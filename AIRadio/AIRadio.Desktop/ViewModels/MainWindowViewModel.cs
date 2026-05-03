@@ -3,6 +3,7 @@ using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using System;
+using System.Collections.Generic;
 using System.Reactive;
 using System.Reactive.Linq;
 using Serilog;
@@ -23,28 +24,41 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public SettingsViewModel SettingsVM { get; }
     public SpectrumViewModel SpectrumVM { get; }
 
+    public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
+
+    public event Action<string, string>? Live2DCommand; // expression, motion
+
     [Reactive] public bool IsSettingsOpen { get; set; }
+    [Reactive] public bool IsCharacterPickerOpen { get; set; }
+    [Reactive] public CharacterProfile SelectedCharacter { get; set; }
 
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
+    public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
         IDJService djService,
         IMinimaxService minimaxService,
         ISecureStorage secureStorage,
-        IMusicSearchService musicSearchService)
+        IMusicSearchService musicSearchService,
+        ISttService sttService)
     {
         _audioService = audioService;
         _djService = djService;
         _minimaxService = minimaxService;
 
+        SelectedCharacter = Characters[0];
+
         PlayerVM = new PlayerViewModel(_audioService);
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService);
-        ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService);
+        ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService);
         SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
+        ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
+        SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);
 
         _trackEndedSub = _audioService.TrackEnded
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -57,12 +71,31 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             });
     }
 
+    private void SwitchCharacter(CharacterProfile character)
+    {
+        if (character == null) return;
+        SelectedCharacter = character;
+        IsCharacterPickerOpen = false;
+
+        _djService.Initialize(new DJProfile
+        {
+            Name = character.DisplayName,
+            Description = character.Description,
+            VoiceId = character.VoiceId,
+            TtsEnabled = _djService.TtsEnabled,
+            SystemPrompt = character.PersonalityPrompt
+        });
+
+        Log.Information("Switched to character: {Name} (voice: {Voice})", character.DisplayName, character.VoiceId);
+    }
+
     private async System.Threading.Tasks.Task HandleTrackTransitionAsync(Track current, Track next)
     {
         try
         {
             var script = await _djService.GenerateTrackIntroductionAsync(current, next);
             Log.Information("DJ: {Text}", script.Text);
+            Live2DCommand?.Invoke(script.Expression, script.Motion);
         }
         catch (Exception ex)
         {
@@ -75,13 +108,16 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         new DJService(new MinimaxService(new System.Net.Http.HttpClient())),
         new MinimaxService(new System.Net.Http.HttpClient()),
         new WindowsSecureStorage(),
-        new MultiSourceMusicService(new System.Net.Http.HttpClient()))
+        new MultiSourceMusicService(new System.Net.Http.HttpClient()),
+        new WhisperSttService())
     {
     }
 
     public async System.Threading.Tasks.Task InitializeAsync()
     {
         await SettingsVM.LoadAsync();
+        // Apply initial character
+        SwitchCharacter(SelectedCharacter);
     }
 
     public void Dispose()

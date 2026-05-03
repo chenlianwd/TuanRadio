@@ -106,6 +106,7 @@ public partial class App : Application
         services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<IMusicSearchService>(sp =>
             new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<ISttService, WhisperSttService>();
         services.AddSingleton<MainWindowViewModel>();
     }
 

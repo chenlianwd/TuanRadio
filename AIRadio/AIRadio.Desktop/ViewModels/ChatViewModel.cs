@@ -5,10 +5,11 @@ using AIRadio.Desktop.Services;
 using Serilog;
 using System;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
-using System.Speech.Recognition;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NAudio.Wave;
@@ -21,26 +22,32 @@ public class ChatViewModel : ViewModelBase
     private readonly IDJService _djService;
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
+    private readonly ISttService _sttService;
+    private readonly IDisposable _stateSub;
 
     private WaveInEvent? _waveIn;
     private string? _tempWavPath;
-    private SpeechRecognitionEngine? _recognizer;
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
     [Reactive] public string InputText { get; set; } = string.Empty;
     [Reactive] public bool IsProcessing { get; set; }
     [Reactive] public bool IsListening { get; set; }
+    [Reactive] public bool IsConversationMode { get; set; }
     [Reactive] public string DjEmotion { get; set; } = "neutral";
+
+    public event Action<string, string>? Live2DCommand; // expression, motion
 
     public ReactiveCommand<Unit, Unit> SendMessageCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleVoiceInputCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleConversationModeCommand { get; }
 
-    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService)
+    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService)
     {
         _djService = djService;
         _audioService = audioService;
         _musicSearchService = musicSearchService;
+        _sttService = sttService;
 
         SendMessageCommand = ReactiveCommand.CreateFromTask(
             SendMessageAsync,
@@ -49,14 +56,47 @@ public class ChatViewModel : ViewModelBase
                 .Select(p => !p));
 
         ToggleVoiceInputCommand = ReactiveCommand.Create(ToggleVoiceInput);
+        ToggleConversationModeCommand = ReactiveCommand.Create(ToggleConversationMode);
+
+        // Listen for TTS completion in conversation mode
+        _stateSub = _audioService.StateChanged
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(state =>
+            {
+                if (IsConversationMode && !IsProcessing && !IsListening &&
+                    state == Models.PlaybackState.Ended)
+                {
+                    StartListening();
+                }
+            });
     }
 
     private void ToggleVoiceInput()
     {
+        if (IsConversationMode)
+        {
+            IsConversationMode = false;
+            StopListening();
+            return;
+        }
         if (IsListening)
             StopListening();
         else
             StartListening();
+    }
+
+    private void ToggleConversationMode()
+    {
+        if (IsConversationMode)
+        {
+            IsConversationMode = false;
+            StopListening();
+        }
+        else
+        {
+            IsConversationMode = true;
+            StartListening();
+        }
     }
 
     private void StartListening()
@@ -114,23 +154,27 @@ public class ChatViewModel : ViewModelBase
     {
         try
         {
-            _recognizer = new SpeechRecognitionEngine();
-            _recognizer.LoadGrammar(new DictationGrammar());
+            var text = await _sttService.TranscribeAsync(wavPath);
 
-            _recognizer.SetInputToWaveFile(wavPath);
-            var result = _recognizer.Recognize();
-
-            if (result != null && !string.IsNullOrWhiteSpace(result.Text))
+            if (!string.IsNullOrWhiteSpace(text))
             {
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
                 {
-                    InputText = result.Text;
+                    InputText = text;
                 });
-                Log.Information("Speech recognized: {Text}", result.Text);
+                Log.Information("Speech recognized: {Text}", text);
+
+                // Auto-send in conversation mode
+                if (IsConversationMode)
+                {
+                    await SendMessageAsync();
+                }
             }
             else
             {
                 Log.Warning("No speech recognized");
+                if (IsConversationMode)
+                    StartListening();
             }
         }
         catch (Exception ex)
@@ -139,8 +183,6 @@ public class ChatViewModel : ViewModelBase
         }
         finally
         {
-            _recognizer?.Dispose();
-            _recognizer = null;
             try { File.Delete(wavPath); } catch { }
         }
     }
@@ -169,16 +211,21 @@ public class ChatViewModel : ViewModelBase
                 Content = displayText
             });
             DjEmotion = _djService.CurrentEmotion;
+            Live2DCommand?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
 
             if (command != null)
                 await ExecuteCommandAsync(command);
 
-            // TTS: generate and play speech
+            // TTS: generate and play speech (strip emoji so they aren't read aloud)
             if (_djService.TtsEnabled)
             {
-                var speechData = await _djService.GenerateSpeechAsync(displayText);
-                if (speechData is { Length: > 0 })
-                    _audioService.PlayTtsAudio(speechData);
+                var ttsText = StripEmoji(displayText);
+                if (!string.IsNullOrWhiteSpace(ttsText))
+                {
+                    var speechData = await _djService.GenerateSpeechAsync(ttsText);
+                    if (speechData is { Length: > 0 })
+                        _audioService.PlayTtsAudio(speechData);
+                }
             }
         }
         catch
@@ -208,6 +255,33 @@ public class ChatViewModel : ViewModelBase
         displayText = displayText[..match.Index].TrimEnd('\n', '\r', ' ');
         var command = match.Groups[1].Value;
         return (displayText, command);
+    }
+
+    private static string StripEmoji(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var sb = new System.Text.StringBuilder(text.Length);
+        var enumerator = StringInfo.GetTextElementEnumerator(text);
+        while (enumerator.MoveNext())
+        {
+            var element = enumerator.GetTextElement();
+            var codePoint = char.ConvertToUtf32(element, 0);
+            // Skip emoji and symbol ranges
+            if (codePoint >= 0x1F600 && codePoint <= 0x1F64F) continue; // emoticons
+            if (codePoint >= 0x1F300 && codePoint <= 0x1F5FF) continue; // symbols & pictographs
+            if (codePoint >= 0x1F680 && codePoint <= 0x1F6FF) continue; // transport & map
+            if (codePoint >= 0x1F900 && codePoint <= 0x1F9FF) continue; // supplemental
+            if (codePoint >= 0x1FA00 && codePoint <= 0x1FA6F) continue; // chess symbols
+            if (codePoint >= 0x1FA70 && codePoint <= 0x1FAFF) continue; // extended-A
+            if (codePoint >= 0x2600 && codePoint <= 0x26FF) continue;   // misc symbols
+            if (codePoint >= 0x2700 && codePoint <= 0x27BF) continue;   // dingbats
+            if (codePoint >= 0xFE00 && codePoint <= 0xFE0F) continue;   // variation selectors
+            if (codePoint == 0x200D) continue;                          // zero-width joiner
+            if (codePoint >= 0xE0020 && codePoint <= 0xE007F) continue; // tag characters
+            sb.Append(element);
+        }
+        return sb.ToString().Trim();
     }
 
     private async Task ExecuteCommandAsync(string command)
@@ -280,4 +354,22 @@ public class ChatViewModel : ViewModelBase
         var index = _audioService.Playlist.Count - 1;
         _audioService.PlayAtIndex(index);
     }
+
+    private static string MapExpression(string emotion) => emotion switch
+    {
+        "happy" => "smile",
+        "sad" => "droopy",
+        "angry" => "droopy",
+        "surprised" => "smile",
+        _ => "idle"
+    };
+
+    private static string MapMotion(string emotion) => emotion switch
+    {
+        "happy" => "wave",
+        "surprised" => "wave",
+        "sad" => "nod",
+        "angry" => "nod",
+        _ => "idle"
+    };
 }

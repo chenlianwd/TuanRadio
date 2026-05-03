@@ -44,7 +44,6 @@
 
     <!-- 语音识别 -->
     <PackageReference Include="NAudio" Version="2.3.0" />
-    <PackageReference Include="System.Speech" Version="8.0.0" />
 
     <!-- 元数据 -->
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
@@ -63,5 +62,7 @@
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Whisper.net" Version="1.7.4" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.7.4" />
   </ItemGroup>
 </Project>

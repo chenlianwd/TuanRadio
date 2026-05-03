@@ -20,6 +20,8 @@ public partial class ChatView : UserControl
         Resources["MessageAlignmentConverter"] = new MessageRoleToAlignmentConverter();
         Resources["MicBgConverter"] = new MicBackgroundConverter();
         Resources["MicIconConverter"] = new MicIconConverter();
+        Resources["ConvModeBgConverter"] = new ConversationModeBackgroundConverter();
+        Resources["ConvModeIconConverter"] = new ConversationModeIconConverter();
         InitializeComponent();
 
         DataContextChanged += (_, _) =>
@@ -41,7 +43,7 @@ public partial class ChatView : UserControl
     {
         if (e.Key == Key.Enter && DataContext is ChatViewModel vm)
         {
-            vm.SendMessageCommand.Execute(Unit.Default).Subscribe();
+            vm.SendMessageCommand.Execute(Unit.Default);
         }
     }
 }
@@ -95,6 +97,30 @@ public class MicIconConverter : IValueConverter
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         return value is true ? "■" : "🎤";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => BindingOperations.DoNothing;
+}
+
+public class ConversationModeBackgroundConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true
+            ? new SolidColorBrush(Color.Parse("#FF1ED760"))
+            : new SolidColorBrush(Color.Parse("#FF424242"));
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => BindingOperations.DoNothing;
+}
+
+public class ConversationModeIconConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true ? "■" : "🗣";
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
