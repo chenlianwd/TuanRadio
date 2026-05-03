@@ -40,7 +40,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         PlayerVM = new PlayerViewModel(_audioService);
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService);
-        ChatVM = new ChatViewModel(_djService);
+        ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService);
         SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 

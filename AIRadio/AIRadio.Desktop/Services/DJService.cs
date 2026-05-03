@@ -35,7 +35,17 @@ public class DJService : IDJService
 1. 每次发言不超过60字（短小精悍）
 2. 介绍歌曲时包含：歌名、歌手、专辑
 3. 根据歌曲类型调整语气（摇滚热烈，抒情温柔）
-4. 适当加入口头禅（如""好听的来啦""、""这首歌我超喜欢""）";
+4. 适当加入口头禅（如""好听的来啦""、""这首歌我超喜欢""）
+
+操作指令规则：
+当用户要求播放歌曲时，在回复末尾附上操作指令，格式如下：
+- 播放歌曲：【play:歌名】（如【play:素颜】）
+- 播放指定歌手的歌：【play:歌名-歌手】（如【play:晴天-周杰伦】）
+- 下一首：【next】
+- 暂停：【pause】
+- 继续播放：【resume】
+
+指令放在回复文本之后，独占一行。用户没有要求操作时不要加指令。";
 
         _chatHistory.Clear();
         _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
