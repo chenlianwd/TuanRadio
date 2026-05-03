@@ -27,6 +27,25 @@
             <TextBox Text="{Binding DjDescription, Mode=TwoWay}" AcceptsReturn="True" Height="60" CornerRadius="8"/>
         </StackPanel>
 
+        <!-- TTS -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="语音播报" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="AI 回复自动语音播报" Foreground="#FFB3B3B3" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
+                              OnContent="" OffContent=""/>
+            </Grid>
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+            <TextBlock Text="主播音色" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <ComboBox SelectedItem="{Binding SelectedVoice, Mode=TwoWay}"
+                      ItemsSource="{Binding Voices}"
+                      DisplayMemberBinding="{Binding DisplayName}"
+                      HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
         <!-- Save -->
         <Button Command="{Binding SaveCommand}" Content="保存设置"
                 HorizontalAlignment="Stretch" Padding="18,12" FontSize="14"

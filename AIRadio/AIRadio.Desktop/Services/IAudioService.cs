@@ -38,4 +38,5 @@ public interface IAudioService
     void AddTracks(IEnumerable<Track> tracks);
     void RemoveTrack(Track track);
     void ClearPlaylist();
+    void PlayTtsAudio(byte[] audioData);
 }

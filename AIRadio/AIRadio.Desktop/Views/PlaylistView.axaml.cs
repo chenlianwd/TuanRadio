@@ -1,6 +1,9 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using AIRadio.Desktop.ViewModels;
 using System;
@@ -14,6 +17,10 @@ public partial class PlaylistView : UserControl
     public PlaylistView()
     {
         Resources["InvertBoolConverter"] = new InvertBoolValueConverter();
+        Resources["TabBgConverter"] = new TabBackgroundConverter();
+        Resources["TabBgActiveConverter"] = new TabBackgroundActiveConverter();
+        Resources["TabFgConverter"] = new TabForegroundConverter();
+        Resources["TabFgActiveConverter"] = new TabForegroundActiveConverter();
         InitializeComponent();
     }
 
@@ -51,4 +58,52 @@ public class InvertBoolValueConverter : IValueConverter
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => value is bool b ? !b : value;
+}
+
+// Tab: 播放列表按钮背景 — active=transparent, inactive=dark
+public class TabBackgroundConverter : IValueConverter
+{
+    private static readonly IBrush ActiveBg = new SolidColorBrush(Color.Parse("#FF2A2A2A"));
+    private static readonly IBrush InactiveBg = Brushes.Transparent;
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool isSearchMode ? (isSearchMode ? InactiveBg : ActiveBg) : ActiveBg;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+// Tab: 搜索按钮背景
+public class TabBackgroundActiveConverter : IValueConverter
+{
+    private static readonly IBrush ActiveBg = new SolidColorBrush(Color.Parse("#FF2A2A2A"));
+    private static readonly IBrush InactiveBg = Brushes.Transparent;
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool isSearchMode ? (isSearchMode ? ActiveBg : InactiveBg) : InactiveBg;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+// Tab: 播放列表按钮文字 — active=white, inactive=gray
+public class TabForegroundConverter : IValueConverter
+{
+    private static readonly IBrush ActiveFg = Brushes.White;
+    private static readonly IBrush InactiveFg = new SolidColorBrush(Color.Parse("#FF808080"));
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool isSearchMode ? (isSearchMode ? InactiveFg : ActiveFg) : ActiveFg;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+// Tab: 搜索按钮文字
+public class TabForegroundActiveConverter : IValueConverter
+{
+    private static readonly IBrush ActiveFg = Brushes.White;
+    private static readonly IBrush InactiveFg = new SolidColorBrush(Color.Parse("#FF808080"));
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool isSearchMode ? (isSearchMode ? ActiveFg : InactiveFg) : InactiveFg;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }

@@ -70,6 +70,7 @@ public class DJProfile
     public string AvatarModelPath { get; set; } = "assets/models/Hiyori";
     public string DefaultExpression { get; set; } = "idle";
     public string VoiceId { get; set; } = "male-qn-qingse";
+    public bool TtsEnabled { get; set; } = true;
     public string SystemPrompt { get; set; } = string.Empty;
 }
 

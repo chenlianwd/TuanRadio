@@ -5,6 +5,7 @@ using AIRadio.Desktop.Services;
 using Avalonia.Threading;
 using Serilog;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reactive;
 using System.Reactive.Linq;
@@ -13,6 +14,12 @@ using System.Threading.Tasks;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
+
+public class VoiceOption
+{
+    public string Id { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+}
 
 public class SettingsViewModel : ViewModelBase
 {
@@ -26,8 +33,20 @@ public class SettingsViewModel : ViewModelBase
     [Reactive] public string ApiKey { get; set; } = string.Empty;
     [Reactive] public string DjName { get; set; } = "小音";
     [Reactive] public string DjDescription { get; set; } = "活泼开朗的电台主播";
+    [Reactive] public bool TtsEnabled { get; set; } = true;
+    [Reactive] public VoiceOption? SelectedVoice { get; set; }
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
+
+    public List<VoiceOption> Voices { get; } = new()
+    {
+        new() { Id = "male-qn-qingse", DisplayName = "青涩男声" },
+        new() { Id = "male-qn-jingying", DisplayName = "精英男声" },
+        new() { Id = "male-qn-badao", DisplayName = "霸道男声" },
+        new() { Id = "female-shaonv", DisplayName = "少女音" },
+        new() { Id = "female-yujie", DisplayName = "御姐音" },
+        new() { Id = "female-chengshu", DisplayName = "成熟女声" },
+    };
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -57,6 +76,8 @@ public class SettingsViewModel : ViewModelBase
             }
 
             string? djName = null, djDesc = null;
+            bool? ttsEnabled = null;
+            string? voiceId = null;
             if (File.Exists(SettingsFile))
             {
                 var json = await File.ReadAllTextAsync(SettingsFile);
@@ -66,15 +87,30 @@ public class SettingsViewModel : ViewModelBase
                     djName = name.GetString();
                 if (root.TryGetProperty("dj_description", out var desc))
                     djDesc = desc.GetString();
+                if (root.TryGetProperty("tts_enabled", out var tts))
+                    ttsEnabled = tts.GetBoolean();
+                if (root.TryGetProperty("voice_id", out var vid))
+                    voiceId = vid.GetString();
             }
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 if (djName != null) DjName = djName;
                 if (djDesc != null) DjDescription = djDesc;
+                if (ttsEnabled.HasValue) TtsEnabled = ttsEnabled.Value;
+                if (voiceId != null)
+                    SelectedVoice = Voices.Find(v => v.Id == voiceId) ?? Voices[0];
+                else
+                    SelectedVoice = Voices[0];
             });
 
-            _djService.Initialize(new DJProfile { Name = DjName, Description = DjDescription });
+            _djService.Initialize(new DJProfile
+            {
+                Name = DjName,
+                Description = DjDescription,
+                TtsEnabled = TtsEnabled,
+                VoiceId = SelectedVoice?.Id ?? "male-qn-qingse"
+            });
         }
         catch (Exception ex)
         {
@@ -119,10 +155,13 @@ public class SettingsViewModel : ViewModelBase
     private async Task SaveAsync()
     {
         Log.Information("Save clicked, DjName={Name}", DjName);
+        var voiceId = SelectedVoice?.Id ?? "male-qn-qingse";
         var profile = new DJProfile
         {
             Name = DjName,
-            Description = DjDescription
+            Description = DjDescription,
+            TtsEnabled = TtsEnabled,
+            VoiceId = voiceId
         };
         _djService.Initialize(profile);
 
@@ -138,7 +177,9 @@ public class SettingsViewModel : ViewModelBase
             var settingsData = new
             {
                 dj_name = DjName,
-                dj_description = DjDescription
+                dj_description = DjDescription,
+                tts_enabled = TtsEnabled,
+                voice_id = voiceId
             };
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(SettingsFile, json);
