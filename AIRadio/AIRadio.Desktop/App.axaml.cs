@@ -3,6 +3,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.ReactiveUI;
 using Avalonia.Threading;
+using AvaloniaWebView;
 using System;
 using System.IO;
 
@@ -18,11 +19,18 @@ public partial class App : Application
 {
     private IServiceProvider? _serviceProvider;
     private Live2DStaticServer? _live2DServer;
+    private MusicApiServer? _musicApiServer;
     private MainWindowViewModel? _mainVm;
 
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+    }
+
+    public override void RegisterServices()
+    {
+        base.RegisterServices();
+        AvaloniaWebViewBuilder.Initialize(default);
     }
 
     public override void OnFrameworkInitializationCompleted()
@@ -66,6 +74,9 @@ public partial class App : Application
                     Log.Warning("wwwroot not found at {Path}", wwwrootPath);
                 }
 
+                _musicApiServer = new MusicApiServer();
+                _ = _musicApiServer.StartAsync();
+
                 var mainWindow = new Views.MainWindow();
                 _mainVm = _serviceProvider.GetRequiredService<MainWindowViewModel>();
                 _ = _mainVm.InitializeAsync();
@@ -93,6 +104,8 @@ public partial class App : Application
         services.AddSingleton<IMinimaxService, MinimaxService>();
         services.AddSingleton<IDJService, DJService>();
         services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
+        services.AddSingleton<IMusicSearchService>(sp =>
+            new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         services.AddSingleton<MainWindowViewModel>();
     }
 
@@ -100,6 +113,7 @@ public partial class App : Application
     {
         Log.Information("AI Radio shutting down...");
         _mainVm?.Dispose();
+        _musicApiServer?.Dispose();
         _live2DServer?.Dispose();
         (_serviceProvider as IDisposable)?.Dispose();
         Log.CloseAndFlush();

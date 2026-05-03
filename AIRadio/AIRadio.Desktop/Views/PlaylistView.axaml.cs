@@ -1,8 +1,11 @@
-using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Data.Converters;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using AIRadio.Desktop.ViewModels;
+using System;
+using System.Globalization;
+using System.Linq;
 
 namespace AIRadio.Desktop.Views;
 
@@ -10,6 +13,7 @@ public partial class PlaylistView : UserControl
 {
     public PlaylistView()
     {
+        Resources["InvertBoolConverter"] = new InvertBoolValueConverter();
         InitializeComponent();
     }
 
@@ -38,4 +42,13 @@ public partial class PlaylistView : UserControl
             vm.AddFiles(files.Select(f => f.TryGetLocalPath()!).Where(p => p != null).ToArray());
         }
     }
+}
+
+public class InvertBoolValueConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool b ? !b : value;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool b ? !b : value;
 }

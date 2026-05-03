@@ -221,7 +221,9 @@ public class AudioService : IAudioService, IDisposable
         var track = _playlist[index];
         try
         {
-            var media = new Media(_libVLC, track.FilePath, FromType.FromPath);
+            var isUrl = track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                     || track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+            var media = new Media(_libVLC, track.FilePath, isUrl ? FromType.FromLocation : FromType.FromPath);
             _player.Media = media;
             _player.Play();
             NotifyTrackChanged();

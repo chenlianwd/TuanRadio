@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
         xmlns:views="using:AIRadio.Desktop.Views"
+        xmlns:webview="using:AvaloniaWebView"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="AI Radio"
@@ -131,14 +132,9 @@
                     </Border>
                     <!-- Playlist takes remaining space -->
                     <views:PlaylistView DockPanel.Dock="Bottom" DataContext="{Binding PlaylistVM}" Margin="0,0,0,4"/>
-                    <!-- Avatar at top -->
-                    <Border Background="#FF181818" CornerRadius="8" Margin="0,0,0,4">
-                        <Panel>
-                            <TextBlock Text="AI" FontSize="48" FontWeight="100" Foreground="#FF282828"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            <TextBlock Text="DJ 主播" FontSize="11" Foreground="#FF535353"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,50,0,0"/>
-                        </Panel>
+                    <!-- Avatar at top - Live2D -->
+                    <Border Background="#FF181818" CornerRadius="8" Margin="0,0,0,4" ClipToBounds="True" MinHeight="160">
+                        <webview:WebView Url="http://localhost:18080/live2d-demo/index.html" Background="#FF181818"/>
                     </Border>
                 </DockPanel>
 

@@ -16,6 +16,9 @@
     <Content Include="wwwroot\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="server\**" Exclude="server\node_modules\.package-lock.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -48,6 +51,7 @@
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
 
     <!-- WebView -->
+    <PackageReference Include="WebView.Avalonia" Version="11.0.0.1" />
     <PackageReference Include="WebView.Avalonia.Desktop" Version="11.0.0.1" />
 
     <!-- Diagnostics -->

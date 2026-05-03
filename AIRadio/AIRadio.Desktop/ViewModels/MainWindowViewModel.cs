@@ -31,14 +31,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IAudioService audioService,
         IDJService djService,
         IMinimaxService minimaxService,
-        ISecureStorage secureStorage)
+        ISecureStorage secureStorage,
+        IMusicSearchService musicSearchService)
     {
         _audioService = audioService;
         _djService = djService;
         _minimaxService = minimaxService;
 
         PlayerVM = new PlayerViewModel(_audioService);
-        PlaylistVM = new PlaylistViewModel(_audioService);
+        PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService);
         ChatVM = new ChatViewModel(_djService);
         SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
@@ -73,7 +74,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         new AudioService(),
         new DJService(new MinimaxService(new System.Net.Http.HttpClient())),
         new MinimaxService(new System.Net.Http.HttpClient()),
-        new WindowsSecureStorage())
+        new WindowsSecureStorage(),
+        new MultiSourceMusicService(new System.Net.Http.HttpClient()))
     {
     }
 

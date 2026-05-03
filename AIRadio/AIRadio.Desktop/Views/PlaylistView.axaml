@@ -5,9 +5,9 @@
              x:DataType="vm:PlaylistViewModel">
 
     <Border Background="#FF181818" CornerRadius="8" Padding="16">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
             <!-- Header -->
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,10">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <TextBlock Text="播放列表" FontSize="14" FontWeight="700" Foreground="#FFFFFFFF"/>
                     <Border Background="#FF282828" CornerRadius="500" Padding="8,2">
@@ -16,34 +16,77 @@
                         </TextBlock>
                     </Border>
                 </StackPanel>
-                <Button Grid.Column="1" Content="＋ 导入" Click="OnImportFiles"
-                        FontSize="11" Padding="14,6" Background="#FF1ED760"
-                        Foreground="#FF000000" CornerRadius="500"/>
+                <Button Grid.Column="1" Command="{Binding ToggleSearchCommand}"
+                        FontSize="11" Padding="12,6" Margin="0,0,6,0">
+                    <TextBlock Text="🔍 搜索"/>
+                </Button>
+                <Button Grid.Column="2" Content="＋ 导入" Click="OnImportFiles"
+                        FontSize="11" Padding="12,6" Background="#FF1ED760"
+                        Foreground="#FF000000"/>
             </Grid>
 
-            <!-- List -->
-            <ListBox Grid.Row="1" ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}"
+            <!-- Search bar -->
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,0,0,8"
+                  IsVisible="{Binding IsSearchMode}">
+                <TextBox Grid.Column="0" Text="{Binding SearchText, Mode=TwoWay}"
+                         Watermark="搜索在线歌曲..." Margin="0,0,6,0"/>
+                <Button Grid.Column="1" Command="{Binding SearchCommand}"
+                        Content="搜索" Padding="16,8" Background="#FF1ED760"
+                        Foreground="#FF000000"/>
+            </Grid>
+
+            <!-- Search results -->
+            <ListBox Grid.Row="2" ItemsSource="{Binding SearchResults}"
+                     IsVisible="{Binding IsSearchMode}"
+                     SelectionMode="Single">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border Padding="10,8" Margin="0,1">
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="600"
+                                               Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock FontSize="11" Foreground="#FFB3B3B3" Margin="0,2,0,0">
+                                        <Run Text="{Binding Artist, Mode=OneWay}"/><Run Text=" · "/><Run Text="{Binding Source, Mode=OneWay}"/>
+                                    </TextBlock>
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                           FontSize="11" Foreground="#FF535353" Margin="8,0">
+                                    <Run Text="{Binding Album, Mode=OneWay}"/>
+                                </TextBlock>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <Button Content="▶" FontSize="10" Padding="6,4"
+                                            Command="{Binding $parent[ListBox].((vm:PlaylistViewModel)DataContext).PlayOnlineCommand}"
+                                            CommandParameter="{Binding}"/>
+                                    <Button Content="+" FontSize="10" Padding="6,4"
+                                            Command="{Binding $parent[ListBox].((vm:PlaylistViewModel)DataContext).AddOnlineCommand}"
+                                            CommandParameter="{Binding}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- Playlist -->
+            <ListBox Grid.Row="2" ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}"
+                     IsVisible="{Binding IsSearchMode, Converter={StaticResource InvertBoolConverter}}"
                      SelectionMode="Single">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
                         <Border Padding="10,8" Margin="0,1">
                             <Grid ColumnDefinitions="40,*,Auto">
-                                <!-- Cover art placeholder -->
                                 <Border Grid.Column="0" Background="#FF282828" CornerRadius="4"
                                         Width="36" Height="36">
                                     <TextBlock Text="♪" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="16" Foreground="#FF535353"/>
                                 </Border>
-
-                                <!-- Info -->
                                 <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="700"
                                                Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
                                     <TextBlock Text="{Binding Artist}" FontSize="12" Foreground="#FFB3B3B3"
                                                Margin="0,2,0,0"/>
                                 </StackPanel>
-
-                                <!-- Duration -->
                                 <TextBlock Grid.Column="2" Text="{Binding Duration, StringFormat={}{0:m\\:ss}}"
                                            VerticalAlignment="Center" Foreground="#FFB3B3B3" FontSize="12"/>
                             </Grid>
@@ -53,7 +96,7 @@
             </ListBox>
 
             <!-- Bottom -->
-            <Button Grid.Row="2" Command="{Binding ClearPlaylistCommand}" Content="清空列表"
+            <Button Grid.Row="3" Command="{Binding ClearPlaylistCommand}" Content="清空列表"
                     FontSize="11" Padding="14,6" Margin="0,8,0,0"
                     Foreground="#FFB3B3B3" Background="#FF1F1F1F"/>
         </Grid>
