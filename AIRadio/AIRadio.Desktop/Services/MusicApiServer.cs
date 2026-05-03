@@ -37,6 +37,9 @@ public class MusicApiServer : IDisposable
             return;
         }
 
+        // Kill any leftover Node.js process on the same port
+        KillProcessOnPort();
+
         try
         {
             // 确保 Node.js 可用（自动下载便携版）
@@ -122,5 +125,49 @@ public class MusicApiServer : IDisposable
     {
         Stop();
         _process?.Dispose();
+    }
+
+    private void KillProcessOnPort()
+    {
+        try
+        {
+            // Use netstat to find PID using the port
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c netstat -ano | findstr :{_port}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return;
+
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit();
+
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 5 && parts[0].Contains("TCP") && parts[1].Contains($":{_port}"))
+                {
+                    var pidStr = parts[^1];
+                    if (int.TryParse(pidStr, out var pid) && pid > 0)
+                    {
+                        try
+                        {
+                            var p = Process.GetProcessById(pid);
+                            p.Kill(entireProcessTree: true);
+                            Log.Information("Killed leftover process PID {Pid} on port {Port}", pid, _port);
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not check for processes on port {Port}", _port);
+        }
     }
 }
