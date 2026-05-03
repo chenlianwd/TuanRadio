@@ -1,0 +1,115 @@
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Serilog;
+
+namespace AIRadio.Desktop.Services;
+
+/// <summary>
+/// 咪咕音乐 API
+/// </summary>
+public class MiguMusicService : IMusicSearchService
+{
+    private readonly HttpClient _httpClient;
+    public string Name => "咪咕音乐";
+
+    public MiguMusicService(HttpClient httpClient)
+    {
+        _httpClient = httpClient;
+    }
+
+    public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+    {
+        try
+        {
+            var url = $"https://m.music.migu.cn/migu/remoting/scr_search_tag?keyword={Uri.EscapeDataString(keyword)}&pgc=1&rows={limit}&type=2";
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("Referer", "https://m.music.migu.cn/");
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var tracks = new List<OnlineTrack>();
+            if (root.TryGetProperty("musics", out var musics))
+            {
+                foreach (var item in musics.EnumerateArray())
+                {
+                    var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" :
+                             item.TryGetProperty("copyrightId", out var cId) ? cId.GetString() ?? "" : "";
+                    var title = item.TryGetProperty("songName", out var t) ? t.GetString() ?? "" :
+                                item.TryGetProperty("title", out var t2) ? t2.GetString() ?? "" : "";
+                    var artist = item.TryGetProperty("singerName", out var ar) ? ar.GetString() ?? "" :
+                                 item.TryGetProperty("singer", out var ar2) ? ar2.GetString() ?? "" : "";
+                    var album = item.TryGetProperty("albumName", out var al) ? al.GetString() ?? "" : "";
+
+                    if (!string.IsNullOrEmpty(id))
+                    {
+                        tracks.Add(new OnlineTrack
+                        {
+                            Id = "migu:" + id,
+                            Title = title,
+                            Artist = artist,
+                            Album = album,
+                            DurationMs = 0,
+                            Source = "咪咕"
+                        });
+                    }
+                }
+            }
+
+            return tracks;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Migu search failed");
+            return new List<OnlineTrack>();
+        }
+    }
+
+    public async Task<string?> GetPlayUrlAsync(string trackId)
+    {
+        var id = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
+        try
+        {
+            var url = $"https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/queryListenSongInfo.do?copyrightId={id}&toneType=SQ&netType=01";
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36");
+
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("listenUrl", out var listenUrl))
+            {
+                return listenUrl.GetString();
+            }
+
+            // Try alternative endpoint
+            var url2 = $"https://music.migu.cn/v3/api/music/audioPlayer/getSongInfo?copyrightId={id}";
+            var request2 = new HttpRequestMessage(HttpMethod.Get, url2);
+            request2.Headers.Add("Referer", "https://music.migu.cn/");
+
+            var response2 = await _httpClient.SendAsync(request2);
+            var json2 = await response2.Content.ReadAsStringAsync();
+            using var doc2 = JsonDocument.Parse(json2);
+
+            if (doc2.RootElement.TryGetProperty("data", out var data2) &&
+                data2.TryGetProperty("playUrl", out var playUrl))
+            {
+                return playUrl.GetString();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Migu get play url failed for {Id}", id);
+        }
+        return null;
+    }
+}

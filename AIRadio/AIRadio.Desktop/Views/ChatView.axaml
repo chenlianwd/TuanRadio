@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             x:Class="AIRadio.Desktop.Views.ChatView"
+             x:DataType="vm:ChatViewModel">
+
+    <Border Background="#FF181818" CornerRadius="8" Padding="16">
+        <Grid RowDefinitions="Auto,*,Auto">
+            <!-- Header -->
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="听众互动" FontSize="14" FontWeight="700" Foreground="#FFFFFFFF"/>
+                    <Border Background="#221ED760" CornerRadius="500" Padding="8,2">
+                        <TextBlock Text="在线" FontSize="10" Foreground="#FF1ED760" FontWeight="700"/>
+                    </Border>
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding DjEmotion}" FontSize="11" Foreground="#FF535353"
+                           VerticalAlignment="Center"/>
+            </Grid>
+
+            <!-- Messages -->
+            <ScrollViewer x:Name="MessagesScroller" Grid.Row="1">
+                <ItemsControl ItemsSource="{Binding Messages}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Margin="4,2" Padding="14,10" CornerRadius="8" MaxWidth="420"
+                                    Background="{Binding Role, Converter={StaticResource MessageRoleConverter}}"
+                                    HorizontalAlignment="{Binding Role, Converter={StaticResource MessageAlignmentConverter}}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap" FontSize="14"
+                                               Foreground="#FFFFFFFF" LineHeight="20"/>
+                                    <TextBlock Text="{Binding Timestamp, StringFormat=HH:mm}" FontSize="10"
+                                               Foreground="#FF535353" HorizontalAlignment="Right"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <!-- Input -->
+            <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+                <TextBox x:Name="InputBox" Text="{Binding InputText, Mode=TwoWay}" Watermark="输入消息..."
+                         KeyDown="OnInputKeyDown" Margin="0,0,8,0"/>
+                <Button Grid.Column="1" Command="{Binding SendMessageCommand}"
+                        Content="发送" Padding="20,8" Background="#FF1ED760"
+                        Foreground="#FF000000" CornerRadius="500"/>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>
