@@ -5,10 +5,13 @@ using AIRadio.Desktop.Services;
 using Serilog;
 using System;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Reactive;
 using System.Reactive.Linq;
+using System.Speech.Recognition;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using NAudio.Wave;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
@@ -19,13 +22,19 @@ public class ChatViewModel : ViewModelBase
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
 
+    private WaveInEvent? _waveIn;
+    private string? _tempWavPath;
+    private SpeechRecognitionEngine? _recognizer;
+
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
     [Reactive] public string InputText { get; set; } = string.Empty;
     [Reactive] public bool IsProcessing { get; set; }
+    [Reactive] public bool IsListening { get; set; }
     [Reactive] public string DjEmotion { get; set; } = "neutral";
 
     public ReactiveCommand<Unit, Unit> SendMessageCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleVoiceInputCommand { get; }
 
     public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService)
     {
@@ -38,6 +47,102 @@ public class ChatViewModel : ViewModelBase
             this.WhenAnyValue(x => x.IsProcessing)
                 .ObserveOn(RxApp.MainThreadScheduler)
                 .Select(p => !p));
+
+        ToggleVoiceInputCommand = ReactiveCommand.Create(ToggleVoiceInput);
+    }
+
+    private void ToggleVoiceInput()
+    {
+        if (IsListening)
+            StopListening();
+        else
+            StartListening();
+    }
+
+    private void StartListening()
+    {
+        try
+        {
+            _tempWavPath = Path.Combine(Path.GetTempPath(), $"stt_{Guid.NewGuid():N}.wav");
+
+            _waveIn = new WaveInEvent
+            {
+                WaveFormat = new WaveFormat(16000, 16, 1)
+            };
+            var writer = new WaveFileWriter(_tempWavPath, _waveIn.WaveFormat);
+
+            _waveIn.DataAvailable += (_, e) =>
+            {
+                writer.Write(e.Buffer, 0, e.BytesRecorded);
+            };
+
+            _waveIn.RecordingStopped += (_, _) =>
+            {
+                writer.Dispose();
+                _waveIn?.Dispose();
+                _waveIn = null;
+                RecognizeFromWav(_tempWavPath);
+            };
+
+            _waveIn.StartRecording();
+            IsListening = true;
+            Log.Information("Mic recording started");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to start mic recording");
+            IsListening = false;
+        }
+    }
+
+    private void StopListening()
+    {
+        try
+        {
+            _waveIn?.StopRecording();
+            IsListening = false;
+            Log.Information("Mic recording stopped");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Error stopping mic");
+            IsListening = false;
+        }
+    }
+
+    private async void RecognizeFromWav(string wavPath)
+    {
+        try
+        {
+            _recognizer = new SpeechRecognitionEngine();
+            _recognizer.LoadGrammar(new DictationGrammar());
+
+            _recognizer.SetInputToWaveFile(wavPath);
+            var result = _recognizer.Recognize();
+
+            if (result != null && !string.IsNullOrWhiteSpace(result.Text))
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    InputText = result.Text;
+                });
+                Log.Information("Speech recognized: {Text}", result.Text);
+            }
+            else
+            {
+                Log.Warning("No speech recognized");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Speech recognition failed");
+        }
+        finally
+        {
+            _recognizer?.Dispose();
+            _recognizer = null;
+            try { File.Delete(wavPath); } catch { }
+        }
     }
 
     private async Task SendMessageAsync()
@@ -67,6 +172,14 @@ public class ChatViewModel : ViewModelBase
 
             if (command != null)
                 await ExecuteCommandAsync(command);
+
+            // TTS: generate and play speech
+            if (_djService.TtsEnabled)
+            {
+                var speechData = await _djService.GenerateSpeechAsync(displayText);
+                if (speechData is { Length: > 0 })
+                    _audioService.PlayTtsAudio(speechData);
+            }
         }
         catch
         {
@@ -84,12 +197,15 @@ public class ChatViewModel : ViewModelBase
 
     private static (string displayText, string? command) ParseResponse(string response)
     {
-        // Match 【play:xxx】 or 【next】 etc at the end of the response
-        var match = Regex.Match(response, @"【(play:.+?|next|pause|resume)】\s*$");
-        if (!match.Success)
-            return (response, null);
+        // Strip emotion tag like [happy] [neutral] etc
+        var displayText = Regex.Replace(response, @"\s*\[(happy|sad|calm|neutral|angry|surprised)\]\s*$", "").TrimEnd();
 
-        var displayText = response[..match.Index].TrimEnd('\n', '\r', ' ');
+        // Match 【play:xxx】 or 【next】 etc at the end
+        var match = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$");
+        if (!match.Success)
+            return (displayText, null);
+
+        displayText = displayText[..match.Index].TrimEnd('\n', '\r', ' ');
         var command = match.Groups[1].Value;
         return (displayText, command);
     }
@@ -147,6 +263,16 @@ public class ChatViewModel : ViewModelBase
                 Content = "这首歌暂时无法播放，换一首吧？"
             });
             return;
+        }
+
+        // Check if already in playlist
+        for (int i = 0; i < _audioService.Playlist.Count; i++)
+        {
+            if (_audioService.Playlist[i].FilePath == url)
+            {
+                _audioService.PlayAtIndex(i);
+                return;
+            }
         }
 
         var t = track.ToTrack(url);

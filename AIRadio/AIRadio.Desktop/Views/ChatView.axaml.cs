@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -17,6 +18,8 @@ public partial class ChatView : UserControl
     {
         Resources["MessageRoleConverter"] = new MessageRoleToBrushConverter();
         Resources["MessageAlignmentConverter"] = new MessageRoleToAlignmentConverter();
+        Resources["MicBgConverter"] = new MicBackgroundConverter();
+        Resources["MicIconConverter"] = new MicIconConverter();
         InitializeComponent();
 
         DataContextChanged += (_, _) =>
@@ -56,7 +59,7 @@ public class MessageRoleToBrushConverter : IValueConverter
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotImplementedException();
+        => BindingOperations.DoNothing;
 }
 
 public class MessageRoleToAlignmentConverter : IValueConverter
@@ -71,5 +74,29 @@ public class MessageRoleToAlignmentConverter : IValueConverter
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotImplementedException();
+        => BindingOperations.DoNothing;
+}
+
+public class MicBackgroundConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true
+            ? new SolidColorBrush(Color.Parse("#FFE53935"))
+            : new SolidColorBrush(Color.Parse("#FF424242"));
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => BindingOperations.DoNothing;
+}
+
+public class MicIconConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true ? "■" : "🎤";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => BindingOperations.DoNothing;
 }

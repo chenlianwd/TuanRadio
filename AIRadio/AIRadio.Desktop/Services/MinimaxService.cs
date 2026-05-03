@@ -76,7 +76,7 @@ public class MinimaxService : IMinimaxService
         {
             var requestBody = new
             {
-                model = "speech-2.6-hd",
+                model = "speech-2.8-hd",
                 text,
                 stream = false,
                 voice_setting = new

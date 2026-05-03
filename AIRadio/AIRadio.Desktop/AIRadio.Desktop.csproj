@@ -38,17 +38,21 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
 
     <!-- 音频 -->
-    <PackageReference Include="LibVLCSharp" Version="3.9.4" />
-    <PackageReference Include="System.Reactive" Version="6.0.1" />
-    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
+    <PackageReference Include="LibVLCSharp" Version="3.9.7.1" />
+    <PackageReference Include="System.Reactive" Version="6.1.0" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
+
+    <!-- 语音识别 -->
+    <PackageReference Include="NAudio" Version="2.3.0" />
+    <PackageReference Include="System.Speech" Version="8.0.0" />
 
     <!-- 元数据 -->
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
 
     <!-- 日志 -->
-    <PackageReference Include="Serilog" Version="4.2.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
-    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Serilog" Version="4.3.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
 
     <!-- WebView -->
     <PackageReference Include="WebView.Avalonia" Version="11.0.0.1" />

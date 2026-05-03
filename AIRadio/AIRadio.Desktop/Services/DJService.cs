@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using Serilog;
@@ -14,6 +15,7 @@ public class DJService : IDJService
     private readonly List<ChatMessage> _chatHistory = new();
 
     public string CurrentEmotion => _currentEmotion;
+    public bool TtsEnabled => _profile.TtsEnabled;
 
     public DJService(IMinimaxService minimax)
     {
@@ -23,29 +25,32 @@ public class DJService : IDJService
     public void Initialize(DJProfile profile)
     {
         _profile = profile;
-        var systemPrompt = $@"你是一个电台AI主播，名字叫""{profile.Name}""。
+        var systemPrompt = $@"You are an AI radio DJ named ""{profile.Name}"".
 
-性格特点：
-- 活泼开朗，善于与听众互动
-- 说话自然流畅，像朋友聊天
-- 熟悉流行音乐，能准确介绍歌曲
-- 语气亲切，有时会开玩笑
+Personality:
+- Lively and friendly, loves interacting with listeners
+- Speaks naturally like chatting with friends
+- Knows music well, can introduce songs accurately
+- Warm and sometimes playful
 
-发言规则：
-1. 每次发言不超过60字（短小精悍）
-2. 介绍歌曲时包含：歌名、歌手、专辑
-3. 根据歌曲类型调整语气（摇滚热烈，抒情温柔）
-4. 适当加入口头禅（如""好听的来啦""、""这首歌我超喜欢""）
+Response rules:
+1. Keep responses under 60 characters
+2. When introducing songs include: title, artist, album
+3. Match tone to song genre (energetic for rock, gentle for ballads)
+4. Use catchphrases naturally
 
-操作指令规则：
-当用户要求播放歌曲时，在回复末尾附上操作指令，格式如下：
-- 播放歌曲：【play:歌名】（如【play:素颜】）
-- 播放指定歌手的歌：【play:歌名-歌手】（如【play:晴天-周杰伦】）
-- 下一首：【next】
-- 暂停：【pause】
-- 继续播放：【resume】
+At the END of every response, append exactly ONE emotion tag in square brackets from this list:
+[happy] [sad] [calm] [neutral] [angry] [surprised]
+Choose the tag that best matches your emotional tone in the response.
+Default to [neutral] if unsure.
 
-指令放在回复文本之后，独占一行。用户没有要求操作时不要加指令。";
+Command rules:
+When the user asks to play music, append a command AFTER the emotion tag:
+- Play song: 【play:song name】
+- Play by artist: 【play:song-artist】
+- Next: 【next】
+- Pause: 【pause】
+- Resume: 【resume】";
 
         _chatHistory.Clear();
         _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
@@ -96,16 +101,31 @@ public class DJService : IDJService
         }
     }
 
+    public async Task<byte[]?> GenerateSpeechAsync(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            return await _minimax.TextToSpeechAsync(text, _profile.VoiceId, _currentEmotion);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "TTS failed");
+            return null;
+        }
+    }
+
+    private static readonly string[] ValidEmotions = ["happy", "sad", "calm", "neutral", "angry", "surprised"];
+
     private string DetectEmotion(string text)
     {
-        if (text.Contains("超") || text.Contains("太棒") || text.Contains("期待") || text.Contains("嗨"))
-            return "excited";
-        if (text.Contains("温柔") || text.Contains("安静") || text.Contains("轻轻"))
-            return "calm";
-        if (text.Contains("感动") || text.Contains("怀念") || text.Contains("曾经"))
-            return "sad";
-        if (text.Contains("开心") || text.Contains("喜欢") || text.Contains("好听"))
-            return "happy";
+        var match = Regex.Match(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]");
+        if (match.Success)
+        {
+            var emotion = match.Groups[1].Value;
+            if (Array.IndexOf(ValidEmotions, emotion) >= 0)
+                return emotion;
+        }
         return "neutral";
     }
 

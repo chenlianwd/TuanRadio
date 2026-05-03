@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -14,6 +15,7 @@ public class AudioService : IAudioService, IDisposable
 {
     private readonly LibVLC _libVLC;
     private readonly MediaPlayer _player;
+    private readonly MediaPlayer _ttsPlayer;
     private readonly Subject<float[]> _spectrumSubject = new();
     private readonly Subject<Track?> _trackChangedSubject = new();
     private readonly Subject<PlaybackState> _stateChangedSubject = new();
@@ -54,6 +56,7 @@ public class AudioService : IAudioService, IDisposable
         Core.Initialize();
         _libVLC = new LibVLC();
         _player = new MediaPlayer(_libVLC);
+        _ttsPlayer = new MediaPlayer(_libVLC);
 
         _player.Playing += (_, _) => SetState(PlaybackState.Playing);
         _player.Paused += (_, _) => SetState(PlaybackState.Paused);
@@ -280,6 +283,8 @@ public class AudioService : IAudioService, IDisposable
     {
         _spectrumTimer?.Dispose();
         _positionTimer?.Dispose();
+        _ttsPlayer?.Stop();
+        _ttsPlayer?.Dispose();
         _player?.Dispose();
         _libVLC?.Dispose();
         _spectrumSubject.Dispose();
@@ -287,5 +292,33 @@ public class AudioService : IAudioService, IDisposable
         _stateChangedSubject.Dispose();
         _positionChangedSubject.Dispose();
         _trackEndedSubject.Dispose();
+    }
+
+    private string? _currentTtsFile;
+
+    public void PlayTtsAudio(byte[] audioData)
+    {
+        try
+        {
+            // Clean up previous TTS file
+            if (_currentTtsFile != null)
+            {
+                try { File.Delete(_currentTtsFile); } catch { }
+            }
+
+            var tempPath = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.mp3");
+            File.WriteAllBytes(tempPath, audioData);
+            _currentTtsFile = tempPath;
+
+            var media = new Media(_libVLC, tempPath, FromType.FromPath);
+            _ttsPlayer.Stop();
+            _ttsPlayer.Media = media;
+            _ttsPlayer.Play();
+            Log.Debug("TTS playback started");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to play TTS audio");
+        }
     }
 }
