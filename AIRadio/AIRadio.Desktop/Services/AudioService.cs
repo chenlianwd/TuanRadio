@@ -61,6 +61,12 @@ public class AudioService : IAudioService, IDisposable
         _player.Playing += (_, _) => SetState(PlaybackState.Playing);
         _player.Paused += (_, _) => SetState(PlaybackState.Paused);
         _player.Stopped += (_, _) => SetState(PlaybackState.Stopped);
+        _player.EncounteredError += (_, _) =>
+        {
+            Log.Warning("Playback error on track: {Track}", CurrentTrack?.Title);
+            SetState(PlaybackState.Stopped);
+            if (_playlist.Count > 1) Next();
+        };
         _player.EndReached += (_, _) =>
         {
             SetState(PlaybackState.Ended);
@@ -227,6 +233,12 @@ public class AudioService : IAudioService, IDisposable
             var isUrl = track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                      || track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
             var media = new Media(_libVLC, track.FilePath, isUrl ? FromType.FromLocation : FromType.FromPath);
+            if (isUrl)
+            {
+                media.AddOption(":network-caching=5000");
+                media.AddOption(":http-reconnect");
+                media.AddOption(":http-continuous");
+            }
             _player.Media = media;
             _player.Play();
             NotifyTrackChanged();

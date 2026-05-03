@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
         xmlns:views="using:AIRadio.Desktop.Views"
+        xmlns:models="using:AIRadio.Desktop.Models"
         xmlns:webview="using:AvaloniaWebView"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
@@ -134,7 +135,26 @@
                     <views:PlaylistView DockPanel.Dock="Bottom" DataContext="{Binding PlaylistVM}" Margin="0,0,0,4"/>
                     <!-- Avatar at top - Live2D -->
                     <Border Background="#FF181818" CornerRadius="8" Margin="0,0,0,4" ClipToBounds="True" MinHeight="160">
-                        <webview:WebView Url="http://localhost:18080/live2d-demo/index.html" Background="#FF181818"/>
+                        <Grid>
+                            <webview:WebView x:Name="Live2DWebView" Url="http://localhost:18080/live2d-demo/index.html" Background="#FF181818"/>
+                            <!-- Character name overlay -->
+                            <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10" Padding="8,4"
+                                    Background="#AA000000" CornerRadius="4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{Binding SelectedCharacter.DisplayName}" FontSize="12"
+                                               FontWeight="700" Foreground="#FFFFFFFF"/>
+                                    <TextBlock Text="{Binding SelectedCharacter.Description}" FontSize="10"
+                                               Foreground="#FFB3B3B3" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <!-- Gear button -->
+                            <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                                    Command="{Binding ToggleCharacterPickerCommand}"
+                                    Background="#AA000000" Foreground="#FFFFFFFF"
+                                    CornerRadius="500" Padding="6,4" FontSize="14" FontWeight="700">
+                                ⚙
+                            </Button>
+                        </Grid>
                     </Border>
                 </DockPanel>
 
@@ -152,6 +172,33 @@
                 <ScrollViewer>
                     <views:SettingsView DataContext="{Binding SettingsVM}"/>
                 </ScrollViewer>
+            </Border>
+        </Panel>
+
+        <!-- Character picker overlay -->
+        <Panel x:Name="CharacterOverlay" IsVisible="{Binding IsCharacterPickerOpen}">
+            <Border Background="#CC000000" PointerPressed="OnCharacterOverlayClick"/>
+            <Border Background="#FF282828" CornerRadius="12" Padding="24"
+                    MaxWidth="400" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="选择主播" FontSize="16" FontWeight="700" Foreground="#FFFFFFFF"/>
+                    <ItemsControl ItemsSource="{Binding Characters}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:CharacterProfile">
+                                <Border Background="#FF1F1F1F" CornerRadius="8" Padding="14,10" Margin="0,2"
+                                        Cursor="Hand" PointerPressed="OnCharacterSelected">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Grid.Column="0" Text=" " FontSize="24" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="700" Foreground="#FFFFFFFF"/>
+                                            <TextBlock Text="{Binding Description}" FontSize="11" Foreground="#FFB3B3B3"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
             </Border>
         </Panel>
     </Panel>
