@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #181818; overflow: hidden; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  canvas { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="live2d"></canvas>
+<script src="./Core/live2dcubismcore.js"></script>
+<script>
+// Simple Live2D loader using Cubism Core directly
+const canvas = document.getElementById('live2d');
+const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+if (!gl) {
+  document.body.innerHTML = '<div style="color:#888;text-align:center;padding:40px;font-family:sans-serif"><p style="font-size:24px">WebGL</p><p style="font-size:12px;margin-top:8px">WebView2 需要 WebGL 支持</p></div>';
+} else {
+  document.body.innerHTML = '<div style="color:#1ED760;text-align:center;padding:40px;font-family:sans-serif"><p style="font-size:20px">DJ 主播</p><p style="font-size:11px;color:#535353;margin-top:8px">Live2D 模型加载中...</p><p style="font-size:10px;color:#333;margin-top:16px">WebView2 运行正常</p></div>';
+}
+</script>
+</body>
+</html>

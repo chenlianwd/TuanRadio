@@ -1,0 +1,77 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             x:Class="AIRadio.Desktop.Views.PlayerView"
+             x:DataType="vm:PlayerViewModel">
+
+    <Border Background="#FF181818" CornerRadius="8" Padding="16">
+        <StackPanel Spacing="10">
+            <!-- Track info -->
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="{Binding TrackTitle}" FontSize="16" FontWeight="700"
+                               Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding TrackArtist}" FontSize="12" Foreground="#FFB3B3B3"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Progress -->
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0" Text="{Binding PositionText}" VerticalAlignment="Center"
+                           FontSize="11" Foreground="#FFB3B3B3" MinWidth="32"/>
+                <Slider Grid.Column="1" Minimum="0" Maximum="{Binding TotalSeconds}"
+                        Value="{Binding CurrentSeconds}"
+                        Margin="10,0" VerticalAlignment="Center"
+                        PointerReleased="OnSliderReleased" Height="3"/>
+                <TextBlock Grid.Column="2" Text="{Binding DurationText}" VerticalAlignment="Center"
+                           FontSize="11" Foreground="#FFB3B3B3" MinWidth="32"/>
+            </Grid>
+
+            <!-- Transport controls -->
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <!-- Shuffle -->
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <Button Command="{Binding ToggleShuffleCommand}" FontSize="11" Padding="10,6"
+                            Background="Transparent" CornerRadius="500">
+                        <TextBlock Text="{Binding ShuffleText}" Foreground="#FFB3B3B3"/>
+                    </Button>
+                </StackPanel>
+
+                <!-- Center: Previous / Play / Next -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="24" HorizontalAlignment="Center">
+                    <Button Command="{Binding PreviousCommand}" FontSize="14" Padding="8"
+                            Background="Transparent" CornerRadius="100">
+                        <TextBlock Text="⏮" Foreground="#FFFFFFFF"/>
+                    </Button>
+                    <Button Command="{Binding PlayCommand}" FontSize="18" Padding="10"
+                            CornerRadius="100" Background="#FFFFFFFF">
+                        <TextBlock Text="{Binding PlayPauseText}" Foreground="#FF000000"/>
+                    </Button>
+                    <Button Command="{Binding NextCommand}" FontSize="14" Padding="8"
+                            Background="Transparent" CornerRadius="100">
+                        <TextBlock Text="⏭" Foreground="#FFFFFFFF"/>
+                    </Button>
+                </StackPanel>
+
+                <!-- Repeat -->
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <Button Command="{Binding ToggleRepeatCommand}" FontSize="11" Padding="10,6"
+                            Background="Transparent" CornerRadius="500">
+                        <TextBlock Text="{Binding RepeatText}" Foreground="#FFB3B3B3"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Volume -->
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="4,0,0,0">
+                <TextBlock Grid.Column="0" Text="🔊" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding Volume}"
+                        SmallChange="0.01" LargeChange="0.1" VerticalAlignment="Center" Height="3"/>
+                <TextBlock Grid.Column="2" FontSize="11" Foreground="#FFB3B3B3" Margin="8,0,0,0"
+                           VerticalAlignment="Center" MinWidth="30">
+                    <Run Text="{Binding Volume, Mode=OneWay, StringFormat={}{0:P0}}"/>
+                </TextBlock>
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

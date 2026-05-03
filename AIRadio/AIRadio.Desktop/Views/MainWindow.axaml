@@ -1,0 +1,160 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AIRadio.Desktop.ViewModels"
+        xmlns:views="using:AIRadio.Desktop.Views"
+        x:Class="AIRadio.Desktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="AI Radio"
+        Width="1100" Height="720"
+        MinWidth="900" MinHeight="550"
+        TransparencyLevelHint="AcrylicBlur"
+        Background="#FF121212">
+
+    <Window.Styles>
+        <!-- Card style: dark surface -->
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="#FF181818"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+        </Style>
+
+        <!-- Pill button -->
+        <Style Selector="Button">
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Foreground" Value="#FFFFFFFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="700"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#FF2A2A2A"/>
+        </Style>
+        <Style Selector="Button.green">
+            <Setter Property="Background" Value="#FF1ED760"/>
+            <Setter Property="Foreground" Value="#FF000000"/>
+        </Style>
+        <Style Selector="Button.green:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#FF1DB954"/>
+        </Style>
+        <Style Selector="Button.circle">
+            <Setter Property="CornerRadius" Value="100"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="Background" Value="#FF1ED760"/>
+            <Setter Property="Foreground" Value="#FF000000"/>
+        </Style>
+        <Style Selector="Button.icon-btn">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="8"/>
+        </Style>
+
+        <!-- Slider -->
+        <Style Selector="Slider">
+            <Setter Property="Foreground" Value="#FF1ED760"/>
+        </Style>
+
+        <!-- TextBox -->
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Foreground" Value="#FFFFFFFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="14,8"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+        <Style Selector="TextBox:focus /template/ Border#border">
+            <Setter Property="BorderBrush" Value="#FFFFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <!-- ListBox -->
+        <Style Selector="ListBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#FF282828"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#FF232323"/>
+        </Style>
+
+        <!-- ScrollBar -->
+        <Style Selector="ScrollViewer:pointerover ScrollBar">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="ScrollBar">
+            <Setter Property="Opacity" Value="0"/>
+            <Setter Property="Width" Value="8"/>
+        </Style>
+    </Window.Styles>
+
+    <Panel>
+        <DockPanel>
+            <!-- Now-playing-style top bar -->
+            <Border DockPanel.Dock="Top" Background="#FF000000" Padding="24,14">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                        <TextBlock Text="●" FontSize="14" Foreground="#FF1ED760" VerticalAlignment="Center"/>
+                        <TextBlock Text="AI Radio" FontSize="16" FontWeight="700" Foreground="#FFFFFFFF" VerticalAlignment="Center"/>
+                        <TextBlock Text="数字人主播电台" FontSize="12" VerticalAlignment="Center" Foreground="#FFB3B3B3" Margin="0,1,0,0"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Command="{Binding ToggleSettingsCommand}"
+                            Content="设置" FontSize="12" Padding="16,6"
+                            CornerRadius="500"/>
+                </Grid>
+            </Border>
+
+            <!-- Main content -->
+            <Grid ColumnDefinitions="360,*" Background="#FF121212">
+                <!-- Left sidebar: Avatar + Spectrum + Player + Playlist -->
+                <DockPanel Grid.Column="0" Margin="8,8,4,8">
+                    <!-- Player controls at bottom -->
+                    <views:PlayerView DockPanel.Dock="Bottom" DataContext="{Binding PlayerVM}" Margin="0,4,0,0"/>
+                    <!-- Spectrum above player -->
+                    <Border DockPanel.Dock="Bottom" Background="#FF181818" CornerRadius="8" Margin="0,4,0,4"
+                            Padding="16,10" Height="70">
+                        <Grid>
+                            <TextBlock Text="EQUALIZER" FontSize="9" FontWeight="700" Foreground="#FF535353"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top"
+                                       LetterSpacing="1.5"/>
+                            <views:SpectrumView DataContext="{Binding SpectrumVM}" Margin="0,6,0,0"/>
+                        </Grid>
+                    </Border>
+                    <!-- Playlist takes remaining space -->
+                    <views:PlaylistView DockPanel.Dock="Bottom" DataContext="{Binding PlaylistVM}" Margin="0,0,0,4"/>
+                    <!-- Avatar at top -->
+                    <Border Background="#FF181818" CornerRadius="8" Margin="0,0,0,4">
+                        <Panel>
+                            <TextBlock Text="AI" FontSize="48" FontWeight="100" Foreground="#FF282828"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <TextBlock Text="DJ 主播" FontSize="11" Foreground="#FF535353"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,50,0,0"/>
+                        </Panel>
+                    </Border>
+                </DockPanel>
+
+                <!-- Right: Chat -->
+                <views:ChatView Grid.Column="1" DataContext="{Binding ChatVM}" Margin="4,8,8,8"/>
+            </Grid>
+        </DockPanel>
+
+        <!-- Settings overlay -->
+        <Panel x:Name="SettingsOverlay" IsVisible="{Binding IsSettingsOpen}">
+            <Border Background="#CC000000" PointerPressed="OnOverlayClick"/>
+            <Border Background="#FF282828" CornerRadius="12" Padding="32"
+                    MaxWidth="480" MaxHeight="420"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <views:SettingsView DataContext="{Binding SettingsVM}"/>
+            </Border>
+        </Panel>
+    </Panel>
+</Window>

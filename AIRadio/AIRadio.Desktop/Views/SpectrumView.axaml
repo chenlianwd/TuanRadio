@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             x:Class="AIRadio.Desktop.Views.SpectrumView"
+             x:DataType="vm:SpectrumViewModel">
+
+    <UserControl.Resources>
+        <LinearGradientBrush x:Key="SpotifyBar" StartPoint="0%,0%" EndPoint="0%,100%">
+            <GradientStop Offset="0" Color="#FF1ED760"/>
+            <GradientStop Offset="1" Color="#FF169C46"/>
+        </LinearGradientBrush>
+    </UserControl.Resources>
+
+    <ItemsControl ItemsSource="{Binding Bands}">
+        <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Bottom"/>
+            </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="x:Single">
+                <Border Width="8" CornerRadius="1,1,0,0"
+                        Height="{Binding Converter={StaticResource SpectrumBarConverter}}"
+                        Background="{StaticResource SpotifyBar}"/>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+    </ItemsControl>
+</UserControl>
