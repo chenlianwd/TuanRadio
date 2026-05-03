@@ -1,4 +1,5 @@
 ﻿using Avalonia;
+using Avalonia.WebView.Desktop;
 using System;
 
 namespace AIRadio.Desktop;
@@ -16,5 +17,6 @@ sealed class Program
             .WithDeveloperTools()
 #endif
             .WithInterFont()
-            .LogToTrace();
+            .LogToTrace()
+            .UseDesktopWebView();
 }
