@@ -56,6 +56,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
+        // Set URL resolver for re-fresh of online track URLs (prevents 403 from expired links)
+        if (_audioService is Services.AudioService audioSvc)
+        {
+            audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
+        }
+
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);

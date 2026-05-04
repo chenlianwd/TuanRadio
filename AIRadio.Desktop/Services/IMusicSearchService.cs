@@ -27,6 +27,7 @@ public class OnlineTrack
         Artist = Artist,
         Album = Album,
         Duration = System.TimeSpan.FromMilliseconds(DurationMs),
-        FilePath = playUrl
+        FilePath = playUrl,
+        SourceId = Id  // store original ID for URL re-resolution
     };
 }

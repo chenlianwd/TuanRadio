@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 
 namespace AIRadio.Desktop.Services;
@@ -40,4 +41,5 @@ public interface IAudioService
     void ClearPlaylist();
     void PlayTtsAudio(byte[] audioData);
     IObservable<bool> TtsStateChanged { get; }
+    void SetUrlResolver(Func<string, Task<string?>> resolver);
 }

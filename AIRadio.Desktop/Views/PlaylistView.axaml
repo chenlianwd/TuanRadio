@@ -10,7 +10,7 @@
             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="0">
                 <Button Command="{Binding ShowPlaylistCommand}" Padding="14,7" FontSize="12" FontWeight="600" CornerRadius="8,0,0,8"
                         Background="{Binding IsSearchMode, Converter={StaticResource TabBgConverter}}">
-                    <TextBlock Text="{Binding IsSearchMode, Converter={StaticResource TabTextConverter}, ConverterParameter=列表}"
+                    <TextBlock Text="列表"
                                Foreground="{Binding IsSearchMode, Converter={StaticResource TabFgConverter}}"/>
                 </Button>
                 <Button Command="{Binding ShowSearchCommand}" Padding="14,7" FontSize="12" FontWeight="600" CornerRadius="0,8,8,0"

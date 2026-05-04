@@ -29,26 +29,39 @@ public class NeteaseMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
 
-            if (root.GetProperty("code").GetInt32() != 200)
+            if (!root.TryGetProperty("code", out var codeEl) || codeEl.GetInt32() != 200)
                 return new List<OnlineTrack>();
 
-            var songs = root.GetProperty("result").GetProperty("songs");
+            if (!root.TryGetProperty("result", out var result) ||
+                !result.TryGetProperty("songs", out var songs))
+                return new List<OnlineTrack>();
+
             var tracks = new List<OnlineTrack>();
 
             foreach (var song in songs.EnumerateArray())
             {
-                var artists = song.GetProperty("artists");
-                var artistName = artists.GetArrayLength() > 0
-                    ? artists[0].GetProperty("name").GetString() ?? "未知"
-                    : "未知";
+                var artistName = "未知";
+                if (song.TryGetProperty("artists", out var artists) &&
+                    artists.GetArrayLength() > 0 &&
+                    artists[0].TryGetProperty("name", out var nameEl))
+                {
+                    artistName = nameEl.GetString() ?? "未知";
+                }
+
+                var albumName = "";
+                if (song.TryGetProperty("album", out var album) &&
+                    album.TryGetProperty("name", out var albumEl))
+                {
+                    albumName = albumEl.GetString() ?? "";
+                }
 
                 tracks.Add(new OnlineTrack
                 {
-                    Id = "netease:" + song.GetProperty("id").GetInt64().ToString(),
-                    Title = song.GetProperty("name").GetString() ?? "",
+                    Id = "netease:" + (song.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "0"),
+                    Title = song.TryGetProperty("name", out var titleEl) ? titleEl.GetString() ?? "" : "",
                     Artist = artistName,
-                    Album = song.GetProperty("album").GetProperty("name").GetString() ?? "",
-                    DurationMs = song.GetProperty("duration").GetInt64(),
+                    Album = albumName,
+                    DurationMs = song.TryGetProperty("duration", out var durEl) ? durEl.GetInt64() : 0,
                     Source = "netease"
                 });
             }

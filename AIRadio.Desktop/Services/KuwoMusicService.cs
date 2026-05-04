@@ -33,21 +33,23 @@ public class KuwoMusicService : IMusicSearchService
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        if (root.GetProperty("code").GetInt32() != 200)
+        if (!root.TryGetProperty("code", out var codeElement) || codeElement.GetInt32() != 200)
             return new List<OnlineTrack>();
 
         var tracks = new List<OnlineTrack>();
-        var data = root.GetProperty("data").GetProperty("list");
+        if (!root.TryGetProperty("data", out var dataElement) ||
+            !dataElement.TryGetProperty("list", out var listElement))
+            return tracks;
 
-        foreach (var item in data.EnumerateArray())
+        foreach (var item in listElement.EnumerateArray())
         {
             tracks.Add(new OnlineTrack
             {
-                Id = "kuwo:" + item.GetProperty("rid").GetInt64().ToString(),
-                Title = item.GetProperty("name").GetString() ?? "",
-                Artist = item.GetProperty("artist").GetString() ?? "",
-                Album = item.GetProperty("album").GetString() ?? "",
-                DurationMs = item.GetProperty("duration").GetInt32() * 1000L,
+                Id = "kuwo:" + (item.TryGetProperty("rid", out var rid) ? rid.GetInt64().ToString() : "0"),
+                Title = item.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+                Artist = item.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "",
+                Album = item.TryGetProperty("album", out var album) ? album.GetString() ?? "" : "",
+                DurationMs = item.TryGetProperty("duration", out var dur) ? dur.GetInt32() * 1000L : 0,
                 Source = "酷我"
             });
         }
