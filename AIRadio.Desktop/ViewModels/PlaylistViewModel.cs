@@ -294,14 +294,38 @@ public class PlaylistViewModel : ViewModelBase
         }
     }
 
+    public void AddExternalTrack(Track track)
+    {
+        if (Tracks.Any(t =>
+                (!string.IsNullOrWhiteSpace(track.SourceId) && t.SourceId == track.SourceId) ||
+                (!string.IsNullOrWhiteSpace(track.FilePath) && t.FilePath == track.FilePath)))
+        {
+            return;
+        }
+
+        Tracks.Add(track);
+        if (track.IsFavorite && !Favorites.Contains(track))
+            Favorites.Add(track);
+        TabIndex = 0;
+        _ = SaveAsync();
+    }
+
     public void AddFiles(string[] filePaths)
     {
+        var added = new List<Track>();
         foreach (var path in filePaths)
         {
             var track = Track.FromFile(path);
+            if (Tracks.Any(t => t.FilePath == track.FilePath))
+                continue;
+
             Tracks.Add(track);
+            added.Add(track);
         }
-        _audioService.AddTracks(Tracks);
+
+        if (added.Count > 0)
+            _audioService.AddTracks(added);
+
         TabIndex = 0;
         _ = SaveAsync();
     }

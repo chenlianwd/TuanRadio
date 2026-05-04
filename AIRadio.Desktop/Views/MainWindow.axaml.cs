@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Specialized;
 using System.Linq;
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Avalonia.Data.Converters;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using AIRadio.Desktop.Models;
 using ReactiveUI;
 using Serilog;
@@ -29,6 +33,7 @@ public partial class MainWindow : Window
     private System.Timers.Timer? _clockTimer;
     private Button? _darkButton;
     private Button? _lightButton;
+    private ViewModels.MainWindowViewModel? _activeVm;
 
     public MainWindow()
     {
@@ -39,11 +44,25 @@ public partial class MainWindow : Window
         {
             if (DataContext is ViewModels.MainWindowViewModel vm)
             {
+                if (_activeVm != null)
+                    _activeVm.ChatVM.Messages.CollectionChanged -= OnChatMessagesChanged;
+
+                _activeVm = vm;
                 vm.ChatVM.Live2DCommand += OnLive2DCommand;
                 vm.Live2DCommand += OnLive2DCommand;
                 vm.WhenAnyValue(x => x.IsDarkMode).Subscribe(isDark => UpdateThemeButtons(isDark));
+                vm.ChatVM.Messages.CollectionChanged += OnChatMessagesChanged;
+                UpdateThemeButtons(vm.IsDarkMode);
             }
         };
+    }
+
+    private void OnChatMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            this.FindControl<ScrollViewer>("ChatScrollViewer")?.ScrollToEnd();
+        }, Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private void UpdateThemeButtons(bool isDark)
@@ -56,13 +75,76 @@ public partial class MainWindow : Window
             if (_darkButton != null) { _darkButton.Background = new SolidColorBrush(Color.Parse("#FF171722")); _darkButton.Foreground = new SolidColorBrush(Color.Parse("#FFFFFFFF")); }
             if (_lightButton != null) { _lightButton.Background = new SolidColorBrush(Colors.Transparent); _lightButton.Foreground = new SolidColorBrush(Color.Parse("#FF666666")); }
             Background = new SolidColorBrush(Color.Parse("#FF08080B"));
+            SetThemeColors(
+                "#FF030305", "#FF050507", "#F0131320", "#CC1B1B2A", "#F008080D",
+                "#E91B1B2A", "#F007070A", "#E9161623", "#66111113", "#F0222234",
+                "#33494B66");
+            SetShellTextForeground("#FFEDEDF5");
         }
         else
         {
             if (_darkButton != null) { _darkButton.Background = new SolidColorBrush(Colors.Transparent); _darkButton.Foreground = new SolidColorBrush(Color.Parse("#FF666666")); }
-            if (_lightButton != null) { _lightButton.Background = new SolidColorBrush(Color.Parse("#FF171722")); _lightButton.Foreground = new SolidColorBrush(Color.Parse("#FFFFFFFF")); }
-            Background = new SolidColorBrush(Color.Parse("#FFF5F5F5"));
+            if (_lightButton != null) { _lightButton.Background = new SolidColorBrush(Color.Parse("#FFFFFFFF")); _lightButton.Foreground = new SolidColorBrush(Color.Parse("#FF111118")); }
+            Background = new SolidColorBrush(Color.Parse("#FFF5F1FF"));
+            SetThemeColors(
+                "#FFF5F1FF", "#FFE9E2F7", "#F8FFFFFF", "#EDEBE5FF", "#F7F8F6FF",
+                "#ECEEE9FF", "#F4F3F8FF", "#F8FFFFFF", "#99EEEAF5", "#EAE7F3FF",
+                "#664E4862");
+            SetShellTextForeground("#FF17171F");
         }
+    }
+
+    private void SetShellTextForeground(string color)
+    {
+        if (this.FindControl<Border>("ShellCard") is not Border shell) return;
+
+        var brush = new SolidColorBrush(Color.Parse(color));
+        foreach (var text in shell.GetVisualDescendants().OfType<TextBlock>())
+        {
+            text.Foreground = brush;
+        }
+    }
+
+    private void SetThemeColors(
+        string root,
+        string title,
+        string shell,
+        string header,
+        string clock,
+        string deck,
+        string queue,
+        string room,
+        string live,
+        string footer,
+        string border)
+    {
+        SetBackground("RootGrid", root);
+        SetBackground("TitleBar", title);
+        SetBackground("ShellCard", shell);
+        SetBorderBrush("ShellCard", border);
+        SetBackground("BrandHeader", header);
+        SetBackground("ClockStage", clock);
+        SetBackground("PlayerDeck", deck);
+        SetBackground("QueueStrip", queue);
+        SetBackground("RadioRoom", room);
+        SetBackground("LiveStrip", live);
+        SetBackground("InputDeck", deck);
+        SetBackground("FooterBar", footer);
+    }
+
+    private void SetBackground(string name, string color)
+    {
+        var brush = new SolidColorBrush(Color.Parse(color));
+        if (this.FindControl<Control>(name) is Border border)
+            border.Background = brush;
+        else if (this.FindControl<Control>(name) is Panel panel)
+            panel.Background = brush;
+    }
+
+    private void SetBorderBrush(string name, string color)
+    {
+        if (this.FindControl<Border>(name) is Border border)
+            border.BorderBrush = new SolidColorBrush(Color.Parse(color));
     }
 
     private void StartClock()
@@ -110,6 +192,47 @@ public partial class MainWindow : Window
         {
             vm.ChatVM.SendMessageCommand.Execute().Subscribe();
         }
+    }
+
+    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            vm.PlaylistVM.SearchCommand.Execute().Subscribe();
+        }
+    }
+
+    private async void OnImportFiles(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ViewModels.MainWindowViewModel vm) return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择音频文件",
+            AllowMultiple = true,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("音频文件")
+                {
+                    Patterns = ["*.mp3", "*.flac", "*.wav", "*.ogg", "*.m4a", "*.wma", "*.aac"]
+                }
+            ]
+        });
+
+        var paths = files
+            .Select(f => f.TryGetLocalPath())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p!)
+            .ToArray();
+
+        if (paths.Length == 0) return;
+
+        vm.PlaylistVM.AddFiles(paths);
+        vm.PlaylistVM.TabIndex = 0;
+        vm.IsLibraryOpen = true;
     }
 
     private async void OnLive2DCommand(string expression, string motion)

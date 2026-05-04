@@ -503,12 +503,19 @@ public class AudioService : IAudioService, IDisposable
             var media = new Media(_libVLC, tempPath, FromType.FromPath);
             _ttsPlayer.Stop();
             _ttsPlayer.Media = media;
+            _ttsPlayer.Volume = 100;
             _ttsStateSubject.OnNext(true); // TTS started
-            _ttsPlayer.Play();
+            if (!_ttsPlayer.Play())
+            {
+                _ttsStateSubject.OnNext(false);
+                Log.Warning("TTS player refused to start");
+                return;
+            }
             Log.Debug("TTS playback started");
         }
         catch (Exception ex)
         {
+            _ttsStateSubject.OnNext(false);
             Log.Warning(ex, "Failed to play TTS audio");
         }
     }
