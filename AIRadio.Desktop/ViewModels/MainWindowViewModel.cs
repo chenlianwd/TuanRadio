@@ -4,6 +4,7 @@ using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
 using Serilog;
@@ -131,8 +132,74 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public async System.Threading.Tasks.Task InitializeAsync()
     {
         await SettingsVM.LoadAsync();
+        await PlaylistVM.LoadAsync();
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
+
+        // AI startup recommendation: analyze playlist and recommend a song
+        await AnnounceStartupRecommendationAsync();
+    }
+
+    private async System.Threading.Tasks.Task AnnounceStartupRecommendationAsync()
+    {
+        try
+        {
+            var current = _audioService.CurrentTrack;
+            Track? recommended = null;
+
+            // Smart pick: prioritize favorites, exclude currently playing track, avoid same-artist repetition
+            var favorites = PlaylistVM.Favorites.ToList();
+            var allTracks = PlaylistVM.Tracks.ToList();
+            if (favorites.Count > 0)
+            {
+                var candidates = favorites.Where(t => t != current).ToList();
+                if (candidates.Count == 0)
+                    candidates = favorites;
+                recommended = PickDiversifiedTrack(candidates, current);
+            }
+            else if (allTracks.Count > 0)
+            {
+                var candidates = allTracks.Where(t => t != current).ToList();
+                if (candidates.Count == 0)
+                    candidates = allTracks;
+                recommended = PickDiversifiedTrack(candidates, current);
+            }
+
+            if (recommended == null) return;
+
+            var script = await _djService.GenerateTrackIntroductionAsync(
+                current ?? new Track { Title = "无", Artist = "未知" },
+                recommended);
+
+            Live2DCommand?.Invoke(script.Expression, script.Motion);
+
+            if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
+            {
+                var speechData = await _djService.GenerateSpeechAsync(script.Text);
+                if (speechData is { Length: > 0 })
+                    _audioService.PlayTtsAudio(speechData);
+            }
+
+            Log.Information("AI recommended: {Track}", recommended.Title);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to generate startup recommendation");
+        }
+    }
+
+    private static Track? PickDiversifiedTrack(List<Track> pool, Track? current)
+    {
+        if (pool.Count == 0) return null;
+        if (pool.Count == 1) return pool[0];
+
+        // Try to avoid same artist as current
+        var sameArtist = pool.Where(t => current != null && t.Artist == current.Artist).ToList();
+        var differentArtist = pool.Except(sameArtist).ToList();
+
+        var candidates = differentArtist.Count > 0 ? differentArtist : pool;
+        var random = new Random();
+        return candidates[random.Next(candidates.Count)];
     }
 
     public void Dispose()

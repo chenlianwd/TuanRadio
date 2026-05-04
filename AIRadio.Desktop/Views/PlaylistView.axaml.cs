@@ -18,10 +18,14 @@ public partial class PlaylistView : UserControl
     public PlaylistView()
     {
         Resources["InvertBoolConverter"] = new InvertBoolValueConverter();
-        Resources["TabBgConverter"] = new TabBackgroundConverter();
-        Resources["TabBgActiveConverter"] = new TabBackgroundActiveConverter();
-        Resources["TabFgConverter"] = new TabForegroundConverter();
-        Resources["TabFgActiveConverter"] = new TabForegroundActiveConverter();
+        Resources["TabBgPlaylistConverter"] = new TabBgConverter(0);
+        Resources["TabFgPlaylistConverter"] = new TabFgConverter(0);
+        Resources["TabBgFavoritesConverter"] = new TabBgConverter(1);
+        Resources["TabFgFavoritesConverter"] = new TabFgConverter(1);
+        Resources["TabBgSearchConverter"] = new TabBgConverter(2);
+        Resources["TabFgSearchConverter"] = new TabFgConverter(2);
+        Resources["TabVisibleConverter"] = new TabVisibleConverter();
+        Resources["FavoriteIconConverter"] = new FavoriteIconConverter();
         InitializeComponent();
     }
 
@@ -69,50 +73,54 @@ public class InvertBoolValueConverter : IValueConverter
         => value is bool b ? !b : value;
 }
 
-// Tab: 播放列表按钮背景 — active=transparent, inactive=dark
-public class TabBackgroundConverter : IValueConverter
+// Tab button background: active when TabIndex matches tabIndex parameter
+public class TabBgConverter : IValueConverter
 {
+    private readonly int _tabIndex;
     private static readonly IBrush ActiveBg = new SolidColorBrush(Color.Parse("#FF2A2A2A"));
     private static readonly IBrush InactiveBg = Brushes.Transparent;
 
+    public TabBgConverter(int tabIndex) => _tabIndex = tabIndex;
+
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool isSearchMode ? (isSearchMode ? InactiveBg : ActiveBg) : ActiveBg;
+        => value is int tabIndex && tabIndex == _tabIndex ? ActiveBg : InactiveBg;
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
 
-// Tab: 搜索按钮背景
-public class TabBackgroundActiveConverter : IValueConverter
+// Tab button foreground: active when TabIndex matches tabIndex parameter
+public class TabFgConverter : IValueConverter
 {
-    private static readonly IBrush ActiveBg = new SolidColorBrush(Color.Parse("#FF2A2A2A"));
-    private static readonly IBrush InactiveBg = Brushes.Transparent;
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool isSearchMode ? (isSearchMode ? ActiveBg : InactiveBg) : InactiveBg;
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
-}
-
-// Tab: 播放列表按钮文字 — active=white, inactive=gray
-public class TabForegroundConverter : IValueConverter
-{
+    private readonly int _tabIndex;
     private static readonly IBrush ActiveFg = Brushes.White;
     private static readonly IBrush InactiveFg = new SolidColorBrush(Color.Parse("#FF808080"));
 
+    public TabFgConverter(int tabIndex) => _tabIndex = tabIndex;
+
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool isSearchMode ? (isSearchMode ? InactiveFg : ActiveFg) : ActiveFg;
+        => value is int tabIndex && tabIndex == _tabIndex ? ActiveFg : InactiveFg;
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
 
-// Tab: 搜索按钮文字
-public class TabForegroundActiveConverter : IValueConverter
+// Tab content visibility: visible when TabIndex equals parameter (0=列表, 1=收藏, 2=搜索)
+public class TabVisibleConverter : IValueConverter
 {
-    private static readonly IBrush ActiveFg = Brushes.White;
-    private static readonly IBrush InactiveFg = new SolidColorBrush(Color.Parse("#FF808080"));
-
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool isSearchMode ? (isSearchMode ? ActiveFg : InactiveFg) : InactiveFg;
+    {
+        if (value is int tabIndex && parameter is string paramStr && int.TryParse(paramStr, out int param))
+            return tabIndex == param;
+        return false;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+// Favorite icon: ♥ if true (IsFavorite), ♡ if false
+public class FavoriteIconConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool isFav && isFav ? "♥" : "♡";
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }

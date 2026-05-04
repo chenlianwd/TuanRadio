@@ -13,6 +13,7 @@ public class Track
     public string FilePath { get; set; } = string.Empty;
     public byte[]? CoverArt { get; set; }
     public string? SourceId { get; set; } // e.g. "netease:12345" - used to re-resolve play URL
+    public bool IsFavorite { get; set; }
 
     public static Track FromFile(string filePath)
     {
