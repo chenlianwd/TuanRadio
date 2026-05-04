@@ -12,7 +12,7 @@
             <TextBlock Text="Minimax API Key" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="输入你的 API Key" PasswordChar="•"/>
             <Button Command="{Binding TestConnectionCommand}" Content="测试连接"
-                    HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="#FF1ED760"
+                    HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="#FF9B59B0"
                     Foreground="#FF000000"/>
         </StackPanel>
 
@@ -66,7 +66,7 @@
         <!-- Save -->
         <Button Command="{Binding SaveCommand}" Content="保存设置"
                 HorizontalAlignment="Stretch" Padding="18,12" FontSize="14"
-                Background="#FF1ED760" Foreground="#FF000000"/>
+                Background="#FF9B59B0" Foreground="#FF000000"/>
 
         <!-- Status -->
         <TextBlock Text="{Binding StatusMessage}" Foreground="#FFB3B3B3"

@@ -31,6 +31,9 @@ public class MiguMusicService : IMusicSearchService
 
             var response = await _httpClient.SendAsync(request);
             var json = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json[0] == '<')
+                return new List<OnlineTrack>();
+
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 

@@ -6,7 +6,7 @@
 
     <UserControl.Resources>
         <LinearGradientBrush x:Key="SpotifyBar" StartPoint="0%,0%" EndPoint="0%,100%">
-            <GradientStop Offset="0" Color="#FF1ED760"/>
+            <GradientStop Offset="0" Color="#FF9B59B0"/>
             <GradientStop Offset="1" Color="#FF169C46"/>
         </LinearGradientBrush>
     </UserControl.Resources>

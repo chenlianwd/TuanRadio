@@ -12,6 +12,7 @@ public class Track
     public TimeSpan Duration { get; set; }
     public string FilePath { get; set; } = string.Empty;
     public byte[]? CoverArt { get; set; }
+    public string? SourceId { get; set; } // e.g. "netease:12345" - used to re-resolve play URL
 
     public static Track FromFile(string filePath)
     {
@@ -47,6 +48,13 @@ public class ChatMessage
     public MessageRole Role { get; set; }
     public string Content { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.Now;
+    public string SenderName => Role switch
+    {
+        MessageRole.User => "我",
+        MessageRole.Assistant => "AI主播",
+        MessageRole.System => "系统",
+        _ => ""
+    };
 }
 
 public enum MessageRole
