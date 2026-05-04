@@ -30,14 +30,21 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public event Action<string, string>? Live2DCommand; // expression, motion
 
     [Reactive] public bool IsSettingsOpen { get; set; }
+    [Reactive] public bool IsLibraryOpen { get; set; }
     [Reactive] public bool IsCharacterPickerOpen { get; set; }
     [Reactive] public CharacterProfile SelectedCharacter { get; set; }
     [Reactive] public bool IsDarkMode { get; set; } = true;
 
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleLibraryCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenPlaylistCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenFavoritesCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenSearchCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
+    public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
+    public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
@@ -55,7 +62,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         PlayerVM = new PlayerViewModel(_audioService);
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService);
-        ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService);
+        ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
+            track => PlaylistVM.AddExternalTrack(track));
         SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
@@ -66,8 +74,26 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
 
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
+        ToggleLibraryCommand = ReactiveCommand.Create(() => { IsLibraryOpen = !IsLibraryOpen; });
+        OpenPlaylistCommand = ReactiveCommand.Create(() =>
+        {
+            PlaylistVM.TabIndex = 0;
+            IsLibraryOpen = true;
+        });
+        OpenFavoritesCommand = ReactiveCommand.Create(() =>
+        {
+            PlaylistVM.TabIndex = 1;
+            IsLibraryOpen = true;
+        });
+        OpenSearchCommand = ReactiveCommand.Create(() =>
+        {
+            PlaylistVM.TabIndex = 2;
+            IsLibraryOpen = true;
+        });
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
+        UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
+        UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);
 
         // Re-apply character when settings are saved
@@ -113,6 +139,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+            ChatVM.AddAssistantMessage(script.Text);
             Log.Information("DJ: {Text}", script.Text);
             Live2DCommand?.Invoke(script.Expression, script.Motion);
         }
@@ -174,6 +201,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 current ?? new Track { Title = "无", Artist = "未知" },
                 recommended);
 
+            ChatVM.AddAssistantMessage(script.Text);
             Live2DCommand?.Invoke(script.Expression, script.Motion);
 
             if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))

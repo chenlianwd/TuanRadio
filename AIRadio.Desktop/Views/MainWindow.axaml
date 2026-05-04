@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
         xmlns:models="using:AIRadio.Desktop.Models"
+        xmlns:services="using:AIRadio.Desktop.Services"
         xmlns:local="using:AIRadio.Desktop.Views"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
@@ -10,6 +11,11 @@
         MinWidth="700" MinHeight="700"
         SystemDecorations="None"
         Background="#FF030305">
+
+    <Window.Resources>
+        <local:TabVisibleConverter x:Key="TabVisibleConverter"/>
+        <local:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
+    </Window.Resources>
 
     <Window.Styles>
         <Style Selector="Button">
@@ -49,8 +55,8 @@
         </Style>
     </Window.Styles>
 
-    <Grid Background="#FF030305" RowDefinitions="30,*">
-        <Border Grid.Row="0" Background="#FF050507" PointerPressed="OnTitleBarPointerPressed">
+    <Grid x:Name="RootGrid" Background="#FF030305" RowDefinitions="30,*">
+        <Border x:Name="TitleBar" Grid.Row="0" Background="#FF050507" PointerPressed="OnTitleBarPointerPressed">
             <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0">
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Border Width="10" Height="10" CornerRadius="5" Background="#FF56F5C4"/>
@@ -66,7 +72,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="1"
+        <Border x:Name="ShellCard" Grid.Row="1"
                 Width="650"
                 Height="690"
                 HorizontalAlignment="Center"
@@ -76,13 +82,14 @@
                 BorderThickness="1"
                 CornerRadius="18"
                 ClipToBounds="True">
+            <Grid>
             <Grid RowDefinitions="64,168,88,36,*,66,28">
                 <!-- Brand header -->
-                <Border Grid.Row="0" Background="#CC1B1B2A" Padding="22,0">
+                <Border x:Name="BrandHeader" Grid.Row="0" Background="#CC1B1B2A" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                            <Border Width="34" Height="34" CornerRadius="17" Background="#FF262632">
-                                <TextBlock Text="{Binding SelectedCharacter.DisplayName[0]}"
+                            <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="#FF262632">
+                                <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}"
                                            FontSize="15" FontWeight="700"
                                            Foreground="#FFFFFFFF"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -92,18 +99,23 @@
                                        Foreground="#FFEDEDF5" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Content="LOGIN" Padding="12,5" Background="#10000000"/>
+                            <Button Content="DJ" Padding="12,5" Background="#10000000"
+                                    Command="{Binding ToggleCharacterPickerCommand}"/>
+                            <Button Content="SEARCH" Padding="12,5" Background="#10000000"
+                                    Command="{Binding OpenSearchCommand}"/>
+                            <Button Content="SETTINGS" Padding="12,5" Background="#10000000"
+                                    Command="{Binding ToggleSettingsCommand}"/>
                             <Button x:Name="DarkButton" Content="DARK" Padding="14,5"
                                     Background="#FFEDEDF5" Foreground="#FF050507"
-                                    Command="{Binding ToggleThemeCommand}"/>
+                                    Command="{Binding UseDarkThemeCommand}"/>
                             <Button x:Name="LightButton" Content="LIGHT" Padding="12,5" Background="#10000000"
-                                    Foreground="#FFB8B8C6" Command="{Binding ToggleThemeCommand}"/>
+                                    Foreground="#FFB8B8C6" Command="{Binding UseLightThemeCommand}"/>
                         </StackPanel>
                     </Grid>
                 </Border>
 
                 <!-- Clock stage -->
-                <Grid Grid.Row="1" Background="#F008080D">
+                <Grid x:Name="ClockStage" Grid.Row="1" Background="#F008080D">
                     <TextBlock IsHitTestVisible="False"
                                Opacity="0.20"
                                FontSize="11"
@@ -129,7 +141,7 @@
                 </Grid>
 
                 <!-- Player deck -->
-                <Border Grid.Row="2" Background="#E91B1B2A" BorderBrush="#223D3D4F" BorderThickness="0,1" Padding="22,10">
+                <Border x:Name="PlayerDeck" Grid.Row="2" Background="#E91B1B2A" BorderBrush="#223D3D4F" BorderThickness="0,1" Padding="22,10">
                     <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="165,*,175">
                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
@@ -159,8 +171,8 @@
 
                         <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8"
                                     HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button Content="HIDE" Padding="12,5"/>
-                            <Button Content="FAV" Padding="12,5" Command="{Binding PlaylistVM.ShowFavoritesCommand}"/>
+                            <Button Content="HIDE" Padding="12,5" Command="{Binding ToggleLibraryCommand}"/>
+                            <Button Content="FAV" Padding="12,5" Command="{Binding OpenFavoritesCommand}"/>
                             <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
                                        Foreground="#FF8A8A96" VerticalAlignment="Center"/>
                             <Slider Width="48" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
@@ -179,18 +191,23 @@
                 </Border>
 
                 <!-- Queue strip -->
-                <Border Grid.Row="3" Background="#F007070A" BorderBrush="#222B2B36" BorderThickness="0,1">
+                <Border x:Name="QueueStrip" Grid.Row="3" Background="#F007070A" BorderBrush="#222B2B36" BorderThickness="0,1">
                     <Grid ColumnDefinitions="*,Auto" Margin="22,0">
                         <TextBlock Text="QUEUE" FontSize="12" FontFamily="Consolas"
                                    Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="1" Text="{Binding PlaylistVM.Tracks.Count, StringFormat={}{0} TRACKS}"
-                                   FontSize="12" FontFamily="Consolas"
-                                   Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Button Content="IMPORT" Padding="10,4" FontSize="10" Click="OnImportFiles"/>
+                            <Button Content="LIST" Padding="10,4" FontSize="10" Command="{Binding OpenPlaylistCommand}"/>
+                            <Button Content="SEARCH" Padding="10,4" FontSize="10" Command="{Binding OpenSearchCommand}"/>
+                            <TextBlock Text="{Binding PlaylistVM.Tracks.Count, StringFormat={}{0} TRACKS}"
+                                       FontSize="12" FontFamily="Consolas"
+                                       Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Grid>
                 </Border>
 
                 <!-- Radio room -->
-                <Grid Grid.Row="4" Background="#E9161623">
+                <Grid x:Name="RadioRoom" Grid.Row="4" Background="#E9161623">
                     <TextBlock IsHitTestVisible="False"
                                Opacity="0.20"
                                FontSize="11"
@@ -200,7 +217,7 @@
                                TextWrapping="Wrap"
                                Text=".  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  ."/>
 
-                    <Border Background="#66111113" BorderBrush="#222F303A" BorderThickness="0,0,0,1"
+                    <Border x:Name="LiveStrip" Background="#66111113" BorderBrush="#222F303A" BorderThickness="0,0,0,1"
                             Height="46" VerticalAlignment="Top">
                         <Grid ColumnDefinitions="*,Auto" Margin="22,0">
                             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
@@ -235,7 +252,7 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer x:Name="ChatScrollViewer" Grid.Column="1" VerticalScrollBarVisibility="Auto">
                             <ItemsControl ItemsSource="{Binding ChatVM.Messages}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -257,14 +274,30 @@
                             </ItemsControl>
                         </ScrollViewer>
                     </Grid>
+
+                    <Border IsVisible="{Binding ChatVM.IsProcessing}"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Bottom"
+                            Margin="215,0,22,14"
+                            Background="#EE050507"
+                            BorderBrush="#3356F5C4"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="12,8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                            <TextBlock Text="Claudio is thinking..." FontSize="12"
+                                       FontFamily="Consolas" Foreground="#FFB9FFE8"/>
+                        </StackPanel>
+                    </Border>
                 </Grid>
 
                 <!-- Input -->
-                <Border Grid.Row="5" Background="#E91B1B2A" Padding="22,10">
+                <Border x:Name="InputDeck" Grid.Row="5" Background="#E91B1B2A" Padding="22,10">
                     <Grid ColumnDefinitions="*,46,50" ColumnSpacing="9">
                         <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
                                  Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown"/>
-                        <Button Grid.Column="1" Content="MIC" FontSize="10"
+                        <Button Grid.Column="1" Content="{Binding ChatVM.MicButtonText}" FontSize="10"
                                 Background="#33262835" Command="{Binding ChatVM.ToggleVoiceInputCommand}"/>
                         <Button Grid.Column="2" Content="UP" FontSize="11"
                                 Background="#FF7F7896" Foreground="#FF111118"
@@ -273,14 +306,192 @@
                 </Border>
 
                 <!-- Footer -->
-                <Border Grid.Row="6" Background="#F0222234" Padding="22,0">
+                <Border x:Name="FooterBar" Grid.Row="6" Background="#F0222234" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBlock Text="AIRADIO FM" FontSize="11" FontFamily="Consolas"
                                    Foreground="#FFB5B5C8" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="1" Text="CONNECTED" FontSize="11" FontFamily="Consolas"
+                        <TextBlock Grid.Column="1" Text="{Binding ChatVM.StatusText}" FontSize="11" FontFamily="Consolas"
                                    Foreground="#FFD8D8EA" VerticalAlignment="Center"/>
                     </Grid>
                 </Border>
+            </Grid>
+
+            <!-- Library drawer: real playlist, favorites, search and import entry points -->
+            <Border IsVisible="{Binding IsLibraryOpen}"
+                    Width="455"
+                    HorizontalAlignment="Right"
+                    Margin="0,72,18,34"
+                    Background="#FC0E0E15"
+                    BorderBrush="#667B7898"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="16">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel>
+                            <TextBlock Text="LIBRARY" FontSize="18" FontWeight="700"
+                                       FontFamily="Consolas" Foreground="#FFFFFFFF"/>
+                            <TextBlock Text="playlist / favorites / search" FontSize="11"
+                                       FontFamily="Consolas" Foreground="#FF89899A"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="CLOSE" Padding="12,5"
+                                Command="{Binding ToggleLibraryCommand}"/>
+                    </Grid>
+
+                    <Grid Grid.Row="1" RowDefinitions="Auto,Auto" RowSpacing="10">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="LIST" Command="{Binding OpenPlaylistCommand}"/>
+                            <Button Content="FAV" Command="{Binding OpenFavoritesCommand}"/>
+                            <Button Content="SEARCH" Command="{Binding OpenSearchCommand}"/>
+                            <Button Content="IMPORT" Click="OnImportFiles"/>
+                        </StackPanel>
+                        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8"
+                              IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
+                            <TextBox Text="{Binding PlaylistVM.SearchText, Mode=TwoWay}"
+                                     Watermark="Search songs..." KeyDown="OnSearchKeyDown"/>
+                            <Button Grid.Column="1" Content="GO" Command="{Binding PlaylistVM.SearchCommand}"/>
+                        </Grid>
+                    </Grid>
+
+                    <Grid Grid.Row="2">
+                        <ListBox ItemsSource="{Binding PlaylistVM.Tracks}"
+                                 SelectedItem="{Binding PlaylistVM.SelectedTrack}"
+                                 IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:Track">
+                                    <Border Background="#CC202126" BorderBrush="#253D3D4A"
+                                            BorderThickness="1" CornerRadius="6" Padding="10,8"
+                                            Margin="0,0,0,8">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Artist}" FontSize="11"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="#FF9B9BA8" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding Duration, StringFormat={}{0:m\\:ss}}"
+                                                       FontSize="11" FontFamily="Consolas"
+                                                       Foreground="#FF8E8E9C" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="2"
+                                                    Content="{Binding IsFavorite, Converter={StaticResource FavoriteIconConverter}}"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.ToggleFavoriteCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <ListBox ItemsSource="{Binding PlaylistVM.Favorites}"
+                                 IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:Track">
+                                    <Border Background="#CC202126" BorderBrush="#253D3D4A"
+                                            BorderThickness="1" CornerRadius="6" Padding="10,8"
+                                            Margin="0,0,0,8">
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Artist}" FontSize="11"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="#FF9B9BA8" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="PLAY"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayFavoriteCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <ListBox ItemsSource="{Binding PlaylistVM.SearchResults}"
+                                 IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="services:OnlineTrack">
+                                    <Border Background="#CC202126" BorderBrush="#253D3D4A"
+                                            BorderThickness="1" CornerRadius="6" Padding="10,8"
+                                            Margin="0,0,0,8">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Artist}" FontSize="11"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="#FF9B9BA8" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="PLAY"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayOnlineCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Grid.Column="2" Content="ADD"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.AddOnlineCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- Settings overlay -->
+            <Border IsVisible="{Binding IsSettingsOpen}"
+                    Margin="56"
+                    Background="#FC0E0E15"
+                    BorderBrush="#667B7898"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="18">
+                <Grid RowDefinitions="Auto,*" RowSpacing="12">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="SETTINGS" FontSize="18" FontWeight="700"
+                                   FontFamily="Consolas" Foreground="#FFFFFFFF"/>
+                        <Button Grid.Column="1" Content="CLOSE" Padding="12,5"
+                                Command="{Binding ToggleSettingsCommand}"/>
+                    </Grid>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <local:SettingsView DataContext="{Binding SettingsVM}"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- Character picker -->
+            <Border IsVisible="{Binding IsCharacterPickerOpen}"
+                    Width="410"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Margin="22,58,0,0"
+                    Background="#FC0E0E15"
+                    BorderBrush="#667B7898"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="14">
+                <ItemsControl ItemsSource="{Binding Characters}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="models:CharacterProfile">
+                            <Button Margin="0,0,8,8"
+                                    Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).SelectCharacterCommand}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{Binding DisplayName[0]}" FontWeight="700"/>
+                                    <TextBlock Text="{Binding DisplayName}"/>
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
             </Grid>
         </Border>
     </Grid>

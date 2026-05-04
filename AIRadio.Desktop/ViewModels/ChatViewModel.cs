@@ -23,6 +23,7 @@ public class ChatViewModel : ViewModelBase
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
     private readonly ISttService _sttService;
+    private readonly Action<Track>? _trackAdded;
     private readonly IDisposable _stateSub;
     private string? _pendingCommand;
 
@@ -35,8 +36,12 @@ public class ChatViewModel : ViewModelBase
     [Reactive] public string InputText { get; set; } = string.Empty;
     [Reactive] public bool IsProcessing { get; set; }
     [Reactive] public bool IsListening { get; set; }
+    [Reactive] public bool IsRecognizing { get; set; }
+    [Reactive] public bool IsSpeaking { get; set; }
     [Reactive] public bool IsConversationMode { get; set; }
     [Reactive] public string DjEmotion { get; set; } = "neutral";
+    [Reactive] public string StatusText { get; set; } = "READY";
+    [Reactive] public string MicButtonText { get; set; } = "MIC";
 
     public event Action<string, string>? Live2DCommand; // expression, motion
 
@@ -44,12 +49,13 @@ public class ChatViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ToggleVoiceInputCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleConversationModeCommand { get; }
 
-    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService)
+    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService, Action<Track>? trackAdded = null)
     {
         _djService = djService;
         _audioService = audioService;
         _musicSearchService = musicSearchService;
         _sttService = sttService;
+        _trackAdded = trackAdded;
 
         SendMessageCommand = ReactiveCommand.CreateFromTask(
             SendMessageAsync,
@@ -63,10 +69,12 @@ public class ChatViewModel : ViewModelBase
         // Listen for TTS completion to play song AFTER TTS finishes
         _audioService.TtsStateChanged
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Where(playing => !playing)
-            .Subscribe(async _ =>
+            .Subscribe(async playing =>
             {
-                if (_pendingCommand != null)
+                IsSpeaking = playing;
+                RefreshStatus();
+
+                if (!playing && _pendingCommand != null)
                 {
                     var cmd = _pendingCommand;
                     _pendingCommand = null;
@@ -85,6 +93,17 @@ public class ChatViewModel : ViewModelBase
                     StartListening();
                 }
             });
+    }
+
+    public void AddAssistantMessage(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        Messages.Add(new ChatMessage
+        {
+            Role = MessageRole.Assistant,
+            Content = text
+        });
     }
 
     private void ToggleVoiceInput()
@@ -142,12 +161,18 @@ public class ChatViewModel : ViewModelBase
 
             _waveIn.StartRecording();
             IsListening = true;
+            IsRecognizing = false;
+            MicButtonText = "STOP";
+            RefreshStatus();
             Log.Information("Mic recording started");
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to start mic recording");
             IsListening = false;
+            IsRecognizing = false;
+            MicButtonText = "MIC";
+            StatusText = "MIC ERROR";
         }
     }
 
@@ -157,12 +182,18 @@ public class ChatViewModel : ViewModelBase
         {
             _waveIn?.StopRecording();
             IsListening = false;
+            IsRecognizing = true;
+            MicButtonText = "MIC";
+            RefreshStatus();
             Log.Information("Mic recording stopped");
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Error stopping mic");
             IsListening = false;
+            IsRecognizing = false;
+            MicButtonText = "MIC";
+            StatusText = "MIC ERROR";
         }
     }
 
@@ -189,6 +220,7 @@ public class ChatViewModel : ViewModelBase
             else
             {
                 Log.Warning("No speech recognized");
+                Avalonia.Threading.Dispatcher.UIThread.Invoke(() => StatusText = "NO SPEECH");
                 if (IsConversationMode)
                     StartListening();
             }
@@ -196,9 +228,15 @@ public class ChatViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.Warning(ex, "Speech recognition failed");
+            Avalonia.Threading.Dispatcher.UIThread.Invoke(() => StatusText = "STT ERROR");
         }
         finally
         {
+            Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
+            {
+                IsRecognizing = false;
+                RefreshStatus();
+            });
             try { File.Delete(wavPath); } catch { }
         }
     }
@@ -216,6 +254,7 @@ public class ChatViewModel : ViewModelBase
         var text = InputText;
         InputText = string.Empty;
         IsProcessing = true;
+        RefreshStatus();
 
         try
         {
@@ -234,28 +273,7 @@ public class ChatViewModel : ViewModelBase
             else if (command != null && _djService.TtsEnabled)
                 _pendingCommand = command;
 
-            // TTS: generate and play speech (strip emoji so they aren't read aloud)
-            if (_djService.TtsEnabled)
-            {
-                var ttsText = StripEmoji(displayText);
-                if (!string.IsNullOrWhiteSpace(ttsText))
-                {
-                    var speechData = await _djService.GenerateSpeechAsync(ttsText);
-                    if (speechData is { Length: > 0 })
-                        _audioService.PlayTtsAudio(speechData);
-                }
-            }
-            else if (command == null)
-            {
-                // No TTS, just display text - use TTS anyway for voice feedback
-                var ttsText = StripEmoji(displayText);
-                if (!string.IsNullOrWhiteSpace(ttsText))
-                {
-                    var speechData = await _djService.GenerateSpeechAsync(ttsText);
-                    if (speechData is { Length: > 0 })
-                        _audioService.PlayTtsAudio(speechData);
-                }
-            }
+            await SpeakAsync(displayText);
         }
         catch
         {
@@ -268,7 +286,42 @@ public class ChatViewModel : ViewModelBase
         finally
         {
             IsProcessing = false;
+            RefreshStatus();
         }
+    }
+
+    private async Task SpeakAsync(string displayText)
+    {
+        if (!_djService.TtsEnabled)
+        {
+            StatusText = "VOICE OFF";
+            return;
+        }
+
+        var ttsText = StripEmoji(displayText);
+        if (string.IsNullOrWhiteSpace(ttsText)) return;
+
+        StatusText = "VOICE...";
+        var speechData = await _djService.GenerateSpeechAsync(ttsText);
+        if (speechData is { Length: > 0 })
+        {
+            _audioService.PlayTtsAudio(speechData);
+        }
+        else
+        {
+            StatusText = "VOICE ERROR";
+            Log.Warning("TTS returned empty audio");
+        }
+    }
+
+    private void RefreshStatus()
+    {
+        StatusText = IsSpeaking ? "SPEAKING"
+            : IsRecognizing ? "RECOGNIZING"
+            : IsListening ? "LISTENING"
+            : IsProcessing ? "THINKING"
+            : IsConversationMode ? "CONVERSATION"
+            : "READY";
     }
 
     private static (string displayText, string? command) ParseResponse(string response)
@@ -392,6 +445,7 @@ public class ChatViewModel : ViewModelBase
             var t = track.ToTrack(url);
             Log.Debug("Adding track to playlist and playing...");
             _audioService.AddTracks(new[] { t });
+            _trackAdded?.Invoke(t);
             var index = _audioService.Playlist.Count - 1;
             _audioService.PlayAtIndex(index);
             Log.Information("DJ track play initiated: {Track}", t);

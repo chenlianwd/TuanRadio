@@ -120,6 +120,9 @@ public class SettingsViewModel : ViewModelBase
                 if (root.TryGetProperty("language", out var lang))
                     SelectedLanguage = lang.GetString() ?? "zh";
 
+                if (root.TryGetProperty("tts_enabled", out var tts))
+                    TtsEnabled = tts.GetBoolean();
+
                 if (root.TryGetProperty("character_overrides", out var ovElem))
                 {
                     foreach (var prop in ovElem.EnumerateObject())
