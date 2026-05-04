@@ -5,9 +5,12 @@ using AIRadio.Desktop.Services;
 using Serilog;
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
@@ -18,23 +21,29 @@ public class PlaylistViewModel : ViewModelBase
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
     private bool _isPlayingOnline;
+    private static readonly string PlaylistDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
+    private static readonly string PlaylistFile = Path.Combine(PlaylistDir, "playlist.json");
 
     public ObservableCollection<Track> Tracks { get; } = new();
+    public ObservableCollection<Track> Favorites { get; } = new();
     public ObservableCollection<OnlineTrack> SearchResults { get; } = new();
 
     [Reactive] public Track? SelectedTrack { get; set; }
     [Reactive] public string SearchText { get; set; } = string.Empty;
     [Reactive] public bool IsSearching { get; set; }
-    [Reactive] public bool IsSearchMode { get; set; }
+    [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> SearchCommand { get; }
-    public ReactiveCommand<Unit, Unit> ToggleSearchCommand { get; }
     public ReactiveCommand<Unit, Unit> ShowPlaylistCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowFavoritesCommand { get; }
     public ReactiveCommand<Unit, Unit> ShowSearchCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> PlayOnlineCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> AddOnlineCommand { get; }
+    public ReactiveCommand<Track, Unit> ToggleFavoriteCommand { get; }
+    public ReactiveCommand<Track, Unit> PlayFavoriteCommand { get; }
 
     public PlaylistViewModel(IAudioService audioService, IMusicSearchService musicSearchService)
     {
@@ -45,27 +54,29 @@ public class PlaylistViewModel : ViewModelBase
         {
             _audioService.RemoveTrack(track);
             Tracks.Remove(track);
+            _ = SaveAsync();
         });
 
         ClearPlaylistCommand = ReactiveCommand.Create(() =>
         {
             _audioService.ClearPlaylist();
             Tracks.Clear();
-        });
-
-        ToggleSearchCommand = ReactiveCommand.Create(() =>
-        {
-            IsSearchMode = !IsSearchMode;
+            _ = SaveAsync();
         });
 
         ShowPlaylistCommand = ReactiveCommand.Create(() =>
         {
-            IsSearchMode = false;
+            TabIndex = 0;
+        });
+
+        ShowFavoritesCommand = ReactiveCommand.Create(() =>
+        {
+            TabIndex = 1;
         });
 
         ShowSearchCommand = ReactiveCommand.Create(() =>
         {
-            IsSearchMode = true;
+            TabIndex = 2;
         });
 
         SearchCommand = ReactiveCommand.CreateFromTask(SearchAsync);
@@ -84,7 +95,30 @@ public class PlaylistViewModel : ViewModelBase
             var t = track.ToTrack(url);
             Tracks.Add(t);
             _audioService.AddTracks(new[] { t });
-            IsSearchMode = false;
+            TabIndex = 0;
+            await SaveAsync();
+        });
+
+        ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
+        {
+            track.IsFavorite = !track.IsFavorite;
+            if (track.IsFavorite)
+            {
+                if (!Favorites.Contains(track))
+                    Favorites.Add(track);
+            }
+            else
+            {
+                Favorites.Remove(track);
+            }
+            _ = SaveAsync();
+        });
+
+        PlayFavoriteCommand = ReactiveCommand.Create<Track>(track =>
+        {
+            var index = Tracks.IndexOf(track);
+            if (index >= 0)
+                _audioService.PlayAtIndex(index);
         });
 
         this.WhenAnyValue(x => x.SelectedTrack)
@@ -97,6 +131,105 @@ public class PlaylistViewModel : ViewModelBase
                     _audioService.PlayAtIndex(index);
                 }
             });
+
+        // Auto-save when tracks change
+        Tracks.CollectionChanged += (_, _) => _ = SaveAsync();
+    }
+
+    public async Task LoadAsync()
+    {
+        try
+        {
+            if (!File.Exists(PlaylistFile)) return;
+
+            var json = await File.ReadAllTextAsync(PlaylistFile);
+            var data = JsonSerializer.Deserialize<PlaylistData>(json);
+            if (data == null || data.Tracks == null) return;
+
+            Tracks.Clear();
+            foreach (var item in data.Tracks)
+            {
+                if (item.IsOnline && !string.IsNullOrEmpty(item.SourceId))
+                {
+                    // Re-fetch URL for online tracks
+                    var url = await _musicSearchService.GetPlayUrlAsync(item.SourceId);
+                    if (!string.IsNullOrEmpty(url))
+                    {
+                        var track = new Track
+                        {
+                            Id = item.Id,
+                            Title = item.Title,
+                            Artist = item.Artist,
+                            Album = item.Album,
+                            Duration = TimeSpan.FromMilliseconds(item.DurationMs),
+                            FilePath = url,
+                            SourceId = item.SourceId,
+                            IsFavorite = item.IsFavorite
+                        };
+                        Tracks.Add(track);
+                        if (item.IsFavorite)
+                            Favorites.Add(track);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(item.FilePath) && File.Exists(item.FilePath))
+                {
+                    // Local file - verify exists
+                    var track = new Track
+                    {
+                        Id = item.Id,
+                        Title = item.Title,
+                        Artist = item.Artist,
+                        Album = item.Album,
+                        Duration = TimeSpan.FromMilliseconds(item.DurationMs),
+                        FilePath = item.FilePath,
+                        IsFavorite = item.IsFavorite
+                    };
+                    Tracks.Add(track);
+                    if (item.IsFavorite)
+                        Favorites.Add(track);
+                }
+            }
+
+            if (Tracks.Count > 0)
+            {
+                _audioService.LoadTracks(Tracks);
+                Log.Information("Loaded {Count} tracks from playlist", Tracks.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load playlist");
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            Directory.CreateDirectory(PlaylistDir);
+            var data = new PlaylistData
+            {
+                Tracks = Tracks.Select(t => new PlaylistTrack
+                {
+                    Id = t.Id,
+                    Title = t.Title,
+                    Artist = t.Artist,
+                    Album = t.Album,
+                    DurationMs = (long)t.Duration.TotalMilliseconds,
+                    FilePath = t.SourceId != null ? "" : t.FilePath,
+                    SourceId = t.SourceId,
+                    IsOnline = t.SourceId != null,
+                    IsFavorite = t.IsFavorite
+                }).ToList()
+            };
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(PlaylistFile, json);
+            Log.Debug("Playlist saved: {Count} tracks", Tracks.Count);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save playlist");
+        }
     }
 
     private async Task PlayOnlineAsync(OnlineTrack track)
@@ -117,7 +250,7 @@ public class PlaylistViewModel : ViewModelBase
             if (existingIndex >= 0)
             {
                 _audioService.PlayAtIndex(existingIndex);
-                IsSearchMode = false;
+                TabIndex = 0;
                 return;
             }
 
@@ -126,7 +259,8 @@ public class PlaylistViewModel : ViewModelBase
             _audioService.AddTracks(new[] { t });
             var index = Tracks.Count - 1;
             _audioService.PlayAtIndex(index);
-            IsSearchMode = false;
+            TabIndex = 0;
+            await SaveAsync();
         }
         finally
         {
@@ -147,7 +281,7 @@ public class PlaylistViewModel : ViewModelBase
             {
                 SearchResults.Add(track);
             }
-            IsSearchMode = true; // auto-switch to search results
+            TabIndex = 2; // auto-switch to search results
             Log.Information("Search '{Query}' returned {Count} results", SearchText, results.Count);
         }
         catch (Exception ex)
@@ -168,7 +302,8 @@ public class PlaylistViewModel : ViewModelBase
             Tracks.Add(track);
         }
         _audioService.AddTracks(Tracks);
-        IsSearchMode = false;
+        TabIndex = 0;
+        _ = SaveAsync();
     }
 }
 
@@ -182,4 +317,22 @@ public static class ObservableCollectionExtensions
         }
         return -1;
     }
+}
+
+internal class PlaylistData
+{
+    public List<PlaylistTrack> Tracks { get; set; } = new();
+}
+
+internal class PlaylistTrack
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Artist { get; set; } = "";
+    public string Album { get; set; } = "";
+    public long DurationMs { get; set; }
+    public string FilePath { get; set; } = "";
+    public string? SourceId { get; set; }
+    public bool IsOnline { get; set; }
+    public bool IsFavorite { get; set; }
 }
