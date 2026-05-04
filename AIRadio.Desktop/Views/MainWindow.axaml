@@ -136,7 +136,7 @@
                     <!-- Avatar at top - Live2D -->
                     <Border Background="#FF181818" CornerRadius="8" Margin="0,0,0,4" ClipToBounds="True" MinHeight="160">
                         <Grid>
-                            <webview:WebView x:Name="Live2DWebView" Url="http://localhost:18080/live2d-demo/index.html" Background="#FF181818"/>
+                            <webview:WebView x:Name="Live2DWebView" Url="http://localhost:18080/live2d.html" Background="#FF181818"/>
                             <!-- Character name overlay -->
                             <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10" Padding="8,4"
                                     Background="#AA000000" CornerRadius="4">

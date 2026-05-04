@@ -257,6 +257,9 @@ public class AudioService : IAudioService, IDisposable
         var track = _playlist[index];
         try
         {
+            // Stop current playback first to prevent mixing
+            _player.Stop();
+
             var isUrl = track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                      || track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
             var media = new Media(_libVLC, track.FilePath, isUrl ? FromType.FromLocation : FromType.FromPath);

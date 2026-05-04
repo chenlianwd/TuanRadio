@@ -244,8 +244,8 @@ public class ChatViewModel : ViewModelBase
 
     private static (string displayText, string? command) ParseResponse(string response)
     {
-        // Strip emotion tag like [happy] [neutral] etc
-        var displayText = Regex.Replace(response, @"\s*\[(happy|sad|calm|neutral|angry|surprised)\]\s*$", "").TrimEnd();
+        // Strip emotion tag like [happy] [neutral] etc - anywhere in response
+        var displayText = Regex.Replace(response, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
 
         // Match 【play:xxx】 or 【next】 etc at the end
         var match = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$");
@@ -260,6 +260,9 @@ public class ChatViewModel : ViewModelBase
     private static string StripEmoji(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
+
+        // First strip emotion tags like [happy] [neutral] etc
+        text = Regex.Replace(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
 
         var sb = new System.Text.StringBuilder(text.Length);
         var enumerator = StringInfo.GetTextElementEnumerator(text);
