@@ -16,17 +16,6 @@
                     Foreground="#FF000000"/>
         </StackPanel>
 
-        <!-- DJ Profile -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="主播名称" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
-            <TextBox Text="{Binding DjName, Mode=TwoWay}"/>
-        </StackPanel>
-
-        <StackPanel Spacing="6">
-            <TextBlock Text="主播描述" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
-            <TextBox Text="{Binding DjDescription, Mode=TwoWay}" AcceptsReturn="True" Height="60" CornerRadius="8"/>
-        </StackPanel>
-
         <!-- TTS -->
         <StackPanel Spacing="6">
             <TextBlock Text="语音播报" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
@@ -38,12 +27,29 @@
             </Grid>
         </StackPanel>
 
-        <StackPanel Spacing="6">
-            <TextBlock Text="主播音色" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
-            <ComboBox SelectedItem="{Binding SelectedVoice, Mode=TwoWay}"
-                      ItemsSource="{Binding Voices}"
+        <!-- Character customization -->
+        <StackPanel Spacing="8">
+            <TextBlock Text="数字人设置" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+
+            <ComboBox SelectedItem="{Binding SelectedCharacter}"
+                      ItemsSource="{Binding Characters}"
                       DisplayMemberBinding="{Binding DisplayName}"
                       HorizontalAlignment="Stretch"/>
+
+            <StackPanel Spacing="4" Margin="0,4,0,0">
+                <TextBlock Text="音色" Foreground="#FFB3B3B3" FontSize="11"/>
+                <ComboBox SelectedItem="{Binding CharacterVoice}"
+                          ItemsSource="{Binding Voices}"
+                          DisplayMemberBinding="{Binding DisplayName}"
+                          HorizontalAlignment="Stretch"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="人格提示词" Foreground="#FFB3B3B3" FontSize="11"/>
+                <TextBox Text="{Binding CharacterPersonality, Mode=TwoWay}"
+                         AcceptsReturn="True" Height="80" CornerRadius="8"
+                         TextWrapping="Wrap"/>
+            </StackPanel>
         </StackPanel>
 
         <!-- Save -->
