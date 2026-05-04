@@ -26,8 +26,35 @@ public class DJService : IDJService
     {
         _profile = profile;
 
-        var systemPrompt = !string.IsNullOrWhiteSpace(profile.SystemPrompt)
-            ? profile.SystemPrompt + @"
+        string systemPrompt;
+        if (profile.Language == "en")
+        {
+            systemPrompt = !string.IsNullOrWhiteSpace(profile.SystemPrompt)
+                ? profile.SystemPrompt + @"
+
+At the END of every response, append exactly ONE emotion tag in square brackets from this list:
+[happy] [sad] [calm] [neutral] [angry] [surprised]
+Choose the tag that best matches your emotional tone. Default to [neutral].
+
+Command rules:
+When the user asks to play music, append a command AFTER the emotion tag:
+- Play song: 【play:song name】
+- Next: 【next】
+- Pause: 【pause】
+- Resume: 【resume】"
+                : $@"You are an AI radio DJ named ""{profile.Name}"".
+{profile.Description}
+
+Response rules:
+1. Keep responses under 60 characters
+2. ALWAYS respond in ENGLISH only
+3. At the END of every response, append exactly ONE emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised]
+4. When user asks to play music, append after emotion tag: 【play:song name】 【next】 【pause】 【resume】";
+        }
+        else
+        {
+            systemPrompt = !string.IsNullOrWhiteSpace(profile.SystemPrompt)
+                ? profile.SystemPrompt + @"
 
 At the END of every response, append exactly ONE emotion tag in square brackets from this list:
 [happy] [sad] [calm] [neutral] [angry] [surprised]
@@ -40,13 +67,15 @@ When the user asks to play music, append a command AFTER the emotion tag:
 - Next: 【next】
 - Pause: 【pause】
 - Resume: 【resume】"
-            : $@"You are an AI radio DJ named ""{profile.Name}"".
+                : $@"你是一个名叫 ""{profile.Name}"" 的AI电台主播。
 {profile.Description}
 
-Response rules:
-1. Keep responses under 60 characters
-2. At the END of every response, append exactly ONE emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised]
-3. When user asks to play music, append after emotion tag: 【play:song name】 【next】 【pause】 【resume】";
+回复规则：
+1. 回复保持在60字以内
+2. 必须用中文回复
+3. 在回复末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]
+4. 当用户要求播放音乐时，在情绪标签后附加：【play:歌名】【next】【pause】【resume】";
+        }
 
         _chatHistory.Clear();
         _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });

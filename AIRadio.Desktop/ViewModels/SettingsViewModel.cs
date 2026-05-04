@@ -38,6 +38,7 @@ public class SettingsViewModel : ViewModelBase
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
     [Reactive] public bool TtsEnabled { get; set; } = true;
+    [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
     // Character customization
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
@@ -53,6 +54,12 @@ public class SettingsViewModel : ViewModelBase
         new() { Id = "female-shaonv", DisplayName = "少女音" },
         new() { Id = "female-yujie", DisplayName = "御姐音" },
         new() { Id = "female-chengshu", DisplayName = "成熟女声" },
+    };
+
+    public List<VoiceOption> Languages { get; } = new()
+    {
+        new() { Id = "zh", DisplayName = "中文" },
+        new() { Id = "en", DisplayName = "English" },
     };
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
@@ -110,8 +117,8 @@ public class SettingsViewModel : ViewModelBase
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                if (root.TryGetProperty("tts_enabled", out var tts))
-                    TtsEnabled = tts.GetBoolean();
+                if (root.TryGetProperty("language", out var lang))
+                    SelectedLanguage = lang.GetString() ?? "zh";
 
                 if (root.TryGetProperty("character_overrides", out var ovElem))
                 {
@@ -197,6 +204,7 @@ public class SettingsViewModel : ViewModelBase
             var settingsData = new
             {
                 tts_enabled = TtsEnabled,
+                language = SelectedLanguage,
                 character_overrides = overridesJson
             };
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
