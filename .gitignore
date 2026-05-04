@@ -20,9 +20,6 @@
 # Node.js
 **/node_modules/
 
-# Claude Code
-.claude/
-
 # OS
 Thumbs.db
 ehthumbs.db
