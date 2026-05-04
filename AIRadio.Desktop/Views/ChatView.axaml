@@ -27,8 +27,9 @@
                                     Background="{Binding Role, Converter={StaticResource MessageRoleConverter}}"
                                     HorizontalAlignment="{Binding Role, Converter={StaticResource MessageAlignmentConverter}}">
                                 <StackPanel Spacing="4">
-                                    <TextBlock Text="{Binding Content}" TextWrapping="Wrap" FontSize="14"
-                                               Foreground="#FFFFFFFF" LineHeight="20"/>
+                                    <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap" FontSize="14"
+                                               Foreground="#FFFFFFFF" LineHeight="20"
+                                               FontFamily="Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji"/>
                                     <TextBlock Text="{Binding Timestamp, StringFormat=HH:mm}" FontSize="10"
                                                Foreground="#FF535353" HorizontalAlignment="Right"/>
                                 </StackPanel>

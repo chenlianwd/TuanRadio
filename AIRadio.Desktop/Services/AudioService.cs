@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using LibVLCSharp.Shared;
@@ -31,13 +33,24 @@ public class AudioService : IAudioService, IDisposable
     private readonly Random _rng = new();
     private PlaybackState _currentState = PlaybackState.Stopped;
 
+    // Crossfade
+    private float _userVolume = 0.8f;
+    private const double CrossfadeSeconds = 2.0;
+    private bool _isFading;
+    private readonly System.Threading.Timer _fadeTimer;
+
     public bool IsPlaying => _player.IsPlaying;
     public TimeSpan CurrentPosition => TimeSpan.FromMilliseconds(_player.Time);
     public TimeSpan Duration => TimeSpan.FromMilliseconds(_player.Length);
     public float Volume
     {
         get => _player.Volume / 100f;
-        set => _player.Volume = (int)(Math.Clamp(value, 0f, 1f) * 100);
+        set
+        {
+            _userVolume = Math.Clamp(value, 0f, 1f);
+            if (!_isFading)
+                _player.Volume = (int)(_userVolume * 100);
+        }
     }
 
     public Track? CurrentTrack => _currentIndex >= 0 && _currentIndex < _playlist.Count ? _playlist[_currentIndex] : null;
@@ -50,6 +63,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<PlaybackState> StateChanged => _stateChangedSubject.AsObservable();
     public IObservable<TimeSpan> PositionChanged => _positionChangedSubject.AsObservable();
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
+    public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
 
     public AudioService()
     {
@@ -73,10 +87,20 @@ public class AudioService : IAudioService, IDisposable
             OnTrackEndReached();
         };
 
+        // No audio callbacks — use simulated spectrum (VLC handles output normally)
+        _spectrumTimer = new System.Threading.Timer(_ => EmitSimulatedSpectrum(), null, 100, 33);
+
+        // TTS player end notification
+        _ttsPlayer.EndReached += (_, _) =>
+        {
+            _ttsStateSubject.OnNext(false); // TTS ended
+        };
+
+        _fadeTimer = new System.Threading.Timer(_ => DoFadeStep(), null, Timeout.Infinite, Timeout.Infinite);
         _positionTimer = new System.Threading.Timer(_ => EmitPosition(), null, 500, 500);
-        _spectrumTimer = new System.Threading.Timer(_ => EmitSpectrum(), null, 100, 33); // ~30fps
     }
 
+    
     private void SetState(PlaybackState state)
     {
         _currentState = state;
@@ -86,6 +110,9 @@ public class AudioService : IAudioService, IDisposable
     private void OnTrackEndReached()
     {
         _trackEndedSubject.OnNext(CurrentTrack);
+
+        // If we're already doing a fade-out, DoFadeStep will handle advancement
+        if (_isFading && _fadeDirection == -1) return;
 
         if (_repeatMode == "single" && CurrentTrack != null)
         {
@@ -240,8 +267,10 @@ public class AudioService : IAudioService, IDisposable
                 media.AddOption(":http-continuous");
             }
             _player.Media = media;
+            _player.Volume = 0;
             _player.Play();
             NotifyTrackChanged();
+            StartFadeIn();
             Log.Information("Playing: {Track}", track);
         }
         catch (Exception ex)
@@ -251,9 +280,75 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
+    private void StartFadeIn()
+    {
+        _isFading = true;
+        _fadeStepStart = Environment.TickCount64;
+        _fadeDirection = 1;
+        _fadeTimer.Change(33, 33); // ~30fps
+    }
+
+    private void StartFadeOut()
+    {
+        if (_isFading && _fadeDirection == -1) return;
+        _isFading = true;
+        _fadeStepStart = Environment.TickCount64;
+        _fadeDirection = -1;
+        _fadeTimer.Change(33, 33);
+    }
+
+    private long _fadeStepStart;
+    private int _fadeDirection = 1;
+
+    private void DoFadeStep()
+    {
+        var elapsed = (Environment.TickCount64 - _fadeStepStart) / 1000.0;
+        var progress = Math.Clamp(elapsed / CrossfadeSeconds, 0.0, 1.0);
+
+        if (_fadeDirection == 1)
+        {
+            _player.Volume = (int)(_userVolume * progress * 100);
+            if (progress >= 1.0)
+            {
+                _isFading = false;
+                _player.Volume = (int)(_userVolume * 100);
+                _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+        }
+        else
+        {
+            _player.Volume = (int)(_userVolume * (1.0 - progress) * 100);
+            if (progress >= 1.0)
+            {
+                _isFading = false;
+                _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                // Auto-advance to next track
+                if (_repeatMode == "single" && CurrentTrack != null)
+                    PlayTrack(_currentIndex);
+                else
+                    Next();
+            }
+        }
+    }
+
     private void NotifyTrackChanged()
     {
         _trackChangedSubject.OnNext(CurrentTrack);
+    }
+
+    private void EmitSimulatedSpectrum()
+    {
+        if (_currentState != PlaybackState.Playing) return;
+
+        var time = Environment.TickCount64 / 1000.0;
+        var data = new float[16];
+        for (int i = 0; i < 16; i++)
+        {
+            var baseLevel = 0.2f + 0.3f * ((i % 3 == 0) ? 1f : 0.4f);
+            data[i] = (float)(baseLevel + 0.15 * Math.Sin(time * 8 + i * 0.7));
+            data[i] = Math.Clamp(data[i], 0f, 1f);
+        }
+        _spectrumSubject.OnNext(data);
     }
 
     private void EmitPosition()
@@ -261,39 +356,30 @@ public class AudioService : IAudioService, IDisposable
         if (_currentState == PlaybackState.Playing || _currentState == PlaybackState.Paused)
         {
             var pos = _player.Time;
+            var dur = _player.Length;
+
             if (pos != _lastPositionMs)
             {
                 _lastPositionMs = pos;
                 _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(pos));
             }
-        }
-    }
 
-    private void EmitSpectrum()
-    {
-        if (_currentState != PlaybackState.Playing)
-        {
-            return;
+            // Fade out when near end (only for known-duration tracks)
+            if (dur > 0 && !_isFading)
+            {
+                var remainingMs = dur - pos;
+                if (remainingMs <= CrossfadeSeconds * 1000)
+                {
+                    StartFadeOut();
+                }
+            }
         }
-
-        // Simulated spectrum from playback timing — real FFT requires VLC audio callbacks
-        var bands = 16;
-        var data = new float[bands];
-        var time = DateTime.Now.Ticks / 10000.0;
-        for (int i = 0; i < bands; i++)
-        {
-            var freq = 0.5 + i * 0.3;
-            data[i] = (float)(0.3 + 0.3 * Math.Sin(time * 0.001 * freq + i)
-                              + 0.2 * Math.Sin(time * 0.0023 * freq)
-                              + 0.1 * Math.Sin(time * 0.005 * (i + 1)));
-            data[i] = Math.Clamp(data[i], 0f, 1f);
-        }
-        _spectrumSubject.OnNext(data);
     }
 
     public void Dispose()
     {
         _spectrumTimer?.Dispose();
+        _fadeTimer?.Dispose();
         _positionTimer?.Dispose();
         _ttsPlayer?.Stop();
         _ttsPlayer?.Dispose();
@@ -304,15 +390,16 @@ public class AudioService : IAudioService, IDisposable
         _stateChangedSubject.Dispose();
         _positionChangedSubject.Dispose();
         _trackEndedSubject.Dispose();
+        _ttsStateSubject.Dispose();
     }
 
+    private readonly Subject<bool> _ttsStateSubject = new();
     private string? _currentTtsFile;
 
     public void PlayTtsAudio(byte[] audioData)
     {
         try
         {
-            // Clean up previous TTS file
             if (_currentTtsFile != null)
             {
                 try { File.Delete(_currentTtsFile); } catch { }
@@ -325,6 +412,7 @@ public class AudioService : IAudioService, IDisposable
             var media = new Media(_libVLC, tempPath, FromType.FromPath);
             _ttsPlayer.Stop();
             _ttsPlayer.Media = media;
+            _ttsStateSubject.OnNext(true); // TTS started
             _ttsPlayer.Play();
             Log.Debug("TTS playback started");
         }

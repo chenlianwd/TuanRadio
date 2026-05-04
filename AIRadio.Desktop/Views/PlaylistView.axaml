@@ -40,7 +40,8 @@
             <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,0,0,8"
                   IsVisible="{Binding IsSearchMode}">
                 <TextBox Grid.Column="0" Text="{Binding SearchText, Mode=TwoWay}"
-                         Watermark="搜索在线歌曲..." Margin="0,0,6,0"/>
+                         Watermark="搜索在线歌曲..." Margin="0,0,6,0"
+                         KeyDown="OnSearchKeyDown"/>
                 <Button Grid.Column="1" Command="{Binding SearchCommand}"
                         Content="搜索" Padding="16,8" Background="#FF1ED760"
                         Foreground="#FF000000"/>

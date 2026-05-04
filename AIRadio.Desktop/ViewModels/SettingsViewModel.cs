@@ -7,6 +7,7 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.Json;
@@ -30,13 +31,19 @@ public class SettingsViewModel : ViewModelBase
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
 
+    // Per-character overrides: character id → (voiceId, personalityPrompt)
+    private readonly Dictionary<string, (string VoiceId, string Personality)> _overrides = new();
+
     [Reactive] public string ApiKey { get; set; } = string.Empty;
-    [Reactive] public string DjName { get; set; } = "小音";
-    [Reactive] public string DjDescription { get; set; } = "活泼开朗的电台主播";
-    [Reactive] public bool TtsEnabled { get; set; } = true;
-    [Reactive] public VoiceOption? SelectedVoice { get; set; }
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
+    [Reactive] public bool TtsEnabled { get; set; } = true;
+
+    // Character customization
+    public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
+    [Reactive] public CharacterProfile? SelectedCharacter { get; set; }
+    [Reactive] public VoiceOption? CharacterVoice { get; set; }
+    [Reactive] public string CharacterPersonality { get; set; } = string.Empty;
 
     public List<VoiceOption> Voices { get; } = new()
     {
@@ -51,6 +58,9 @@ public class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
 
+    // Notify MainWindow when character settings change so it can re-apply
+    public event Action? CharacterSettingsChanged;
+
     public SettingsViewModel(IMinimaxService minimaxService, IDJService djService, ISecureStorage secureStorage)
     {
         _minimaxService = minimaxService;
@@ -59,6 +69,28 @@ public class SettingsViewModel : ViewModelBase
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync);
+
+        // When character selection changes, load its overrides
+        this.WhenAnyValue(x => x.SelectedCharacter)
+            .Where(c => c != null)
+            .Subscribe(c => LoadCharacterOverrides(c!));
+
+        // Default selection
+        SelectedCharacter = Characters[0];
+    }
+
+    private void LoadCharacterOverrides(CharacterProfile character)
+    {
+        if (_overrides.TryGetValue(character.Id, out var ov))
+        {
+            CharacterVoice = Voices.Find(v => v.Id == ov.VoiceId) ?? Voices.Find(v => v.Id == character.VoiceId) ?? Voices[0];
+            CharacterPersonality = ov.Personality;
+        }
+        else
+        {
+            CharacterVoice = Voices.Find(v => v.Id == character.VoiceId) ?? Voices[0];
+            CharacterPersonality = character.PersonalityPrompt;
+        }
     }
 
     public async Task LoadAsync()
@@ -68,49 +100,33 @@ public class SettingsViewModel : ViewModelBase
             var key = await _secureStorage.GetApiKeyAsync("minimax");
             if (!string.IsNullOrEmpty(key))
             {
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    ApiKey = key;
-                });
+                await Dispatcher.UIThread.InvokeAsync(() => ApiKey = key);
                 _minimaxService.SetApiKey(key);
             }
 
-            string? djName = null, djDesc = null;
-            bool? ttsEnabled = null;
-            string? voiceId = null;
             if (File.Exists(SettingsFile))
             {
                 var json = await File.ReadAllTextAsync(SettingsFile);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
-                if (root.TryGetProperty("dj_name", out var name))
-                    djName = name.GetString();
-                if (root.TryGetProperty("dj_description", out var desc))
-                    djDesc = desc.GetString();
+
                 if (root.TryGetProperty("tts_enabled", out var tts))
-                    ttsEnabled = tts.GetBoolean();
-                if (root.TryGetProperty("voice_id", out var vid))
-                    voiceId = vid.GetString();
+                    TtsEnabled = tts.GetBoolean();
+
+                if (root.TryGetProperty("character_overrides", out var ovElem))
+                {
+                    foreach (var prop in ovElem.EnumerateObject())
+                    {
+                        var voiceId = prop.Value.TryGetProperty("voice_id", out var v) ? v.GetString() ?? "" : "";
+                        var personality = prop.Value.TryGetProperty("personality", out var p) ? p.GetString() ?? "" : "";
+                        _overrides[prop.Name] = (voiceId, personality);
+                    }
+                }
             }
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (djName != null) DjName = djName;
-                if (djDesc != null) DjDescription = djDesc;
-                if (ttsEnabled.HasValue) TtsEnabled = ttsEnabled.Value;
-                if (voiceId != null)
-                    SelectedVoice = Voices.Find(v => v.Id == voiceId) ?? Voices[0];
-                else
-                    SelectedVoice = Voices[0];
-            });
-
-            _djService.Initialize(new DJProfile
-            {
-                Name = DjName,
-                Description = DjDescription,
-                TtsEnabled = TtsEnabled,
-                VoiceId = SelectedVoice?.Id ?? "male-qn-qingse"
-            });
+            // Apply first character
+            if (SelectedCharacter != null)
+                LoadCharacterOverrides(SelectedCharacter);
         }
         catch (Exception ex)
         {
@@ -118,9 +134,13 @@ public class SettingsViewModel : ViewModelBase
         }
     }
 
+    public (string VoiceId, string Personality)? GetOverride(string characterId)
+    {
+        return _overrides.TryGetValue(characterId, out var ov) ? ov : null;
+    }
+
     private async Task TestConnectionAsync()
     {
-        Log.Information("TestConnection clicked, ApiKey length={Len}", ApiKey?.Length ?? 0);
         if (string.IsNullOrWhiteSpace(ApiKey))
         {
             await Dispatcher.UIThread.InvokeAsync(() => StatusMessage = "请先输入 API Key");
@@ -135,8 +155,7 @@ public class SettingsViewModel : ViewModelBase
         try
         {
             _minimaxService.SetApiKey(ApiKey);
-            Log.Information("Calling Minimax API...");
-            var result = await _minimaxService.ChatAsync("你好，请用一句话回复", new System.Collections.Generic.List<ChatMessage>());
+            var result = await _minimaxService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
             await Dispatcher.UIThread.InvokeAsync(() =>
                 StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...");
         }
@@ -154,16 +173,11 @@ public class SettingsViewModel : ViewModelBase
 
     private async Task SaveAsync()
     {
-        Log.Information("Save clicked, DjName={Name}", DjName);
-        var voiceId = SelectedVoice?.Id ?? "male-qn-qingse";
-        var profile = new DJProfile
+        // Save current character overrides
+        if (SelectedCharacter != null && CharacterVoice != null)
         {
-            Name = DjName,
-            Description = DjDescription,
-            TtsEnabled = TtsEnabled,
-            VoiceId = voiceId
-        };
-        _djService.Initialize(profile);
+            _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
+        }
 
         try
         {
@@ -174,16 +188,21 @@ public class SettingsViewModel : ViewModelBase
             }
 
             Directory.CreateDirectory(SettingsDir);
+            var overridesJson = new Dictionary<string, object>();
+            foreach (var kv in _overrides)
+            {
+                overridesJson[kv.Key] = new { voice_id = kv.Value.VoiceId, personality = kv.Value.Personality };
+            }
+
             var settingsData = new
             {
-                dj_name = DjName,
-                dj_description = DjDescription,
                 tts_enabled = TtsEnabled,
-                voice_id = voiceId
+                character_overrides = overridesJson
             };
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(SettingsFile, json);
 
+            CharacterSettingsChanged?.Invoke();
             await Dispatcher.UIThread.InvokeAsync(() => StatusMessage = "设置已保存");
             Log.Information("Settings saved to {Path}", SettingsFile);
         }

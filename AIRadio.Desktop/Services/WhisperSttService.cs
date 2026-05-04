@@ -63,7 +63,8 @@ public class WhisperSttService : ISttService, IDisposable
         try
         {
             using var processor = _factory.CreateBuilder()
-                .WithLanguage("zh")
+                .WithLanguage("zh-CN")
+                .WithNoSpeechThreshold(0.3f)
                 .Build();
 
             await using var fileStream = File.OpenRead(wavFilePath);

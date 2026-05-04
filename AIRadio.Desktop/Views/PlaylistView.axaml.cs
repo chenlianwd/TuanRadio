@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -47,6 +48,14 @@ public partial class PlaylistView : UserControl
         if (files.Count > 0)
         {
             vm.AddFiles(files.Select(f => f.TryGetLocalPath()!).Where(p => p != null).ToArray());
+        }
+    }
+
+    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is PlaylistViewModel vm)
+        {
+            vm.SearchCommand.Execute().Subscribe();
         }
     }
 }

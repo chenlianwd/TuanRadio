@@ -11,6 +11,8 @@ public class SpectrumViewModel : ViewModelBase, IDisposable
     public ObservableCollection<float> Bands { get; } = new();
     private readonly IDisposable _spectrumSub;
 
+    public event Action<float[]>? SpectrumReceived;
+
     private const int BandCount = 16;
 
     public SpectrumViewModel(IAudioService audioService)
@@ -27,6 +29,7 @@ public class SpectrumViewModel : ViewModelBase, IDisposable
                 {
                     Bands[i] = data[i];
                 }
+                SpectrumReceived?.Invoke(data);
             });
     }
 

@@ -12,6 +12,12 @@ namespace AIRadio.Desktop.ViewModels;
 public class PlayerViewModel : ViewModelBase, IDisposable
 {
     private readonly IAudioService _audioService;
+    private readonly IDisposable _trackSub;
+    private readonly IDisposable _stateSub;
+    private readonly IDisposable _posSub;
+    private readonly IDisposable _volSub;
+
+    public IAudioService AudioService => _audioService;
 
     [Reactive] public string TrackTitle { get; set; } = "未播放";
     [Reactive] public string TrackArtist { get; set; } = "";
@@ -32,11 +38,6 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> NextCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleShuffleCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleRepeatCommand { get; }
-
-    private readonly IDisposable _trackSub;
-    private readonly IDisposable _stateSub;
-    private readonly IDisposable _posSub;
-    private readonly IDisposable _volSub;
 
     public PlayerViewModel(IAudioService audioService)
     {

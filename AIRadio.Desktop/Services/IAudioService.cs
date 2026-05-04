@@ -39,4 +39,5 @@ public interface IAudioService
     void RemoveTrack(Track track);
     void ClearPlaylist();
     void PlayTtsAudio(byte[] audioData);
+    IObservable<bool> TtsStateChanged { get; }
 }

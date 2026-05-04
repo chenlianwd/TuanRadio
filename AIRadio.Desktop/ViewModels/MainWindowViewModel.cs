@@ -60,6 +60,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);
 
+        // Re-apply character when settings are saved
+        SettingsVM.CharacterSettingsChanged += () => SwitchCharacter(SelectedCharacter);
+
         _trackEndedSub = _audioService.TrackEnded
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(current =>
@@ -77,16 +80,21 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SelectedCharacter = character;
         IsCharacterPickerOpen = false;
 
+        // Apply per-character overrides from settings if available
+        var ov = SettingsVM.GetOverride(character.Id);
+        var voiceId = ov?.VoiceId ?? character.VoiceId;
+        var personality = ov?.Personality ?? character.PersonalityPrompt;
+
         _djService.Initialize(new DJProfile
         {
             Name = character.DisplayName,
             Description = character.Description,
-            VoiceId = character.VoiceId,
+            VoiceId = voiceId,
             TtsEnabled = _djService.TtsEnabled,
-            SystemPrompt = character.PersonalityPrompt
+            SystemPrompt = personality
         });
 
-        Log.Information("Switched to character: {Name} (voice: {Voice})", character.DisplayName, character.VoiceId);
+        Log.Information("Switched to character: {Name} (voice: {Voice})", character.DisplayName, voiceId);
     }
 
     private async System.Threading.Tasks.Task HandleTrackTransitionAsync(Track current, Track next)
