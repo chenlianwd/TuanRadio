@@ -144,9 +144,9 @@
 
                 <!-- Character avatar -->
                 <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,6,0,0">
-                    <Border Width="140" Height="140" CornerRadius="70" Background="#FF1A1A1A" BorderBrush="#FF9B59B0" BorderThickness="2">
+                    <Border x:Name="AvatarBorder" Width="140" Height="140" CornerRadius="70" Background="#FF1A1A1A" BorderBrush="#FF9B59B0" BorderThickness="2">
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock Text="{Binding SelectedCharacter.DisplayName[0]}" FontSize="48" FontWeight="700"
+                            <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}" FontSize="48" FontWeight="700"
                                        Foreground="#FF9B59B0" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Border>

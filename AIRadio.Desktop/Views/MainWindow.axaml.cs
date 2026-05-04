@@ -1,7 +1,10 @@
 using System;
 using System.Linq;
+using Avalonia;
+using Avalonia.Animation;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Media;
 using Serilog;
 
 namespace AIRadio.Desktop.Views;
@@ -53,22 +56,9 @@ public partial class MainWindow : Window
 
     private async void OnLive2DCommand(string expression, string motion)
     {
-        // Live2D removed - no-op
-    }
-
-    private void OnOverlayClick(object? sender, PointerPressedEventArgs e)
-    {
-        if (DataContext is ViewModels.MainWindowViewModel vm)
+        if (this.Find<Border>("AvatarBorder") is Border border)
         {
-            vm.IsSettingsOpen = false;
-        }
-    }
-
-    private void OnCharacterOverlayClick(object? sender, PointerPressedEventArgs e)
-    {
-        if (DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            vm.IsCharacterPickerOpen = false;
+            await Animations.PlayBounceAsync(border);
         }
     }
 
@@ -77,7 +67,18 @@ public partial class MainWindow : Window
         if (sender is Border { DataContext: Models.CharacterProfile character } &&
             DataContext is ViewModels.MainWindowViewModel vm)
         {
-            vm.SelectCharacterCommand.Execute(character);
+            if (character == vm.SelectedCharacter) return;
+
+            if (this.Find<Border>("AvatarBorder") is Border border &&
+                this.Find<TextBlock>("AvatarLetter") is TextBlock letter)
+            {
+                _ = Animations.PlayCharacterSwitchAsync(border, letter, character.DisplayName,
+                    () => vm.SelectCharacterCommand.Execute(character));
+            }
+            else
+            {
+                vm.SelectCharacterCommand.Execute(character);
+            }
         }
     }
 }
