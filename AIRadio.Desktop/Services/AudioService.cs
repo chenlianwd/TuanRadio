@@ -257,8 +257,13 @@ public class AudioService : IAudioService, IDisposable
         var track = _playlist[index];
         try
         {
-            // Stop current playback first to prevent mixing
+            // Stop current playback and dispose old media to prevent mixing and memory leaks
+            var oldMedia = _player.Media;
             _player.Stop();
+            if (oldMedia != null)
+            {
+                oldMedia.Dispose();
+            }
 
             var isUrl = track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                      || track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);

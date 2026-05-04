@@ -3,73 +3,38 @@
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
         xmlns:views="using:AIRadio.Desktop.Views"
         xmlns:models="using:AIRadio.Desktop.Models"
-        xmlns:webview="using:AvaloniaWebView"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="AI Radio"
+        Title="AIRadio"
         Width="1100" Height="720"
         MinWidth="900" MinHeight="550"
-        TransparencyLevelHint="AcrylicBlur"
-        Background="#FF121212">
+        Background="#FF000000">
 
     <Window.Styles>
-        <!-- Card style: dark surface -->
-        <Style Selector="Border.card">
-            <Setter Property="Background" Value="#FF181818"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="16"/>
-        </Style>
-
-        <!-- Pill button -->
+        <!-- Basic button style -->
         <Style Selector="Button">
-            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Background" Value="#FF1C1C1C"/>
             <Setter Property="Foreground" Value="#FFFFFFFF"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius" Value="16"/>
-            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="12,8"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="FontWeight" Value="700"/>
-            <Setter Property="HorizontalAlignment" Value="Center"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
         <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="#FF2A2A2A"/>
         </Style>
-        <Style Selector="Button.green">
-            <Setter Property="Background" Value="#FF1ED760"/>
-            <Setter Property="Foreground" Value="#FF000000"/>
-        </Style>
-        <Style Selector="Button.green:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#FF1DB954"/>
-        </Style>
-        <Style Selector="Button.circle">
-            <Setter Property="CornerRadius" Value="100"/>
-            <Setter Property="Padding" Value="12"/>
-            <Setter Property="Background" Value="#FF1ED760"/>
-            <Setter Property="Foreground" Value="#FF000000"/>
-        </Style>
-        <Style Selector="Button.icon-btn">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding" Value="8"/>
-        </Style>
-
-        <!-- Slider -->
-        <Style Selector="Slider">
-            <Setter Property="Foreground" Value="#FF1ED760"/>
-        </Style>
 
         <!-- TextBox -->
         <Style Selector="TextBox">
-            <Setter Property="Background" Value="#FF1F1F1F"/>
+            <Setter Property="Background" Value="#FF1C1C1C"/>
             <Setter Property="Foreground" Value="#FFFFFFFF"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="14,8"/>
+            <Setter Property="Padding" Value="12,10"/>
             <Setter Property="FontSize" Value="14"/>
         </Style>
         <Style Selector="TextBox:focus /template/ Border#border">
-            <Setter Property="BorderBrush" Value="#FFFFFFFF"/>
+            <Setter Property="BorderBrush" Value="#FF333333"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
 
@@ -80,126 +45,147 @@
         </Style>
         <Style Selector="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="8,6"/>
         </Style>
         <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#FF282828"/>
+            <Setter Property="Background" Value="#FF2A2A2A"/>
         </Style>
         <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#FF232323"/>
+            <Setter Property="Background" Value="#FF222222"/>
         </Style>
 
         <!-- ScrollBar -->
-        <Style Selector="ScrollViewer:pointerover ScrollBar">
-            <Setter Property="Opacity" Value="1"/>
-        </Style>
         <Style Selector="ScrollBar">
-            <Setter Property="Opacity" Value="0"/>
-            <Setter Property="Width" Value="8"/>
+            <Setter Property="Opacity" Value="0.3"/>
+            <Setter Property="Width" Value="6"/>
+        </Style>
+
+        <!-- Slider -->
+        <Style Selector="Slider">
+            <Setter Property="Foreground" Value="#FF1ED760"/>
         </Style>
     </Window.Styles>
 
-    <Panel>
-        <DockPanel>
-            <!-- Now-playing-style top bar -->
-            <Border DockPanel.Dock="Top" Background="#FF000000" Padding="24,14">
-                <Grid ColumnDefinitions="*,Auto">
-                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                        <TextBlock Text="●" FontSize="14" Foreground="#FF1ED760" VerticalAlignment="Center"/>
-                        <TextBlock Text="AI Radio" FontSize="16" FontWeight="700" Foreground="#FFFFFFFF" VerticalAlignment="Center"/>
-                        <TextBlock Text="数字人主播电台" FontSize="12" VerticalAlignment="Center" Foreground="#FFB3B3B3" Margin="0,1,0,0"/>
-                    </StackPanel>
-                    <Button Grid.Column="1" Command="{Binding ToggleSettingsCommand}"
-                            Content="设置" FontSize="12" Padding="16,6"
-                            CornerRadius="500"/>
-                </Grid>
-            </Border>
-
-            <!-- Main content -->
-            <Grid ColumnDefinitions="360,*" Background="#FF121212">
-                <!-- Left sidebar: Avatar + Spectrum + Player + Playlist -->
-                <DockPanel Grid.Column="0" Margin="8,8,4,8">
-                    <!-- Player controls at bottom -->
-                    <views:PlayerView DockPanel.Dock="Bottom" DataContext="{Binding PlayerVM}" Margin="0,4,0,0"/>
-                    <!-- Spectrum above player -->
-                    <Border DockPanel.Dock="Bottom" Background="#FF181818" CornerRadius="8" Margin="0,4,0,4"
-                            Padding="16,10" Height="70">
-                        <Grid>
-                            <TextBlock Text="EQUALIZER" FontSize="9" FontWeight="700" Foreground="#FF535353"
-                                       HorizontalAlignment="Left" VerticalAlignment="Top"
-                                       LetterSpacing="1.5"/>
-                            <views:SpectrumView DataContext="{Binding SpectrumVM}" Margin="0,6,0,0"/>
-                        </Grid>
-                    </Border>
-                    <!-- Playlist takes remaining space -->
-                    <views:PlaylistView DockPanel.Dock="Bottom" DataContext="{Binding PlaylistVM}" Margin="0,0,0,4"/>
-                    <!-- Avatar at top - Live2D -->
-                    <Border Background="#FF181818" CornerRadius="8" Margin="0,0,0,4" ClipToBounds="True" MinHeight="160">
-                        <Grid>
-                            <webview:WebView x:Name="Live2DWebView" Url="http://localhost:18080/live2d.html" Background="#FF181818"/>
-                            <!-- Character name overlay -->
-                            <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="10" Padding="8,4"
-                                    Background="#AA000000" CornerRadius="4">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock Text="{Binding SelectedCharacter.DisplayName}" FontSize="12"
-                                               FontWeight="700" Foreground="#FFFFFFFF"/>
-                                    <TextBlock Text="{Binding SelectedCharacter.Description}" FontSize="10"
-                                               Foreground="#FFB3B3B3" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-                            <!-- Gear button -->
-                            <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
-                                    Command="{Binding ToggleCharacterPickerCommand}"
-                                    Background="#AA000000" Foreground="#FFFFFFFF"
-                                    CornerRadius="500" Padding="6,4" FontSize="14" FontWeight="700">
-                                ⚙
-                            </Button>
-                        </Grid>
-                    </Border>
-                </DockPanel>
-
-                <!-- Right: Chat -->
-                <views:ChatView Grid.Column="1" DataContext="{Binding ChatVM}" Margin="4,8,8,8"/>
-            </Grid>
-        </DockPanel>
-
-        <!-- Settings overlay -->
-        <Panel x:Name="SettingsOverlay" IsVisible="{Binding IsSettingsOpen}" ZIndex="100">
-            <Border Background="#CC000000" PointerPressed="OnOverlayClick"/>
-            <Border Background="#FF282828" CornerRadius="12" Padding="32"
-                    MaxWidth="520" MaxHeight="640"
-                    HorizontalAlignment="Center" VerticalAlignment="Center">
-                <ScrollViewer>
-                    <views:SettingsView DataContext="{Binding SettingsVM}"/>
-                </ScrollViewer>
-            </Border>
-        </Panel>
-
-        <!-- Character picker overlay -->
-        <Panel x:Name="CharacterOverlay" IsVisible="{Binding IsCharacterPickerOpen}" ZIndex="101">
-            <Border Background="#CC000000" PointerPressed="OnCharacterOverlayClick"/>
-            <Border Background="#FF282828" CornerRadius="12" Padding="24"
-                    MaxWidth="400" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="选择主播" FontSize="16" FontWeight="700" Foreground="#FFFFFFFF"/>
-                    <ItemsControl ItemsSource="{Binding Characters}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="models:CharacterProfile">
-                                <Border Background="#FF1F1F1F" CornerRadius="8" Padding="14,10" Margin="0,2"
-                                        Cursor="Hand" PointerPressed="OnCharacterSelected">
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Grid.Column="0" Text=" " FontSize="24" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                        <StackPanel Grid.Column="1" Spacing="2">
-                                            <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="700" Foreground="#FFFFFFFF"/>
-                                            <TextBlock Text="{Binding Description}" FontSize="11" Foreground="#FFB3B3B3"/>
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+    <Grid RowDefinitions="48,*">
+        <!-- Top bar - minimal black bar -->
+        <Border Grid.Row="0" Background="#FF0A0A0A">
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="16,0">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Ellipse Width="8" Height="8" Fill="#FF1ED760"/>
+                    <TextBlock Text="AIRadio" FontSize="14" FontWeight="700" Foreground="#FFFFFFFF"/>
                 </StackPanel>
-            </Border>
-        </Panel>
-    </Panel>
+                <Button Grid.Column="2" Command="{Binding ToggleSettingsCommand}"
+                        Content="设置" FontSize="12" Padding="12,6" Background="Transparent"/>
+            </Grid>
+        </Border>
+
+        <!-- Main content - left playlist, right chat -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>360,*</Grid.ColumnDefinitions>
+
+            <!-- Left: Playlist & Player -->
+            <ScrollViewer Grid.Column="0" Background="#FF000000">
+                <StackPanel Margin="12">
+                    <!-- Character selector -->
+                    <TextBlock Text="选择主播" FontSize="11" Foreground="#FF666666" Margin="4,0,0,8"/>
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                        <ItemsControl ItemsSource="{Binding Characters}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:CharacterProfile">
+                                    <Border Background="#FF1C1C1C" CornerRadius="20" Padding="10,6"
+                                            Cursor="Hand" PointerPressed="OnCharacterSelected">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Border Width="24" Height="24" CornerRadius="12" Background="#FF1ED760">
+                                                <TextBlock Text="{Binding DisplayName[0]}" FontSize="11" FontWeight="700"
+                                                           Foreground="#FF000000" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="12" Foreground="#FFFFFFFF"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <!-- Player card -->
+                    <Border Background="#FF1C1C1C" CornerRadius="12" Padding="16" Margin="0,0,0,12">
+                        <StackPanel Spacing="12">
+                            <!-- Album art placeholder -->
+                            <Border Height="160" CornerRadius="8" Background="#FF0D0D0D">
+                                <Grid>
+                                    <TextBlock Text="♪" FontSize="48" Foreground="#FF333333"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <!-- Play button overlay -->
+                                    <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                                            Width="48" Height="48" CornerRadius="24" Background="#FF1ED760">
+                                        <TextBlock Text="▶" FontSize="20" Foreground="#FF000000"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <!-- Track info -->
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontSize="15" FontWeight="700"
+                                           Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding PlayerVM.TrackArtist}" FontSize="12"
+                                           Foreground="#FF666666"/>
+                            </StackPanel>
+
+                            <!-- Progress -->
+                            <StackPanel Spacing="4">
+                                <Slider Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                                        Value="{Binding PlayerVM.CurrentSeconds}"
+                                        PointerReleased="OnSliderReleased"
+                                        Classes="player-slider"/>
+                                <Grid ColumnDefinitions="*,*">
+                                    <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}"
+                                               FontSize="10" Foreground="#FF666666"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding PlayerVM.DurationText}"
+                                               FontSize="10" Foreground="#FF666666" HorizontalAlignment="Right"/>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Controls -->
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <TextBlock Grid.Column="0" Text="🔀" FontSize="14" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+                                    <Button Content="⏮" FontSize="16" Padding="10" Background="Transparent"
+                                            Command="{Binding PlayerVM.PreviousCommand}"/>
+                                    <Button Content="{Binding PlayerVM.PlayPauseText}" FontSize="20" Padding="14"
+                                            CornerRadius="100" Background="#FF1ED760" Foreground="#FF000000"
+                                            Command="{Binding PlayerVM.PlayCommand}"/>
+                                    <Button Content="⏭" FontSize="16" Padding="10" Background="Transparent"
+                                            Command="{Binding PlayerVM.NextCommand}"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" Text="🔁" FontSize="14" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- Volume -->
+                            <Grid ColumnDefinitions="Auto,*" Margin="0,4,0,0">
+                                <TextBlock Grid.Column="0" Text="🔊" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Playlist -->
+                    <TextBlock Text="播放列表" FontSize="11" Foreground="#FF666666" Margin="4,0,0,8"/>
+                    <Border Background="#FF1C1C1C" CornerRadius="12" Padding="8">
+                        <views:PlaylistView DataContext="{Binding PlaylistVM}"/>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Right: Chat -->
+            <views:ChatView Grid.Column="1" DataContext="{Binding ChatVM}" Margin="0,12,12,12"/>
+        </Grid>
+    </Grid>
 </Window>

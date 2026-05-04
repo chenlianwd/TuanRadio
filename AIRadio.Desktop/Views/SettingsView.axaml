@@ -16,6 +16,17 @@
                     Foreground="#FF000000"/>
         </StackPanel>
 
+        <!-- Language selection -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="AI 回复语言" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <ComboBox SelectedValue="{Binding SelectedLanguage}"
+                      ItemsSource="{Binding Languages}"
+                      SelectedValueBinding="{Binding Id}"
+                      DisplayMemberBinding="{Binding DisplayName}"
+                      HorizontalAlignment="Stretch"/>
+            <TextBlock Text="选择 AI 主播回复使用的语言，可用于英语听力练习" Foreground="#FF666666" FontSize="11"/>
+        </StackPanel>
+
         <!-- TTS -->
         <StackPanel Spacing="6">
             <TextBlock Text="语音播报" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>

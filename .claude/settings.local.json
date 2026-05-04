@@ -59,7 +59,10 @@
       "Bash(git mv *)",
       "Bash(git reset *)",
       "Bash(git -C d:/Program/ClaudeWorkZone/AIRadio rev-parse --show-toplevel)",
-      "Bash(ilspycmd /c/Users/14870/.nuget/packages/libvlcsharp/3.9.7.1/lib/netstandard2.0/LibVLCSharp.dll)"
+      "Bash(ilspycmd /c/Users/14870/.nuget/packages/libvlcsharp/3.9.7.1/lib/netstandard2.0/LibVLCSharp.dll)",
+      "Bash(taskkill /F /PID 17164)",
+      "Bash(taskkill /F /PID 7660)",
+      "mcp__plugin_everything-claude-code_github__search_repositories"
     ]
   }
 }

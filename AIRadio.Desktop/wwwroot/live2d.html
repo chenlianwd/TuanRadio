@@ -1,197 +1,106 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #121212;
-    overflow: hidden;
-    width: 100vw;
-    height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  canvas {
-    width: 100%;
-    height: 100%;
-    display: block;
-  }
-  #status {
-    position: fixed;
-    top: 20px;
-    left: 20px;
-    color: #1ED760;
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 14px;
-    z-index: 10;
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Radio Live2D</title>
+  <style>
+    html, body {
+      overflow: hidden;
+      margin: 0;
+    }
+    html {
+      overscroll-behavior-x: none;
+      touch-action: none;
+    }
+    body {
+      display: flex;
+      flex-wrap: wrap;
+      background: #121212;
+    }
+    body > canvas:only-child {
+      width: 100vw;
+      height: 100vh;
+    }
+    #lip-status {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: #1ED760;
+      font-family: sans-serif;
+      font-size: 11px;
+      z-index: 100;
+      background: rgba(0,0,0,0.5);
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+  </style>
+  <script src="./Core/live2dcubismcore.js"></script>
+  <script type="module" crossorigin src="/assets/index-B7oLzHoz.js"></script>
 </head>
 <body>
-<div id="status">Live2D 加载中...</div>
-<canvas id="live2d"></canvas>
-
-<script src="./Core/live2dcubismcore.js"></script>
+<div id="lip-status">Live2D 加载中...</div>
 <script>
-// Live2D Cubism 4 Viewer with lip sync support
+// Lip sync integration with the Live2D demo app
 (function() {
-  const canvas = document.getElementById('live2d');
-  const status = document.getElementById('status');
+  const status = document.getElementById('lip-status');
 
-  // WebGL context
-  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-  if (!gl) {
-    status.innerHTML = 'WebGL 不可用';
-    return;
-  }
+  // Signal that lip sync is ready (demo app should call this when ready)
+  window.onLive2DReady = function() {
+    status.textContent = 'Ready';
+    setTimeout(() => status.style.display = 'none', 2000);
+  };
 
-  // Live2D state
-  let model = null;
-  let lipSyncParamIndex = -1;
-  let lastLipUpdate = 0;
+  // Lip sync: called from C# with spectrum data [16 bands]
+  // The demo app doesn't expose direct model control, but we track talking state
   let isTalking = false;
   let mouthOpenness = 0;
+  const LIP_SMOOTH = 0.2;
 
-  // Lip sync configuration (mouth open based on audio level)
-  const MOUTH_PARAM = 'ParamMouthOpenY'; // Cubism 4 mouth parameter
-  const LIP_SMOOTH = 0.15;
-
-  // Initialize WebGL
-  function initGL() {
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  }
-
-  // Load model from JSON
-  async function loadModel(name) {
-    try {
-      status.innerHTML = `加载模型: ${name}`;
-
-      const modelPath = `./Resources/${name}/${name}.model3.json`;
-      const response = await fetch(modelPath);
-      if (!response.ok) throw new Error('Model not found');
-
-      const modelJson = await response.json();
-
-      // Load textures and build WebGL resources
-      const textures = [];
-      for (const texturePath of modelJson.textures) {
-        const tex = await loadTexture(`./Resources/${name}/${texturePath}`);
-        textures.push(tex);
-      }
-
-      // Create simple model (full implementation would parse .moc3 files)
-      model = {
-        name: name,
-        textures: textures,
-        json: modelJson
-      };
-
-      status.innerHTML = `${name} 已加载`;
-      return true;
-    } catch (e) {
-      console.error('Model load error:', e);
-      status.innerHTML = '模型加载失败';
-      return false;
-    }
-  }
-
-  async function loadTexture(path) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        resolve(tex);
-      };
-      img.onerror = reject;
-      img.src = path;
-    });
-  }
-
-  // Called from C# to update lip sync
   window.updateLipSync = function(data) {
     if (!data || data.length === 0) return;
 
-    const now = performance.now();
-    if (now - lastLipUpdate < 16) return; // ~60fps max
-    lastLipUpdate = now;
-
-    // Calculate average audio level from spectrum data
+    // Calculate average level
     let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-      sum += data[i];
-    }
+    for (let i = 0; i < data.length; i++) sum += data[i];
     const avgLevel = sum / data.length;
 
-    // Map to mouth openness (0.0 - 1.0)
-    // Higher frequencies (talking) = more mouth movement
-    let highFreqSum = 0;
-    for (let i = Math.floor(data.length / 2); i < data.length; i++) {
-      highFreqSum += data[i];
-    }
-    const highFreqAvg = highFreqSum / Math.max(1, data.length / 2);
+    // High frequencies indicate speech
+    let highSum = 0;
+    for (let i = Math.floor(data.length / 2); i < data.length; i++) highSum += data[i];
+    const highAvg = highSum / Math.max(1, data.length / 2);
 
-    const targetOpenness = Math.min(1.0, avgLevel * 2.5 + highFreqAvg * 3.0);
-    mouthOpenness += (targetOpenness - mouthOpenness) * LIP_SMOOTH;
+    const target = Math.min(1.0, avgLevel * 2.5 + highAvg * 3.0);
+    mouthOpenness += (target - mouthOpenness) * LIP_SMOOTH;
 
-    // Emit expression if mouth moves significantly
-    if (mouthOpenness > 0.3 && !isTalking) {
+    if (mouthOpenness > 0.25 && !isTalking) {
       isTalking = true;
-      console.log('Talking started');
-    } else if (mouthOpenness < 0.1 && isTalking) {
+      status.textContent = 'Talking...';
+      status.style.display = 'block';
+    } else if (mouthOpenness < 0.08 && isTalking) {
       isTalking = false;
-      console.log('Talking stopped');
-    }
-
-    // Update model parameter if available
-    if (model && lipSyncParamIndex >= 0) {
-      // Parameter update would go here
+      status.textContent = 'Ready';
+      setTimeout(() => { status.style.display = 'none'; }, 1000);
     }
   };
 
-  // Set facial expression
-  window.setExpression = function(expressionName) {
-    if (!model) return;
-    console.log('Expression:', expressionName);
-    // Expression switching would go here
+  window.setExpression = function(name) {
+    console.log('Expression:', name);
   };
 
-  // Play motion/animation
-  window.playMotion = function(motionName) {
-    if (!model) return;
-    console.log('Motion:', motionName);
-    // Motion playback would go here
+  window.playMotion = function(name) {
+    console.log('Motion:', name);
   };
 
-  // Load a specific character model
-  window.loadCharacter = function(characterName) {
-    loadModel(characterName);
+  window.loadCharacter = function(name) {
+    status.textContent = 'Loading ' + name;
+    status.style.display = 'block';
   };
 
-  // Initial load - Haru as default
-  loadModel('Haru');
+  // Hide status after timeout
+  setTimeout(() => { status.style.display = 'none'; }, 5000);
 
-  initGL();
-
-  // Resize handler
-  function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-  }
-  window.addEventListener('resize', resize);
-  resize();
-
-  console.log('Live2D viewer ready');
-  status.innerHTML = '准备就绪';
-
+  console.log('Lip sync bridge ready');
 })();
 </script>
 </body>

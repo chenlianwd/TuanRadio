@@ -91,7 +91,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             Description = character.Description,
             VoiceId = voiceId,
             TtsEnabled = SettingsVM.TtsEnabled,
-            SystemPrompt = personality
+            SystemPrompt = personality,
+            Language = SettingsVM.SelectedLanguage
         });
 
         Log.Information("Switched to character: {Name} (voice: {Voice})", character.DisplayName, voiceId);

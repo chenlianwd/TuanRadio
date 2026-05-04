@@ -73,6 +73,7 @@ public class DJProfile
     public string VoiceId { get; set; } = "male-qn-qingse";
     public bool TtsEnabled { get; set; } = true;
     public string SystemPrompt { get; set; } = string.Empty;
+    public string Language { get; set; } = "zh"; // "zh" or "en"
 }
 
 public class DJScript

@@ -4,40 +4,53 @@
              x:Class="AIRadio.Desktop.Views.PlayerView"
              x:DataType="vm:PlayerViewModel">
 
-    <Border Background="#FF181818" CornerRadius="8" Padding="16,12">
-        <StackPanel Spacing="12">
+    <Border CornerRadius="12" Padding="16,14">
+        <Border.Background>
+            <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#33FFFFFF"/>
+                <GradientStop Offset="1" Color="#11FFFFFF"/>
+            </LinearGradientBrush>
+        </Border.Background>
+
+        <StackPanel Spacing="10">
             <!-- Track info -->
             <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Grid.Column="0">
-                    <TextBlock Text="{Binding TrackTitle}" FontSize="14" FontWeight="700"
+                    <TextBlock Text="{Binding TrackTitle}" FontSize="15" FontWeight="700"
                                Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding TrackArtist}" FontSize="11" Foreground="#FF808080"
-                               Margin="0,1,0,0"/>
+                    <TextBlock Text="{Binding TrackArtist}" FontSize="12" Foreground="#FF808080"
+                               Margin="0,2,0,0"/>
                 </StackPanel>
+                <!-- Live indicator -->
+                <Border Grid.Column="1" Background="#FF1ED760" CornerRadius="4" Padding="6,2"
+                        VerticalAlignment="Center" IsVisible="{Binding IsPlaying}">
+                    <TextBlock Text="LIVE" FontSize="9" FontWeight="800" Foreground="#FF000000"/>
+                </Border>
             </Grid>
 
-            <!-- Progress bar -->
-            <Grid ColumnDefinitions="Auto,*,Auto">
+            <!-- Progress bar - larger touch target -->
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
                 <TextBlock Grid.Column="0" Text="{Binding PositionText}" VerticalAlignment="Center"
-                           FontSize="10" Foreground="#FF808080" MinWidth="28"/>
+                           FontSize="11" Foreground="#FF808080" MinWidth="36"/>
                 <Slider Grid.Column="1" Minimum="0" Maximum="{Binding TotalSeconds}"
                         Value="{Binding CurrentSeconds}"
-                        Margin="8,0" VerticalAlignment="Center"
-                        PointerReleased="OnSliderReleased" Height="4"/>
+                        Margin="10,0" VerticalAlignment="Center"
+                        PointerReleased="OnSliderReleased"
+                        Classes="player-slider"/>
                 <TextBlock Grid.Column="2" Text="{Binding DurationText}" VerticalAlignment="Center"
-                           FontSize="10" Foreground="#FF808080" MinWidth="28"/>
+                           FontSize="11" Foreground="#FF808080" MinWidth="36" HorizontalAlignment="Right"/>
             </Grid>
 
-            <!-- Transport controls -->
+            <!-- Transport controls - modern style -->
             <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2,0,0">
                 <!-- Shuffle -->
                 <Button Grid.Column="0" Command="{Binding ToggleShuffleCommand}"
-                        FontSize="12" Padding="8,6" CornerRadius="500"
+                        Width="36" Height="36" CornerRadius="18"
                         VerticalAlignment="Center">
                     <Button.Background>
                         <Binding Path="IsShuffled" Converter="{StaticResource BoolToAccentBg}"/>
                     </Button.Background>
-                    <TextBlock FontSize="11">
+                    <TextBlock FontSize="12" HorizontalAlignment="Center">
                         <TextBlock.Foreground>
                             <Binding Path="IsShuffled" Converter="{StaticResource BoolToAccentFg}"/>
                         </TextBlock.Foreground>
@@ -46,31 +59,31 @@
                 </Button>
 
                 <!-- Center: Previous / Play / Next -->
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="20" HorizontalAlignment="Center">
-                    <Button Command="{Binding PreviousCommand}" FontSize="16" Padding="8"
-                            Background="Transparent" CornerRadius="100">
-                        <TextBlock Text="|◁" Foreground="#FFFFFFFF"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+                    <Button Command="{Binding PreviousCommand}" Width="36" Height="36"
+                            CornerRadius="18" Background="#22FFFFFF">
+                        <TextBlock Text="⏮" FontSize="14" Foreground="#FFFFFFFF"/>
                     </Button>
 
-                    <Button Command="{Binding PlayCommand}" FontSize="18" Padding="12"
-                            CornerRadius="100" Background="#FF1ED760">
-                        <TextBlock Text="{Binding PlayPauseText}" Foreground="#FF000000" FontWeight="Bold"/>
+                    <Button Command="{Binding PlayCommand}" Width="48" Height="48"
+                            CornerRadius="24" Background="#FF1ED760">
+                        <TextBlock Text="{Binding PlayPauseText}" FontSize="18" Foreground="#FF000000" FontWeight="Bold"/>
                     </Button>
 
-                    <Button Command="{Binding NextCommand}" FontSize="16" Padding="8"
-                            Background="Transparent" CornerRadius="100">
-                        <TextBlock Text="▷|" Foreground="#FFFFFFFF"/>
+                    <Button Command="{Binding NextCommand}" Width="36" Height="36"
+                            CornerRadius="18" Background="#22FFFFFF">
+                        <TextBlock Text="⏭" FontSize="14" Foreground="#FFFFFFFF"/>
                     </Button>
                 </StackPanel>
 
                 <!-- Repeat -->
                 <Button Grid.Column="2" Command="{Binding ToggleRepeatCommand}"
-                        FontSize="12" Padding="8,6" CornerRadius="500"
+                        Width="36" Height="36" CornerRadius="18"
                         VerticalAlignment="Center" HorizontalAlignment="Right">
                     <Button.Background>
                         <Binding Path="RepeatMode" Converter="{StaticResource RepeatToBg}"/>
                     </Button.Background>
-                    <TextBlock FontSize="11">
+                    <TextBlock FontSize="12" HorizontalAlignment="Center">
                         <TextBlock.Foreground>
                             <Binding Path="RepeatMode" Converter="{StaticResource RepeatToFg}"/>
                         </TextBlock.Foreground>
@@ -79,14 +92,15 @@
                 </Button>
             </Grid>
 
-            <!-- Volume -->
+            <!-- Volume - modern style -->
             <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2,0,0">
-                <TextBlock Grid.Column="0" Text="♪" FontSize="12" VerticalAlignment="Center"
-                           Foreground="#FF808080" Margin="0,0,6,0"/>
+                <TextBlock Grid.Column="0" Text="🔊" FontSize="12" VerticalAlignment="Center"
+                           Foreground="#FF808080"/>
                 <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding Volume}"
-                        SmallChange="0.01" LargeChange="0.1" VerticalAlignment="Center" Height="3"/>
-                <TextBlock Grid.Column="2" FontSize="10" Foreground="#FF808080" Margin="6,0,0,0"
-                           VerticalAlignment="Center" MinWidth="28">
+                        SmallChange="0.01" LargeChange="0.1" VerticalAlignment="Center"
+                        Classes="player-slider"/>
+                <TextBlock Grid.Column="2" FontSize="11" Foreground="#FF808080" Margin="8,0,0,0"
+                           VerticalAlignment="Center" MinWidth="36" HorizontalAlignment="Right">
                     <Run Text="{Binding Volume, Mode=OneWay, StringFormat={}{0:P0}}"/>
                 </TextBlock>
             </Grid>
