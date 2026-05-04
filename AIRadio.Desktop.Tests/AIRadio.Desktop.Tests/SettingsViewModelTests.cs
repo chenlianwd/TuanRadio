@@ -101,9 +101,7 @@ public class SettingsViewModelTests
         var vm = new SettingsViewModel(_mockMinimax.Object, _mockDJ.Object, _mockStorage.Object);
         vm.ApiKey = "";
 
-        // Verify command exists and can be subscribed
-        var executed = false;
-        vm.TestConnectionCommand.Subscribe(_ => executed = true);
+        vm.TestConnectionCommand.Subscribe(_ => { });
 
         Assert.NotNull(vm.TestConnectionCommand);
     }
