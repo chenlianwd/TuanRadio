@@ -65,6 +65,8 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
 
+    public void SetUrlResolver(Func<string, Task<string?>> resolver) => _urlResolver = resolver;
+
     public AudioService()
     {
         Core.Initialize();
@@ -79,7 +81,11 @@ public class AudioService : IAudioService, IDisposable
         {
             Log.Warning("Playback error on track: {Track}", CurrentTrack?.Title);
             SetState(PlaybackState.Stopped);
-            if (_playlist.Count > 1) Next();
+            // Retry with fresh URL before advancing
+            if (CurrentTrack != null && _currentIndex >= 0)
+                PlayTrack(_currentIndex, isRetry: true);
+            else if (_playlist.Count > 1)
+                Next();
         };
         _player.EndReached += (_, _) =>
         {
@@ -96,6 +102,22 @@ public class AudioService : IAudioService, IDisposable
             _ttsStateSubject.OnNext(false); // TTS ended
         };
 
+        // Duck main player volume when TTS is speaking
+        _ttsStateSubject.Subscribe(ttsPlaying =>
+        {
+            if (ttsPlaying)
+            {
+                // Duck: reduce main player to 20% of user volume
+                _player.Volume = (int)(_userVolume * 20);
+            }
+            else
+            {
+                // Restore volume
+                if (!_isFading)
+                    _player.Volume = (int)(_userVolume * 100);
+            }
+        });
+
         _fadeTimer = new System.Threading.Timer(_ => DoFadeStep(), null, Timeout.Infinite, Timeout.Infinite);
         _positionTimer = new System.Threading.Timer(_ => EmitPosition(), null, 500, 500);
     }
@@ -109,10 +131,14 @@ public class AudioService : IAudioService, IDisposable
 
     private void OnTrackEndReached()
     {
-        _trackEndedSubject.OnNext(CurrentTrack);
-
-        // If we're already doing a fade-out, DoFadeStep will handle advancement
+        // Guard: prevent double-trigger from EndReached + fade-out completing simultaneously
         if (_isFading && _fadeDirection == -1) return;
+
+        var now = Environment.TickCount64;
+        if (now - _lastAdvanceMs < 500) return; // debounce rapid re-entry
+        _lastAdvanceMs = now;
+
+        _trackEndedSubject.OnNext(CurrentTrack);
 
         if (_repeatMode == "single" && CurrentTrack != null)
         {
@@ -250,29 +276,47 @@ public class AudioService : IAudioService, IDisposable
         PlayTrack(_currentIndex);
     }
 
-    private void PlayTrack(int index)
+    private void PlayTrack(int index, bool isRetry = false)
     {
         if (index < 0 || index >= _playlist.Count) return;
 
         var track = _playlist[index];
         try
         {
-            // Stop current playback and dispose old media to prevent mixing and memory leaks
-            var oldMedia = _player.Media;
+            // Stop current playback - do NOT dispose old media here,
+            // LibVLC may still be using it internally during cleanup
             _player.Stop();
-            if (oldMedia != null)
+
+            string filePath = track.FilePath;
+
+            // For URL tracks with a source ID, refresh URL to avoid 403/404 from expired links
+            if (!string.IsNullOrEmpty(track.SourceId) && _urlResolver != null)
             {
-                oldMedia.Dispose();
+                if (filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (isRetry)
+                    {
+                        // Sync refresh on retry to get fresh URL
+                        var newUrl = RefreshTrackUrlSync(track);
+                        if (!string.IsNullOrEmpty(newUrl))
+                            filePath = newUrl;
+                    }
+                    else
+                    {
+                        // Fire-and-forget refresh for next play
+                        _ = RefreshTrackUrlAsync(track);
+                    }
+                }
             }
 
-            var isUrl = track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                     || track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-            var media = new Media(_libVLC, track.FilePath, isUrl ? FromType.FromLocation : FromType.FromPath);
+            var isUrl = filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                     || filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+            var media = new Media(_libVLC, filePath, isUrl ? FromType.FromLocation : FromType.FromPath);
             if (isUrl)
             {
                 media.AddOption(":network-caching=5000");
                 media.AddOption(":http-reconnect");
-                media.AddOption(":http-continuous");
             }
             _player.Media = media;
             _player.Volume = 0;
@@ -286,6 +330,43 @@ public class AudioService : IAudioService, IDisposable
             Log.Error(ex, "Failed to play track: {Track}", track);
             Next();
         }
+    }
+
+    private async System.Threading.Tasks.Task RefreshTrackUrlAsync(Track track)
+    {
+        try
+        {
+            var newUrl = await _urlResolver!(track.SourceId);
+            if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
+            {
+                track.FilePath = newUrl;
+                Log.Debug("Refreshed URL for track {Track}", track.Title);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to refresh URL for {Track}", track.Title);
+        }
+    }
+
+    private string? RefreshTrackUrlSync(Track track)
+    {
+        try
+        {
+            var task = _urlResolver!(track.SourceId);
+            var newUrl = task.GetAwaiter().GetResult();
+            if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
+            {
+                track.FilePath = newUrl;
+                Log.Debug("Sync refreshed URL for track {Track}", track.Title);
+                return newUrl;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to sync refresh URL for {Track}", track.Title);
+        }
+        return null;
     }
 
     private void StartFadeIn()
@@ -307,6 +388,8 @@ public class AudioService : IAudioService, IDisposable
 
     private long _fadeStepStart;
     private int _fadeDirection = 1;
+    private long _lastAdvanceMs;
+    private Func<string, Task<string?>>? _urlResolver;
 
     private void DoFadeStep()
     {
