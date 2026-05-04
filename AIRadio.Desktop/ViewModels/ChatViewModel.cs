@@ -24,9 +24,11 @@ public class ChatViewModel : ViewModelBase
     private readonly IMusicSearchService _musicSearchService;
     private readonly ISttService _sttService;
     private readonly IDisposable _stateSub;
+    private string? _pendingCommand;
 
     private WaveInEvent? _waveIn;
     private string? _tempWavPath;
+    private bool _isPlayingSong;
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
@@ -58,7 +60,21 @@ public class ChatViewModel : ViewModelBase
         ToggleVoiceInputCommand = ReactiveCommand.Create(ToggleVoiceInput);
         ToggleConversationModeCommand = ReactiveCommand.Create(ToggleConversationMode);
 
-        // Listen for TTS completion in conversation mode
+        // Listen for TTS completion to play song AFTER TTS finishes
+        _audioService.TtsStateChanged
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Where(playing => !playing)
+            .Subscribe(async _ =>
+            {
+                if (_pendingCommand != null)
+                {
+                    var cmd = _pendingCommand;
+                    _pendingCommand = null;
+                    await ExecuteCommandAsync(cmd);
+                }
+            });
+
+        // Listen for track end to restart listening in conversation mode
         _stateSub = _audioService.StateChanged
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(state =>
@@ -213,12 +229,25 @@ public class ChatViewModel : ViewModelBase
             DjEmotion = _djService.CurrentEmotion;
             Live2DCommand?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
 
-            if (command != null)
+            if (command != null && !_djService.TtsEnabled)
                 await ExecuteCommandAsync(command);
+            else if (command != null && _djService.TtsEnabled)
+                _pendingCommand = command;
 
             // TTS: generate and play speech (strip emoji so they aren't read aloud)
             if (_djService.TtsEnabled)
             {
+                var ttsText = StripEmoji(displayText);
+                if (!string.IsNullOrWhiteSpace(ttsText))
+                {
+                    var speechData = await _djService.GenerateSpeechAsync(ttsText);
+                    if (speechData is { Length: > 0 })
+                        _audioService.PlayTtsAudio(speechData);
+                }
+            }
+            else if (command == null)
+            {
+                // No TTS, just display text - use TTS anyway for voice feedback
                 var ttsText = StripEmoji(displayText);
                 if (!string.IsNullOrWhiteSpace(ttsText))
                 {
@@ -317,45 +346,64 @@ public class ChatViewModel : ViewModelBase
 
     private async Task PlaySongAsync(string query)
     {
-        Log.Information("DJ play request: {Query}", query);
-
-        var results = await _musicSearchService.SearchAsync(query, 5);
-        if (results.Count == 0)
+        if (_isPlayingSong) return;
+        _isPlayingSong = true;
+        try
         {
-            Messages.Add(new ChatMessage
-            {
-                Role = MessageRole.Assistant,
-                Content = "没找到这首歌，换个关键词试试？"
-            });
-            return;
-        }
+            Log.Information("DJ play request: {Query}", query);
 
-        var track = results[0];
-        var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
-        if (url == null)
-        {
-            Messages.Add(new ChatMessage
+            var results = await _musicSearchService.SearchAsync(query, 5);
+            Log.Debug("DJ search returned {Count} results", results.Count);
+            if (results.Count == 0)
             {
-                Role = MessageRole.Assistant,
-                Content = "这首歌暂时无法播放，换一首吧？"
-            });
-            return;
-        }
-
-        // Check if already in playlist
-        for (int i = 0; i < _audioService.Playlist.Count; i++)
-        {
-            if (_audioService.Playlist[i].FilePath == url)
-            {
-                _audioService.PlayAtIndex(i);
+                Messages.Add(new ChatMessage
+                {
+                    Role = MessageRole.Assistant,
+                    Content = "没找到这首歌，换个关键词试试？"
+                });
                 return;
             }
-        }
 
-        var t = track.ToTrack(url);
-        _audioService.AddTracks(new[] { t });
-        var index = _audioService.Playlist.Count - 1;
-        _audioService.PlayAtIndex(index);
+            var track = results[0];
+            Log.Debug("DJ got track: {Track}, fetching URL...", track.Title);
+            var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
+            Log.Debug("DJ got URL: {Url}", url != null ? "present" : "null");
+            if (url == null)
+            {
+                Messages.Add(new ChatMessage
+                {
+                    Role = MessageRole.Assistant,
+                    Content = "这首歌暂时无法播放，换一首吧？"
+                });
+                return;
+            }
+
+            // Check if already in playlist
+            for (int i = 0; i < _audioService.Playlist.Count; i++)
+            {
+                if (_audioService.Playlist[i].FilePath == url)
+                {
+                    Log.Debug("Track already in playlist at index {Index}, playing", i);
+                    _audioService.PlayAtIndex(i);
+                    return;
+                }
+            }
+
+            var t = track.ToTrack(url);
+            Log.Debug("Adding track to playlist and playing...");
+            _audioService.AddTracks(new[] { t });
+            var index = _audioService.Playlist.Count - 1;
+            _audioService.PlayAtIndex(index);
+            Log.Information("DJ track play initiated: {Track}", t);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "PlaySongAsync failed for query: {Query}", query);
+        }
+        finally
+        {
+            _isPlayingSong = false;
+        }
     }
 
     private static string MapExpression(string emotion) => emotion switch

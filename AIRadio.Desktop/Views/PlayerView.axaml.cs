@@ -22,11 +22,17 @@ public partial class PlayerView : UserControl
         InitializeComponent();
     }
 
+    private void OnSliderPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is PlayerViewModel vm)
+            vm.StartSeek();
+    }
+
     private void OnSliderReleased(object? sender, PointerReleasedEventArgs e)
     {
         if (sender is Slider slider && DataContext is PlayerViewModel vm)
         {
-            vm.SeekTo(slider.Value);
+            vm.EndSeek(slider.Value);
         }
     }
 }

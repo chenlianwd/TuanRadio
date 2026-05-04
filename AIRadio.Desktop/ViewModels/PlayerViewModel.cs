@@ -24,6 +24,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsPlaying { get; set; }
     [Reactive] public string PlayPauseText { get; set; } = "▶";
     [Reactive] public double CurrentSeconds { get; set; }
+    [Reactive] public double DisplaySeconds { get; set; }
     [Reactive] public double TotalSeconds { get; set; }
     [Reactive] public float Volume { get; set; } = 0.8f;
     [Reactive] public string PositionText { get; set; } = "0:00";
@@ -32,6 +33,8 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public string ShuffleText { get; set; } = "🔀";
     [Reactive] public string RepeatMode { get; set; } = "list";
     [Reactive] public string RepeatText { get; set; } = "🔁 列表";
+
+    private bool _isDragging;
 
     public ReactiveCommand<Unit, Unit> PlayCommand { get; }
     public ReactiveCommand<Unit, Unit> PreviousCommand { get; }
@@ -109,6 +112,8 @@ public class PlayerViewModel : ViewModelBase, IDisposable
             .Subscribe(pos =>
             {
                 CurrentSeconds = pos.TotalSeconds;
+                if (!_isDragging)
+                    DisplaySeconds = pos.TotalSeconds;
                 PositionText = FormatTime(pos);
             });
 
@@ -119,6 +124,17 @@ public class PlayerViewModel : ViewModelBase, IDisposable
 
     public void SeekTo(double seconds)
     {
+        _audioService.Seek(TimeSpan.FromSeconds(seconds));
+    }
+
+    public void StartSeek()
+    {
+        _isDragging = true;
+    }
+
+    public void EndSeek(double seconds)
+    {
+        _isDragging = false;
         _audioService.Seek(TimeSpan.FromSeconds(seconds));
     }
 
