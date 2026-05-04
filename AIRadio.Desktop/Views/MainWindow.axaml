@@ -1,220 +1,287 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
-        xmlns:views="using:AIRadio.Desktop.Views"
         xmlns:models="using:AIRadio.Desktop.Models"
+        xmlns:local="using:AIRadio.Desktop.Views"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="AIRadio"
-        Width="800" Height="560"
-        MinWidth="700" MinHeight="480"
-        Background="#FF0A0A0A">
+        Title="AIRadio FM"
+        Width="760" Height="760"
+        MinWidth="700" MinHeight="700"
+        SystemDecorations="None"
+        Background="#FF030305">
 
     <Window.Styles>
         <Style Selector="Button">
-            <Setter Property="Background" Value="#FF1C1C1C"/>
-            <Setter Property="Foreground" Value="#FFFFFFFF"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Background" Value="#11121620"/>
+            <Setter Property="Foreground" Value="#FFEDEDF5"/>
+            <Setter Property="BorderBrush" Value="#333A3D4A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="14"/>
+            <Setter Property="Padding" Value="10,5"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="11"/>
         </Style>
         <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#FF2A2A2A"/>
+            <Setter Property="Background" Value="#24212632"/>
         </Style>
-
         <Style Selector="TextBox">
-            <Setter Property="Background" Value="#FF1A1A1A"/>
+            <Setter Property="Background" Value="#FF07070B"/>
             <Setter Property="Foreground" Value="#FFFFFFFF"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="BorderBrush" Value="#889090A0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="14,10"/>
             <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontFamily" Value="Consolas, Microsoft YaHei UI"/>
         </Style>
-
+        <Style Selector="Slider">
+            <Setter Property="MinHeight" Value="14"/>
+        </Style>
         <Style Selector="ListBox">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
         </Style>
         <Style Selector="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="CornerRadius" Value="6"/>
-            <Setter Property="Padding" Value="6,4"/>
-        </Style>
-        <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#FF2A2A2A"/>
-        </Style>
-        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#FF1E1E1E"/>
-        </Style>
-
-        <Style Selector="ScrollBar">
-            <Setter Property="Opacity" Value="0.3"/>
-            <Setter Property="Width" Value="4"/>
+            <Setter Property="Padding" Value="0"/>
         </Style>
     </Window.Styles>
 
-    <DockPanel>
-        <!-- Top bar -->
-        <Border DockPanel.Dock="Top" Background="#FF0A0A0A" Padding="16,10">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Ellipse Width="8" Height="8" Fill="#FF9B59B0"/>
-                    <TextBlock Text="Tune" FontSize="14" FontWeight="700" Foreground="#FFFFFFFF"/>
+    <Grid Background="#FF030305" RowDefinitions="30,*">
+        <Border Grid.Row="0" Background="#FF050507" PointerPressed="OnTitleBarPointerPressed">
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Border Width="10" Height="10" CornerRadius="5" Background="#FF56F5C4"/>
+                    <TextBlock Text="AIRadio FM" FontSize="12" FontFamily="Consolas"
+                               Foreground="#FFBFC3D6" VerticalAlignment="Center"/>
                 </StackPanel>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <Button Content="▶" FontSize="11" Padding="8,6" Background="Transparent"/>
-                    <TextBlock Text="Radio" FontSize="13" Foreground="#FFFFFFFF" VerticalAlignment="Center"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Border Background="#FF3A1515" CornerRadius="4" Padding="8,4">
-                        <TextBlock Text="LIVE" FontSize="10" FontWeight="700" Foreground="#FFFF4444"/>
-                    </Border>
-                    <Button Content="▢" FontSize="14" Padding="8,6" Background="Transparent"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button Content="-" Width="28" Height="22" Padding="0" BorderThickness="0"
+                            Background="Transparent" Foreground="#FF8B8F9D" Click="OnMinimizeClicked"/>
+                    <Button Content="x" Width="28" Height="22" Padding="0" BorderThickness="0"
+                            Background="Transparent" Foreground="#FF8B8F9D" Click="OnCloseClicked"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Bottom player bar -->
-        <Border DockPanel.Dock="Bottom" Background="#FF141414" Padding="12,8">
-            <Grid RowDefinitions="Auto,Auto">
-                <!-- Progress slider -->
-                <Grid Grid.Row="0" ColumnDefinitions="40,*,Auto" Margin="0,0,0,6">
-                    <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}" FontSize="10" Foreground="#FF666666"
-                               VerticalAlignment="Center"/>
-                    <Slider Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
-                            Value="{Binding PlayerVM.CurrentSeconds}"
-                            Margin="8,0" VerticalAlignment="Center"
-                            PointerReleased="OnProgressSliderReleased"/>
-                    <TextBlock Grid.Column="2" Text="{Binding PlayerVM.DurationText}" FontSize="10" Foreground="#FF666666"
-                               VerticalAlignment="Center" MinWidth="36"/>
-                </Grid>
-
-                <!-- Controls row -->
-                <Grid Grid.Row="1" ColumnDefinitions="40,*,Auto,Auto,Auto,50">
-                    <!-- Album art -->
-                    <Border Grid.Column="0" Background="#FF0D0D0D" CornerRadius="4" Width="32" Height="32">
-                        <TextBlock Text="♪" FontSize="14" Foreground="#FF333333"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-
-                    <!-- Track info -->
-                    <StackPanel Grid.Column="1" Margin="8,0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontSize="11" FontWeight="600"
-                                   Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Text="{Binding PlayerVM.TrackArtist}" FontSize="9" Foreground="#FF666666"/>
-                    </StackPanel>
-
-                    <!-- Controls -->
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                        <Button Content="◁" FontSize="12" Padding="8,6" Background="Transparent"
-                                Command="{Binding PlayerVM.PreviousCommand}"/>
-                        <Button Content="{Binding PlayerVM.PlayPauseText}" FontSize="12" Padding="8,6"
-                                Background="#FF9B59B0" Foreground="#FFFFFFFF" CornerRadius="100"
-                                Command="{Binding PlayerVM.PlayCommand}"/>
-                        <Button Content="▷▷" FontSize="12" Padding="8,6" Background="Transparent"
-                                Command="{Binding PlayerVM.NextCommand}"/>
-                    </StackPanel>
-
-                    <!-- Volume slider -->
-                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="8,0">
-                        <TextBlock Text="🔊" FontSize="11" Foreground="#FF666666" VerticalAlignment="Center"/>
-                        <Slider Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
-                                Width="60" VerticalAlignment="Center"
-                                PointerReleased="OnVolumeSliderReleased"/>
-                    </StackPanel>
-
-                    <!-- LIVE -->
-                    <Border Grid.Column="4" Background="#FF3A1515" CornerRadius="4" Padding="6,3" VerticalAlignment="Center" Margin="6,0">
-                        <TextBlock Text="LIVE" FontSize="9" FontWeight="700" Foreground="#FFFF4444"/>
-                    </Border>
-                </Grid>
-            </Grid>
-        </Border>
-
-        <!-- Main content -->
-        <Grid>
-            <Grid.ColumnDefinitions>240,*</Grid.ColumnDefinitions>
-
-            <!-- LEFT: Character + Chat -->
-            <Grid Grid.Column="0" Margin="10,0">
-                <Grid.RowDefinitions>Auto,*,Auto</Grid.RowDefinitions>
-
-                <!-- Character avatar -->
-                <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,6,0,0">
-                    <Border x:Name="AvatarBorder" Width="140" Height="140" CornerRadius="70" Background="#FF1A1A1A" BorderBrush="#FF9B59B0" BorderThickness="2">
-                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}" FontSize="48" FontWeight="700"
-                                       Foreground="#FF9B59B0" HorizontalAlignment="Center"/>
+        <Border Grid.Row="1"
+                Width="650"
+                Height="690"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="#F0131320"
+                BorderBrush="#33494B66"
+                BorderThickness="1"
+                CornerRadius="18"
+                ClipToBounds="True">
+            <Grid RowDefinitions="64,168,88,36,*,66,28">
+                <!-- Brand header -->
+                <Border Grid.Row="0" Background="#CC1B1B2A" Padding="22,0">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                            <Border Width="34" Height="34" CornerRadius="17" Background="#FF262632">
+                                <TextBlock Text="{Binding SelectedCharacter.DisplayName[0]}"
+                                           FontSize="15" FontWeight="700"
+                                           Foreground="#FFFFFFFF"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Text="AIRadio" FontSize="24" FontWeight="700"
+                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                       Foreground="#FFEDEDF5" VerticalAlignment="Center"/>
                         </StackPanel>
-                    </Border>
-                    <TextBlock Text="{Binding SelectedCharacter.DisplayName}" FontSize="15" FontWeight="600"
-                               Foreground="#FFFFFFFF" HorizontalAlignment="Center" Margin="0,8,0,0"/>
-                    <TextBlock Text="AI陪你听歌" FontSize="11"
-                               Foreground="#FF666666" HorizontalAlignment="Center"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Button Content="LOGIN" Padding="12,5" Background="#10000000"/>
+                            <Button x:Name="DarkButton" Content="DARK" Padding="14,5"
+                                    Background="#FFEDEDF5" Foreground="#FF050507"
+                                    Command="{Binding ToggleThemeCommand}"/>
+                            <Button x:Name="LightButton" Content="LIGHT" Padding="12,5" Background="#10000000"
+                                    Foreground="#FFB8B8C6" Command="{Binding ToggleThemeCommand}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
-                    <!-- Character pills -->
-                    <ScrollViewer HorizontalScrollBarVisibility="Auto" Margin="0,8,0,0">
-                        <ItemsControl ItemsSource="{Binding Characters}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="4"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="models:CharacterProfile">
-                                    <Border Background="#FF1C1C1C" CornerRadius="12" Padding="8,4" Cursor="Hand"
-                                            PointerPressed="OnCharacterSelected">
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
-                                            <Border Width="18" Height="18" CornerRadius="9" Background="#FF9B59B0">
-                                                <TextBlock Text="{Binding DisplayName[0]}" FontSize="8" FontWeight="700"
-                                                           Foreground="#FF0A0A0A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </Border>
-                                            <TextBlock Text="{Binding DisplayName}" FontSize="10" Foreground="#FFFFFFFF" VerticalAlignment="Center"/>
+                <!-- Clock stage -->
+                <Grid Grid.Row="1" Background="#F008080D">
+                    <TextBlock IsHitTestVisible="False"
+                               Opacity="0.20"
+                               FontSize="11"
+                               LineHeight="17"
+                               FontFamily="Consolas"
+                               Foreground="#FF44465C"
+                               TextWrapping="Wrap"
+                               Text=".  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  ."/>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                        <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="70" FontWeight="700"
+                                   FontFamily="Consolas" Foreground="#FFFFFFFF"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="DayDisplay" Text="Monday" FontSize="14" FontFamily="Consolas"
+                                   Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="DateDisplay" Text="20-APR-2026" FontSize="11" FontFamily="Consolas"
+                                   Foreground="#FF858594" HorizontalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                            <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                            <TextBlock Text="ON AIR" FontSize="11" FontWeight="700" FontFamily="Consolas"
+                                       Foreground="#FF56F5C4"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Player deck -->
+                <Border Grid.Row="2" Background="#E91B1B2A" BorderBrush="#223D3D4F" BorderThickness="0,1" Padding="22,10">
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="165,*,175">
+                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                <Border Width="3" Height="11" Background="#FF56F5C4" CornerRadius="2"/>
+                                <Border Width="3" Height="17" Background="#FF56F5C4" CornerRadius="2"/>
+                                <Border Width="3" Height="9" Background="#FF56F5C4" CornerRadius="2"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontSize="14" FontWeight="700"
+                                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFFFFFFF"
+                                           TextTrimming="CharacterEllipsis" MaxWidth="128"/>
+                                <TextBlock Text="{Binding PlayerVM.TrackArtist}" FontSize="11"
+                                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FF9A9AA8"
+                                           TextTrimming="CharacterEllipsis" MaxWidth="128"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Button Width="32" Height="32" Content="&lt;" Command="{Binding PlayerVM.PreviousCommand}"/>
+                            <Button Width="36" Height="36" Content="{Binding PlayerVM.PlayPauseText}"
+                                    Background="#302B2E3C" Command="{Binding PlayerVM.PlayCommand}"/>
+                            <Button Width="32" Height="32" Content="&gt;" Command="{Binding PlayerVM.NextCommand}"/>
+                            <Button Width="32" Height="32" Content="[]" FontSize="10"/>
+                            <Button Width="32" Height="32" Content="FAV" FontSize="10"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="HIDE" Padding="12,5"/>
+                            <Button Content="FAV" Padding="12,5" Command="{Binding PlaylistVM.ShowFavoritesCommand}"/>
+                            <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
+                                       Foreground="#FF8A8A96" VerticalAlignment="Center"/>
+                            <Slider Width="48" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
+                                    PointerReleased="OnVolumeSliderReleased"/>
+                        </StackPanel>
+
+                        <Grid Grid.Row="1" Grid.ColumnSpan="3" ColumnDefinitions="42,*,42" Margin="0,12,0,0">
+                            <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}" FontSize="11"
+                                       FontFamily="Consolas" Foreground="#FF9A9AA6" VerticalAlignment="Center"/>
+                            <Slider Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                                    Value="{Binding PlayerVM.CurrentSeconds}" PointerReleased="OnProgressSliderReleased"/>
+                            <TextBlock Grid.Column="2" Text="{Binding PlayerVM.DurationText}" FontSize="11"
+                                       FontFamily="Consolas" Foreground="#FF9A9AA6" HorizontalAlignment="Right"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Queue strip -->
+                <Border Grid.Row="3" Background="#F007070A" BorderBrush="#222B2B36" BorderThickness="0,1">
+                    <Grid ColumnDefinitions="*,Auto" Margin="22,0">
+                        <TextBlock Text="QUEUE" FontSize="12" FontFamily="Consolas"
+                                   Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" Text="{Binding PlaylistVM.Tracks.Count, StringFormat={}{0} TRACKS}"
+                                   FontSize="12" FontFamily="Consolas"
+                                   Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <!-- Radio room -->
+                <Grid Grid.Row="4" Background="#E9161623">
+                    <TextBlock IsHitTestVisible="False"
+                               Opacity="0.20"
+                               FontSize="11"
+                               LineHeight="17"
+                               FontFamily="Consolas"
+                               Foreground="#FF44465C"
+                               TextWrapping="Wrap"
+                               Text=".  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  ."/>
+
+                    <Border Background="#66111113" BorderBrush="#222F303A" BorderThickness="0,0,0,1"
+                            Height="46" VerticalAlignment="Top">
+                        <Grid ColumnDefinitions="*,Auto" Margin="22,0">
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <Ellipse Width="9" Height="9" Fill="#FF56F5C4"/>
+                                <TextBlock Text="AIRadio" FontSize="16" FontFamily="Consolas"
+                                           Foreground="#FFEDEDF5"/>
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" Text="LIVE" FontSize="12" FontFamily="Consolas"
+                                       Foreground="#FF8DFFC8" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Grid Margin="22,60,22,12" ColumnDefinitions="180,*">
+                        <ListBox Grid.Column="0"
+                                 ItemsSource="{Binding PlaylistVM.Tracks}"
+                                 SelectedItem="{Binding PlaylistVM.SelectedTrack}"
+                                 MaxHeight="150">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:Track">
+                                    <Border Background="#CC202126" CornerRadius="6" Padding="10,8"
+                                            Width="165" Margin="0,0,0,8">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
+                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                       Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Artist}" FontSize="11"
+                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                       Foreground="#FF9B9BA8" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </StackPanel>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
 
-                <!-- Chat bubbles -->
-                <ScrollViewer Grid.Row="1" Margin="0,8,0,0">
-                    <ItemsControl ItemsSource="{Binding ChatVM.Messages}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="0,3">
-                                    <TextBlock Text="{Binding SenderName}" FontSize="9" Foreground="#FF9B59B0" Margin="6,0,0,1"/>
-                                    <Border Background="#FF1C1C1C" CornerRadius="10" Padding="8,6" MaxWidth="220" HorizontalAlignment="Left">
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap" FontSize="12"
-                                                       Foreground="#FFFFFFFF" LineHeight="16"/>
-                                            <TextBlock Text="{Binding Timestamp, StringFormat=HH:mm}" FontSize="8"
-                                                       Foreground="#FF555555" HorizontalAlignment="Right" Margin="0,2,0,0"/>
+                        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding ChatVM.Messages}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,8"
+                                                    HorizontalAlignment="{Binding Role, Converter={x:Static local:MessageAlignConverter.Instance}}">
+                                            <TextBlock Text="{Binding SenderName}" FontSize="10"
+                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                       Foreground="#FFA783FF" Margin="0,0,0,4"/>
+                                            <Border Background="#EE050507" CornerRadius="4" Padding="14,10"
+                                                    MaxWidth="380">
+                                                <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                                           FontSize="13" LineHeight="21"
+                                                           FontFamily="Microsoft YaHei UI"
+                                                           Foreground="#FFFFFFFF"/>
+                                            </Border>
                                         </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-
-                <!-- Chat input -->
-                <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                    <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
-                             Watermark="输入消息..." KeyDown="OnChatInputKeyDown"/>
-                    <Button Grid.Column="1" Content="发送" Padding="14,8" Background="#FF9B59B0" Foreground="#FF0A0A0A"
-                            Margin="6,0,0,0" Command="{Binding ChatVM.SendMessageCommand}"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
                 </Grid>
-            </Grid>
 
-            <!-- RIGHT: Playlist -->
-            <Border Grid.Column="1" Background="#FF141414" Margin="0,10,10,10" Padding="10">
-                <views:PlaylistView DataContext="{Binding PlaylistVM}"/>
-            </Border>
-        </Grid>
-    </DockPanel>
+                <!-- Input -->
+                <Border Grid.Row="5" Background="#E91B1B2A" Padding="22,10">
+                    <Grid ColumnDefinitions="*,46,50" ColumnSpacing="9">
+                        <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
+                                 Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown"/>
+                        <Button Grid.Column="1" Content="MIC" FontSize="10"
+                                Background="#33262835" Command="{Binding ChatVM.ToggleVoiceInputCommand}"/>
+                        <Button Grid.Column="2" Content="UP" FontSize="11"
+                                Background="#FF7F7896" Foreground="#FF111118"
+                                Command="{Binding ChatVM.SendMessageCommand}"/>
+                    </Grid>
+                </Border>
+
+                <!-- Footer -->
+                <Border Grid.Row="6" Background="#F0222234" Padding="22,0">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="AIRADIO FM" FontSize="11" FontFamily="Consolas"
+                                   Foreground="#FFB5B5C8" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" Text="CONNECTED" FontSize="11" FontFamily="Consolas"
+                                   Foreground="#FFD8D8EA" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
 </Window>
