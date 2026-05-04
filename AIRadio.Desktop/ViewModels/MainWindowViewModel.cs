@@ -32,10 +32,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsSettingsOpen { get; set; }
     [Reactive] public bool IsCharacterPickerOpen { get; set; }
     [Reactive] public CharacterProfile SelectedCharacter { get; set; }
+    [Reactive] public bool IsDarkMode { get; set; } = true;
 
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
@@ -65,6 +67,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
+        ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);
 
         // Re-apply character when settings are saved
