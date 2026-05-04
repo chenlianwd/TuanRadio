@@ -22,7 +22,7 @@
                                Margin="0,2,0,0"/>
                 </StackPanel>
                 <!-- Live indicator -->
-                <Border Grid.Column="1" Background="#FF1ED760" CornerRadius="4" Padding="6,2"
+                <Border Grid.Column="1" Background="#FF9B59B0" CornerRadius="4" Padding="6,2"
                         VerticalAlignment="Center" IsVisible="{Binding IsPlaying}">
                     <TextBlock Text="LIVE" FontSize="9" FontWeight="800" Foreground="#FF000000"/>
                 </Border>
@@ -33,8 +33,9 @@
                 <TextBlock Grid.Column="0" Text="{Binding PositionText}" VerticalAlignment="Center"
                            FontSize="11" Foreground="#FF808080" MinWidth="36"/>
                 <Slider Grid.Column="1" Minimum="0" Maximum="{Binding TotalSeconds}"
-                        Value="{Binding CurrentSeconds}"
+                        Value="{Binding DisplaySeconds}"
                         Margin="10,0" VerticalAlignment="Center"
+                        PointerPressed="OnSliderPressed"
                         PointerReleased="OnSliderReleased"
                         Classes="player-slider"/>
                 <TextBlock Grid.Column="2" Text="{Binding DurationText}" VerticalAlignment="Center"
@@ -66,7 +67,7 @@
                     </Button>
 
                     <Button Command="{Binding PlayCommand}" Width="48" Height="48"
-                            CornerRadius="24" Background="#FF1ED760">
+                            CornerRadius="24" Background="#FF9B59B0">
                         <TextBlock Text="{Binding PlayPauseText}" FontSize="18" Foreground="#FF000000" FontWeight="Bold"/>
                     </Button>
 
