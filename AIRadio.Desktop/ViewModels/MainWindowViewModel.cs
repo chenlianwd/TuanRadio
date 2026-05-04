@@ -90,7 +90,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             Name = character.DisplayName,
             Description = character.Description,
             VoiceId = voiceId,
-            TtsEnabled = _djService.TtsEnabled,
+            TtsEnabled = SettingsVM.TtsEnabled,
             SystemPrompt = personality
         });
 
