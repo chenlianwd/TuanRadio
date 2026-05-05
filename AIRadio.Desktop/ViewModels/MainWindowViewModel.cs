@@ -22,7 +22,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
-    private bool _autoRadioAdvancing;
+    private int _autoRadioAdvancing;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
 
     public PlayerViewModel PlayerVM { get; }
@@ -80,6 +80,22 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService is Services.AudioService audioSvc)
         {
             audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
+            audioSvc.SetNextCallback(async () =>
+            {
+                var favorites = PlaylistVM.Favorites.ToList();
+                var current = _audioService.CurrentTrack;
+                if (current != null && favorites.Count > 0)
+                    current.Tag = favorites;
+                return await _djService.RecommendNextTrackAsync(current);
+            });
+            audioSvc.SetPreviousCallback(async () =>
+            {
+                var favorites = PlaylistVM.Favorites.ToList();
+                var current = _audioService.CurrentTrack;
+                if (current != null && favorites.Count > 0)
+                    current.Tag = favorites;
+                return await _djService.RecommendNextTrackAsync(current);
+            });
         }
 
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
@@ -349,12 +365,48 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private async System.Threading.Tasks.Task HandleAutoRadioTrackEndedAsync(Track current)
     {
-        if (_autoRadioAdvancing) return;
-        // Only auto-radio in 'radio' repeat mode
-        if (_audioService.RepeatMode != "radio") return;
-        _autoRadioAdvancing = true;
+        if (Interlocked.Exchange(ref _autoRadioAdvancing, 1) == 1) return;
+        if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
         try
         {
+            // If only one track in playlist, always ask DJ to recommend from online
+            if (PlaylistVM.Tracks.Count <= 1)
+            {
+                var favorites = PlaylistVM.Favorites.ToList();
+                if (favorites.Count > 0 && current != null)
+                    current.Tag = favorites;
+                var recommended = await _djService.RecommendNextTrackAsync(current);
+                if (recommended == null)
+                {
+                    ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en"
+                        ? "Couldn't find a song to play next. The station needs more tracks to keep going."
+                        : "推荐出错了，歌单里没新歌了。你可以搜一首，或者让我继续播现有的。");
+                    Interlocked.Exchange(ref _autoRadioAdvancing, 0);
+                    return;
+                }
+
+                if (current != null && recommended.FilePath == current.FilePath)
+                {
+                    var retry = await _djService.RecommendNextTrackAsync(current);
+                    if (retry != null && retry.FilePath != current.FilePath)
+                        recommended = retry;
+                }
+
+                var alreadyInPlaylist = PlaylistVM.Tracks.Any(t => t.FilePath == recommended.FilePath);
+                if (!alreadyInPlaylist)
+                    PlaylistVM.AddExternalTrack(recommended);
+
+                var script = await _djService.GenerateTrackIntroductionAsync(current, recommended);
+                ChatVM.AddAssistantMessage(script.Text);
+                Live2DCommand?.Invoke(script.Expression, script.Motion);
+                await SpeakDjTextAsync(script.Text);
+
+                var playIndex = PlaylistVM.Tracks.FindIndex(t => t.FilePath == recommended.FilePath);
+                if (playIndex >= 0)
+                    _audioService.PlayAtIndex(playIndex);
+                return;
+            }
+
             var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
             Track? next = null;
 
@@ -362,33 +414,28 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 next = PickDiversifiedTrack(pool, current);
             }
-            else if (PlaylistVM.Tracks.Count == 1)
-            {
-                next = current;
-            }
-            else
-            {
-                _autoRadioAdvancing = false;
-                return;
-            }
 
             if (next == null)
             {
-                _autoRadioAdvancing = false;
+                Interlocked.Exchange(ref _autoRadioAdvancing, 0);
                 return;
             }
 
-            if (next != current)
+            // Add to playlist if not already there (for online recommendations)
+            if (!PlaylistVM.Tracks.Contains(next))
+            {
+                PlaylistVM.AddExternalTrack(next);
+            }
+
+            var index = PlaylistVM.Tracks.IndexOf(next);
+            if (index >= 0)
             {
                 var script = await _djService.GenerateTrackIntroductionAsync(current, next);
                 ChatVM.AddAssistantMessage(script.Text);
                 Live2DCommand?.Invoke(script.Expression, script.Motion);
                 await SpeakDjTextAsync(script.Text);
-            }
-
-            var index = PlaylistVM.Tracks.IndexOf(next);
-            if (index >= 0)
                 _audioService.PlayAtIndex(index);
+            }
         }
         catch (Exception ex)
         {
@@ -396,7 +443,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            _autoRadioAdvancing = false;
+            Interlocked.Exchange(ref _autoRadioAdvancing, 0);
         }
     }
 

@@ -1,17 +1,18 @@
 # AIRadio
 
-AI 数字电台桌面播放器 — 集成多平台在线音乐搜索、星空粒子动画、Live2D 数字人主播、AI DJ 语音播报。
+AI 数字人电台桌面播放器 — 集成多平台在线音乐搜索、星空粒子动画、Live2D 数字人主播、AI DJ 语音播报、TTS 语音中断。
 
 ## 技术栈
 
 | 组件 | 技术 |
 |------|------|
-| 框架 | .NET 8 / Avalonia 11.3.9 |
+| 框架 | .NET 8 / Avalonia 11.3.2 |
 | MVVM | ReactiveUI 20.1.1 + ReactiveUI.Fody |
 | 音频播放 | LibVLCSharp (VLC 内核) + NAudio (TTS) |
 | 数字人 | Cubism SDK for Web 5-r.5 + WebView2 (WebView.Avalonia) |
 | AI DJ | MiniMax API（大模型对话 + TTS 语音合成） |
 | 在线音乐 | NeteaseCloudMusicApi (Node.js) + 酷我/酷狗/咪咕 HTTP API |
+| ASR | Whisper (本地语音识别) |
 | DI | Microsoft.Extensions.DependencyInjection |
 
 ## 架构概览
@@ -39,31 +40,45 @@ AIRadio.Desktop/
 │   └── airadio.png          PNG 源图
 ├── Models/                  数据模型 (Track, ChatMessage, DJProfile, CharacterProfile 等)
 ├── ViewModels/              ReactiveUI ViewModel 层
+│   ├── ViewModelBase.cs        基类
+│   ├── MainWindowViewModel.cs  主窗口状态 + Radio Mode 自动续播
+│   ├── PlayerViewModel.cs      播放器状态
+│   ├── PlaylistViewModel.cs    歌单管理
+│   ├── ChatViewModel.cs        聊天 + TTS 中断
+│   ├── SettingsViewModel.cs    设置面板
+│   └── SpectrumViewModel.cs    频谱数据
 ├── Views/                   Avalonia AXAML 视图层
-│   ├── MainWindow.axaml     主窗口 (Claudio 复古终端风格)
-│   ├── StarfieldView.axaml  星空粒子动画组件
-│   └── ...
+│   ├── MainWindow.axaml     主窗口 (Live2D 数字人 + 星空粒子)
+│   ├── PlayerView.axaml     播放器控制栏
+│   ├── PlaylistView.axaml   歌单/收藏/搜索
+│   ├── ChatView.axaml        聊天面板
+│   ├── SettingsView.axaml    设置面板
+│   ├── SpectrumView.axaml    频谱可视化
+│   └── StarfieldView.axaml  星空粒子动画
 ├── Services/                业务服务层
-│   ├── AudioService.cs          LibVLC 播放引擎 + NAudio TTS
-│   ├── DJService.cs             AI DJ (MiniMax 大模型 + TTS)
+│   ├── AudioService.cs          LibVLC 播放引擎 + NAudio TTS + TTS 中断
+│   ├── DJService.cs             AI DJ (MiniMax 大模型 + 推荐歌曲)
 │   ├── MinimaxService.cs        MiniMax API 客户端
 │   ├── Live2DStaticServer.cs    HttpListener 静态文件服务
 │   ├── MusicApiServer.cs        Node.js 子进程管理 (网易云)
-│   ├── EnvironmentManager.cs    环境自动安装 (Node.js / WebView2)
+│   ├── EnvironmentManager.cs     环境自动安装 (Node.js / WebView2)
 │   ├── MultiSourceMusicService.cs  多音源聚合搜索
 │   ├── NeteaseMusicService.cs   网易云音乐 API
 │   ├── KuwoMusicService.cs      酷我音乐 API
 │   ├── KugouMusicService.cs     酷狗音乐 API
-│   └── MiguMusicService.cs      咪咕音乐 API
+│   ├── MiguMusicService.cs      咪咕音乐 API
+│   ├── WhisperSttService.cs     Whisper ASR 语音识别
+│   ├── RetryPolicy.cs           重试策略
+│   └── WindowsSecureStorage.cs  Windows Credential Manager
 ├── server/                  NeteaseCloudMusicApi Node.js 服务
 │   ├── package.json
 │   └── start.js             启动脚本 (PORT=37250)
 └── wwwroot/                 静态资源
     ├── live2d-demo/         Cubism SDK 示例 (含 Ren 模型)
     ├── Core/                Cubism Core JS 库
-    ├── Framework/          Cubism Framework (Shader/渲染)
-    ├── Resources/          Live2D 模型资源 (Haru, Hiyori 等)
-    └── assets/             Vite 打包的渲染框架
+    ├── Framework/           Cubism Framework (Shader/渲染)
+    ├── Resources/           Live2D 模型资源 (Haru, Hiyori 等)
+    └── assets/              Vite 打包的渲染框架
 ```
 
 ## 核心模块说明
@@ -75,7 +90,8 @@ AIRadio.Desktop/
 - 播放状态通过 Rx Subject 广播：`TrackChanged` / `StateChanged` / `PositionChanged` / `TrackEnded` / `TtsStateChanged`
 - TTS 使用 NAudio 播放，支持中断（用户发送消息时立即停止当前 TTS）
 - 频谱数据由定时器驱动（~30fps），同时驱动星空粒子动画
-- 四种循环模式：OFF（关闭自动续播）/ 单曲 / 列表 / **电台（radio，自动推荐新歌）**
+- 四种循环模式：**OFF（关闭自动续播）** / 单曲 / 列表 / **电台（radio，自动从 AI 推荐新歌）**
+- Radio Mode：Tracks 播完后由 `DJService.RecommendNextTrackAsync` 从 AI 获取推荐歌曲并自动续播
 
 ### 2. 在线音乐 (IMusicSearchService)
 
@@ -111,7 +127,8 @@ AIRadio.Desktop/
 - 播放列表：聊天对话 / 歌曲过渡播报 / 语音合成
 - 音色配置：`male-qn-qn-qingse` / `female-shaonv` 等（可在设置中修改）
 - 语音合成支持：MiniMax T2A 接口
-- DJ 角色系统：预置多个角色形象（Claudio / Lumen / Sonnet 等），可切换主播风格
+- DJ 角色系统：预置多个角色形象（可切换主播风格），支持情绪标签 [happy|sad|calm|neutral|angry|surprised]
+- 新增 `RecommendNextTrackAsync`：根据当前曲目 AI 推荐下一首
 
 ### 6. 星空粒子动画 (StarfieldView)
 
@@ -122,7 +139,7 @@ AIRadio.Desktop/
 ## 构建与运行
 
 ```bash
-cd AIRadio/AIRadio.Desktop
+cd AIRadio.Desktop
 dotnet build
 dotnet run
 ```
