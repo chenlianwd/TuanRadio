@@ -29,7 +29,7 @@ public class PlaylistViewModelTests
         searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
             .ReturnsAsync(new List<OnlineTrack>());
 
-        var vm = new PlaylistViewModel(audioMock.Object, searchMock.Object, playlistFile);
+        var vm = new PlaylistViewModel(audioMock.Object, searchMock.Object, playlistFile ?? CreateTempPlaylistFile());
         return (vm, audioMock, searchMock);
     }
 

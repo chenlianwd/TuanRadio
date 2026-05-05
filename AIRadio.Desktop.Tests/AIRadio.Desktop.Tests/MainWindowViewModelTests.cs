@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reactive.Concurrency;
 using System.Threading.Tasks;
@@ -14,6 +15,13 @@ namespace AIRadio.Desktop.Tests;
 
 public class MainWindowViewModelTests
 {
+    private static string CreateTempPlaylistFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "playlist.json");
+    }
+
     [Fact]
     public async Task RadioNext_AddsRecommendedTrackToDisplayedPlaylist()
     {
@@ -44,7 +52,8 @@ public class MainWindowViewModelTests
             minimax.Object,
             storage.Object,
             search.Object,
-            stt.Object);
+            stt.Object,
+            CreateTempPlaylistFile());
 
         try
         {

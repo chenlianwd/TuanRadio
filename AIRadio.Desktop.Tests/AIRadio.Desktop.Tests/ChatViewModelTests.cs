@@ -105,6 +105,51 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public async Task SendMessage_WithTrackAddedCallback_DoesNotAddTrackTwice()
+    {
+        var playlist = new List<Track>();
+        var djMock = new Mock<IDJService>();
+        djMock.SetupGet(x => x.TtsEnabled).Returns(false);
+        djMock.SetupGet(x => x.CurrentEmotion).Returns("neutral");
+
+        var audioMock = new Mock<IAudioService>();
+        audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audioMock.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
+        audioMock.Setup(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()))
+            .Callback<IEnumerable<Track>>(tracks => playlist.AddRange(tracks));
+
+        var searchMock = new Mock<IMusicSearchService>();
+        var result = new OnlineTrack
+        {
+            Id = "netease:167827",
+            Title = "素颜",
+            Artist = "许嵩"
+        };
+        searchMock.Setup(x => x.SearchAsync("素颜", 3))
+            .ReturnsAsync(new List<OnlineTrack> { result });
+        searchMock.Setup(x => x.SearchAsync("素颜", 5))
+            .ReturnsAsync(new List<OnlineTrack> { result });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:167827"))
+            .ReturnsAsync("http://example.com/suyan.mp3");
+
+        var sttMock = new Mock<ISttService>();
+        var vm = new ChatViewModel(
+            djMock.Object,
+            audioMock.Object,
+            searchMock.Object,
+            sttMock.Object,
+            track => audioMock.Object.AddTracks(new[] { track }));
+
+        vm.InputText = "素颜";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        Assert.Single(playlist);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Once);
+        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+    }
+
+    [Fact]
     public async Task AudioService_Volume_SetAndGet()
     {
         var service = new AudioService();
