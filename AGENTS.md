@@ -44,18 +44,16 @@ cd AIRadio.Desktop && dotnet build
 <claude-mem-context>
 # Memory Context
 
-# [AIRadio] recent context, 2026-05-05 10:39pm GMT+8
+# [AIRadio] recent context, 2026-05-05 10:49pm GMT+8
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (11,607t read) | 2,859,553t work | 100% savings
+Stats: 50 obs (12,097t read) | 2,791,277t work | 100% savings
 
 ### May 5, 2026
-S292 修复DJ推荐和Next按钮功能 (May 5, 7:50 PM)
 S294 Fix DJ recommendation system - DJ should recommend NEW songs based on favorites context, and fix UI not updating when DJ switches tracks (May 5, 8:46 PM)
-268 8:50p 🔴 HandleAutoRadioTrackEndedAsync使用SetTag方法
 269 8:52p 🔴 Fixed DJService.cs compilation error - missing System.Linq
 270 " 🔵 Encoding issue with Chinese characters in logs
 271 8:55p 🔵 System.Linq edit may not have persisted - file still shows old content
@@ -107,30 +105,14 @@ S303 Fix MiniMax-generated bugs: AI DJ song detection confidence, favorites pers
 328 10:21p ✅ Committed AI DJ song detection and favorites persistence fixes
 331 " 🔴 App crash on playback caused by test pollution of real playlist.json
 332 " 🔴 ChatViewModel duplicate track prevention via TrackAdded callback coordination
-S304 Fix bugs from MiniMax's code generation session - song detection, favorites persistence, online track URL refresh (May 5, 10:21 PM)
+S307 Fix AIRadio bugs: app crash, test pollution, duplicate track addition (May 5, 10:21 PM)
 S302 Fix MiniMax-generated bugs: AI DJ song detection confidence, favorites persistence, online track URL refresh (May 5, 10:21 PM)
+S304 Fix bugs from MiniMax's code generation session - song detection, favorites persistence, online track URL refresh (May 5, 10:23 PM)
 S305 Fix AI DJ song detection confidence, favorites persistence, online track URL refresh; commit all changes (May 5, 10:24 PM)
 329 10:25p ✅ AGENTS.md 已单独暂存待提交
 330 10:33p ✅ 全部修复提交完成，工作区干净
 S306 Fix multiple AIRadio bugs: app crash on playback, test pollution of real playlist, duplicate track addition (May 5, 10:39 PM)
-**Investigated**: App crash logs showing playback error on "Current" track, JSON parsing failures in Kugou/Migu/Netease services, playlist.json content with fake test tracks, MainWindowViewModelTests and ChatViewModel code paths
+333 10:48p 🔴 Auto-radio interrupting manual playback - track switching bug fixed
 
-**Learned**: - MainWindowViewModelTests used real AudioService with default AppData playlist path, polluting user's playlist.json with test:current/test:recommended fake tracks
-    - App loaded these fake tracks with placeholder URLs (http://example.com/*) causing playback failures and crash (exit -1)
-    - ChatViewModel was calling both _audioService.AddTracks AND _trackAdded callback, causing double insertion
-    - Avalonia build blocked by telemetry write to %LocalAppData% despite --no-restore; workaround uses isolated OutDir
-    - VBCSCompiler locks default obj directory when test/build run in parallel
-
-**Completed**: - playlistFile parameter added to MainWindowViewModel constructor and PlaylistViewModel
-    - MainWindowViewModelTests and PlaylistViewModelTests now use temp GUID-based playlist files
-    - ChatViewModel refactored with FindAudioTrackIndex to prevent duplicate track addition
-    - User's real playlist.json backed up and cleaned (test:current/test:recommended removed, netease:167827 素颜 preserved)
-    - reviewbin/reviewtestbin/obj_review directories cleaned from workspace
-    - 68 tests passing
-    - Commit ba4b263 already pushed
-
-**Next Steps**: Cleaning user's real playlist.json (pending escalated permission approval); then commit remaining fixes and document cleanup
-
-
-Access 2860k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 2791k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>
