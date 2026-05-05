@@ -10,11 +10,13 @@
         Width="760" Height="760"
         MinWidth="700" MinHeight="700"
         SystemDecorations="None"
-        Background="#FF030305">
+        Background="#FF030305"
+        KeyDown="OnWindowKeyDown">
 
     <Window.Resources>
         <local:TabVisibleConverter x:Key="TabVisibleConverter"/>
         <local:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
+        <local:InverseBoolConverter x:Key="InverseBoolConverter"/>
     </Window.Resources>
 
     <Window.Styles>
@@ -64,19 +66,24 @@
                                Foreground="#FFBFC3D6" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Button Content="-" Width="28" Height="22" Padding="0" BorderThickness="0"
-                            Background="Transparent" Foreground="#FF8B8F9D" Click="OnMinimizeClicked"/>
-                    <Button Content="x" Width="28" Height="22" Padding="0" BorderThickness="0"
-                            Background="Transparent" Foreground="#FF8B8F9D" Click="OnCloseClicked"/>
+                    <Button Width="28" Height="22" Padding="0" BorderThickness="0"
+                            Background="#1AFFFFFF" Foreground="#FFEDEDF5" Click="OnMinimizeClicked"
+                            ToolTip.Tip="Minimize">
+                        <PathIcon Width="16" Height="16" Data="M5,12 L19,12"/>
+                    </Button>
+                    <Button Width="28" Height="22" Padding="0" BorderThickness="0"
+                            Background="#1AFFFFFF" Foreground="#FFFF7B8A" Click="OnCloseClicked"
+                            ToolTip.Tip="Close">
+                        <PathIcon Width="16" Height="16" Data="M18,6 L6,18 M6,6 L18,18"/>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>
 
         <Border x:Name="ShellCard" Grid.Row="1"
-                Width="650"
-                Height="690"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
+                Margin="14"
+                VerticalAlignment="Stretch"
+                HorizontalAlignment="Stretch"
                 Background="#F0131320"
                 BorderBrush="#33494B66"
                 BorderThickness="1"
@@ -99,12 +106,27 @@
                                        Foreground="#FFEDEDF5" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Content="DJ" Padding="12,5" Background="#10000000"
-                                    Command="{Binding ToggleCharacterPickerCommand}"/>
-                            <Button Content="SEARCH" Padding="12,5" Background="#10000000"
-                                    Command="{Binding OpenSearchCommand}"/>
-                            <Button Content="SETTINGS" Padding="12,5" Background="#10000000"
-                                    Command="{Binding ToggleSettingsCommand}"/>
+                            <Button Padding="11,5" Background="#10000000"
+                                    Command="{Binding ToggleCharacterPickerCommand}" ToolTip.Tip="DJ">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Width="14" Height="14" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
+                                    <TextBlock Text="DJ"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Padding="11,5" Background="#10000000"
+                                    Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Width="14" Height="14" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
+                                    <TextBlock Text="SEARCH"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Padding="11,5" Background="#10000000"
+                                    Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Settings">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Width="14" Height="14" Data="M4,21 L4,14 M4,10 L4,3 M12,21 L12,12 M12,8 L12,3 M20,21 L20,16 M20,12 L20,3 M2,14 L6,14 M10,8 L14,8 M18,16 L22,16"/>
+                                    <TextBlock Text="SETTINGS"/>
+                                </StackPanel>
+                            </Button>
                             <Button x:Name="DarkButton" Content="DARK" Padding="14,5"
                                     Background="#FFEDEDF5" Foreground="#FF050507"
                                     Command="{Binding UseDarkThemeCommand}"/>
@@ -123,21 +145,26 @@
                                FontFamily="Consolas"
                                Foreground="#FF44465C"
                                TextWrapping="Wrap"
-                               Text=".  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  ."/>
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-                        <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="70" FontWeight="700"
-                                   FontFamily="Consolas" Foreground="#FFFFFFFF"
-                                   HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="DayDisplay" Text="Monday" FontSize="14" FontFamily="Consolas"
-                                   Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="DateDisplay" Text="20-APR-2026" FontSize="11" FontFamily="Consolas"
-                                   Foreground="#FF858594" HorizontalAlignment="Center"/>
-                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                               x:Name="ClockDots"/>
+                    <Grid RowDefinitions="Auto,*,Auto" Margin="0,8">
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                             <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
                             <TextBlock Text="ON AIR" FontSize="11" FontWeight="700" FontFamily="Consolas"
                                        Foreground="#FF56F5C4"/>
                         </StackPanel>
-                    </StackPanel>
+                        <local:SpectrumView Grid.Row="1" DataContext="{Binding SpectrumVM}"
+                                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                                            MinHeight="96" MaxHeight="126" MinWidth="520"/>
+                        <StackPanel Grid.Row="2" HorizontalAlignment="Center" Spacing="4">
+                            <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="56" FontWeight="700"
+                                       FontFamily="Consolas" Foreground="#FFFFFFFF"
+                                       HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="DayDisplay" Text="Monday" FontSize="13" FontFamily="Consolas"
+                                       Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="DateDisplay" Text="20-APR-2026" FontSize="10" FontFamily="Consolas"
+                                       Foreground="#FF858594" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
                 </Grid>
 
                 <!-- Player deck -->
@@ -161,12 +188,31 @@
 
                         <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                     HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Button Width="32" Height="32" Content="&lt;" Command="{Binding PlayerVM.PreviousCommand}"/>
-                            <Button Width="36" Height="36" Content="{Binding PlayerVM.PlayPauseText}"
-                                    Background="#302B2E3C" Command="{Binding PlayerVM.PlayCommand}"/>
-                            <Button Width="32" Height="32" Content="&gt;" Command="{Binding PlayerVM.NextCommand}"/>
-                            <Button Width="32" Height="32" Content="[]" FontSize="10"/>
-                            <Button Width="32" Height="32" Content="FAV" FontSize="10"/>
+                            <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}" ToolTip.Tip="上一首">
+                                <PathIcon Width="16" Height="16" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
+                            </Button>
+                            <Button Width="38" Height="38" Background="#302B2E3C" Command="{Binding PlayerVM.PlayCommand}" ToolTip.Tip="播放/暂停">
+                                <Grid>
+                                    <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
+                                              Data="M8,5 L19,12 L8,19 Z"/>
+                                    <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying}"
+                                              Data="M7,5 L10,5 L10,19 L7,19 Z M14,5 L17,5 L17,19 L14,19 Z"/>
+                                </Grid>
+                            </Button>
+                            <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首">
+                                <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
+                            </Button>
+                            <Button Width="34" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}" ToolTip.Tip="循环模式">
+                                <PathIcon Width="17" Height="17" Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
+                            </Button>
+                            <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="收藏当前歌曲">
+                                <Grid>
+                                    <PathIcon Width="17" Height="17" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
+                                              Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                    <PathIcon Width="17" Height="17" Foreground="#FF56F5C4" IsVisible="{Binding IsCurrentFavorite}"
+                                              Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                </Grid>
+                            </Button>
                         </StackPanel>
 
                         <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8"
@@ -215,7 +261,7 @@
                                FontFamily="Consolas"
                                Foreground="#FF44465C"
                                TextWrapping="Wrap"
-                               Text=".  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .&#10;.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  ."/>
+                               x:Name="RoomDots"/>
 
                     <Border x:Name="LiveStrip" Background="#66111113" BorderBrush="#222F303A" BorderThickness="0,0,0,1"
                             Height="46" VerticalAlignment="Top">
@@ -230,29 +276,8 @@
                         </Grid>
                     </Border>
 
-                    <Grid Margin="22,60,22,12" ColumnDefinitions="180,*">
-                        <ListBox Grid.Column="0"
-                                 ItemsSource="{Binding PlaylistVM.Tracks}"
-                                 SelectedItem="{Binding PlaylistVM.SelectedTrack}"
-                                 MaxHeight="150">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate DataType="models:Track">
-                                    <Border Background="#CC202126" CornerRadius="6" Padding="10,8"
-                                            Width="165" Margin="0,0,0,8">
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
-                                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                                       Foreground="#FFFFFFFF" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Text="{Binding Artist}" FontSize="11"
-                                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                                       Foreground="#FF9B9BA8" TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-
-                        <ScrollViewer x:Name="ChatScrollViewer" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="22,60,22,12">
+                        <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto">
                             <ItemsControl ItemsSource="{Binding ChatVM.Messages}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -278,7 +303,7 @@
                     <Border IsVisible="{Binding ChatVM.IsProcessing}"
                             HorizontalAlignment="Left"
                             VerticalAlignment="Bottom"
-                            Margin="215,0,22,14"
+                            Margin="22,0,22,14"
                             Background="#EE050507"
                             BorderBrush="#3356F5C4"
                             BorderThickness="1"
@@ -290,18 +315,48 @@
                                        FontFamily="Consolas" Foreground="#FFB9FFE8"/>
                         </StackPanel>
                     </Border>
+
+                    <Border IsVisible="{Binding ChatVM.IsListening}"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom"
+                            Margin="22,0,22,14"
+                            Background="#EE050507"
+                            BorderBrush="#6656F5C4"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="12,8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                <Border Width="3" Height="8" Background="#FF56F5C4"/>
+                                <Border Width="3" Height="16" Background="#FF56F5C4"/>
+                                <Border Width="3" Height="11" Background="#FF56F5C4"/>
+                                <Border Width="3" Height="19" Background="#FF56F5C4"/>
+                            </StackPanel>
+                            <TextBlock Text="Release to transcribe..." FontSize="12"
+                                       FontFamily="Consolas" Foreground="#FFB9FFE8"/>
+                        </StackPanel>
+                    </Border>
                 </Grid>
 
                 <!-- Input -->
                 <Border x:Name="InputDeck" Grid.Row="5" Background="#E91B1B2A" Padding="22,10">
-                    <Grid ColumnDefinitions="*,46,50" ColumnSpacing="9">
+                    <Grid ColumnDefinitions="*,56,50" ColumnSpacing="9">
                         <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
                                  Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown"/>
-                        <Button Grid.Column="1" Content="{Binding ChatVM.MicButtonText}" FontSize="10"
-                                Background="#33262835" Command="{Binding ChatVM.ToggleVoiceInputCommand}"/>
-                        <Button Grid.Column="2" Content="UP" FontSize="11"
+                        <Button Grid.Column="1" FontSize="10"
+                                Background="#33262835"
+                                PointerPressed="OnMicPointerPressed"
+                                PointerReleased="OnMicPointerReleased"
+                                PointerCaptureLost="OnMicPointerCaptureLost"
+                                ToolTip.Tip="Hold to talk">
+                            <PathIcon Width="18" Height="18" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
+                        </Button>
+                        <Button Grid.Column="2" FontSize="11"
                                 Background="#FF7F7896" Foreground="#FF111118"
-                                Command="{Binding ChatVM.SendMessageCommand}"/>
+                                Command="{Binding ChatVM.SendMessageCommand}"
+                                ToolTip.Tip="Send">
+                            <PathIcon Width="18" Height="18" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
+                        </Button>
                     </Grid>
                 </Border>
 
@@ -315,6 +370,10 @@
                     </Grid>
                 </Border>
             </Grid>
+
+            <Border IsVisible="{Binding IsLibraryOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
+            <Border IsVisible="{Binding IsSettingsOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
+            <Border IsVisible="{Binding IsCharacterPickerOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
 
             <!-- Library drawer: real playlist, favorites, search and import entry points -->
             <Border IsVisible="{Binding IsLibraryOpen}"

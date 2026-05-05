@@ -9,7 +9,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using LibVLCSharp.Shared;
+using NAudio.Wave;
 using Serilog;
+using PlaybackState = AIRadio.Desktop.Models.PlaybackState;
 
 namespace AIRadio.Desktop.Services;
 
@@ -17,7 +19,8 @@ public class AudioService : IAudioService, IDisposable
 {
     private readonly LibVLC _libVLC;
     private readonly MediaPlayer _player;
-    private readonly MediaPlayer _ttsPlayer;
+    private WaveOutEvent? _ttsOutput;
+    private MediaFoundationReader? _ttsReader;
     private readonly Subject<float[]> _spectrumSubject = new();
     private readonly Subject<Track?> _trackChangedSubject = new();
     private readonly Subject<PlaybackState> _stateChangedSubject = new();
@@ -72,7 +75,6 @@ public class AudioService : IAudioService, IDisposable
         Core.Initialize();
         _libVLC = new LibVLC();
         _player = new MediaPlayer(_libVLC);
-        _ttsPlayer = new MediaPlayer(_libVLC);
 
         _player.Playing += (_, _) => SetState(PlaybackState.Playing);
         _player.Paused += (_, _) => SetState(PlaybackState.Paused);
@@ -95,12 +97,6 @@ public class AudioService : IAudioService, IDisposable
 
         // No audio callbacks — use simulated spectrum (VLC handles output normally)
         _spectrumTimer = new System.Threading.Timer(_ => EmitSimulatedSpectrum(), null, 100, 33);
-
-        // TTS player end notification
-        _ttsPlayer.EndReached += (_, _) =>
-        {
-            _ttsStateSubject.OnNext(false); // TTS ended
-        };
 
         // Duck main player volume when TTS is speaking
         _ttsStateSubject.Subscribe(ttsPlaying =>
@@ -432,11 +428,22 @@ public class AudioService : IAudioService, IDisposable
         if (_currentState != PlaybackState.Playing) return;
 
         var time = Environment.TickCount64 / 1000.0;
-        var data = new float[16];
-        for (int i = 0; i < 16; i++)
+        var beat = 0.5 + 0.5 * Math.Sin(time * 3.2);
+        var bassPulse = Math.Pow(Math.Max(0, Math.Sin(time * 5.8)), 2);
+        var midPulse = 0.5 + 0.5 * Math.Sin(time * 2.1 + Math.Sin(time * 0.7));
+        var treblePulse = _rng.NextDouble() * 0.35;
+        var data = new float[32];
+        for (int i = 0; i < data.Length; i++)
         {
-            var baseLevel = 0.2f + 0.3f * ((i % 3 == 0) ? 1f : 0.4f);
-            data[i] = (float)(baseLevel + 0.15 * Math.Sin(time * 8 + i * 0.7));
+            var band = i / (double)(data.Length - 1);
+            var envelope = band < 0.25
+                ? 0.55 * bassPulse
+                : band < 0.7
+                    ? 0.38 * midPulse
+                    : 0.24 * treblePulse;
+            var wave = 0.24 * Math.Sin(time * (7 + band * 12) + i * 0.55);
+            var noise = (_rng.NextDouble() - 0.5) * 0.12;
+            data[i] = (float)(0.12 + envelope + beat * 0.18 + wave + noise);
             data[i] = Math.Clamp(data[i], 0f, 1f);
         }
         _spectrumSubject.OnNext(data);
@@ -472,8 +479,9 @@ public class AudioService : IAudioService, IDisposable
         _spectrumTimer?.Dispose();
         _fadeTimer?.Dispose();
         _positionTimer?.Dispose();
-        _ttsPlayer?.Stop();
-        _ttsPlayer?.Dispose();
+        _ttsOutput?.Stop();
+        _ttsOutput?.Dispose();
+        _ttsReader?.Dispose();
         _player?.Dispose();
         _libVLC?.Dispose();
         _spectrumSubject.Dispose();
@@ -491,6 +499,12 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
+            _ttsOutput?.Stop();
+            _ttsOutput?.Dispose();
+            _ttsOutput = null;
+            _ttsReader?.Dispose();
+            _ttsReader = null;
+
             if (_currentTtsFile != null)
             {
                 try { File.Delete(_currentTtsFile); } catch { }
@@ -500,18 +514,30 @@ public class AudioService : IAudioService, IDisposable
             File.WriteAllBytes(tempPath, audioData);
             _currentTtsFile = tempPath;
 
-            var media = new Media(_libVLC, tempPath, FromType.FromPath);
-            _ttsPlayer.Stop();
-            _ttsPlayer.Media = media;
-            _ttsPlayer.Volume = 100;
-            _ttsStateSubject.OnNext(true); // TTS started
-            if (!_ttsPlayer.Play())
+            _ttsReader = new MediaFoundationReader(tempPath);
+            _ttsOutput = new WaveOutEvent
             {
+                DesiredLatency = 120,
+                Volume = 1.0f
+            };
+            _ttsOutput.Init(_ttsReader);
+            _ttsOutput.PlaybackStopped += (_, e) =>
+            {
+                if (e.Exception != null)
+                    Log.Warning(e.Exception, "TTS NAudio playback failed");
+                else
+                    Log.Information("TTS playback ended");
+
                 _ttsStateSubject.OnNext(false);
-                Log.Warning("TTS player refused to start");
-                return;
-            }
-            Log.Debug("TTS playback started");
+                try { File.Delete(tempPath); } catch { }
+                if (_currentTtsFile == tempPath)
+                    _currentTtsFile = null;
+            };
+
+            var signature = BitConverter.ToString(audioData.Take(Math.Min(8, audioData.Length)).ToArray());
+            _ttsStateSubject.OnNext(true);
+            _ttsOutput.Play();
+            Log.Information("TTS NAudio playback started: {Bytes} bytes, header={Header}, file={File}", audioData.Length, signature, tempPath);
         }
         catch (Exception ex)
         {

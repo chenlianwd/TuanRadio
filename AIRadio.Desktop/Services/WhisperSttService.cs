@@ -63,7 +63,7 @@ public class WhisperSttService : ISttService, IDisposable
         try
         {
             using var processor = _factory.CreateBuilder()
-                .WithLanguage("zh-CN")
+                .WithLanguage("zh")
                 .WithNoSpeechThreshold(0.3f)
                 .Build();
 

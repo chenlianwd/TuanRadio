@@ -13,7 +13,7 @@ public class SpectrumViewModel : ViewModelBase, IDisposable
 
     public event Action<float[]>? SpectrumReceived;
 
-    private const int BandCount = 16;
+    private const int BandCount = 32;
 
     public SpectrumViewModel(IAudioService audioService)
     {

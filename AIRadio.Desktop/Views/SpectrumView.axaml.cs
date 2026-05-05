@@ -21,7 +21,7 @@ public class SpectrumBarHeightConverter : IValueConverter
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is float f)
-            return Math.Max(2, f * 80);
+            return Math.Max(4, f * 130);
         return 2.0;
     }
 

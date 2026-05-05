@@ -1,4 +1,4 @@
-using ReactiveUI;
+﻿using ReactiveUI;
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -41,7 +41,7 @@ public class ChatViewModel : ViewModelBase
     [Reactive] public bool IsConversationMode { get; set; }
     [Reactive] public string DjEmotion { get; set; } = "neutral";
     [Reactive] public string StatusText { get; set; } = "READY";
-    [Reactive] public string MicButtonText { get; set; } = "MIC";
+    [Reactive] public string MicButtonText { get; set; } = "HOLD";
 
     public event Action<string, string>? Live2DCommand; // expression, motion
 
@@ -120,6 +120,18 @@ public class ChatViewModel : ViewModelBase
             StartListening();
     }
 
+    public void BeginHoldToTalk()
+    {
+        if (!IsListening && !IsRecognizing && !IsProcessing)
+            StartListening();
+    }
+
+    public void EndHoldToTalk()
+    {
+        if (IsListening)
+            StopListening();
+    }
+
     private void ToggleConversationMode()
     {
         if (IsConversationMode)
@@ -162,7 +174,7 @@ public class ChatViewModel : ViewModelBase
             _waveIn.StartRecording();
             IsListening = true;
             IsRecognizing = false;
-            MicButtonText = "STOP";
+            MicButtonText = "HOLD";
             RefreshStatus();
             Log.Information("Mic recording started");
         }
@@ -171,7 +183,7 @@ public class ChatViewModel : ViewModelBase
             Log.Error(ex, "Failed to start mic recording");
             IsListening = false;
             IsRecognizing = false;
-            MicButtonText = "MIC";
+            MicButtonText = "HOLD";
             StatusText = "MIC ERROR";
         }
     }
@@ -183,7 +195,7 @@ public class ChatViewModel : ViewModelBase
             _waveIn?.StopRecording();
             IsListening = false;
             IsRecognizing = true;
-            MicButtonText = "MIC";
+            MicButtonText = "HOLD";
             RefreshStatus();
             Log.Information("Mic recording stopped");
         }
@@ -192,7 +204,7 @@ public class ChatViewModel : ViewModelBase
             Log.Warning(ex, "Error stopping mic");
             IsListening = false;
             IsRecognizing = false;
-            MicButtonText = "MIC";
+            MicButtonText = "HOLD";
             StatusText = "MIC ERROR";
         }
     }
@@ -235,6 +247,7 @@ public class ChatViewModel : ViewModelBase
             Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
             {
                 IsRecognizing = false;
+                MicButtonText = "HOLD";
                 RefreshStatus();
             });
             try { File.Delete(wavPath); } catch { }
@@ -273,7 +286,28 @@ public class ChatViewModel : ViewModelBase
             else if (command != null && _djService.TtsEnabled)
                 _pendingCommand = command;
 
-            await SpeakAsync(displayText);
+            var ttsText = StripEmoji(displayText);
+            if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText))
+            {
+                StatusText = "VOICE...";
+                var speechData = await _djService.GenerateSpeechAsync(ttsText);
+                if (speechData is { Length: > 0 })
+                {
+                    _audioService.PlayTtsAudio(speechData);
+                }
+                else
+                {
+                    StatusText = "VOICE ERROR";
+                    Log.Warning("TTS returned empty audio");
+                    // TTS failed — execute pending command immediately if we were waiting for TTS
+                    if (_pendingCommand != null)
+                    {
+                        var cmd = _pendingCommand;
+                        _pendingCommand = null;
+                        await ExecuteCommandAsync(cmd);
+                    }
+                }
+            }
         }
         catch
         {
@@ -326,13 +360,11 @@ public class ChatViewModel : ViewModelBase
 
     private static (string displayText, string? command) ParseResponse(string response)
     {
-        // Strip emotion tag like [happy] [neutral] etc - anywhere in response
         var displayText = Regex.Replace(response, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
 
-        // Match 【play:xxx】 or 【next】 etc at the end
-        var match = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$");
+        var match = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$", RegexOptions.IgnoreCase);
         if (!match.Success)
-            return (displayText, null);
+            return (displayText.Trim(), null);
 
         displayText = displayText[..match.Index].TrimEnd('\n', '\r', ' ');
         var command = match.Groups[1].Value;

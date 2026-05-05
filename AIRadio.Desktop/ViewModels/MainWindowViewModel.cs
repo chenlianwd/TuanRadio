@@ -17,7 +17,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IAudioService _audioService;
     private readonly IDJService _djService;
     private readonly IMinimaxService _minimaxService;
+    private readonly IMusicSearchService _musicSearchService;
     private readonly IDisposable _trackEndedSub;
+    private readonly IDisposable _trackChangedSub;
 
     public PlayerViewModel PlayerVM { get; }
     public PlaylistViewModel PlaylistVM { get; }
@@ -34,6 +36,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsCharacterPickerOpen { get; set; }
     [Reactive] public CharacterProfile SelectedCharacter { get; set; }
     [Reactive] public bool IsDarkMode { get; set; } = true;
+    [Reactive] public bool IsCurrentFavorite { get; set; }
 
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleLibraryCommand { get; }
@@ -45,6 +48,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleCurrentFavoriteCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
@@ -57,6 +61,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _audioService = audioService;
         _djService = djService;
         _minimaxService = minimaxService;
+        _musicSearchService = musicSearchService;
 
         SelectedCharacter = Characters[0];
 
@@ -94,10 +99,23 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
         UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
+
+        // Persist IsDarkMode to settings when it changes
+        this.WhenAnyValue(x => x.IsDarkMode)
+            .Skip(1)
+            .Subscribe(isDark =>
+            {
+                SettingsVM.IsDarkMode = isDark;
+                SettingsVM.SaveCommand.Execute().Subscribe();
+            });
+        ToggleCurrentFavoriteCommand = ReactiveCommand.Create(ToggleCurrentFavorite);
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);
 
         // Re-apply character when settings are saved
         SettingsVM.CharacterSettingsChanged += () => SwitchCharacter(SelectedCharacter);
+        SettingsVM.WhenAnyValue(x => x.SelectedLanguage, x => x.TtsEnabled)
+            .Skip(1)
+            .Subscribe(_ => SwitchCharacter(SelectedCharacter));
 
         _trackEndedSub = _audioService.TrackEnded
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -108,6 +126,22 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 if (next == null || next == current) return;
                 _ = HandleTrackTransitionAsync(current, next);
             });
+
+        _trackChangedSub = _audioService.TrackChanged
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(track => IsCurrentFavorite = track?.IsFavorite == true);
+    }
+
+    private void ToggleCurrentFavorite()
+    {
+        var current = _audioService.CurrentTrack;
+        if (current == null) return;
+
+        if (!PlaylistVM.Tracks.Contains(current))
+            PlaylistVM.AddExternalTrack(current);
+
+        PlaylistVM.ToggleFavoriteCommand.Execute(current).Subscribe();
+        IsCurrentFavorite = current.IsFavorite;
     }
 
     private void SwitchCharacter(CharacterProfile character)
@@ -142,6 +176,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             ChatVM.AddAssistantMessage(script.Text);
             Log.Information("DJ: {Text}", script.Text);
             Live2DCommand?.Invoke(script.Expression, script.Motion);
+
+            if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
+            {
+                var speechData = await _djService.GenerateSpeechAsync(script.Text);
+                if (speechData is { Length: > 0 })
+                    _audioService.PlayTtsAudio(speechData);
+            }
         }
         catch (Exception ex)
         {
@@ -163,11 +204,57 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         await SettingsVM.LoadAsync();
         await PlaylistVM.LoadAsync();
+        IsDarkMode = SettingsVM.IsDarkMode;
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
 
+        await AnnounceWelcomeAsync();
+
         // AI startup recommendation: analyze playlist and recommend a song
-        await AnnounceStartupRecommendationAsync();
+        if (PlaylistVM.Tracks.Count == 0)
+            await AnnounceEmptyLibraryAsync();
+        else
+            await AnnounceStartupRecommendationAsync();
+    }
+
+    public void CloseOverlays()
+    {
+        IsSettingsOpen = false;
+        IsLibraryOpen = false;
+        IsCharacterPickerOpen = false;
+    }
+
+    private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync()
+    {
+        var text = SettingsVM.SelectedLanguage == "en"
+            ? "No tracks yet. Tell me a mood or search a song, and I'll build today's station."
+            : "歌单还是空的。告诉我今天的心情，或者搜一首歌，我来帮你开台。";
+
+        ChatVM.AddAssistantMessage(text);
+
+        if (_djService.TtsEnabled)
+        {
+            var speechData = await _djService.GenerateSpeechAsync(text);
+            if (speechData is { Length: > 0 })
+                _audioService.PlayTtsAudio(speechData);
+        }
+    }
+
+    private async System.Threading.Tasks.Task AnnounceWelcomeAsync()
+    {
+        var text = SettingsVM.SelectedLanguage == "en"
+            ? $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood."
+            : $"这里是 {SelectedCharacter.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。";
+
+        ChatVM.AddAssistantMessage(text);
+        Live2DCommand?.Invoke("smile", "wave");
+
+        if (_djService.TtsEnabled)
+        {
+            var speechData = await _djService.GenerateSpeechAsync(text);
+            if (speechData is { Length: > 0 })
+                _audioService.PlayTtsAudio(speechData);
+        }
     }
 
     private async System.Threading.Tasks.Task AnnounceStartupRecommendationAsync()
@@ -236,6 +323,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _trackEndedSub?.Dispose();
+        _trackChangedSub?.Dispose();
         PlayerVM?.Dispose();
     }
 }
