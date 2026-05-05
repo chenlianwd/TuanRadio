@@ -66,17 +66,19 @@
                                Foreground="#FFBFC3D6" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Button Width="30" Height="24" Padding="0" BorderThickness="1"
-                            Background="#FF302A1B" BorderBrush="#88FFC857"
-                            Foreground="#FFFFC857" Click="OnMinimizeClicked"
+                    <Button Width="30" Height="24" Padding="0" BorderThickness="0"
+                            Background="#00000000"
+                            Foreground="#FF8A8A96" Click="OnMinimizeClicked"
                             ToolTip.Tip="Minimize">
-                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FFFFC857" StrokeThickness="2.4" Data="M5,12 L19,12"/>
+                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FF8A8A96" StrokeThickness="2"
+                              Data="M5 15 L19 15" Fill="Transparent" StrokeLineCap="Round"/>
                     </Button>
-                    <Button Width="30" Height="24" Padding="0" BorderThickness="1"
-                            Background="#FF321D25" BorderBrush="#88FF5F73"
-                            Foreground="#FFFF5F73" Click="OnCloseClicked"
+                    <Button Width="30" Height="24" Padding="0" BorderThickness="0"
+                            Background="#00000000"
+                            Foreground="#FF6E6E80" Click="OnCloseClicked"
                             ToolTip.Tip="Close">
-                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FFFF5F73" StrokeThickness="2.4" Data="M18,6 L6,18 M6,6 L18,18"/>
+                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FF6E6E80" StrokeThickness="2"
+                              Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
                     </Button>
                 </StackPanel>
             </Grid>
@@ -92,7 +94,7 @@
                 CornerRadius="18"
                 ClipToBounds="True">
             <Grid>
-            <Grid RowDefinitions="64,168,88,36,*,66,28">
+            <Grid RowDefinitions="64,168,88,Auto,*,66,28">
                 <!-- Brand header -->
                 <Border x:Name="BrandHeader" Grid.Row="0" Background="#CC1B1B2A" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
@@ -144,19 +146,16 @@
                                Foreground="#FF44465C"
                                TextWrapping="Wrap"
                                x:Name="ClockDots"/>
+                    <local:StarfieldView x:Name="Starfield"
+                                         IsHitTestVisible="False"/>
                     <Grid ColumnDefinitions="*,Auto,*" Margin="24,10">
                         <local:SpectrumView Grid.Column="0" DataContext="{Binding SpectrumVM}"
                                             HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                             Height="118" Margin="0,0,18,0"/>
                         <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-                                <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
-                                <TextBlock Text="LIVE" FontSize="10" FontWeight="700" FontFamily="Consolas"
-                                           Foreground="#FF56F5C4"/>
-                            </StackPanel>
-                            <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="56" FontWeight="700"
-                                       FontFamily="Consolas" Foreground="#FFFFFFFF"
-                                       HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="56" FontWeight="700"
+                                           FontFamily="Consolas" Foreground="#FFFFFFFF"
+                                           HorizontalAlignment="Center"/>
                             <TextBlock x:Name="DayDisplay" Text="Monday" FontSize="13" FontFamily="Consolas"
                                        Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
                             <TextBlock x:Name="DateDisplay" Text="20-APR-2026" FontSize="10" FontFamily="Consolas"
@@ -229,7 +228,7 @@
                             </Button>
                             <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
                                        Foreground="#FF8A8A96" VerticalAlignment="Center"/>
-                            <Slider Width="48" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
+                            <Slider Width="120" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
                                     PointerReleased="OnVolumeSliderReleased"/>
                         </StackPanel>
 
@@ -244,8 +243,9 @@
                     </Grid>
                 </Border>
 
-                <!-- Queue strip -->
-                <Border x:Name="QueueStrip" Grid.Row="3" Background="#F007070A" BorderBrush="#222B2B36" BorderThickness="0,1">
+                <!-- Queue strip (hidden - actions available in Library drawer) -->
+                <Border x:Name="QueueStrip" Grid.Row="3" Background="#F007070A" BorderBrush="#222B2B36" BorderThickness="0,1"
+                        IsVisible="False" Height="0">
                     <Grid ColumnDefinitions="*,Auto" Margin="22,0">
                         <TextBlock Text="QUEUE" FontSize="12" FontFamily="Consolas"
                                    Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
@@ -325,7 +325,7 @@
                             Padding="12,8">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
-                            <TextBlock Text="Claudio is thinking..." FontSize="12"
+                            <TextBlock Text="AIRadio is thinking..." FontSize="12"
                                        FontFamily="Consolas" Foreground="#FFB9FFE8"/>
                         </StackPanel>
                     </Border>
@@ -417,12 +417,9 @@
                     Padding="16">
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel>
-                            <TextBlock Text="LIBRARY" FontSize="18" FontWeight="700"
-                                       FontFamily="Consolas" Foreground="#FFFFFFFF"/>
-                            <TextBlock Text="playlist / favorites / search" FontSize="11"
-                                       FontFamily="Consolas" Foreground="#FF89899A"/>
-                        </StackPanel>
+                        <TextBlock Text="LIBRARY" FontSize="18" FontWeight="700"
+                                   FontFamily="Consolas" Foreground="#FFFFFFFF"
+                                   VerticalAlignment="Center"/>
                         <Button Grid.Column="1" Width="32" Height="28" Padding="0"
                                 Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="Close library">
                             <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
@@ -447,7 +444,8 @@
                         <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8"
                               IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
                             <TextBox Text="{Binding PlaylistVM.SearchText, Mode=TwoWay}"
-                                     Watermark="Search songs..." KeyDown="OnSearchKeyDown"/>
+                                     Watermark="Search songs..." KeyDown="OnSearchKeyDown"
+                                     TextChanged="OnSearchTextChanged"/>
                             <Button Grid.Column="1" Content="GO" Command="{Binding PlaylistVM.SearchCommand}"/>
                         </Grid>
                     </Grid>

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Reactive.Linq;
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Controls;
@@ -45,12 +46,20 @@ public partial class MainWindow : Window
     private Border? _avatarBorder;
     private TextBlock? _avatarLetter;
     private Button? _micButton;
+    private StarfieldView? _starfield;
+    private Action<float[]>? _spectrumHandler;
+    private IDisposable? _starfieldVisSub;
+    private IDisposable? _searchDebounceSub;
+    private IDisposable? _themeSub;
+    private NotifyCollectionChangedEventHandler? _chatHandler;
+    private Action<string, string>? _live2dHandler;
 
     public MainWindow()
     {
         InitializeComponent();
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
         _avatarLetter = this.FindControl<TextBlock>("AvatarLetter");
+        _starfield = this.FindControl<StarfieldView>("Starfield");
         StartClock();
         FillDotFields();
 
@@ -59,14 +68,54 @@ public partial class MainWindow : Window
             if (DataContext is ViewModels.MainWindowViewModel vm)
             {
                 if (_activeVm != null)
-                    _activeVm.ChatVM.Messages.CollectionChanged -= OnChatMessagesChanged;
+                {
+                    if (_live2dHandler != null)
+                    {
+                        _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
+                        _activeVm.Live2DCommand -= _live2dHandler;
+                    }
+                    if (_live2dHandler != null)
+                    {
+                        _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
+                        _activeVm.Live2DCommand -= _live2dHandler;
+                    }
+                    if (_chatHandler != null)
+                        _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
+                    _themeSub?.Dispose();
+                    if (_spectrumHandler != null)
+                        _activeVm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
+                }
 
                 _activeVm = vm;
-                vm.ChatVM.Live2DCommand += OnLive2DCommand;
-                vm.Live2DCommand += OnLive2DCommand;
-                vm.WhenAnyValue(x => x.IsDarkMode).Subscribe(isDark => UpdateThemeButtons(isDark));
-                vm.ChatVM.Messages.CollectionChanged += OnChatMessagesChanged;
+                _live2dHandler = OnLive2DCommand;
+                vm.ChatVM.Live2DCommand += _live2dHandler;
+                vm.Live2DCommand += _live2dHandler;
+                vm.ChatVM.Messages.CollectionChanged -= _chatHandler;
+                _chatHandler = OnChatMessagesChanged;
+                vm.ChatVM.Messages.CollectionChanged += _chatHandler;
+                _themeSub = vm.WhenAnyValue(x => x.IsDarkMode).Subscribe(isDark => UpdateThemeButtons(isDark));
                 UpdateThemeButtons(vm.IsDarkMode);
+
+                // Wire starfield: push spectrum data + bind visibility
+                if (_spectrumHandler != null)
+                    vm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
+                _spectrumHandler = data => _starfield?.PushSpectrum(data);
+                vm.SpectrumVM.SpectrumReceived += _spectrumHandler;
+
+                _starfieldVisSub?.Dispose();
+                _starfieldVisSub = vm.SettingsVM.WhenAnyValue(x => x.EnableStarfield)
+                    .Subscribe(v => { if (_starfield != null) _starfield.IsVisible = v; });
+
+                // Debounced search on text change
+                _searchDebounceSub?.Dispose();
+                _searchDebounceSub = vm.PlaylistVM.WhenAnyValue(x => x.SearchText)
+                    .Throttle(TimeSpan.FromMilliseconds(500))
+                    .ObserveOn(RxApp.MainThreadScheduler)
+                    .Subscribe(text =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(text) && text.Length >= 2)
+                            vm.PlaylistVM.SearchCommand.Execute().Subscribe();
+                    });
             }
         };
     }
@@ -286,6 +335,11 @@ public partial class MainWindow : Window
         {
             vm.PlaylistVM.SearchCommand.Execute().Subscribe();
         }
+    }
+
+    private void OnSearchTextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
+    {
+        // Triggers WhenAnyValue in the debounced subscription in DataContextChanged
     }
 
     private async void OnImportFiles(object? sender, RoutedEventArgs e)

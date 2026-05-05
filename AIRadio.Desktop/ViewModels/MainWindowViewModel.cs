@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Serilog;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
@@ -22,6 +23,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
     private bool _autoRadioAdvancing;
+    private readonly SemaphoreSlim _ttsLock = new(1, 1);
 
     public PlayerViewModel PlayerVM { get; }
     public PlaylistViewModel PlaylistVM { get; }
@@ -215,7 +217,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SwitchCharacter(SelectedCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
 
-        AnnounceWelcome();
+        await AnnounceWelcomeAsync();
 
         // AI startup recommendation: analyze playlist and recommend a song
         _ = AnnounceStartupFollowupAsync();
@@ -244,7 +246,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private System.Threading.Tasks.Task AnnounceEmptyLibraryAsync()
+    private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync()
     {
         var text = SettingsVM.SelectedLanguage == "en"
             ? "No tracks yet. Tell me a mood or search a song, and I'll build today's station."
@@ -252,11 +254,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         ChatVM.AddAssistantMessage(text);
 
-        SpeakDjText(text);
-        return System.Threading.Tasks.Task.CompletedTask;
+        await SpeakDjTextAsync(text);
+        if (PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
+            _audioService.Play();
     }
 
-    private void AnnounceWelcome()
+    private async System.Threading.Tasks.Task AnnounceWelcomeAsync()
     {
         var text = SettingsVM.SelectedLanguage == "en"
             ? $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood."
@@ -264,7 +267,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         ChatVM.AddAssistantMessage(text);
         Live2DCommand?.Invoke("smile", "wave");
-        SpeakDjText(text);
+        await SpeakDjTextAsync(text);
+        if (PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
+            _audioService.Play();
     }
 
     private async System.Threading.Tasks.Task AnnounceCharacterGreetingAsync()
@@ -282,7 +287,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             ChatVM.AddAssistantMessage(text);
             Live2DCommand?.Invoke("smile", "wave");
 
-            SpeakDjText(text);
+            await SpeakDjTextAsync(text);
         }
         catch (Exception ex)
         {
@@ -324,7 +329,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             ChatVM.AddAssistantMessage(script.Text);
             Live2DCommand?.Invoke(script.Expression, script.Motion);
 
-            SpeakDjText(script.Text);
+            await SpeakDjTextAsync(script.Text);
+
+            // After TTS finishes, auto-play the recommended track if not already playing
+            if (!_audioService.IsPlaying)
+            {
+                var index = PlaylistVM.Tracks.IndexOf(recommended);
+                if (index >= 0)
+                    _audioService.PlayAtIndex(index);
+            }
 
             Log.Information("AI recommended: {Track}", recommended.Title);
         }
@@ -337,19 +350,42 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private async System.Threading.Tasks.Task HandleAutoRadioTrackEndedAsync(Track current)
     {
         if (_autoRadioAdvancing) return;
+        // Only auto-radio in 'radio' repeat mode
+        if (_audioService.RepeatMode != "radio") return;
         _autoRadioAdvancing = true;
         try
         {
             var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
-            var next = PickDiversifiedTrack(pool.Count > 0 ? pool : PlaylistVM.Tracks.ToList(), current);
-            if (next == null) return;
+            Track? next = null;
 
-            var script = await _djService.GenerateTrackIntroductionAsync(current, next);
-            ChatVM.AddAssistantMessage(script.Text);
-            Live2DCommand?.Invoke(script.Expression, script.Motion);
-            SpeakDjText(script.Text);
+            if (pool.Count > 0)
+            {
+                next = PickDiversifiedTrack(pool, current);
+            }
+            else if (PlaylistVM.Tracks.Count == 1)
+            {
+                next = current;
+            }
+            else
+            {
+                _autoRadioAdvancing = false;
+                return;
+            }
 
-            await System.Threading.Tasks.Task.Delay(_djService.TtsEnabled ? 3200 : 700);
+            if (next == null)
+            {
+                _autoRadioAdvancing = false;
+                return;
+            }
+
+            if (next != current)
+            {
+                var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+                ChatVM.AddAssistantMessage(script.Text);
+                Live2DCommand?.Invoke(script.Expression, script.Motion);
+                await SpeakDjTextAsync(script.Text);
+            }
+
             var index = PlaylistVM.Tracks.IndexOf(next);
             if (index >= 0)
                 _audioService.PlayAtIndex(index);
@@ -385,23 +421,43 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         return cleaned.Trim();
     }
 
-    private void SpeakDjText(string text)
+    private async System.Threading.Tasks.Task SpeakDjTextAsync(string text)
     {
         if (!_djService.TtsEnabled || string.IsNullOrWhiteSpace(text)) return;
 
-        _ = System.Threading.Tasks.Task.Run(async () =>
+        try
         {
+            await _ttsLock.WaitAsync();
             try
             {
                 var speechData = await _djService.GenerateSpeechAsync(text);
                 if (speechData is { Length: > 0 })
+                {
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+                    var sub = _audioService.TtsStateChanged.Subscribe(playing =>
+                    {
+                        if (!playing) tcs.TrySetResult(true);
+                    });
                     _audioService.PlayTtsAudio(speechData);
+                    try
+                    {
+                        await tcs.Task;
+                    }
+                    finally
+                    {
+                        sub.Dispose();
+                    }
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                Log.Warning(ex, "Failed to speak DJ text");
+                _ttsLock.Release();
             }
-        });
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to speak DJ text");
+        }
     }
 
     public void Dispose()
@@ -409,5 +465,6 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
         PlayerVM?.Dispose();
+        _ttsLock.Dispose();
     }
 }

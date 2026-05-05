@@ -67,7 +67,7 @@ public class PlaylistViewModelTests
     public async Task ToggleFavorite_AddsToFavoritesWhenTrue()
     {
         var (vm, _, _) = CreateVm();
-        var track = new Track { Title = "Test", Artist = "Me", IsFavorite = false };
+        var track = new Track { Id = "toggle-test-1", Title = "Test", Artist = "Me" };
 
         vm.Tracks.Add(track);
         vm.ToggleFavoriteCommand.Execute(track).Subscribe();
@@ -80,10 +80,11 @@ public class PlaylistViewModelTests
     public async Task ToggleFavorite_RemovesFromFavoritesWhenFalse()
     {
         var (vm, _, _) = CreateVm();
-        var track = new Track { Title = "Test", Artist = "Me", IsFavorite = true };
-        vm.Favorites.Add(track);
+        var track = new Track { Id = "toggle-test-2", Title = "Test", Artist = "Me" };
+        vm.Tracks.Add(track);
+        vm.ToggleFavoriteCommand.Execute(track).Subscribe(); // add first
 
-        vm.ToggleFavoriteCommand.Execute(track).Subscribe();
+        vm.ToggleFavoriteCommand.Execute(track).Subscribe(); // then remove
 
         Assert.False(track.IsFavorite);
         Assert.DoesNotContain(track, vm.Favorites);

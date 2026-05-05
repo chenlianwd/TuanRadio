@@ -29,9 +29,11 @@ public class AudioService : IAudioService, IDisposable
     private readonly List<Track> _playlist = new();
     private int _currentIndex = -1;
     private bool _shuffle;
-    private string _repeatMode = "none";
+    private string _repeatMode = "radio";
     private string _speechMixMode = "duck";
     private bool _resumeAfterTts;
+    private bool _ttsWasPlayingWhenMusicPaused;
+    private bool _ttsCancelled;
     private readonly System.Threading.Timer _positionTimer;
     private readonly System.Threading.Timer _spectrumTimer;
     private long _lastPositionMs;
@@ -114,7 +116,7 @@ public class AudioService : IAudioService, IDisposable
                 else
                 {
                     _resumeAfterTts = false;
-                    _player.Volume = (int)(_userVolume * 20);
+                    _player.Volume = (int)(_userVolume * 35);
                 }
             }
             else
@@ -132,6 +134,28 @@ public class AudioService : IAudioService, IDisposable
 
         _fadeTimer = new System.Threading.Timer(_ => DoFadeStep(), null, Timeout.Infinite, Timeout.Infinite);
         _positionTimer = new System.Threading.Timer(_ => EmitPosition(), null, 500, 500);
+
+        // Pause TTS when music is paused, resume when music plays
+        _stateChangedSubject.Subscribe(state =>
+        {
+            if (state == PlaybackState.Paused)
+            {
+                if (_ttsOutput?.PlaybackState == NAudio.Wave.PlaybackState.Playing)
+                {
+                    _ttsWasPlayingWhenMusicPaused = true;
+                    _ttsOutput.Pause();
+                }
+                else
+                {
+                    _ttsWasPlayingWhenMusicPaused = false;
+                }
+            }
+            else if (state == PlaybackState.Playing && _ttsWasPlayingWhenMusicPaused)
+            {
+                _ttsWasPlayingWhenMusicPaused = false;
+                _ttsOutput?.Play();
+            }
+        });
     }
 
     
@@ -147,6 +171,7 @@ public class AudioService : IAudioService, IDisposable
         if (now - _lastAdvanceMs < 500) return; // debounce rapid re-entry
         _lastAdvanceMs = now;
 
+        // Notify subscribers (auto-radio handler) BEFORE repeat-mode logic
         _trackEndedSubject.OnNext(CurrentTrack);
 
         if (_repeatMode == "single" && CurrentTrack != null)
@@ -157,10 +182,9 @@ public class AudioService : IAudioService, IDisposable
         {
             Next();
         }
-        else
-        {
-            Stop();
-        }
+        // "radio" and "none" mode: emit TrackEnded for handler to manage.
+        // Auto-radio handler fires and selects/plays the next track.
+        // If no handler is active, player naturally stays at end.
     }
 
     public void LoadTracks(IEnumerable<Track> tracks)
@@ -431,8 +455,7 @@ public class AudioService : IAudioService, IDisposable
                     PlayTrack(_currentIndex);
                 else if (_repeatMode == "list")
                     Next();
-                else
-                    Stop();
+                // "none" mode: let auto-radio handler manage continuation
             }
         }
     }
@@ -509,6 +532,7 @@ public class AudioService : IAudioService, IDisposable
 
     public void PlayTtsAudio(byte[] audioData)
     {
+        _ttsCancelled = false;
         try
         {
             _ttsOutput?.Stop();
@@ -535,6 +559,11 @@ public class AudioService : IAudioService, IDisposable
             _ttsOutput.Init(_ttsReader);
             _ttsOutput.PlaybackStopped += (_, e) =>
             {
+                if (_ttsCancelled)
+                {
+                    _ttsCancelled = false;
+                    return;
+                }
                 if (e.Exception != null)
                     Log.Warning(e.Exception, "TTS NAudio playback failed");
                 else
@@ -556,5 +585,21 @@ public class AudioService : IAudioService, IDisposable
             _ttsStateSubject.OnNext(false);
             Log.Warning(ex, "Failed to play TTS audio");
         }
+    }
+
+    public void StopTts()
+    {
+        _ttsCancelled = true;
+        _ttsOutput?.Stop();
+        _ttsOutput?.Dispose();
+        _ttsOutput = null;
+        _ttsReader?.Dispose();
+        _ttsReader = null;
+        if (_currentTtsFile != null)
+        {
+            try { File.Delete(_currentTtsFile); } catch { }
+            _currentTtsFile = null;
+        }
+        Log.Information("TTS playback stopped");
     }
 }

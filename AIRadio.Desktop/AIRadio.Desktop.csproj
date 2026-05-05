@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationIcon>Assets\airadio.ico</ApplicationIcon>
+    <AssemblyName>AIRadio</AssemblyName>
+    <Product>AIRadio FM</Product>
+    <Description>AI-powered personal radio station</Description>
   </PropertyGroup>
 
   <ItemGroup>

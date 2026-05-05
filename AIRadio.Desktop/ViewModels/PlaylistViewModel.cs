@@ -21,6 +21,8 @@ public class PlaylistViewModel : ViewModelBase
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
     private bool _isPlayingOnline;
+    private bool _isLoading;
+    private readonly HashSet<string> _favoriteIds = new();
     private static readonly string PlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string PlaylistFile = Path.Combine(PlaylistDir, "playlist.json");
@@ -101,15 +103,18 @@ public class PlaylistViewModel : ViewModelBase
 
         ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
-            track.IsFavorite = !track.IsFavorite;
-            if (track.IsFavorite)
+            if (_favoriteIds.Contains(track.Id))
             {
-                if (!Favorites.Contains(track))
-                    Favorites.Add(track);
+                _favoriteIds.Remove(track.Id);
+                track.IsFavorite = false;
+                Favorites.Remove(track);
             }
             else
             {
-                Favorites.Remove(track);
+                _favoriteIds.Add(track.Id);
+                track.IsFavorite = true;
+                if (!Favorites.Contains(track))
+                    Favorites.Add(track);
             }
             _ = SaveAsync();
         });
@@ -132,12 +137,19 @@ public class PlaylistViewModel : ViewModelBase
                 }
             });
 
-        // Auto-save when tracks change
-        Tracks.CollectionChanged += (_, _) => _ = SaveAsync();
+        // Auto-save when tracks change (skip during initial load)
+        Tracks.CollectionChanged += OnTracksChanged;
+    }
+
+    private void OnTracksChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (!_isLoading) _ = SaveAsync();
     }
 
     public async Task LoadAsync()
     {
+        _isLoading = true;
+        Tracks.CollectionChanged -= OnTracksChanged;
         try
         {
             if (!File.Exists(PlaylistFile)) return;
@@ -146,7 +158,22 @@ public class PlaylistViewModel : ViewModelBase
             var data = JsonSerializer.Deserialize<PlaylistData>(json);
             if (data == null || data.Tracks == null) return;
 
+            _favoriteIds.Clear();
+            if (data.FavoriteIds != null && data.FavoriteIds.Count > 0)
+            {
+                foreach (var id in data.FavoriteIds)
+                    _favoriteIds.Add(id);
+            }
+            else
+            {
+                // Backward compat: load from legacy IsFavorite field
+                foreach (var item in data.Tracks)
+                    if (item.IsFavorite && !string.IsNullOrEmpty(item.Id))
+                        _favoriteIds.Add(item.Id);
+            }
+
             Tracks.Clear();
+            Favorites.Clear();
             foreach (var item in data.Tracks)
             {
                 if (item.IsOnline && !string.IsNullOrEmpty(item.SourceId))
@@ -167,7 +194,7 @@ public class PlaylistViewModel : ViewModelBase
                             IsFavorite = item.IsFavorite
                         };
                         Tracks.Add(track);
-                        if (item.IsFavorite)
+                        if (_favoriteIds.Contains(track.Id))
                             Favorites.Add(track);
                     }
                 }
@@ -185,7 +212,7 @@ public class PlaylistViewModel : ViewModelBase
                         IsFavorite = item.IsFavorite
                     };
                     Tracks.Add(track);
-                    if (item.IsFavorite)
+                    if (_favoriteIds.Contains(track.Id))
                         Favorites.Add(track);
                 }
             }
@@ -199,6 +226,12 @@ public class PlaylistViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load playlist");
+        }
+        finally
+        {
+            _isLoading = false;
+            Tracks.CollectionChanged += OnTracksChanged;
+            _ = SaveAsync(); // save once after load completes
         }
     }
 
@@ -219,12 +252,13 @@ public class PlaylistViewModel : ViewModelBase
                     FilePath = t.SourceId != null ? "" : t.FilePath,
                     SourceId = t.SourceId,
                     IsOnline = t.SourceId != null,
-                    IsFavorite = t.IsFavorite
-                }).ToList()
+                    IsFavorite = _favoriteIds.Contains(t.Id)
+                }).ToList(),
+                FavoriteIds = _favoriteIds.ToList()
             };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(PlaylistFile, json);
-            Log.Debug("Playlist saved: {Count} tracks", Tracks.Count);
+            Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", Tracks.Count, _favoriteIds.Count);
         }
         catch (Exception ex)
         {
@@ -304,7 +338,7 @@ public class PlaylistViewModel : ViewModelBase
         }
 
         Tracks.Add(track);
-        if (track.IsFavorite && !Favorites.Contains(track))
+        if (_favoriteIds.Contains(track.Id) && !Favorites.Contains(track))
             Favorites.Add(track);
         TabIndex = 0;
         _ = SaveAsync();
@@ -346,6 +380,7 @@ public static class ObservableCollectionExtensions
 internal class PlaylistData
 {
     public List<PlaylistTrack> Tracks { get; set; } = new();
+    public List<string> FavoriteIds { get; set; } = new();
 }
 
 internal class PlaylistTrack
