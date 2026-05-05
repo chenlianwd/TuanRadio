@@ -20,12 +20,14 @@ public class PlaylistViewModel : ViewModelBase
 {
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
+    private readonly string _playlistDir;
+    private readonly string _playlistFile;
     private bool _isPlayingOnline;
     private bool _isLoading;
     private readonly HashSet<string> _favoriteIds = new();
-    private static readonly string PlaylistDir = Path.Combine(
+    private static readonly string DefaultPlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
-    private static readonly string PlaylistFile = Path.Combine(PlaylistDir, "playlist.json");
+    private static readonly string DefaultPlaylistFile = Path.Combine(DefaultPlaylistDir, "playlist.json");
 
     public ObservableCollection<Track> Tracks { get; } = new();
     public ObservableCollection<Track> Favorites { get; } = new();
@@ -47,10 +49,12 @@ public class PlaylistViewModel : ViewModelBase
     public ReactiveCommand<Track, Unit> ToggleFavoriteCommand { get; }
     public ReactiveCommand<Track, Unit> PlayFavoriteCommand { get; }
 
-    public PlaylistViewModel(IAudioService audioService, IMusicSearchService musicSearchService)
+    public PlaylistViewModel(IAudioService audioService, IMusicSearchService musicSearchService, string? playlistFile = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
+        _playlistFile = playlistFile ?? DefaultPlaylistFile;
+        _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
 
         RemoveTrackCommand = ReactiveCommand.Create<Track>(track =>
         {
@@ -103,18 +107,22 @@ public class PlaylistViewModel : ViewModelBase
 
         ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
-            if (_favoriteIds.Contains(track.Id))
+            var playlistTrack = FindMatchingTrack(track) ?? track;
+            if (!Tracks.Contains(playlistTrack))
+                Tracks.Add(playlistTrack);
+
+            if (_favoriteIds.Contains(playlistTrack.Id))
             {
-                _favoriteIds.Remove(track.Id);
-                track.IsFavorite = false;
-                Favorites.Remove(track);
+                _favoriteIds.Remove(playlistTrack.Id);
+                playlistTrack.IsFavorite = false;
+                Favorites.Remove(playlistTrack);
             }
             else
             {
-                _favoriteIds.Add(track.Id);
-                track.IsFavorite = true;
-                if (!Favorites.Contains(track))
-                    Favorites.Add(track);
+                _favoriteIds.Add(playlistTrack.Id);
+                playlistTrack.IsFavorite = true;
+                if (!Favorites.Contains(playlistTrack))
+                    Favorites.Add(playlistTrack);
             }
             _ = SaveAsync();
         });
@@ -152,9 +160,9 @@ public class PlaylistViewModel : ViewModelBase
         Tracks.CollectionChanged -= OnTracksChanged;
         try
         {
-            if (!File.Exists(PlaylistFile)) return;
+            if (!File.Exists(_playlistFile)) return;
 
-            var json = await File.ReadAllTextAsync(PlaylistFile);
+            var json = await File.ReadAllTextAsync(_playlistFile);
             var data = JsonSerializer.Deserialize<PlaylistData>(json);
             if (data == null || data.Tracks == null) return;
 
@@ -178,25 +186,21 @@ public class PlaylistViewModel : ViewModelBase
             {
                 if (item.IsOnline && !string.IsNullOrEmpty(item.SourceId))
                 {
-                    // Re-fetch URL for online tracks
                     var url = await _musicSearchService.GetPlayUrlAsync(item.SourceId);
-                    if (!string.IsNullOrEmpty(url))
+                    var track = new Track
                     {
-                        var track = new Track
-                        {
-                            Id = item.Id,
-                            Title = item.Title,
-                            Artist = item.Artist,
-                            Album = item.Album,
-                            Duration = TimeSpan.FromMilliseconds(item.DurationMs),
-                            FilePath = url,
-                            SourceId = item.SourceId,
-                            IsFavorite = item.IsFavorite
-                        };
-                        Tracks.Add(track);
-                        if (_favoriteIds.Contains(track.Id))
-                            Favorites.Add(track);
-                    }
+                        Id = item.Id,
+                        Title = item.Title,
+                        Artist = item.Artist,
+                        Album = item.Album,
+                        Duration = TimeSpan.FromMilliseconds(item.DurationMs),
+                        FilePath = url ?? item.FilePath,
+                        SourceId = item.SourceId,
+                        IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
+                    };
+                    Tracks.Add(track);
+                    if (track.IsFavorite)
+                        Favorites.Add(track);
                 }
                 else if (!string.IsNullOrEmpty(item.FilePath) && File.Exists(item.FilePath))
                 {
@@ -209,10 +213,10 @@ public class PlaylistViewModel : ViewModelBase
                         Album = item.Album,
                         Duration = TimeSpan.FromMilliseconds(item.DurationMs),
                         FilePath = item.FilePath,
-                        IsFavorite = item.IsFavorite
+                        IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
                     Tracks.Add(track);
-                    if (_favoriteIds.Contains(track.Id))
+                    if (track.IsFavorite)
                         Favorites.Add(track);
                 }
             }
@@ -239,7 +243,7 @@ public class PlaylistViewModel : ViewModelBase
     {
         try
         {
-            Directory.CreateDirectory(PlaylistDir);
+            Directory.CreateDirectory(_playlistDir);
             var data = new PlaylistData
             {
                 Tracks = Tracks.Select(t => new PlaylistTrack
@@ -249,7 +253,7 @@ public class PlaylistViewModel : ViewModelBase
                     Artist = t.Artist,
                     Album = t.Album,
                     DurationMs = (long)t.Duration.TotalMilliseconds,
-                    FilePath = t.SourceId != null ? "" : t.FilePath,
+                    FilePath = t.FilePath,
                     SourceId = t.SourceId,
                     IsOnline = t.SourceId != null,
                     IsFavorite = _favoriteIds.Contains(t.Id)
@@ -257,7 +261,7 @@ public class PlaylistViewModel : ViewModelBase
                 FavoriteIds = _favoriteIds.ToList()
             };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(PlaylistFile, json);
+            await File.WriteAllTextAsync(_playlistFile, json);
             Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", Tracks.Count, _favoriteIds.Count);
         }
         catch (Exception ex)
@@ -330,10 +334,17 @@ public class PlaylistViewModel : ViewModelBase
 
     public void AddExternalTrack(Track track)
     {
-        if (Tracks.Any(t =>
-                (!string.IsNullOrWhiteSpace(track.SourceId) && t.SourceId == track.SourceId) ||
-                (!string.IsNullOrWhiteSpace(track.FilePath) && t.FilePath == track.FilePath)))
+        var existing = FindMatchingTrack(track);
+        if (existing != null)
         {
+            if (track.IsFavorite || _favoriteIds.Contains(existing.Id))
+            {
+                existing.IsFavorite = true;
+                _favoriteIds.Add(existing.Id);
+                if (!Favorites.Contains(existing))
+                    Favorites.Add(existing);
+                _ = SaveAsync();
+            }
             return;
         }
 
@@ -343,6 +354,14 @@ public class PlaylistViewModel : ViewModelBase
             Favorites.Add(track);
         TabIndex = 0;
         _ = SaveAsync();
+    }
+
+    private Track? FindMatchingTrack(Track track)
+    {
+        return Tracks.FirstOrDefault(t =>
+            (!string.IsNullOrWhiteSpace(track.SourceId) && t.SourceId == track.SourceId) ||
+            (!string.IsNullOrWhiteSpace(track.FilePath) && t.FilePath == track.FilePath) ||
+            (!string.IsNullOrWhiteSpace(track.Id) && t.Id == track.Id));
     }
 
     public void AddFiles(string[] filePaths)

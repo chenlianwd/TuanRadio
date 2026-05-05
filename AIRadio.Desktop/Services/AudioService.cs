@@ -33,7 +33,9 @@ public class AudioService : IAudioService, IDisposable
     private string _speechMixMode = "duck";
     private bool _resumeAfterTts;
     private bool _ttsWasPlayingWhenMusicPaused;
-    private bool _ttsCancelled;
+    private readonly object _ttsStateGate = new();
+    private int _ttsSessionId;
+    private readonly HashSet<int> _cancelledTtsSessions = new();
     private readonly System.Threading.Timer _positionTimer;
     private readonly System.Threading.Timer _spectrumTimer;
     private long _lastPositionMs;
@@ -301,8 +303,12 @@ public class AudioService : IAudioService, IDisposable
                         track = retry;
                 }
 
-                AddTracks(new[] { track });
-                var index = _playlist.Count - 1;
+                var index = FindTrackIndex(track);
+                if (index < 0)
+                {
+                    AddTracks(new[] { track });
+                    index = _playlist.Count - 1;
+                }
                 PlayAtIndex(index);
             }
             return;
@@ -325,8 +331,12 @@ public class AudioService : IAudioService, IDisposable
             var track = await _previousCallback();
             if (track != null)
             {
-                AddTracks(new[] { track });
-                var index = _playlist.Count - 1;
+                var index = FindTrackIndex(track);
+                if (index < 0)
+                {
+                    AddTracks(new[] { track });
+                    index = _playlist.Count - 1;
+                }
                 PlayAtIndex(index);
                 return;
             }
@@ -349,10 +359,25 @@ public class AudioService : IAudioService, IDisposable
         PlayTrack(index, isRetry: false);
     }
 
+    private int FindTrackIndex(Track track)
+    {
+        for (int i = 0; i < _playlist.Count; i++)
+        {
+            var item = _playlist[i];
+            if (!string.IsNullOrWhiteSpace(track.SourceId) && item.SourceId == track.SourceId)
+                return i;
+            if (!string.IsNullOrWhiteSpace(track.FilePath) && item.FilePath == track.FilePath)
+                return i;
+        }
+
+        return -1;
+    }
+
     private void PlayTrack(int index, bool isRetry = false)
     {
         if (index < 0 || index >= _playlist.Count) return;
 
+        _currentIndex = index; // 确保 CurrentTrack 在 NotifyTrackChanged 时正确
         var track = _playlist[index];
         try
         {
@@ -362,15 +387,15 @@ public class AudioService : IAudioService, IDisposable
 
             string filePath = track.FilePath;
 
-            // For URL tracks with a source ID, refresh URL to avoid 403/404 from expired links
+            // Online tracks may be restored before their temporary play URL is available.
             if (!string.IsNullOrEmpty(track.SourceId) && _urlResolver != null)
             {
-                if (filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                    filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                var isOnlineUrl = filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                                  filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+                if (string.IsNullOrWhiteSpace(filePath) || isOnlineUrl)
                 {
-                    if (isRetry)
+                    if (isRetry || string.IsNullOrWhiteSpace(filePath))
                     {
-                        // Sync refresh on retry to get fresh URL
                         var newUrl = RefreshTrackUrlSync(track);
                         if (!string.IsNullOrEmpty(newUrl))
                             filePath = newUrl;
@@ -409,7 +434,7 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
-            var newUrl = await _urlResolver!(track.SourceId);
+            var newUrl = await _urlResolver!(track.SourceId!);
             if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
             {
                 track.FilePath = newUrl;
@@ -426,7 +451,7 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
-            var task = _urlResolver!(track.SourceId);
+            var task = _urlResolver!(track.SourceId!);
             var newUrl = task.GetAwaiter().GetResult();
             if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
             {
@@ -568,23 +593,14 @@ public class AudioService : IAudioService, IDisposable
 
     public void PlayTtsAudio(byte[] audioData)
     {
-        _ttsCancelled = false;
         try
         {
-            _ttsOutput?.Stop();
-            _ttsOutput?.Dispose();
-            _ttsOutput = null;
-            _ttsReader?.Dispose();
-            _ttsReader = null;
-
-            if (_currentTtsFile != null)
-            {
-                try { File.Delete(_currentTtsFile); } catch { }
-            }
+            StopTtsInternal(notifyState: false);
 
             var tempPath = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.mp3");
             File.WriteAllBytes(tempPath, audioData);
             _currentTtsFile = tempPath;
+            var sessionId = Interlocked.Increment(ref _ttsSessionId);
 
             _ttsReader = new MediaFoundationReader(tempPath);
             _ttsOutput = new WaveOutEvent
@@ -595,9 +611,8 @@ public class AudioService : IAudioService, IDisposable
             _ttsOutput.Init(_ttsReader);
             _ttsOutput.PlaybackStopped += (_, e) =>
             {
-                if (_ttsCancelled)
+                if (IsTtsSessionCancelled(sessionId))
                 {
-                    _ttsCancelled = false;
                     return;
                 }
                 if (e.Exception != null)
@@ -625,17 +640,47 @@ public class AudioService : IAudioService, IDisposable
 
     public void StopTts()
     {
-        _ttsCancelled = true;
-        _ttsOutput?.Stop();
-        _ttsOutput?.Dispose();
-        _ttsOutput = null;
-        _ttsReader?.Dispose();
-        _ttsReader = null;
-        if (_currentTtsFile != null)
-        {
-            try { File.Delete(_currentTtsFile); } catch { }
-            _currentTtsFile = null;
-        }
+        StopTtsInternal(notifyState: true);
         Log.Information("TTS playback stopped");
+    }
+
+    private void StopTtsInternal(bool notifyState)
+    {
+        WaveOutEvent? output;
+        MediaFoundationReader? reader;
+        string? ttsFile;
+
+        lock (_ttsStateGate)
+        {
+            if (_ttsOutput != null)
+                _cancelledTtsSessions.Add(_ttsSessionId);
+
+            output = _ttsOutput;
+            reader = _ttsReader;
+            ttsFile = _currentTtsFile;
+            _ttsOutput = null;
+            _ttsReader = null;
+            _currentTtsFile = null;
+            _ttsWasPlayingWhenMusicPaused = false;
+        }
+
+        try { output?.Stop(); } catch { }
+        output?.Dispose();
+        reader?.Dispose();
+        if (ttsFile != null)
+        {
+            try { File.Delete(ttsFile); } catch { }
+        }
+
+        if (notifyState)
+            _ttsStateSubject.OnNext(false);
+    }
+
+    private bool IsTtsSessionCancelled(int sessionId)
+    {
+        lock (_ttsStateGate)
+        {
+            return _cancelledTtsSessions.Remove(sessionId);
+        }
     }
 }

@@ -1,6 +1,6 @@
 # AIRadio
 
-AI 数字人电台桌面播放器 — 集成多平台在线音乐搜索、星空粒子动画、Live2D 数字人主播、AI DJ 语音播报、TTS 语音中断。
+AI 电台桌面播放器 — 集成多平台在线音乐搜索、星空粒子动画、AI DJ 语音播报、TTS 语音中断。Live2D 资源仍保留在项目中，但当前主界面暂不启用数字人方案。
 
 ## 技术栈
 
@@ -9,7 +9,7 @@ AI 数字人电台桌面播放器 — 集成多平台在线音乐搜索、星空
 | 框架 | .NET 8 / Avalonia 11.3.2 |
 | MVVM | ReactiveUI 20.1.1 + ReactiveUI.Fody |
 | 音频播放 | LibVLCSharp (VLC 内核) + NAudio (TTS) |
-| 数字人 | Cubism SDK for Web 5-r.5 + WebView2 (WebView.Avalonia) |
+| 数字人资源 | Cubism SDK for Web 5-r.5 + WebView2 (WebView.Avalonia)，当前保留资源但主 UI 暂不启用 |
 | AI DJ | MiniMax API（大模型对话 + TTS 语音合成） |
 | 在线音乐 | NeteaseCloudMusicApi (Node.js) + 酷我/酷狗/咪咕 HTTP API |
 | ASR | Whisper (本地语音识别) |
@@ -28,7 +28,7 @@ App.axaml.cs (启动入口)
     ├── ChatViewModel        → IDJService (MiniMax AI 对话)
     ├── SettingsViewModel    → IMinimaxService + ISecureStorage
     ├── SpectrumViewModel    → IAudioService (频谱数据)
-    └── StarfieldViewModel   → IAudioService (星空粒子频谱驱动)
+    └── SpectrumViewModel    → IAudioService (频谱数据，驱动频谱和星空粒子)
 ```
 
 ## 项目结构
@@ -48,7 +48,7 @@ AIRadio.Desktop/
 │   ├── SettingsViewModel.cs    设置面板
 │   └── SpectrumViewModel.cs    频谱数据
 ├── Views/                   Avalonia AXAML 视图层
-│   ├── MainWindow.axaml     主窗口 (Live2D 数字人 + 星空粒子)
+│   ├── MainWindow.axaml     主窗口 (复古电台 UI + 星空粒子)
 │   ├── PlayerView.axaml     播放器控制栏
 │   ├── PlaylistView.axaml   歌单/收藏/搜索
 │   ├── ChatView.axaml        聊天面板
@@ -114,11 +114,11 @@ AIRadio.Desktop/
 - 下载 `node-v20.18.3-win-x64.zip`，仅解压 `node.exe`
 - 通过注册表检测 WebView2 Runtime 是否已安装
 
-### 4. 数字人 (Live2D)
+### 4. Live2D 资源保留
 
 - 静态服务 (port 18080) 提供 Cubism SDK Web 资源
-- WebView2 通过 WebView.Avalonia 嵌入 Avalonia 窗口
-- 加载 Cubism SDK 示例页面，使用 Ren 模型（Vite 打包渲染框架）
+- WebView2 / WebView.Avalonia 依赖仍在项目中，便于后续恢复数字人方案
+- 当前主窗口暂不嵌入 WebView 数字人，只保留圆形 DJ 头像和动效反馈
 - 支持多个模型：Haru / Hiyori / Mao / Mark / Natori / Ren / Rice / Wanko
 
 ### 5. AI DJ (IDJService)
@@ -156,7 +156,7 @@ dotnet run
 1. 启动后自动下载 Node.js（如系统未安装）
 2. 自动启动 NeteaseCloudMusicApi 服务 (port 37250)
 3. 自动启动 Live2D 静态服务 (port 18080)
-4. 等待 WebView2 加载数字人模型
+4. Live2D 静态资源会保留可访问，但当前主 UI 不加载数字人模型
 
 ## 已知问题
 

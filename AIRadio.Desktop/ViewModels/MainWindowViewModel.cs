@@ -22,6 +22,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
+    private readonly IDisposable _darkModePersistSub;
+    private readonly IDisposable _languageTtsSub;
+    private readonly IDisposable _speechMixSub;
+    private readonly Action _characterSettingsHandler;
     private int _autoRadioAdvancing;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
 
@@ -86,7 +90,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 var current = _audioService.CurrentTrack;
                 if (current != null && favorites.Count > 0)
                     current.Tag = favorites;
-                return await _djService.RecommendNextTrackAsync(current);
+                var recommended = await _djService.RecommendNextTrackAsync(current);
+                if (recommended != null)
+                    PlaylistVM.AddExternalTrack(recommended);
+                return recommended;
             });
             audioSvc.SetPreviousCallback(async () =>
             {
@@ -94,7 +101,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 var current = _audioService.CurrentTrack;
                 if (current != null && favorites.Count > 0)
                     current.Tag = favorites;
-                return await _djService.RecommendNextTrackAsync(current);
+                var recommended = await _djService.RecommendNextTrackAsync(current);
+                if (recommended != null)
+                    PlaylistVM.AddExternalTrack(recommended);
+                return recommended;
             });
         }
 
@@ -121,7 +131,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
 
         // Persist IsDarkMode to settings when it changes
-        this.WhenAnyValue(x => x.IsDarkMode)
+        _darkModePersistSub = this.WhenAnyValue(x => x.IsDarkMode)
             .Skip(1)
             .Subscribe(isDark =>
             {
@@ -136,11 +146,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         });
 
         // Re-apply character when settings are saved
-        SettingsVM.CharacterSettingsChanged += () => SwitchCharacter(SelectedCharacter);
-        SettingsVM.WhenAnyValue(x => x.SelectedLanguage, x => x.TtsEnabled)
+        _characterSettingsHandler = () => SwitchCharacter(SelectedCharacter);
+        SettingsVM.CharacterSettingsChanged += _characterSettingsHandler;
+        _languageTtsSub = SettingsVM.WhenAnyValue(x => x.SelectedLanguage, x => x.TtsEnabled)
             .Skip(1)
             .Subscribe(_ => SwitchCharacter(SelectedCharacter));
-        SettingsVM.WhenAnyValue(x => x.SpeechMixMode)
+        _speechMixSub = SettingsVM.WhenAnyValue(x => x.SpeechMixMode)
             .Subscribe(mode => _audioService.SetSpeechMixMode(mode));
 
         _trackEndedSub = _audioService.TrackEnded
@@ -396,7 +407,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 if (!alreadyInPlaylist)
                     PlaylistVM.AddExternalTrack(recommended);
 
-                var script = await _djService.GenerateTrackIntroductionAsync(current, recommended);
+                var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
                 ChatVM.AddAssistantMessage(script.Text);
                 Live2DCommand?.Invoke(script.Expression, script.Motion);
                 await SpeakDjTextAsync(script.Text);
@@ -511,7 +522,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
+        _darkModePersistSub?.Dispose();
+        _languageTtsSub?.Dispose();
+        _speechMixSub?.Dispose();
+        SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();
+        ChatVM?.Dispose();
+        SpectrumVM?.Dispose();
         _ttsLock.Dispose();
     }
 }

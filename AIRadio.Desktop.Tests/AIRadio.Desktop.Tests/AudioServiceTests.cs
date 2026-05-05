@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using Xunit;
@@ -125,6 +126,57 @@ public class AudioServiceTests
         svc.PlayAtIndex(-1); // negative
 
         // Should not throw - index is clamped internally
+        svc.Dispose();
+    }
+
+    [Fact]
+    public void StopTts_PublishesNotSpeakingState()
+    {
+        var svc = new AudioService();
+        var states = new List<bool>();
+        using var sub = svc.TtsStateChanged.Subscribe(states.Add);
+
+        svc.StopTts();
+
+        Assert.Contains(false, states);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Next_RadioMode_DoesNotDuplicateTrackAlreadyAddedByCallback()
+    {
+        var svc = new AudioService();
+        var recommended = new Track
+        {
+            Id = "recommended",
+            SourceId = "test:recommended",
+            Title = "Recommended",
+            Artist = "DJ",
+            FilePath = "http://example.com/recommended.mp3"
+        };
+        svc.LoadTracks(new[]
+        {
+            new Track
+            {
+                Id = "current",
+                SourceId = "test:current",
+                Title = "Current",
+                Artist = "DJ",
+                FilePath = "http://example.com/current.mp3"
+            }
+        });
+        svc.SetRepeatMode("radio");
+        svc.SetNextCallback(() =>
+        {
+            svc.AddTracks(new[] { recommended });
+            return Task.FromResult<Track?>(recommended);
+        });
+
+        svc.Next();
+        await Task.Delay(200);
+
+        Assert.Equal(2, svc.Playlist.Count);
+        Assert.Single(svc.Playlist.Where(t => t.SourceId == "test:recommended"));
         svc.Dispose();
     }
 }

@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading;
+using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using Moq;
@@ -16,7 +18,7 @@ namespace AIRadio.Desktop.Tests;
 public class PlaylistViewModelTests
 {
     private static (PlaylistViewModel vm, Mock<IAudioService> audioMock, Mock<IMusicSearchService> searchMock)
-        CreateVm()
+        CreateVm(string? playlistFile = null)
     {
         var audioMock = new Mock<IAudioService>();
         audioMock.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
@@ -27,8 +29,15 @@ public class PlaylistViewModelTests
         searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
             .ReturnsAsync(new List<OnlineTrack>());
 
-        var vm = new PlaylistViewModel(audioMock.Object, searchMock.Object);
+        var vm = new PlaylistViewModel(audioMock.Object, searchMock.Object, playlistFile);
         return (vm, audioMock, searchMock);
+    }
+
+    private static string CreateTempPlaylistFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "playlist.json");
     }
 
     [Fact]
@@ -88,6 +97,72 @@ public class PlaylistViewModelTests
 
         Assert.False(track.IsFavorite);
         Assert.DoesNotContain(track, vm.Favorites);
+    }
+
+    [Fact]
+    public async Task ToggleFavorite_PersistsFavoriteIds()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var (vm, _, _) = CreateVm(playlistFile);
+        var track = new Track
+        {
+            Id = "netease:ugly",
+            Title = "丑八怪",
+            Artist = "薛之谦",
+            FilePath = "http://example.com/ugly.mp3",
+            SourceId = "netease:ugly"
+        };
+
+        vm.Tracks.Add(track);
+        vm.ToggleFavoriteCommand.Execute(track).Subscribe();
+        await Task.Delay(150);
+
+        var saved = await File.ReadAllTextAsync(playlistFile);
+        Assert.Contains("\"FavoriteIds\"", saved);
+        Assert.Contains("netease:ugly", saved);
+        Assert.Contains("http://example.com/ugly.mp3", saved);
+    }
+
+    [Fact]
+    public async Task LoadAsync_PreservesOnlineFavoriteWhenUrlRefreshFails()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        await File.WriteAllTextAsync(playlistFile,
+            """
+            {
+              "Tracks": [
+                {
+                  "Id": "netease:ugly",
+                  "Title": "丑八怪",
+                  "Artist": "薛之谦",
+                  "Album": "",
+                  "DurationMs": 240000,
+                  "FilePath": "",
+                  "SourceId": "netease:ugly",
+                  "IsOnline": true,
+                  "IsFavorite": true
+                }
+              ],
+              "FavoriteIds": [ "netease:ugly" ]
+            }
+            """);
+
+        var (vm, audioMock, searchMock) = CreateVm(playlistFile);
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:ugly"))
+            .ReturnsAsync((string?)null);
+
+        await vm.LoadAsync();
+        await Task.Delay(150);
+
+        Assert.Single(vm.Tracks);
+        Assert.True(vm.Tracks[0].IsFavorite);
+        Assert.Single(vm.Favorites);
+        audioMock.Verify(x => x.LoadTracks(It.Is<IEnumerable<Track>>(tracks =>
+            tracks.Any(t => t.Id == "netease:ugly" && t.IsFavorite))), Times.Once);
+
+        var saved = await File.ReadAllTextAsync(playlistFile);
+        Assert.Contains("netease:ugly", saved);
+        Assert.Contains("\"FavoriteIds\"", saved);
     }
 
     [Fact]

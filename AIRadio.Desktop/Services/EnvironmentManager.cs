@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -94,6 +95,7 @@ public static class EnvironmentManager
     /// <summary>
     /// 检查 WebView2 Runtime 是否已安装
     /// </summary>
+    [SupportedOSPlatform("windows")]
     public static bool IsWebView2Installed()
     {
         try
