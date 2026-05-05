@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
+using System.Text.RegularExpressions;
 using Serilog;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
@@ -20,6 +21,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
+    private bool _autoRadioAdvancing;
 
     public PlayerViewModel PlayerVM { get; }
     public PlaylistViewModel PlaylistVM { get; }
@@ -109,22 +111,26 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 SettingsVM.SaveCommand.Execute().Subscribe();
             });
         ToggleCurrentFavoriteCommand = ReactiveCommand.Create(ToggleCurrentFavorite);
-        SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(SwitchCharacter);
+        SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(character =>
+        {
+            SwitchCharacter(character);
+            _ = AnnounceCharacterGreetingAsync();
+        });
 
         // Re-apply character when settings are saved
         SettingsVM.CharacterSettingsChanged += () => SwitchCharacter(SelectedCharacter);
         SettingsVM.WhenAnyValue(x => x.SelectedLanguage, x => x.TtsEnabled)
             .Skip(1)
             .Subscribe(_ => SwitchCharacter(SelectedCharacter));
+        SettingsVM.WhenAnyValue(x => x.SpeechMixMode)
+            .Subscribe(mode => _audioService.SetSpeechMixMode(mode));
 
         _trackEndedSub = _audioService.TrackEnded
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(current =>
             {
                 if (current == null) return;
-                var next = _audioService.CurrentTrack;
-                if (next == null || next == current) return;
-                _ = HandleTrackTransitionAsync(current, next);
+                _ = HandleAutoRadioTrackEndedAsync(current);
             });
 
         _trackChangedSub = _audioService.TrackChanged
@@ -207,14 +213,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IsDarkMode = SettingsVM.IsDarkMode;
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
+        _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
 
-        await AnnounceWelcomeAsync();
+        AnnounceWelcome();
 
         // AI startup recommendation: analyze playlist and recommend a song
-        if (PlaylistVM.Tracks.Count == 0)
-            await AnnounceEmptyLibraryAsync();
-        else
-            await AnnounceStartupRecommendationAsync();
+        _ = AnnounceStartupFollowupAsync();
     }
 
     public void CloseOverlays()
@@ -224,7 +228,23 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IsCharacterPickerOpen = false;
     }
 
-    private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync()
+    private async System.Threading.Tasks.Task AnnounceStartupFollowupAsync()
+    {
+        try
+        {
+            await System.Threading.Tasks.Task.Delay(1400);
+            if (PlaylistVM.Tracks.Count == 0)
+                await AnnounceEmptyLibraryAsync();
+            else
+                await AnnounceStartupRecommendationAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Startup follow-up failed");
+        }
+    }
+
+    private System.Threading.Tasks.Task AnnounceEmptyLibraryAsync()
     {
         var text = SettingsVM.SelectedLanguage == "en"
             ? "No tracks yet. Tell me a mood or search a song, and I'll build today's station."
@@ -232,15 +252,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         ChatVM.AddAssistantMessage(text);
 
-        if (_djService.TtsEnabled)
-        {
-            var speechData = await _djService.GenerateSpeechAsync(text);
-            if (speechData is { Length: > 0 })
-                _audioService.PlayTtsAudio(speechData);
-        }
+        SpeakDjText(text);
+        return System.Threading.Tasks.Task.CompletedTask;
     }
 
-    private async System.Threading.Tasks.Task AnnounceWelcomeAsync()
+    private void AnnounceWelcome()
     {
         var text = SettingsVM.SelectedLanguage == "en"
             ? $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood."
@@ -248,12 +264,29 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         ChatVM.AddAssistantMessage(text);
         Live2DCommand?.Invoke("smile", "wave");
+        SpeakDjText(text);
+    }
 
-        if (_djService.TtsEnabled)
+    private async System.Threading.Tasks.Task AnnounceCharacterGreetingAsync()
+    {
+        try
         {
-            var speechData = await _djService.GenerateSpeechAsync(text);
-            if (speechData is { Length: > 0 })
-                _audioService.PlayTtsAudio(speechData);
+            var prompt = SettingsVM.SelectedLanguage == "en"
+                ? "You have just taken over this radio station. Greet me in your own DJ personality and voice style. Do not mention settings."
+                : "你刚刚接管这个电台。请用你的主播人设和语气，主动向我打个招呼，不要提到设置。";
+
+            var response = await _djService.GenerateChatResponseAsync(prompt);
+            var text = StripDjControlTags(response);
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            ChatVM.AddAssistantMessage(text);
+            Live2DCommand?.Invoke("smile", "wave");
+
+            SpeakDjText(text);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to generate character greeting");
         }
     }
 
@@ -291,18 +324,43 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             ChatVM.AddAssistantMessage(script.Text);
             Live2DCommand?.Invoke(script.Expression, script.Motion);
 
-            if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
-            {
-                var speechData = await _djService.GenerateSpeechAsync(script.Text);
-                if (speechData is { Length: > 0 })
-                    _audioService.PlayTtsAudio(speechData);
-            }
+            SpeakDjText(script.Text);
 
             Log.Information("AI recommended: {Track}", recommended.Title);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to generate startup recommendation");
+        }
+    }
+
+    private async System.Threading.Tasks.Task HandleAutoRadioTrackEndedAsync(Track current)
+    {
+        if (_autoRadioAdvancing) return;
+        _autoRadioAdvancing = true;
+        try
+        {
+            var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
+            var next = PickDiversifiedTrack(pool.Count > 0 ? pool : PlaylistVM.Tracks.ToList(), current);
+            if (next == null) return;
+
+            var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+            ChatVM.AddAssistantMessage(script.Text);
+            Live2DCommand?.Invoke(script.Expression, script.Motion);
+            SpeakDjText(script.Text);
+
+            await System.Threading.Tasks.Task.Delay(_djService.TtsEnabled ? 3200 : 700);
+            var index = PlaylistVM.Tracks.IndexOf(next);
+            if (index >= 0)
+                _audioService.PlayAtIndex(index);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Auto radio continuation failed");
+        }
+        finally
+        {
+            _autoRadioAdvancing = false;
         }
     }
 
@@ -318,6 +376,32 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var candidates = differentArtist.Count > 0 ? differentArtist : pool;
         var random = new Random();
         return candidates[random.Next(candidates.Count)];
+    }
+
+    private static string StripDjControlTags(string text)
+    {
+        var cleaned = Regex.Replace(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, @"【(?:play:.+?|next|pause|resume)】", "", RegexOptions.IgnoreCase);
+        return cleaned.Trim();
+    }
+
+    private void SpeakDjText(string text)
+    {
+        if (!_djService.TtsEnabled || string.IsNullOrWhiteSpace(text)) return;
+
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            try
+            {
+                var speechData = await _djService.GenerateSpeechAsync(text);
+                if (speechData is { Length: > 0 })
+                    _audioService.PlayTtsAudio(speechData);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to speak DJ text");
+            }
+        });
     }
 
     public void Dispose()

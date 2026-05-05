@@ -66,15 +66,17 @@
                                Foreground="#FFBFC3D6" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Button Width="28" Height="22" Padding="0" BorderThickness="0"
-                            Background="#1AFFFFFF" Foreground="#FFEDEDF5" Click="OnMinimizeClicked"
+                    <Button Width="30" Height="24" Padding="0" BorderThickness="1"
+                            Background="#FF302A1B" BorderBrush="#88FFC857"
+                            Foreground="#FFFFC857" Click="OnMinimizeClicked"
                             ToolTip.Tip="Minimize">
-                        <PathIcon Width="16" Height="16" Data="M5,12 L19,12"/>
+                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FFFFC857" StrokeThickness="2.4" Data="M5,12 L19,12"/>
                     </Button>
-                    <Button Width="28" Height="22" Padding="0" BorderThickness="0"
-                            Background="#1AFFFFFF" Foreground="#FFFF7B8A" Click="OnCloseClicked"
+                    <Button Width="30" Height="24" Padding="0" BorderThickness="1"
+                            Background="#FF321D25" BorderBrush="#88FF5F73"
+                            Foreground="#FFFF5F73" Click="OnCloseClicked"
                             ToolTip.Tip="Close">
-                        <PathIcon Width="16" Height="16" Data="M18,6 L6,18 M6,6 L18,18"/>
+                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FFFF5F73" StrokeThickness="2.4" Data="M18,6 L6,18 M6,6 L18,18"/>
                     </Button>
                 </StackPanel>
             </Grid>
@@ -106,32 +108,28 @@
                                        Foreground="#FFEDEDF5" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Padding="11,5" Background="#10000000"
+                            <Button Width="32" Height="30" Padding="0" Background="#10000000"
                                     Command="{Binding ToggleCharacterPickerCommand}" ToolTip.Tip="DJ">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <PathIcon Width="14" Height="14" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
-                                    <TextBlock Text="DJ"/>
-                                </StackPanel>
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
                             </Button>
-                            <Button Padding="11,5" Background="#10000000"
+                            <Button Width="32" Height="30" Padding="0" Background="#10000000"
                                     Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <PathIcon Width="14" Height="14" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
-                                    <TextBlock Text="SEARCH"/>
-                                </StackPanel>
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
                             </Button>
-                            <Button Padding="11,5" Background="#10000000"
+                            <Button Width="32" Height="30" Padding="0" Background="#10000000"
                                     Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Settings">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <PathIcon Width="14" Height="14" Data="M4,21 L4,14 M4,10 L4,3 M12,21 L12,12 M12,8 L12,3 M20,21 L20,16 M20,12 L20,3 M2,14 L6,14 M10,8 L14,8 M18,16 L22,16"/>
-                                    <TextBlock Text="SETTINGS"/>
-                                </StackPanel>
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M4,21 L4,14 M4,10 L4,3 M12,21 L12,12 M12,8 L12,3 M20,21 L20,16 M20,12 L20,3 M2,14 L6,14 M10,8 L14,8 M18,16 L22,16"/>
                             </Button>
-                            <Button x:Name="DarkButton" Content="DARK" Padding="14,5"
-                                    Background="#FFEDEDF5" Foreground="#FF050507"
-                                    Command="{Binding UseDarkThemeCommand}"/>
-                            <Button x:Name="LightButton" Content="LIGHT" Padding="12,5" Background="#10000000"
-                                    Foreground="#FFB8B8C6" Command="{Binding UseLightThemeCommand}"/>
+                            <Button x:Name="ThemeButton" Padding="10,5"
+                                    Background="#10000000"
+                                    Command="{Binding ToggleThemeCommand}" ToolTip.Tip="Theme">
+                                <Grid>
+                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" IsVisible="{Binding IsDarkMode}"
+                                          Data="M21,12.8 C20.1,16.9 16.4,20 12,20 C7,20 3,16 3,11 C3,6.6 6.1,2.9 10.2,2 C9.4,3.2 9,4.6 9,6 C9,11 13,15 18,15 C19.1,15 20.1,14.8 21,14.4"/>
+                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FF111118" StrokeThickness="2" IsVisible="{Binding IsDarkMode, Converter={StaticResource InverseBoolConverter}}"
+                                          Data="M12,4 L12,2 M12,22 L12,20 M4.9,4.9 L3.5,3.5 M20.5,20.5 L19.1,19.1 M4,12 L2,12 M22,12 L20,12 M4.9,19.1 L3.5,20.5 M20.5,3.5 L19.1,4.9 M12,17 C14.8,17 17,14.8 17,12 C17,9.2 14.8,7 12,7 C9.2,7 7,9.2 7,12 C7,14.8 9.2,17 12,17"/>
+                                </Grid>
+                            </Button>
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -146,16 +144,16 @@
                                Foreground="#FF44465C"
                                TextWrapping="Wrap"
                                x:Name="ClockDots"/>
-                    <Grid RowDefinitions="Auto,*,Auto" Margin="0,8">
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-                            <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
-                            <TextBlock Text="ON AIR" FontSize="11" FontWeight="700" FontFamily="Consolas"
-                                       Foreground="#FF56F5C4"/>
-                        </StackPanel>
-                        <local:SpectrumView Grid.Row="1" DataContext="{Binding SpectrumVM}"
-                                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                                            MinHeight="96" MaxHeight="126" MinWidth="520"/>
-                        <StackPanel Grid.Row="2" HorizontalAlignment="Center" Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto,*" Margin="24,10">
+                        <local:SpectrumView Grid.Column="0" DataContext="{Binding SpectrumVM}"
+                                            HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                            Height="118" Margin="0,0,18,0"/>
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                                <TextBlock Text="LIVE" FontSize="10" FontWeight="700" FontFamily="Consolas"
+                                           Foreground="#FF56F5C4"/>
+                            </StackPanel>
                             <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="56" FontWeight="700"
                                        FontFamily="Consolas" Foreground="#FFFFFFFF"
                                        HorizontalAlignment="Center"/>
@@ -164,6 +162,9 @@
                             <TextBlock x:Name="DateDisplay" Text="20-APR-2026" FontSize="10" FontFamily="Consolas"
                                        Foreground="#FF858594" HorizontalAlignment="Center"/>
                         </StackPanel>
+                        <local:SpectrumView Grid.Column="2" DataContext="{Binding SpectrumVM}"
+                                            HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                            Height="118" Margin="18,0,0,0"/>
                     </Grid>
                 </Grid>
 
@@ -202,8 +203,11 @@
                             <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首">
                                 <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                             </Button>
-                            <Button Width="34" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}" ToolTip.Tip="循环模式">
-                                <PathIcon Width="17" Height="17" Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
+                            <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}" ToolTip.Tip="循环模式">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
+                                    <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9"/>
+                                </StackPanel>
                             </Button>
                             <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="收藏当前歌曲">
                                 <Grid>
@@ -217,8 +221,12 @@
 
                         <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8"
                                     HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button Content="HIDE" Padding="12,5" Command="{Binding ToggleLibraryCommand}"/>
-                            <Button Content="FAV" Padding="12,5" Command="{Binding OpenFavoritesCommand}"/>
+                            <Button Width="32" Height="30" Padding="0" Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="Library">
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L20,18"/>
+                            </Button>
+                            <Button Width="32" Height="30" Padding="0" Command="{Binding OpenFavoritesCommand}" ToolTip.Tip="Favorites">
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                            </Button>
                             <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
                                        Foreground="#FF8A8A96" VerticalAlignment="Center"/>
                             <Slider Width="48" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
@@ -242,9 +250,15 @@
                         <TextBlock Text="QUEUE" FontSize="12" FontFamily="Consolas"
                                    Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Content="IMPORT" Padding="10,4" FontSize="10" Click="OnImportFiles"/>
-                            <Button Content="LIST" Padding="10,4" FontSize="10" Command="{Binding OpenPlaylistCommand}"/>
-                            <Button Content="SEARCH" Padding="10,4" FontSize="10" Command="{Binding OpenSearchCommand}"/>
+                            <Button Width="30" Height="26" Padding="0" Click="OnImportFiles" ToolTip.Tip="Import">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M12,3 L12,15 M7,10 L12,15 L17,10 M5,21 L19,21"/>
+                            </Button>
+                            <Button Width="30" Height="26" Padding="0" Command="{Binding OpenPlaylistCommand}" ToolTip.Tip="Playlist">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M8,6 L21,6 M8,12 L21,12 M8,18 L21,18 M3,6 L3.01,6 M3,12 L3.01,12 M3,18 L3.01,18"/>
+                            </Button>
+                            <Button Width="30" Height="26" Padding="0" Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
+                            </Button>
                             <TextBlock Text="{Binding PlaylistVM.Tracks.Count, StringFormat={}{0} TRACKS}"
                                        FontSize="12" FontFamily="Consolas"
                                        Foreground="#FFB7B7C7" VerticalAlignment="Center"/>
@@ -336,6 +350,22 @@
                                        FontFamily="Consolas" Foreground="#FFB9FFE8"/>
                         </StackPanel>
                     </Border>
+
+                    <Border IsVisible="{Binding ChatVM.IsRecognizing}"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom"
+                            Margin="22,0,22,14"
+                            Background="#EE050507"
+                            BorderBrush="#66A783FF"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="12,8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Ellipse Width="6" Height="6" Fill="#FFA783FF" VerticalAlignment="Center"/>
+                            <TextBlock Text="Transcribing Chinese..." FontSize="12"
+                                       FontFamily="Consolas" Foreground="#FFE4D9FF"/>
+                        </StackPanel>
+                    </Border>
                 </Grid>
 
                 <!-- Input -->
@@ -343,19 +373,19 @@
                     <Grid ColumnDefinitions="*,56,50" ColumnSpacing="9">
                         <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
                                  Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown"/>
-                        <Button Grid.Column="1" FontSize="10"
+                        <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
                                 Background="#33262835"
                                 PointerPressed="OnMicPointerPressed"
                                 PointerReleased="OnMicPointerReleased"
                                 PointerCaptureLost="OnMicPointerCaptureLost"
                                 ToolTip.Tip="Hold to talk">
-                            <PathIcon Width="18" Height="18" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
+                            <Path Width="18" Height="18" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
                         </Button>
                         <Button Grid.Column="2" FontSize="11"
                                 Background="#FF7F7896" Foreground="#FF111118"
                                 Command="{Binding ChatVM.SendMessageCommand}"
                                 ToolTip.Tip="Send">
-                            <PathIcon Width="18" Height="18" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
+                            <Path Width="18" Height="18" Stretch="Uniform" Stroke="#FF111118" StrokeThickness="2.2" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
                         </Button>
                     </Grid>
                 </Border>
@@ -393,16 +423,26 @@
                             <TextBlock Text="playlist / favorites / search" FontSize="11"
                                        FontFamily="Consolas" Foreground="#FF89899A"/>
                         </StackPanel>
-                        <Button Grid.Column="1" Content="CLOSE" Padding="12,5"
-                                Command="{Binding ToggleLibraryCommand}"/>
+                        <Button Grid.Column="1" Width="32" Height="28" Padding="0"
+                                Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="Close library">
+                            <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
+                        </Button>
                     </Grid>
 
                     <Grid Grid.Row="1" RowDefinitions="Auto,Auto" RowSpacing="10">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Content="LIST" Command="{Binding OpenPlaylistCommand}"/>
-                            <Button Content="FAV" Command="{Binding OpenFavoritesCommand}"/>
-                            <Button Content="SEARCH" Command="{Binding OpenSearchCommand}"/>
-                            <Button Content="IMPORT" Click="OnImportFiles"/>
+                            <Button Width="32" Height="28" Padding="0" Command="{Binding OpenPlaylistCommand}" ToolTip.Tip="Playlist">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M8,6 L21,6 M8,12 L21,12 M8,18 L21,18 M3,6 L3.01,6 M3,12 L3.01,12 M3,18 L3.01,18"/>
+                            </Button>
+                            <Button Width="32" Height="28" Padding="0" Command="{Binding OpenFavoritesCommand}" ToolTip.Tip="Favorites">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                            </Button>
+                            <Button Width="32" Height="28" Padding="0" Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
+                            </Button>
+                            <Button Width="32" Height="28" Padding="0" Click="OnImportFiles" ToolTip.Tip="Import">
+                                <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M12,3 L12,15 M7,10 L12,15 L17,10 M5,21 L19,21"/>
+                            </Button>
                         </StackPanel>
                         <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8"
                               IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
@@ -511,8 +551,10 @@
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBlock Text="SETTINGS" FontSize="18" FontWeight="700"
                                    FontFamily="Consolas" Foreground="#FFFFFFFF"/>
-                        <Button Grid.Column="1" Content="CLOSE" Padding="12,5"
-                                Command="{Binding ToggleSettingsCommand}"/>
+                        <Button Grid.Column="1" Width="32" Height="28" Padding="0"
+                                Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Close settings">
+                            <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
+                        </Button>
                     </Grid>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <local:SettingsView DataContext="{Binding SettingsVM}"/>

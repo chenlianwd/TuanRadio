@@ -42,4 +42,5 @@ public interface IAudioService
     void PlayTtsAudio(byte[] audioData);
     IObservable<bool> TtsStateChanged { get; }
     void SetUrlResolver(Func<string, Task<string?>> resolver);
+    void SetSpeechMixMode(string mode);
 }

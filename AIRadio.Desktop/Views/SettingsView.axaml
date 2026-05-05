@@ -36,6 +36,22 @@
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
                               OnContent="" OffContent=""/>
             </Grid>
+            <ComboBox SelectedValue="{Binding SpeechMixMode}"
+                      ItemsSource="{Binding SpeechMixModes}"
+                      SelectedValueBinding="{Binding Id}"
+                      DisplayMemberBinding="{Binding DisplayName}"
+                      HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
+        <!-- Visual effects -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="视觉效果" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="星光背景随音乐呼吸" Foreground="#FFB3B3B3" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
+                              OnContent="" OffContent=""/>
+            </Grid>
         </StackPanel>
 
         <!-- Character customization -->
