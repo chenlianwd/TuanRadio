@@ -1,6 +1,6 @@
-# AI Radio
+# AIRadio
 
-AI 数字电台桌面播放器 — 集成多平台在线音乐搜索、Live2D 数字人主播、AI DJ 语音播报。
+AI 数字电台桌面播放器 — 集成多平台在线音乐搜索、星空粒子动画、Live2D 数字人主播、AI DJ 语音播报。
 
 ## 技术栈
 
@@ -8,7 +8,7 @@ AI 数字电台桌面播放器 — 集成多平台在线音乐搜索、Live2D �
 |------|------|
 | 框架 | .NET 8 / Avalonia 11.3.9 |
 | MVVM | ReactiveUI 20.1.1 + ReactiveUI.Fody |
-| 音频播放 | LibVLCSharp (VLC 内核) |
+| 音频播放 | LibVLCSharp (VLC 内核) + NAudio (TTS) |
 | 数字人 | Cubism SDK for Web 5-r.5 + WebView2 (WebView.Avalonia) |
 | AI DJ | MiniMax API（大模型对话 + TTS 语音合成） |
 | 在线音乐 | NeteaseCloudMusicApi (Node.js) + 酷我/酷狗/咪咕 HTTP API |
@@ -26,18 +26,25 @@ App.axaml.cs (启动入口)
     ├── PlaylistViewModel    → IMusicSearchService (多音源搜索+播放)
     ├── ChatViewModel        → IDJService (MiniMax AI 对话)
     ├── SettingsViewModel    → IMinimaxService + ISecureStorage
-    └── SpectrumViewModel    → IAudioService (频谱数据)
+    ├── SpectrumViewModel    → IAudioService (频谱数据)
+    └── StarfieldViewModel   → IAudioService (星空粒子频谱驱动)
 ```
 
 ## 项目结构
 
 ```
 AIRadio.Desktop/
-├── Models/              数据模型 (Track, ChatMessage, DJProfile 等)
-├── ViewModels/          ReactiveUI ViewModel 层
-├── Views/               Avalonia AXAML 视图层
-├── Services/            业务服务层
-│   ├── AudioService.cs          LibVLC 播放引擎
+├── Assets/
+│   ├── airadio.ico          应用图标
+│   └── airadio.png          PNG 源图
+├── Models/                  数据模型 (Track, ChatMessage, DJProfile, CharacterProfile 等)
+├── ViewModels/              ReactiveUI ViewModel 层
+├── Views/                   Avalonia AXAML 视图层
+│   ├── MainWindow.axaml     主窗口 (Claudio 复古终端风格)
+│   ├── StarfieldView.axaml  星空粒子动画组件
+│   └── ...
+├── Services/                业务服务层
+│   ├── AudioService.cs          LibVLC 播放引擎 + NAudio TTS
 │   ├── DJService.cs             AI DJ (MiniMax 大模型 + TTS)
 │   ├── MinimaxService.cs        MiniMax API 客户端
 │   ├── Live2DStaticServer.cs    HttpListener 静态文件服务
@@ -48,15 +55,15 @@ AIRadio.Desktop/
 │   ├── KuwoMusicService.cs      酷我音乐 API
 │   ├── KugouMusicService.cs     酷狗音乐 API
 │   └── MiguMusicService.cs      咪咕音乐 API
-├── server/              NeteaseCloudMusicApi Node.js 服务
+├── server/                  NeteaseCloudMusicApi Node.js 服务
 │   ├── package.json
-│   └── start.js         启动脚本 (PORT=37250)
-└── wwwroot/             静态资源
-    ├── live2d-demo/     Cubism SDK 示例 (含 Ren 模型)
-    ├── Core/            Cubism Core JS 库
-    ├── Framework/       Cubism Framework (Shader/渲染)
-    ├── Resources/       Live2D 模型资源 (Haru, Hiyori 等)
-    └── assets/          Vite 打包的渲染框架
+│   └── start.js             启动脚本 (PORT=37250)
+└── wwwroot/                 静态资源
+    ├── live2d-demo/         Cubism SDK 示例 (含 Ren 模型)
+    ├── Core/                Cubism Core JS 库
+    ├── Framework/          Cubism Framework (Shader/渲染)
+    ├── Resources/          Live2D 模型资源 (Haru, Hiyori 等)
+    └── assets/             Vite 打包的渲染框架
 ```
 
 ## 核心模块说明
@@ -65,9 +72,10 @@ AIRadio.Desktop/
 
 - 基于 LibVLCSharp，支持本地文件和 HTTP 流媒体
 - 自动检测 URL 类型：HTTP 用 `FromType.FromLocation`，本地文件用 `FromType.FromPath`
-- 播放状态通过 Rx Subject 广播：`TrackChanged` / `StateChanged` / `PositionChanged` / `TrackEnded`
-- 频谱数据由定时器驱动（~30fps 模拟，真实 FFT 需 VLC 音频回调）
-- 单曲循环 / 列表循环 / 随机播放
+- 播放状态通过 Rx Subject 广播：`TrackChanged` / `StateChanged` / `PositionChanged` / `TrackEnded` / `TtsStateChanged`
+- TTS 使用 NAudio 播放，支持中断（用户发送消息时立即停止当前 TTS）
+- 频谱数据由定时器驱动（~30fps），同时驱动星空粒子动画
+- 四种循环模式：OFF（关闭自动续播）/ 单曲 / 列表 / **电台（radio，自动推荐新歌）**
 
 ### 2. 在线音乐 (IMusicSearchService)
 
@@ -101,8 +109,15 @@ AIRadio.Desktop/
 
 - 基于 MiniMax 大模型 API
 - 播放列表：聊天对话 / 歌曲过渡播报 / 语音合成
-- 音色配置：`male-qn-qingse`（可在设置中修改）
+- 音色配置：`male-qn-qn-qingse` / `female-shaonv` 等（可在设置中修改）
 - 语音合成支持：MiniMax T2A 接口
+- DJ 角色系统：预置多个角色形象（Claudio / Lumen / Sonnet 等），可切换主播风格
+
+### 6. 星空粒子动画 (StarfieldView)
+
+- Canvas 渲染 55 颗星星粒子
+- 频谱数据驱动：低频→粒子大且亮，高频→粒子小且暗
+- 30fps 动画循环，随音乐节奏呼吸变化
 
 ## 构建与运行
 
