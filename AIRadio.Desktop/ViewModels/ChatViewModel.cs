@@ -568,22 +568,27 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            // Check if already in playlist
-            for (int i = 0; i < _audioService.Playlist.Count; i++)
+            var existingIndex = FindAudioTrackIndex(track.Id, url);
+            if (existingIndex >= 0)
             {
-                if (_audioService.Playlist[i].FilePath == url)
-                {
-                    Log.Debug("Track already in playlist at index {Index}, playing", i);
-                    _audioService.PlayAtIndex(i);
-                    return;
-                }
+                Log.Debug("Track already in playlist at index {Index}, playing", existingIndex);
+                _audioService.PlayAtIndex(existingIndex);
+                return;
             }
 
             var t = track.ToTrack(url);
             Log.Debug("Adding track to playlist and playing...");
-            _audioService.AddTracks(new[] { t });
-            _trackAdded?.Invoke(t);
-            var index = _audioService.Playlist.Count - 1;
+            if (_trackAdded != null)
+                _trackAdded(t);
+            else
+                _audioService.AddTracks(new[] { t });
+
+            var index = FindAudioTrackIndex(t.SourceId ?? t.Id, t.FilePath);
+            if (index < 0)
+            {
+                _audioService.AddTracks(new[] { t });
+                index = _audioService.Playlist.Count - 1;
+            }
             _audioService.PlayAtIndex(index);
             Log.Information("DJ track play initiated: {Track}", t);
         }
@@ -595,6 +600,20 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             _isPlayingSong = false;
         }
+    }
+
+    private int FindAudioTrackIndex(string sourceId, string filePath)
+    {
+        for (int i = 0; i < _audioService.Playlist.Count; i++)
+        {
+            var item = _audioService.Playlist[i];
+            if (!string.IsNullOrWhiteSpace(sourceId) && item.SourceId == sourceId)
+                return i;
+            if (!string.IsNullOrWhiteSpace(filePath) && item.FilePath == filePath)
+                return i;
+        }
+
+        return -1;
     }
 
     private static string MapExpression(string emotion) => emotion switch

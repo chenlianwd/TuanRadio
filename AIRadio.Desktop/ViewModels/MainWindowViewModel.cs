@@ -64,7 +64,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IMinimaxService minimaxService,
         ISecureStorage secureStorage,
         IMusicSearchService musicSearchService,
-        ISttService sttService)
+        ISttService sttService,
+        string? playlistFile = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -74,7 +75,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SelectedCharacter = Characters[0];
 
         PlayerVM = new PlayerViewModel(_audioService);
-        PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService);
+        PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track));
         SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
