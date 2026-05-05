@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -177,6 +178,39 @@ public class AudioServiceTests
 
         Assert.Equal(2, svc.Playlist.Count);
         Assert.Single(svc.Playlist.Where(t => t.SourceId == "test:recommended"));
+        svc.Dispose();
+    }
+
+    [Fact]
+    public void LooksLikeEarlyEnd_ReturnsTrueForLongTrackEndingTooSoon()
+    {
+        var svc = new AudioService();
+        var startedField = typeof(AudioService).GetField("_trackStartedAtMs", BindingFlags.NonPublic | BindingFlags.Instance);
+        var method = typeof(AudioService).GetMethod("LooksLikeEarlyEnd", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(startedField);
+        Assert.NotNull(method);
+
+        startedField!.SetValue(svc, Environment.TickCount64 - 30_000);
+        var track = new Track { Title = "Long", Duration = TimeSpan.FromMinutes(4) };
+
+        var result = (bool)method!.Invoke(svc, new object[] { track })!;
+
+        Assert.True(result);
+        svc.Dispose();
+    }
+
+    [Fact]
+    public void LooksLikeEarlyEnd_ReturnsFalseForShortTracks()
+    {
+        var svc = new AudioService();
+        var method = typeof(AudioService).GetMethod("LooksLikeEarlyEnd", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+
+        var track = new Track { Title = "Short", Duration = TimeSpan.FromSeconds(40) };
+
+        var result = (bool)method!.Invoke(svc, new object[] { track })!;
+
+        Assert.False(result);
         svc.Dispose();
     }
 }

@@ -328,6 +328,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             var current = _audioService.CurrentTrack;
+            var originalTrack = current;
+            var originalCount = PlaylistVM.Tracks.Count;
             Track? recommended = null;
 
             // Smart pick: prioritize favorites, exclude currently playing track, avoid same-artist repetition
@@ -354,18 +356,24 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 current ?? new Track { Title = "无", Artist = "未知" },
                 recommended);
 
+            if (_audioService.IsPlaying ||
+                !IsSameTrack(_audioService.CurrentTrack, originalTrack) ||
+                PlaylistVM.Tracks.Count != originalCount)
+            {
+                Log.Debug("Skipped stale startup recommendation because playback changed");
+                return;
+            }
+
             ChatVM.AddAssistantMessage(script.Text);
             Live2DCommand?.Invoke(script.Expression, script.Motion);
 
-            await SpeakDjTextAsync(script.Text);
-
-            // After TTS finishes, auto-play the recommended track if not already playing
-            if (!_audioService.IsPlaying)
+            if (_audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, originalTrack))
             {
-                var index = PlaylistVM.Tracks.IndexOf(recommended);
-                if (index >= 0)
-                    _audioService.PlayAtIndex(index);
+                Log.Debug("Skipped startup recommendation TTS because playback started");
+                return;
             }
+
+            await SpeakDjTextAsync(script.Text);
 
             Log.Information("AI recommended: {Track}", recommended.Title);
         }
@@ -409,12 +417,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                     PlaylistVM.AddExternalTrack(recommended);
 
                 var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
+                if (!IsSameTrack(_audioService.CurrentTrack, current))
+                    return;
+
                 ChatVM.AddAssistantMessage(script.Text);
                 Live2DCommand?.Invoke(script.Expression, script.Motion);
                 await SpeakDjTextAsync(script.Text);
 
                 var playIndex = PlaylistVM.Tracks.FindIndex(t => t.FilePath == recommended.FilePath);
-                if (playIndex >= 0)
+                if (playIndex >= 0 && IsSameTrack(_audioService.CurrentTrack, current))
                     _audioService.PlayAtIndex(playIndex);
                 return;
             }
@@ -443,10 +454,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (index >= 0)
             {
                 var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+                if (!IsSameTrack(_audioService.CurrentTrack, current))
+                    return;
+
                 ChatVM.AddAssistantMessage(script.Text);
                 Live2DCommand?.Invoke(script.Expression, script.Motion);
                 await SpeakDjTextAsync(script.Text);
-                _audioService.PlayAtIndex(index);
+                if (IsSameTrack(_audioService.CurrentTrack, current))
+                    _audioService.PlayAtIndex(index);
             }
         }
         catch (Exception ex)
@@ -471,6 +486,19 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var candidates = differentArtist.Count > 0 ? differentArtist : pool;
         var random = new Random();
         return candidates[random.Next(candidates.Count)];
+    }
+
+    private static bool IsSameTrack(Track? left, Track? right)
+    {
+        if (ReferenceEquals(left, right))
+            return true;
+        if (left == null || right == null)
+            return false;
+        if (!string.IsNullOrWhiteSpace(left.SourceId) && left.SourceId == right.SourceId)
+            return true;
+        if (!string.IsNullOrWhiteSpace(left.FilePath) && left.FilePath == right.FilePath)
+            return true;
+        return !string.IsNullOrWhiteSpace(left.Id) && left.Id == right.Id;
     }
 
     private static string StripDjControlTags(string text)
