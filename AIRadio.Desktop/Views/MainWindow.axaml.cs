@@ -40,11 +40,11 @@ public class InverseBoolConverter : IValueConverter
 public partial class MainWindow : Window
 {
     private System.Timers.Timer? _clockTimer;
-    private Button? _darkButton;
-    private Button? _lightButton;
+    private Button? _themeButton;
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
     private TextBlock? _avatarLetter;
+    private Button? _micButton;
 
     public MainWindow()
     {
@@ -81,13 +81,11 @@ public partial class MainWindow : Window
 
     private void UpdateThemeButtons(bool isDark)
     {
-        if (_darkButton == null) _darkButton = this.FindControl<Button>("DarkButton");
-        if (_lightButton == null) _lightButton = this.FindControl<Button>("LightButton");
+        _themeButton ??= this.FindControl<Button>("ThemeButton");
 
         if (isDark)
         {
-            if (_darkButton != null) { _darkButton.Background = new SolidColorBrush(Color.Parse("#FF171722")); _darkButton.Foreground = new SolidColorBrush(Color.Parse("#FFFFFFFF")); }
-            if (_lightButton != null) { _lightButton.Background = new SolidColorBrush(Colors.Transparent); _lightButton.Foreground = new SolidColorBrush(Color.Parse("#FF666666")); }
+            if (_themeButton != null) { _themeButton.Background = new SolidColorBrush(Color.Parse("#FF171722")); _themeButton.Foreground = new SolidColorBrush(Color.Parse("#FFFFFFFF")); }
             Background = new SolidColorBrush(Color.Parse("#FF08080B"));
             SetThemeColors(
                 "#FF030305", "#FF050507", "#F0131320", "#CC1B1B2A", "#F008080D",
@@ -97,8 +95,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            if (_darkButton != null) { _darkButton.Background = new SolidColorBrush(Colors.Transparent); _darkButton.Foreground = new SolidColorBrush(Color.Parse("#FF666666")); }
-            if (_lightButton != null) { _lightButton.Background = new SolidColorBrush(Color.Parse("#FFFFFFFF")); _lightButton.Foreground = new SolidColorBrush(Color.Parse("#FF111118")); }
+            if (_themeButton != null) { _themeButton.Background = new SolidColorBrush(Color.Parse("#FFFFFFFF")); _themeButton.Foreground = new SolidColorBrush(Color.Parse("#FF111118")); }
             Background = new SolidColorBrush(Color.Parse("#FFF5F1FF"));
             SetThemeColors(
                 "#FFF5F1FF", "#FFE9E2F7", "#F8FFFFFF", "#EDEBE5FF", "#F7F8F6FF",
@@ -227,6 +224,12 @@ public partial class MainWindow : Window
     {
         if (DataContext is ViewModels.MainWindowViewModel vm)
         {
+            _micButton = sender as Button;
+            if (_micButton != null)
+            {
+                _micButton.Background = new SolidColorBrush(Color.Parse("#FF56F5C4"));
+                _micButton.Foreground = new SolidColorBrush(Color.Parse("#FF050507"));
+            }
             (sender as Control)?.Focus();
             e.Pointer.Capture(sender as IInputElement);
             vm.ChatVM.BeginHoldToTalk();
@@ -238,6 +241,7 @@ public partial class MainWindow : Window
     {
         if (DataContext is ViewModels.MainWindowViewModel vm)
         {
+            ResetMicButton();
             vm.ChatVM.EndHoldToTalk();
             e.Pointer.Capture(null);
             e.Handled = true;
@@ -246,8 +250,16 @@ public partial class MainWindow : Window
 
     private void OnMicPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
     {
+        ResetMicButton();
         if (DataContext is ViewModels.MainWindowViewModel vm)
             vm.ChatVM.EndHoldToTalk();
+    }
+
+    private void ResetMicButton()
+    {
+        if (_micButton == null) return;
+        _micButton.Background = new SolidColorBrush(Color.Parse("#33262835"));
+        _micButton.Foreground = new SolidColorBrush(Color.Parse("#FFEDEDF5"));
     }
 
     private void OnDismissOverlayPressed(object? sender, PointerPressedEventArgs e)
@@ -327,11 +339,11 @@ public partial class MainWindow : Window
             if (_avatarBorder is Border border && _avatarLetter is TextBlock letter)
             {
                 _ = Animations.PlayCharacterSwitchAsync(border, letter, character.DisplayName,
-                    () => vm.SelectCharacterCommand.Execute(character));
+                    () => vm.SelectCharacterCommand.Execute(character).Subscribe());
             }
             else
             {
-                vm.SelectCharacterCommand.Execute(character);
+                vm.SelectCharacterCommand.Execute(character).Subscribe();
             }
         }
     }

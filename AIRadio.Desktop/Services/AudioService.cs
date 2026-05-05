@@ -29,7 +29,9 @@ public class AudioService : IAudioService, IDisposable
     private readonly List<Track> _playlist = new();
     private int _currentIndex = -1;
     private bool _shuffle;
-    private string _repeatMode = "list";
+    private string _repeatMode = "none";
+    private string _speechMixMode = "duck";
+    private bool _resumeAfterTts;
     private readonly System.Threading.Timer _positionTimer;
     private readonly System.Threading.Timer _spectrumTimer;
     private long _lastPositionMs;
@@ -69,6 +71,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
 
     public void SetUrlResolver(Func<string, Task<string?>> resolver) => _urlResolver = resolver;
+    public void SetSpeechMixMode(string mode) => _speechMixMode = mode == "pause" ? "pause" : "duck";
 
     public AudioService()
     {
@@ -103,12 +106,25 @@ public class AudioService : IAudioService, IDisposable
         {
             if (ttsPlaying)
             {
-                // Duck: reduce main player to 20% of user volume
-                _player.Volume = (int)(_userVolume * 20);
+                if (_speechMixMode == "pause" && _player.IsPlaying)
+                {
+                    _resumeAfterTts = true;
+                    _player.Pause();
+                }
+                else
+                {
+                    _resumeAfterTts = false;
+                    _player.Volume = (int)(_userVolume * 20);
+                }
             }
             else
             {
-                // Restore volume
+                if (_speechMixMode == "pause" && _resumeAfterTts)
+                {
+                    _resumeAfterTts = false;
+                    _player.Play();
+                }
+
                 if (!_isFading)
                     _player.Volume = (int)(_userVolume * 100);
             }
@@ -127,9 +143,6 @@ public class AudioService : IAudioService, IDisposable
 
     private void OnTrackEndReached()
     {
-        // Guard: prevent double-trigger from EndReached + fade-out completing simultaneously
-        if (_isFading && _fadeDirection == -1) return;
-
         var now = Environment.TickCount64;
         if (now - _lastAdvanceMs < 500) return; // debounce rapid re-entry
         _lastAdvanceMs = now;
@@ -140,9 +153,13 @@ public class AudioService : IAudioService, IDisposable
         {
             PlayTrack(_currentIndex);
         }
-        else
+        else if (_repeatMode == "list")
         {
             Next();
+        }
+        else
+        {
+            Stop();
         }
     }
 
@@ -412,8 +429,10 @@ public class AudioService : IAudioService, IDisposable
                 // Auto-advance to next track
                 if (_repeatMode == "single" && CurrentTrack != null)
                     PlayTrack(_currentIndex);
-                else
+                else if (_repeatMode == "list")
                     Next();
+                else
+                    Stop();
             }
         }
     }
@@ -462,15 +481,8 @@ public class AudioService : IAudioService, IDisposable
                 _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(pos));
             }
 
-            // Fade out when near end (only for known-duration tracks)
-            if (dur > 0 && !_isFading)
-            {
-                var remainingMs = dur - pos;
-                if (remainingMs <= CrossfadeSeconds * 1000)
-                {
-                    StartFadeOut();
-                }
-            }
+            // Let LibVLC EndReached decide when a track is really over.
+            // Some online sources report unstable duration and can otherwise fade out far too early.
         }
     }
 

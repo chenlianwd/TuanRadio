@@ -39,6 +39,8 @@ public class SettingsViewModel : ViewModelBase
     [Reactive] public bool IsTesting { get; set; }
     [Reactive] public bool TtsEnabled { get; set; } = true;
     [Reactive] public bool IsDarkMode { get; set; } = true;
+    [Reactive] public bool EnableStarfield { get; set; } = true;
+    [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
     // Character customization
@@ -61,6 +63,12 @@ public class SettingsViewModel : ViewModelBase
     {
         new() { Id = "zh", DisplayName = "中文" },
         new() { Id = "en", DisplayName = "English" },
+    };
+
+    public List<VoiceOption> SpeechMixModes { get; } = new()
+    {
+        new() { Id = "duck", DisplayName = "说话时降低音乐音量" },
+        new() { Id = "pause", DisplayName = "说话时暂停音乐" },
     };
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
@@ -126,6 +134,12 @@ public class SettingsViewModel : ViewModelBase
 
                 if (root.TryGetProperty("is_dark_mode", out var dark))
                     IsDarkMode = dark.GetBoolean();
+
+                if (root.TryGetProperty("enable_starfield", out var starfield))
+                    EnableStarfield = starfield.GetBoolean();
+
+                if (root.TryGetProperty("speech_mix_mode", out var speechMode))
+                    SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
 
                 if (root.TryGetProperty("character_overrides", out var ovElem))
                 {
@@ -212,6 +226,8 @@ public class SettingsViewModel : ViewModelBase
             {
                 tts_enabled = TtsEnabled,
                 is_dark_mode = IsDarkMode,
+                enable_starfield = EnableStarfield,
+                speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 character_overrides = overridesJson
             };

@@ -30,6 +30,7 @@ public class ChatViewModel : ViewModelBase
     private WaveInEvent? _waveIn;
     private string? _tempWavPath;
     private bool _isPlayingSong;
+    private bool _sendAfterHoldToTalk;
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
@@ -123,7 +124,10 @@ public class ChatViewModel : ViewModelBase
     public void BeginHoldToTalk()
     {
         if (!IsListening && !IsRecognizing && !IsProcessing)
+        {
+            _sendAfterHoldToTalk = true;
             StartListening();
+        }
     }
 
     public void EndHoldToTalk()
@@ -223,8 +227,8 @@ public class ChatViewModel : ViewModelBase
                 });
                 Log.Information("Speech recognized: {Text}", text);
 
-                // Auto-send in conversation mode
-                if (IsConversationMode)
+                // Hold-to-talk should feel like talking to the DJ directly.
+                if (IsConversationMode || _sendAfterHoldToTalk)
                 {
                     await SendMessageAsync();
                 }
@@ -250,6 +254,7 @@ public class ChatViewModel : ViewModelBase
                 MicButtonText = "HOLD";
                 RefreshStatus();
             });
+            _sendAfterHoldToTalk = false;
             try { File.Delete(wavPath); } catch { }
         }
     }
