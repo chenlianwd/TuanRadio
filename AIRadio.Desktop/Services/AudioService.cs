@@ -39,6 +39,9 @@ public class AudioService : IAudioService, IDisposable
     private readonly System.Threading.Timer _positionTimer;
     private readonly System.Threading.Timer _spectrumTimer;
     private long _lastPositionMs;
+    private long _trackStartedAtMs;
+    private int _earlyEndRetryCount;
+    private int _playbackErrorRetryCount;
     private readonly Random _rng = new();
     private PlaybackState _currentState = PlaybackState.Stopped;
 
@@ -92,14 +95,17 @@ public class AudioService : IAudioService, IDisposable
         {
             Log.Warning("Playback error on track: {Track}", CurrentTrack?.Title);
             SetState(PlaybackState.Stopped);
-            // Retry with fresh URL before advancing
-            if (CurrentTrack != null && _currentIndex >= 0)
+            if (CurrentTrack != null && _currentIndex >= 0 && _playbackErrorRetryCount == 0)
+            {
+                _playbackErrorRetryCount++;
                 PlayTrack(_currentIndex, isRetry: true);
-            else if (_playlist.Count > 1)
-                Next();
+            }
         };
         _player.EndReached += (_, _) =>
         {
+            if (SuppressEarlyTrackEnd())
+                return;
+
             SetState(PlaybackState.Ended);
             // In radio mode, hand off to MainWindowViewModel's TrackEnded handler
             // to keep AudioService playlist and PlaylistVM in sync.
@@ -378,6 +384,12 @@ public class AudioService : IAudioService, IDisposable
         if (index < 0 || index >= _playlist.Count) return;
 
         _currentIndex = index; // 确保 CurrentTrack 在 NotifyTrackChanged 时正确
+        _trackStartedAtMs = Environment.TickCount64;
+        if (!isRetry)
+        {
+            _earlyEndRetryCount = 0;
+            _playbackErrorRetryCount = 0;
+        }
         var track = _playlist[index];
         try
         {
@@ -428,6 +440,51 @@ public class AudioService : IAudioService, IDisposable
             Log.Error(ex, "Failed to play track: {Track}", track);
             Next();
         }
+    }
+
+    private bool SuppressEarlyTrackEnd()
+    {
+        var track = CurrentTrack;
+        if (track == null || !LooksLikeEarlyEnd(track))
+            return false;
+
+        if (_earlyEndRetryCount == 0 && _currentIndex >= 0)
+        {
+            _earlyEndRetryCount++;
+            Log.Warning(
+                "Ignoring early end for {Track} at {Position}/{Duration}; retrying current track",
+                track.Title,
+                TimeSpan.FromMilliseconds(Math.Max(0, _player.Time)),
+                track.Duration);
+            PlayTrack(_currentIndex, isRetry: true);
+        }
+        else
+        {
+            Log.Warning(
+                "Ignoring repeated early end for {Track} at {Position}/{Duration}; stopping instead of auto-switching",
+                track.Title,
+                TimeSpan.FromMilliseconds(Math.Max(0, _player.Time)),
+                track.Duration);
+            SetState(PlaybackState.Stopped);
+        }
+
+        return true;
+    }
+
+    private bool LooksLikeEarlyEnd(Track track)
+    {
+        var durationMs = track.Duration.TotalMilliseconds;
+        if (durationMs < 90_000)
+            return false;
+
+        var positionMs = Math.Max(0, _player.Time);
+        if (positionMs > 0 && durationMs - positionMs > 15_000)
+            return true;
+
+        var elapsedMs = Environment.TickCount64 - _trackStartedAtMs;
+        return elapsedMs > 0 &&
+               elapsedMs < 60_000 &&
+               durationMs - elapsedMs > 30_000;
     }
 
     private async System.Threading.Tasks.Task RefreshTrackUrlAsync(Track track)
