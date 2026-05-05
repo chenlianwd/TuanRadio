@@ -273,6 +273,7 @@ public class ChatViewModel : ViewModelBase
         InputText = string.Empty;
         IsProcessing = true;
         RefreshStatus();
+        _audioService.StopTts();
 
         try
         {

@@ -1,20 +1,16 @@
 <claude-mem-context>
 # Memory Context
 
-# [AIRadio] recent context, 2026-05-05 9:13am GMT+8
+# [AIRadio] recent context, 2026-05-05 1:56pm GMT+8
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (10,343t read) | 4,558,978t work | 100% savings
+Stats: 50 obs (10,719t read) | 4,354,723t work | 100% savings
 
 ### May 4, 2026
-115 9:03p 🔵 AIRadio MainWindow dark/light mode buttons non-functional
-117 9:27p 🔵 AIRadio git status review for task completion verification
-123 " ✅ MainWindow.axaml deleted for rewrite
 124 9:28p 🟣 MainWindow.axaml completely rewritten with new Claudio-style retro terminal design
-125 " 🔴 Test failure due to LibVLC native library not found
 120 9:35p 🟣 Claudio-style retro terminal UI redesign completed
 121 " 🔴 Avalonia telemetry permission error resolved with escalated permissions
 122 " 🔵 RecommendationService.cs has encoding corruption in Chinese strings
@@ -32,9 +28,6 @@ Stats: 50 obs (10,343t read) | 4,558,978t work | 100% savings
 137 " 🔴 修复 TTS 语音不输出的问题
 138 " 🟣 ChatViewModel 增加完整交互状态追踪系统
 139 " ✅ 本轮修改共 8 个文件 +577/-96 行，构建和测试全部通过
-S213 AI Radio 交互状态完善：修复主题切换、TTS 语音、语音识别、MIC 反馈、聊天滚动、AI 思考提示等 7 个交互 bug (May 4, 10:52 PM)
-S217 修复 AIRadio Claudio 电台的 7 个 UI/功能 bug 并提交代码 (May 4, 10:54 PM)
-S216 修复 AIRadio Claudio 电台的 7 个 UI/功能 bug 并提交代码 (May 4, 10:56 PM)
 169 10:57p ✅ 审查Git工作区状态
 S220 AIRadio Avalonia desktop UI - model switching animation + Codex UI redesign comparison (May 4, 10:58 PM)
 S221 AIRadio Codex UI redesign review - found two pending binding issues (May 4, 11:02 PM)
@@ -67,18 +60,30 @@ S225 AIRadio bug fix session - Phase 1-2 bugs verified, F1 SpectrumView remains 
 164 11:44p 🔴 B1 DJ播报只显示不读问题已修复
 165 " 🔵 B2 TTS command execution flow now documented
 166 " 🔴 B6 AvatarBorder/AvatarLetter now use field injection
+S226 AIRadio Bug Fix - Phase 1-2 complete, F1 SpectrumView embedded (May 4, 11:46 PM)
 167 11:49p 🔵 F1 SpectrumView exists but not embedded in UI
 168 11:50p 🟣 F1 SpectrumView embedded in ClockStage
 ### May 5, 2026
-S226 AIRadio Bug Fix - Phase 1-2 complete, F1 SpectrumView embedded (May 5, 12:01 AM)
-**Investigated**: airadio-fix-plan.md (7 bugs B1-B7, 3 features F1-F3), verified code in MainWindowViewModel.cs, ChatViewModel.cs, PlayerViewModel.cs, SettingsViewModel.cs, MainWindow.axaml.cs, WhisperSttService.cs, AudioService.cs, SpectrumViewModel.cs, SpectrumView.axaml
+S228 Code review of AIRadio git working directory - identified TTS race condition, repeat mode default mismatch, Avalonia build permission issue, and new StarfieldView component (May 5, 12:01 AM)
+170 1:51p 🟣 Added StarfieldView visual component to AIRadio
+173 " 🔵 Build succeeds outside sandbox; LibVLC native libs missing in test environment
+171 1:53p 🔵 New "radio" repeat mode implemented with auto-DJ behavior
+172 1:54p 🔵 AIRadio code review findings
+S227 Code review of AIRadio git working directory - identified TTS race condition, repeat mode default mismatch, Avalonia build permission issue, and new StarfieldView component (May 5, 1:54 PM)
+S229 Code review of AIRadio git working directory - awaiting escalated permissions for build verification (May 5, 1:56 PM)
+**Investigated**: Full working directory diff (11 files, +240/-79 lines), AudioService repeat logic, MainWindowViewModel TTS completion wait code, StarfieldView implementation, test expectations, Avalonia build failure with permission denied error
 
-**Learned**: B1 fix uses _djService.GenerateSpeechAsync + _audioService.PlayTtsAudio in HandleTrackTransitionAsync; B2 TTS-then-music uses _pendingCommand + TtsStateChanged listener with fallback for TTS failure; B6 field injection pattern for compiled bindings; SpectrumView uses 16-band visualizer with Spotify-style gradient
+**Learned**: - RepeatMode default is "radio" (not "none") - AudioService.cs:65 and PlayerViewModel.cs:34 aligned
+    - TTS completion waiting uses TaskCompletionSource on TtsStateChanged event which can race if TTS finishes before subscription registers
+    - Avalonia 11.3.2 build blocked by permission denied on %LOCALAPPDATA%\AvaloniaUI\BuildServices\buildtasks.log
+    - StarfieldView spectrum-reactive starfield wired via SpectrumVM.SpectrumReceived event
+    - Debounced search (500ms Throttle) on PlaylistVM.SearchText in MainWindow.axaml.cs
+    - ToggleFavorite tests required track in Tracks collection before toggling favorites
 
-**Completed**: B1-B6 bugs fixed in ChatViewModel.cs, MainWindowViewModel.cs, PlayerViewModel.cs, SettingsViewModel.cs, MainWindow.axaml.cs. F1 SpectrumView embedded in MainWindow.axaml ClockStage between ON AIR and clock. Build: 0 errors, 60 tests passing. 7 files modified with 75+ insertions.
+**Completed**: Code review completed with three bug findings documented; build verification blocked by Avalonia telemetry permission issue - awaiting user approval
 
-**Next Steps**: Session complete - all Phase 1-2 work done. Remaining: B7 (STT model download progress), F2/F3 (slider events). User can test SpectrumView visualizer effect.
+**Next Steps**: Awaiting user approval for escalated permissions to run dotnet build and verify compilation of reviewed code
 
 
-Access 4559k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 4355k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

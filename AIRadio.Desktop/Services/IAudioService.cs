@@ -40,6 +40,7 @@ public interface IAudioService
     void RemoveTrack(Track track);
     void ClearPlaylist();
     void PlayTtsAudio(byte[] audioData);
+    void StopTts();
     IObservable<bool> TtsStateChanged { get; }
     void SetUrlResolver(Func<string, Task<string?>> resolver);
     void SetSpeechMixMode(string mode);

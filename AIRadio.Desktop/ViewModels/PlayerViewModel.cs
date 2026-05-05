@@ -31,8 +31,8 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public string DurationText { get; set; } = "0:00";
     [Reactive] public bool IsShuffled { get; set; }
     [Reactive] public string ShuffleText { get; set; } = "🔀";
-    [Reactive] public string RepeatMode { get; set; } = "none";
-    [Reactive] public string RepeatText { get; set; } = "OFF";
+    [Reactive] public string RepeatMode { get; set; } = "radio";
+    [Reactive] public string RepeatText { get; set; } = "DJ";
 
     private bool _isDragging;
 
@@ -65,14 +65,16 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         {
             var next = _audioService.RepeatMode switch
             {
-                "none" => "list",
+                "radio" => "list",
                 "list" => "single",
-                _ => "none"
+                "single" => "none",
+                _ => "radio"
             };
             _audioService.SetRepeatMode(next);
             RepeatMode = next;
             RepeatText = next switch
             {
+                "radio" => "DJ",
                 "single" => "ONE",
                 "list" => "ALL",
                 _ => "OFF"

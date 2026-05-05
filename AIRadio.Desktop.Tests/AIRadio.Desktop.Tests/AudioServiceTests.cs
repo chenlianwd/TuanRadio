@@ -93,7 +93,7 @@ public class AudioServiceTests
     public void SetRepeatMode_ChangesRepeatMode()
     {
         var svc = new AudioService();
-        Assert.Equal("none", svc.RepeatMode);
+        Assert.Equal("radio", svc.RepeatMode);
 
         svc.SetRepeatMode("list");
         Assert.Equal("list", svc.RepeatMode);
