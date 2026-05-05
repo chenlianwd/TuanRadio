@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "AIRadio (Debug)",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/AIRadio.Desktop/bin/Debug/net8.0/AIRadio.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/AIRadio.Desktop",
+            "console": "internalConsole"
+        }
+    ]
+}
