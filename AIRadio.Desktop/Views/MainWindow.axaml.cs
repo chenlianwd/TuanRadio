@@ -74,14 +74,11 @@ public partial class MainWindow : Window
                         _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
                         _activeVm.Live2DCommand -= _live2dHandler;
                     }
-                    if (_live2dHandler != null)
-                    {
-                        _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
-                        _activeVm.Live2DCommand -= _live2dHandler;
-                    }
                     if (_chatHandler != null)
                         _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
                     _themeSub?.Dispose();
+                    _starfieldVisSub?.Dispose();
+                    _searchDebounceSub?.Dispose();
                     if (_spectrumHandler != null)
                         _activeVm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
                 }
@@ -418,9 +415,30 @@ public partial class MainWindow : Window
         Close();
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        Dispose();
+        base.OnClosed(e);
+    }
+
     public void Dispose()
     {
         _clockTimer?.Stop();
         _clockTimer?.Dispose();
+        _themeSub?.Dispose();
+        _starfieldVisSub?.Dispose();
+        _searchDebounceSub?.Dispose();
+        if (_activeVm != null)
+        {
+            if (_live2dHandler != null)
+            {
+                _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
+                _activeVm.Live2DCommand -= _live2dHandler;
+            }
+            if (_chatHandler != null)
+                _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
+            if (_spectrumHandler != null)
+                _activeVm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
+        }
     }
 }

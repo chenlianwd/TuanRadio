@@ -19,7 +19,7 @@
 | **桌面框架** | Avalonia 11.3.2 + ReactiveUI | ✅ |
 | **语言** | C# / .NET 8 | ✅ |
 | **音频播放** | LibVLCSharp | ✅ |
-| **虚拟形象** | WebView2 + Live2D Cubism Web SDK | ✅ |
+| **虚拟形象资源** | WebView2 + Live2D Cubism Web SDK | 保留资源，当前主 UI 暂不启用 |
 | **LLM 对话** | MiniMax API (OpenAI 兼容) | ✅ |
 | **TTS 语音** | MiniMax T2A API + NAudio | ✅ |
 | **ASR** | Whisper (本地) | ✅ |
@@ -50,7 +50,7 @@ AIRadio/
 │   │   ├── SettingsViewModel.cs    # 设置面板
 │   │   └── SpectrumViewModel.cs    # 频谱数据
 │   ├── Views/
-│   │   ├── MainWindow.axaml        # 主窗口 (Live2D + 星空粒子)
+│   │   ├── MainWindow.axaml        # 主窗口 (复古电台 UI + 星空粒子)
 │   │   ├── PlayerView.axaml        # 播放器控制栏
 │   │   ├── PlaylistView.axaml      # 歌单/收藏/搜索面板
 │   │   ├── ChatView.axaml          # 聊天面板
@@ -69,12 +69,12 @@ AIRadio/
 │   │   ├── WhisperSttService.cs     # Whisper ASR
 │   │   ├── Live2DStaticServer.cs    # HttpListener 静态服务 :18080
 │   │   ├── MusicApiServer.cs        # Node.js 子进程 :37250
-│   │   ├── EnvironmentManager.cs    # Node.js/WebView2 自动安装
+│   │   ├── EnvironmentManager.cs    # Node.js/WebView2 环境辅助
 │   │   └── WindowsSecureStorage.cs  # Windows Credential Manager
 │   ├── Models/                     # Track, ChatMessage, DJProfile, CharacterProfile
 │   ├── Assets/                     # airadio.ico, airadio.png
 │   ├── server/                     # NeteaseCloudMusicApi (Node.js)
-│   └── wwwroot/                    # Live2D Cubism SDK 静态资源
+│   └── wwwroot/                    # Live2D Cubism SDK 静态资源（保留）
 ├── README.md                       # 最新项目文档
 ├── AGENTS.md                       # Session 历史记录
 └── DESIGN.md                       # Spotify 设计系统参考（参考资料）

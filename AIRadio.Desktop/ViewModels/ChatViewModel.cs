@@ -17,13 +17,14 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class ChatViewModel : ViewModelBase
+public class ChatViewModel : ViewModelBase, IDisposable
 {
     private readonly IDJService _djService;
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
     private readonly ISttService _sttService;
     private readonly Action<Track>? _trackAdded;
+    private readonly IDisposable _ttsSub;
     private readonly IDisposable _stateSub;
     private string? _pendingCommand;
 
@@ -68,7 +69,7 @@ public class ChatViewModel : ViewModelBase
         ToggleConversationModeCommand = ReactiveCommand.Create(ToggleConversationMode);
 
         // Listen for TTS completion to play song AFTER TTS finishes
-        _audioService.TtsStateChanged
+        _ttsSub = _audioService.TtsStateChanged
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(async playing =>
             {
@@ -273,47 +274,21 @@ public class ChatViewModel : ViewModelBase
         InputText = string.Empty;
         IsProcessing = true;
         RefreshStatus();
+        _pendingCommand = null;
         _audioService.StopTts();
 
         try
         {
+            if (TryParseSongRequest(text, out var songQuery, out var requiresConfidentMatch) &&
+                (!requiresConfidentMatch || await HasConfidentSongMatchAsync(songQuery)))
+            {
+                await RespondWithCommandAsync($"好，我来找《{songQuery}》。", $"play:{songQuery}", "happy");
+                return;
+            }
+
             var response = await _djService.GenerateChatResponseAsync(text);
             var (displayText, command) = ParseResponse(response);
-            Messages.Add(new ChatMessage
-            {
-                Role = MessageRole.Assistant,
-                Content = displayText
-            });
-            DjEmotion = _djService.CurrentEmotion;
-            Live2DCommand?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
-
-            if (command != null && !_djService.TtsEnabled)
-                await ExecuteCommandAsync(command);
-            else if (command != null && _djService.TtsEnabled)
-                _pendingCommand = command;
-
-            var ttsText = StripEmoji(displayText);
-            if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText))
-            {
-                StatusText = "VOICE...";
-                var speechData = await _djService.GenerateSpeechAsync(ttsText);
-                if (speechData is { Length: > 0 })
-                {
-                    _audioService.PlayTtsAudio(speechData);
-                }
-                else
-                {
-                    StatusText = "VOICE ERROR";
-                    Log.Warning("TTS returned empty audio");
-                    // TTS failed — execute pending command immediately if we were waiting for TTS
-                    if (_pendingCommand != null)
-                    {
-                        var cmd = _pendingCommand;
-                        _pendingCommand = null;
-                        await ExecuteCommandAsync(cmd);
-                    }
-                }
-            }
+            await RespondWithCommandAsync(displayText, command, _djService.CurrentEmotion);
         }
         catch
         {
@@ -327,6 +302,44 @@ public class ChatViewModel : ViewModelBase
         {
             IsProcessing = false;
             RefreshStatus();
+        }
+    }
+
+    private async Task RespondWithCommandAsync(string displayText, string? command, string emotion)
+    {
+        Messages.Add(new ChatMessage
+        {
+            Role = MessageRole.Assistant,
+            Content = displayText
+        });
+        DjEmotion = emotion;
+        Live2DCommand?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
+
+        if (command != null && !_djService.TtsEnabled)
+            await ExecuteCommandAsync(command);
+        else if (command != null && _djService.TtsEnabled)
+            _pendingCommand = command;
+
+        var ttsText = StripEmoji(displayText);
+        if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText))
+        {
+            StatusText = "VOICE...";
+            var speechData = await _djService.GenerateSpeechAsync(ttsText);
+            if (speechData is { Length: > 0 })
+            {
+                _audioService.PlayTtsAudio(speechData);
+            }
+            else
+            {
+                StatusText = "VOICE ERROR";
+                Log.Warning("TTS returned empty audio");
+                if (_pendingCommand != null)
+                {
+                    var cmd = _pendingCommand;
+                    _pendingCommand = null;
+                    await ExecuteCommandAsync(cmd);
+                }
+            }
         }
     }
 
@@ -375,6 +388,92 @@ public class ChatViewModel : ViewModelBase
         displayText = displayText[..match.Index].TrimEnd('\n', '\r', ' ');
         var command = match.Groups[1].Value;
         return (displayText, command);
+    }
+
+    private async Task<bool> HasConfidentSongMatchAsync(string query)
+    {
+        try
+        {
+            var results = await _musicSearchService.SearchAsync(query, 3);
+            return results.Count > 0 && IsConfidentMusicMatch(query, results[0]);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to preflight song request: {Query}", query);
+            return false;
+        }
+    }
+
+    private static bool TryParseSongRequest(string text, out string query, out bool requiresConfidentMatch)
+    {
+        query = string.Empty;
+        requiresConfidentMatch = false;
+        var normalized = NormalizeSongQuery(text);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        var explicitMatch = Regex.Match(
+            normalized,
+            @"^(?:请|麻烦|帮我|给我)?\s*(?:播放|放一下|放下|放|听一下|听下|听|来一首|来首|点一首|点首|我想听|想听)\s*(?:一首|首)?\s*(?<query>.+)$",
+            RegexOptions.IgnoreCase);
+        if (explicitMatch.Success)
+        {
+            query = NormalizeSongQuery(explicitMatch.Groups["query"].Value);
+            return !string.IsNullOrWhiteSpace(query) && !IsGenericMusicRequest(query);
+        }
+
+        if (!LooksLikeBareSongTitle(normalized))
+            return false;
+
+        query = normalized;
+        requiresConfidentMatch = true;
+        return true;
+    }
+
+    private static string NormalizeSongQuery(string text)
+    {
+        var value = text.Trim();
+        value = Regex.Replace(value, @"^[\s""'“”‘’《<]+|[\s""'“”‘’》>。.!！]+$", "");
+        value = Regex.Replace(value, @"\s+", " ");
+        return value.Trim();
+    }
+
+    private static bool LooksLikeBareSongTitle(string text)
+    {
+        if (text.Length is < 1 or > 24)
+            return false;
+        if (Regex.IsMatch(text, @"[?？,，。.!！;；:]"))
+            return false;
+        if (Regex.IsMatch(text, @"^(为什么|怎么|如何|你好|谢谢|再见)"))
+            return false;
+
+        return Regex.IsMatch(text, @"^[\p{IsCJKUnifiedIdeographs}A-Za-z0-9\s\-'&.]+$");
+    }
+
+    private static bool IsGenericMusicRequest(string text)
+    {
+        return Regex.IsMatch(text, @"^(歌|歌曲|音乐|一首歌|首歌|点歌)$", RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsConfidentMusicMatch(string query, OnlineTrack track)
+    {
+        var normalizedQuery = NormalizeForMusicCompare(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery))
+            return false;
+
+        var title = NormalizeForMusicCompare(track.Title);
+        var artist = NormalizeForMusicCompare(track.Artist);
+        if (normalizedQuery == title || normalizedQuery == artist)
+            return true;
+
+        return normalizedQuery.Length >= 5 &&
+               (title.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+                normalizedQuery.Contains(title, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeForMusicCompare(string value)
+    {
+        return Regex.Replace(value.ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
     }
 
     private static string StripEmoji(string text)
@@ -515,4 +614,15 @@ public class ChatViewModel : ViewModelBase
         "angry" => "nod",
         _ => "idle"
     };
+
+    public void Dispose()
+    {
+        _ttsSub.Dispose();
+        _stateSub.Dispose();
+        _waveIn?.Dispose();
+        if (!string.IsNullOrWhiteSpace(_tempWavPath))
+        {
+            try { File.Delete(_tempWavPath); } catch { }
+        }
+    }
 }
