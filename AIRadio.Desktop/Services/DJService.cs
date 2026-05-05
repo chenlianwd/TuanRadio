@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -10,6 +11,7 @@ namespace AIRadio.Desktop.Services;
 public class DJService : IDJService
 {
     private readonly IMinimaxService _minimax;
+    private readonly IMusicSearchService? _musicSearch;
     private DJProfile _profile = new();
     private string _currentEmotion = "neutral";
     private readonly List<ChatMessage> _chatHistory = new();
@@ -17,9 +19,10 @@ public class DJService : IDJService
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
 
-    public DJService(IMinimaxService minimax)
+    public DJService(IMinimaxService minimax, IMusicSearchService? musicSearch = null)
     {
         _minimax = minimax;
+        _musicSearch = musicSearch;
     }
 
     public void Initialize(DJProfile profile)
@@ -169,4 +172,82 @@ Response rules:
         "angry" => "nod",
         _ => "idle"
     };
+
+    public async Task<Track?> RecommendNextTrackAsync(Track? current)
+    {
+        if (_musicSearch == null) return null;
+
+        try
+        {
+            // Build context from favorites if available (passed via current parameter's Tag)
+            string favoriteContext = "";
+            if (current?.Tag is IEnumerable<Track> favorites && favorites.Any())
+            {
+                var favList = favorites.Take(10).Select(t => $"{t.Title} by {t.Artist}").ToList();
+                favoriteContext = $" The user likes these songs: {string.Join(", ", favList)}. ";
+            }
+
+            // Generate a music recommendation prompt based on current track and favorites
+            var prompt = current != null
+                ? $"Based on the song '{current.Title}' by '{current.Artist}', {favoriteContext}recommend ONE similar or related song that would fit well in a radio playlist. Reply with ONLY the song name in Chinese or English (no other text)."
+                : "Recommend one popular song for an AI radio station. Reply with ONLY the song name in Chinese or English (no other text).";
+
+            var response = await _minimax.ChatAsync(prompt, new List<ChatMessage>());
+            var cleaned = response.Trim();
+
+            // Remove URLs, thinking tags, and any other non-song content
+            cleaned = Regex.Replace(cleaned, @"https?://\S+", "", RegexOptions.IgnoreCase);
+            cleaned = Regex.Replace(cleaned, @"\[think\]:.*", "", RegexOptions.IgnoreCase);
+            cleaned = Regex.Replace(cleaned, @"^[\[\(【\(].*?[\]\)】\)]:", "", RegexOptions.IgnoreCase);
+            cleaned = cleaned.Trim();
+
+            // Try multiple parsing strategies
+            string? title = null;
+            string? artist = null;
+
+            // Strategy 1: "Song Name - Artist"
+            if (cleaned.Contains(" - "))
+            {
+                var parts = cleaned.Split(new[] { " - " }, 2, StringSplitOptions.None);
+                title = parts[0].Trim();
+                artist = parts.Length > 1 ? parts[1].Trim() : null;
+            }
+            // Strategy 2: "Song Name by Artist"
+            else if (cleaned.Contains(" by "))
+            {
+                var parts = cleaned.Split(new[] { " by " }, 2, StringSplitOptions.None);
+                title = parts[0].Trim();
+                artist = parts.Length > 1 ? parts[1].Trim() : null;
+            }
+            // Strategy 3: Just the song name - search with artist context
+            else if (cleaned.Length >= 2 && cleaned.Length <= 100)
+            {
+                title = cleaned;
+                artist = current?.Artist; // fallback to current artist
+            }
+
+            if (string.IsNullOrWhiteSpace(title)) return null;
+
+            // Search for the recommended song
+            var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
+            var results = await _musicSearch.SearchAsync(searchQuery, 5);
+            foreach (var item in results)
+            {
+                var url = await _musicSearch.GetPlayUrlAsync(item.Id);
+                if (!string.IsNullOrEmpty(url))
+                {
+                    Log.Information("DJ recommended: {Title} by {Artist}", item.Title, item.Artist);
+                    return item.ToTrack(url);
+                }
+            }
+
+            Log.Warning("DJ could not find track for recommendation: {Response}", cleaned);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DJ recommendation failed");
+            return null;
+        }
+    }
 }

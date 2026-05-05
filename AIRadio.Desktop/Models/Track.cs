@@ -14,6 +14,7 @@ public class Track
     public byte[]? CoverArt { get; set; }
     public string? SourceId { get; set; } // e.g. "netease:12345" - used to re-resolve play URL
     public bool IsFavorite { get; set; }
+    public object? Tag { get; set; } // Used to pass contextual data (e.g., favorite tracks for DJ recommendations)
 
     public static Track FromFile(string filePath)
     {

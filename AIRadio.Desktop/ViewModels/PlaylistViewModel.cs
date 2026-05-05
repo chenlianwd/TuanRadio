@@ -338,6 +338,7 @@ public class PlaylistViewModel : ViewModelBase
         }
 
         Tracks.Add(track);
+        _audioService.AddTracks(new[] { track });
         if (_favoriteIds.Contains(track.Id) && !Favorites.Contains(track))
             Favorites.Add(track);
         TabIndex = 0;

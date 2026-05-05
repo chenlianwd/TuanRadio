@@ -102,10 +102,11 @@ public partial class App : Application
         services.AddSingleton(new System.Net.Http.HttpClient());
         services.AddSingleton<IAudioService, AudioService>();
         services.AddSingleton<IMinimaxService, MinimaxService>();
-        services.AddSingleton<IDJService, DJService>();
-        services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<IMusicSearchService>(sp =>
             new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<IDJService>(sp =>
+            new DJService(sp.GetRequiredService<IMinimaxService>(), sp.GetRequiredService<IMusicSearchService>()));
+        services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<ISttService, WhisperSttService>();
         services.AddSingleton<MainWindowViewModel>();
     }

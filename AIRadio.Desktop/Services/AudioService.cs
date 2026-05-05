@@ -45,6 +45,8 @@ public class AudioService : IAudioService, IDisposable
     private const double CrossfadeSeconds = 2.0;
     private bool _isFading;
     private readonly System.Threading.Timer _fadeTimer;
+    private Func<Task<Track?>>? _nextCallback;
+    private Func<Task<Track?>>? _previousCallback;
 
     public bool IsPlaying => _player.IsPlaying;
     public TimeSpan CurrentPosition => TimeSpan.FromMilliseconds(_player.Time);
@@ -97,7 +99,12 @@ public class AudioService : IAudioService, IDisposable
         _player.EndReached += (_, _) =>
         {
             SetState(PlaybackState.Ended);
-            OnTrackEndReached();
+            // In radio mode, hand off to MainWindowViewModel's TrackEnded handler
+            // to keep AudioService playlist and PlaylistVM in sync.
+            if (_repeatMode == "radio")
+                _trackEndedSubject.OnNext(CurrentTrack);
+            else
+                OnTrackEndReached();
         };
 
         // No audio callbacks — use simulated spectrum (VLC handles output normally)
@@ -272,24 +279,59 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    public void Next()
+    public void Shuffle() => _shuffle = !_shuffle;
+
+    public void SetRepeatMode(string mode) => _repeatMode = mode;
+
+    public void SetNextCallback(Func<Task<Track?>>? callback) => _nextCallback = callback;
+    public void SetPreviousCallback(Func<Task<Track?>>? callback) => _previousCallback = callback;
+
+    public async void Next()
     {
+        if (_repeatMode == "radio" && _nextCallback != null)
+        {
+            var track = await _nextCallback();
+            if (track != null)
+            {
+                if (_currentIndex >= 0 && _currentIndex < _playlist.Count &&
+                    _playlist[_currentIndex].FilePath == track.FilePath)
+                {
+                    var retry = await _nextCallback();
+                    if (retry != null && retry.FilePath != track.FilePath)
+                        track = retry;
+                }
+
+                AddTracks(new[] { track });
+                var index = _playlist.Count - 1;
+                PlayAtIndex(index);
+            }
+            return;
+        }
+
         if (_playlist.Count == 0) return;
 
         if (_shuffle)
-        {
             _currentIndex = _rng.Next(_playlist.Count);
-        }
         else
-        {
             _currentIndex = (_currentIndex + 1) % _playlist.Count;
-        }
 
         PlayTrack(_currentIndex);
     }
 
-    public void Previous()
+    public async void Previous()
     {
+        if (_repeatMode == "radio" && _previousCallback != null)
+        {
+            var track = await _previousCallback();
+            if (track != null)
+            {
+                AddTracks(new[] { track });
+                var index = _playlist.Count - 1;
+                PlayAtIndex(index);
+                return;
+            }
+        }
+
         if (_playlist.Count == 0) return;
 
         if (_player.Time > 3000)
@@ -302,15 +344,9 @@ public class AudioService : IAudioService, IDisposable
         PlayTrack(_currentIndex);
     }
 
-    public void Shuffle() => _shuffle = !_shuffle;
-
-    public void SetRepeatMode(string mode) => _repeatMode = mode;
-
     public void PlayAtIndex(int index)
     {
-        if (index < 0 || index >= _playlist.Count) return;
-        _currentIndex = index;
-        PlayTrack(_currentIndex);
+        PlayTrack(index, isRetry: false);
     }
 
     private void PlayTrack(int index, bool isRetry = false)
