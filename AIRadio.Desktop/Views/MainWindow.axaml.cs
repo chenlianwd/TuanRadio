@@ -28,17 +28,31 @@ public class MessageAlignConverter : IValueConverter
     public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => null;
 }
 
+public class InverseBoolConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+        => value is bool b ? !b : true;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+        => value is bool b ? !b : false;
+}
+
 public partial class MainWindow : Window
 {
     private System.Timers.Timer? _clockTimer;
     private Button? _darkButton;
     private Button? _lightButton;
     private ViewModels.MainWindowViewModel? _activeVm;
+    private Border? _avatarBorder;
+    private TextBlock? _avatarLetter;
 
     public MainWindow()
     {
         InitializeComponent();
+        _avatarBorder = this.FindControl<Border>("AvatarBorder");
+        _avatarLetter = this.FindControl<TextBlock>("AvatarLetter");
         StartClock();
+        FillDotFields();
 
         DataContextChanged += (_, _) =>
         {
@@ -101,8 +115,23 @@ public partial class MainWindow : Window
         var brush = new SolidColorBrush(Color.Parse(color));
         foreach (var text in shell.GetVisualDescendants().OfType<TextBlock>())
         {
+            if (text.GetVisualAncestors().OfType<Border>().Any(IsDarkMessageBubble))
+                continue;
             text.Foreground = brush;
         }
+    }
+
+    private static bool IsDarkMessageBubble(Border border)
+        => border.Background is ISolidColorBrush brush && brush.Color == Color.Parse("#EE050507");
+
+    private void FillDotFields()
+    {
+        var line = string.Join("  ", Enumerable.Repeat(".", 74));
+        var field = string.Join(Environment.NewLine, Enumerable.Repeat(line, 20));
+        if (this.FindControl<TextBlock>("ClockDots") is { } clockDots)
+            clockDots.Text = field;
+        if (this.FindControl<TextBlock>("RoomDots") is { } roomDots)
+            roomDots.Text = field;
     }
 
     private void SetThemeColors(
@@ -194,6 +223,51 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnMicPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            (sender as Control)?.Focus();
+            e.Pointer.Capture(sender as IInputElement);
+            vm.ChatVM.BeginHoldToTalk();
+            e.Handled = true;
+        }
+    }
+
+    private void OnMicPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            vm.ChatVM.EndHoldToTalk();
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        }
+    }
+
+    private void OnMicPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (DataContext is ViewModels.MainWindowViewModel vm)
+            vm.ChatVM.EndHoldToTalk();
+    }
+
+    private void OnDismissOverlayPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            vm.CloseOverlays();
+            e.Handled = true;
+        }
+    }
+
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            vm.CloseOverlays();
+            e.Handled = true;
+        }
+    }
+
     private void OnSearchKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter && DataContext is ViewModels.MainWindowViewModel vm)
@@ -237,7 +311,7 @@ public partial class MainWindow : Window
 
     private async void OnLive2DCommand(string expression, string motion)
     {
-        if (this.Find<Border>("AvatarBorder") is Border border)
+        if (_avatarBorder is Border border)
         {
             await Animations.PlayBounceAsync(border);
         }
@@ -250,8 +324,7 @@ public partial class MainWindow : Window
         {
             if (character == vm.SelectedCharacter) return;
 
-            if (this.Find<Border>("AvatarBorder") is Border border &&
-                this.Find<TextBlock>("AvatarLetter") is TextBlock letter)
+            if (_avatarBorder is Border border && _avatarLetter is TextBlock letter)
             {
                 _ = Animations.PlayCharacterSwitchAsync(border, letter, character.DisplayName,
                     () => vm.SelectCharacterCommand.Execute(character));

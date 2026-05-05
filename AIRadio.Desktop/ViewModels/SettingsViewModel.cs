@@ -38,6 +38,7 @@ public class SettingsViewModel : ViewModelBase
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
     [Reactive] public bool TtsEnabled { get; set; } = true;
+    [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
     // Character customization
@@ -123,6 +124,9 @@ public class SettingsViewModel : ViewModelBase
                 if (root.TryGetProperty("tts_enabled", out var tts))
                     TtsEnabled = tts.GetBoolean();
 
+                if (root.TryGetProperty("is_dark_mode", out var dark))
+                    IsDarkMode = dark.GetBoolean();
+
                 if (root.TryGetProperty("character_overrides", out var ovElem))
                 {
                     foreach (var prop in ovElem.EnumerateObject())
@@ -207,6 +211,7 @@ public class SettingsViewModel : ViewModelBase
             var settingsData = new
             {
                 tts_enabled = TtsEnabled,
+                is_dark_mode = IsDarkMode,
                 language = SelectedLanguage,
                 character_overrides = overridesJson
             };

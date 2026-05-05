@@ -19,7 +19,7 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="x:Single">
-                <Border Width="8" CornerRadius="1,1,0,0"
+                <Border Width="7" CornerRadius="2,2,0,0"
                         Height="{Binding Converter={StaticResource SpectrumBarConverter}}"
                         Background="{StaticResource SpotifyBar}"/>
             </DataTemplate>

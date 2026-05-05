@@ -79,6 +79,7 @@ public class MinimaxService : IMinimaxService
                 model = "speech-2.8-hd",
                 text,
                 stream = false,
+                language_boost = "Chinese",
                 voice_setting = new
                 {
                     voice_id = voiceId,
@@ -112,13 +113,26 @@ public class MinimaxService : IMinimaxService
             using var doc = JsonDocument.Parse(responseJson);
             var root = doc.RootElement;
 
+            if (root.TryGetProperty("base_resp", out var baseResp))
+            {
+                var statusCode = baseResp.TryGetProperty("status_code", out var code) ? code.GetInt32() : 0;
+                if (statusCode != 0)
+                {
+                    var statusMsg = baseResp.TryGetProperty("status_msg", out var msg) ? msg.GetString() : "Unknown TTS error";
+                    Log.Warning("TTS API returned error {Code}: {Message}", statusCode, statusMsg);
+                    return Array.Empty<byte>();
+                }
+            }
+
             if (root.TryGetProperty("data", out var data) &&
                 data.TryGetProperty("audio", out var audioHex))
             {
                 var hex = audioHex.GetString();
                 if (!string.IsNullOrEmpty(hex))
                 {
-                    return Convert.FromHexString(hex);
+                    var bytes = Convert.FromHexString(hex);
+                    Log.Information("TTS audio generated: {Bytes} bytes, voice={VoiceId}, emotion={Emotion}", bytes.Length, voiceId, emotion);
+                    return bytes;
                 }
             }
 
@@ -131,7 +145,7 @@ public class MinimaxService : IMinimaxService
     {
         var prompt = $"当前播放：{current.Title} - {current.Artist}\n" +
                      $"即将播放：{next.Title} - {next.Artist}\n" +
-                     "请用简短活泼的语言（不超过50字）介绍即将播放的歌曲，像电台DJ一样自然过渡。";
+                     "请像真实电台 DJ 一样自然过渡，可以加入歌曲氛围、听众情绪和一句温柔的引导。";
 
         return await ChatAsync(prompt, new List<ChatMessage>());
     }
