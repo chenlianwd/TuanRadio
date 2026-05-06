@@ -74,18 +74,16 @@ public partial class App : Application
                     Log.Warning("wwwroot not found at {Path}", wwwrootPath);
                 }
 
-                _musicApiServer = new MusicApiServer();
-                _ = _musicApiServer.StartAsync();
-
                 var mainWindow = new Views.MainWindow();
                 _mainVm = _serviceProvider.GetRequiredService<MainWindowViewModel>();
-                _ = _mainVm.InitializeAsync();
                 mainWindow.DataContext = _mainVm;
 
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
+                _musicApiServer = new MusicApiServer();
+                _ = StartMusicAndInitializeAsync();
 
-                Log.Information("AI Radio started successfully");
+                Log.Information("AI Radio shell started successfully");
             }
             catch (Exception ex)
             {
@@ -95,6 +93,24 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private async System.Threading.Tasks.Task StartMusicAndInitializeAsync()
+    {
+        try
+        {
+            if (_musicApiServer != null)
+                await _musicApiServer.StartAsync();
+
+            if (_mainVm != null)
+                await _mainVm.InitializeAsync();
+
+            Log.Information("AI Radio initialized successfully");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to initialize AI Radio services");
+        }
     }
 
     private void ConfigureServices(IServiceCollection services)

@@ -9,11 +9,15 @@
 
         <!-- API Key -->
         <StackPanel Spacing="6">
-            <TextBlock Text="Minimax API Key" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <TextBlock Text="AI 服务 API Key" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="输入你的 API Key" PasswordChar="•"/>
-            <Button Command="{Binding TestConnectionCommand}" Content="测试连接"
+            <Button Command="{Binding TestConnectionCommand}"
+                    Content="{Binding TestConnectionButtonText}"
+                    IsEnabled="{Binding !IsTesting}"
                     HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="#FF9B59B0"
                     Foreground="#FF000000"/>
+            <TextBlock Text="{Binding StatusMessage}" Foreground="#FFFFC86B"
+                       TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0"/>
         </StackPanel>
 
         <!-- Language selection -->
@@ -84,8 +88,5 @@
                 HorizontalAlignment="Stretch" Padding="18,12" FontSize="14"
                 Background="#FF9B59B0" Foreground="#FF000000"/>
 
-        <!-- Status -->
-        <TextBlock Text="{Binding StatusMessage}" Foreground="#FFB3B3B3"
-                   TextWrapping="Wrap" FontSize="12"/>
     </StackPanel>
 </UserControl>

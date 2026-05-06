@@ -36,6 +36,9 @@ public class PlaylistViewModel : ViewModelBase
     [Reactive] public Track? SelectedTrack { get; set; }
     [Reactive] public string SearchText { get; set; } = string.Empty;
     [Reactive] public bool IsSearching { get; set; }
+    [Reactive] public bool HasSearchStatus { get; set; }
+    [Reactive] public string SearchStatusMessage { get; set; } = string.Empty;
+    [Reactive] public string SearchButtonText { get; set; } = "搜索";
     [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
@@ -91,18 +94,28 @@ public class PlaylistViewModel : ViewModelBase
 
         AddOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(async track =>
         {
+            SetSearchStatus($"正在添加《{track.Title}》...");
             var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
-            if (url == null) return;
+            if (url == null)
+            {
+                SetSearchStatus("这首歌暂时无法获取播放地址，换一个结果试试。");
+                return;
+            }
 
             // Check if already in playlist
             var existing = Tracks.FirstOrDefault(t => t.FilePath == url);
-            if (existing != null) return;
+            if (existing != null)
+            {
+                SetSearchStatus("这首歌已经在播放列表里了。");
+                return;
+            }
 
             var t = track.ToTrack(url);
             Tracks.Add(t);
             _audioService.AddTracks(new[] { t });
             TabIndex = 0;
             await SaveAsync();
+            SetSearchStatus($"已添加《{track.Title}》。");
         });
 
         ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
@@ -276,10 +289,12 @@ public class PlaylistViewModel : ViewModelBase
         _isPlayingOnline = true;
         try
         {
+            SetSearchStatus($"正在播放《{track.Title}》...");
             var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
             if (url == null)
             {
                 Log.Warning("No play URL for track {Id}", track.Id);
+                SetSearchStatus("这首歌暂时无法获取播放地址，换一个结果试试。");
                 return;
             }
 
@@ -289,6 +304,7 @@ public class PlaylistViewModel : ViewModelBase
             {
                 _audioService.PlayAtIndex(existingIndex);
                 TabIndex = 0;
+                SetSearchStatus($"正在播放《{track.Title}》。");
                 return;
             }
 
@@ -299,6 +315,12 @@ public class PlaylistViewModel : ViewModelBase
             _audioService.PlayAtIndex(index);
             TabIndex = 0;
             await SaveAsync();
+            SetSearchStatus($"正在播放《{track.Title}》。");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Play online failed for {Track}", track.Title);
+            SetSearchStatus("播放失败，可能是音源不可用或网络超时。");
         }
         finally
         {
@@ -311,6 +333,8 @@ public class PlaylistViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(SearchText)) return;
 
         IsSearching = true;
+        SearchButtonText = "搜索中...";
+        SetSearchStatus($"正在搜索“{SearchText}”...");
         try
         {
             var results = await _musicSearchService.SearchAsync(SearchText);
@@ -320,16 +344,27 @@ public class PlaylistViewModel : ViewModelBase
                 SearchResults.Add(track);
             }
             TabIndex = 2; // auto-switch to search results
+            SetSearchStatus(results.Count == 0
+                ? "没有找到可用结果。可以换个关键词，或检查网络/音乐 API 服务。"
+                : $"找到 {results.Count} 个结果。");
             Log.Information("Search '{Query}' returned {Count} results", SearchText, results.Count);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Search failed");
+            SetSearchStatus("搜索失败，可能是网络异常或音乐 API 服务不可用。");
         }
         finally
         {
             IsSearching = false;
+            SearchButtonText = "搜索";
         }
+    }
+
+    private void SetSearchStatus(string message)
+    {
+        SearchStatusMessage = message;
+        HasSearchStatus = !string.IsNullOrWhiteSpace(message);
     }
 
     public void AddExternalTrack(Track track)

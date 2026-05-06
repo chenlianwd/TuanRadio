@@ -103,16 +103,10 @@ public partial class MainWindow : Window
                 _starfieldVisSub = vm.SettingsVM.WhenAnyValue(x => x.EnableStarfield)
                     .Subscribe(v => { if (_starfield != null) _starfield.IsVisible = v; });
 
-                // Debounced search on text change
+                // Keep search explicit. Auto-search can leave the UI waiting on a
+                // partial keyword while the user is still typing.
                 _searchDebounceSub?.Dispose();
-                _searchDebounceSub = vm.PlaylistVM.WhenAnyValue(x => x.SearchText)
-                    .Throttle(TimeSpan.FromMilliseconds(500))
-                    .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(text =>
-                    {
-                        if (!string.IsNullOrWhiteSpace(text) && text.Length >= 2)
-                            vm.PlaylistVM.SearchCommand.Execute().Subscribe();
-                    });
+                _searchDebounceSub = null;
             }
         };
     }
@@ -121,6 +115,8 @@ public partial class MainWindow : Window
     {
         Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
+            if (_activeVm != null)
+                ApplyChatMessageTheme(_activeVm.IsDarkMode);
             this.FindControl<ScrollViewer>("ChatScrollViewer")?.ScrollToEnd();
         }, Avalonia.Threading.DispatcherPriority.Background);
     }
@@ -138,6 +134,7 @@ public partial class MainWindow : Window
                 "#E91B1B2A", "#F007070A", "#E9161623", "#66111113", "#F0222234",
                 "#33494B66");
             SetShellTextForeground("#FFEDEDF5");
+            ApplyChatMessageTheme(isDark);
         }
         else
         {
@@ -148,6 +145,32 @@ public partial class MainWindow : Window
                 "#ECEEE9FF", "#F4F3F8FF", "#F8FFFFFF", "#99EEEAF5", "#EAE7F3FF",
                 "#664E4862");
             SetShellTextForeground("#FF17171F");
+            ApplyChatMessageTheme(isDark);
+        }
+    }
+
+    private void ApplyChatMessageTheme(bool isDark)
+    {
+        var bubbleBrush = new SolidColorBrush(Color.Parse(isDark ? "#EE15151E" : "#FFF0ECF7"));
+        var bubbleBorderBrush = new SolidColorBrush(Color.Parse(isDark ? "#223C3C48" : "#FFD9D1E8"));
+        var messageBrush = new SolidColorBrush(Color.Parse(isDark ? "#FFF0EEF8" : "#FF474255"));
+        var senderBrush = new SolidColorBrush(Color.Parse(isDark ? "#FFA783FF" : "#FF7A68A4"));
+
+        foreach (var border in this.GetVisualDescendants().OfType<Border>())
+        {
+            if (Math.Abs(border.MaxWidth - 380) > 0.1 || border.Child is not TextBlock message)
+                continue;
+
+            border.Background = bubbleBrush;
+            border.BorderBrush = bubbleBorderBrush;
+            border.BorderThickness = new Thickness(1);
+            message.Foreground = messageBrush;
+
+            if (border.GetVisualParent() is StackPanel panel)
+            {
+                foreach (var sender in panel.Children.OfType<TextBlock>())
+                    sender.Foreground = senderBrush;
+            }
         }
     }
 
@@ -165,7 +188,7 @@ public partial class MainWindow : Window
     }
 
     private static bool IsDarkMessageBubble(Border border)
-        => border.Background is ISolidColorBrush brush && brush.Color == Color.Parse("#EE050507");
+        => border.Child is TextBlock && Math.Abs(border.MaxWidth - 380) <= 0.1;
 
     private void FillDotFields()
     {

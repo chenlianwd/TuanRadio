@@ -33,6 +33,7 @@ public class MainWindowViewModelTests
         audio.Setup(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
         audio.Setup(x => x.SpectrumData).Returns(new Subject<float[]>());
         audio.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audio.Setup(x => x.TtsError).Returns(new Subject<string>());
         audio.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
         audio.Setup(x => x.CurrentTrack).Returns(currentTrack);
         audio.Setup(x => x.RepeatMode).Returns("radio");

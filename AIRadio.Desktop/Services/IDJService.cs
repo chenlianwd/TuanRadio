@@ -13,6 +13,7 @@ public interface IDJService
     Task<byte[]?> GenerateSpeechAsync(string text);
     string CurrentEmotion { get; }
     bool TtsEnabled { get; }
+    ApiFailureInfo? LastFailure { get; }
 }
 
 public interface ILive2DViewer
