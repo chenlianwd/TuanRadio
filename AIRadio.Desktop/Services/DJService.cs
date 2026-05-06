@@ -184,9 +184,13 @@ Response rules:
 
         try
         {
-            // Build context from favorites if available (passed via current parameter's Tag)
+            var favorites = GetFavorites(current);
+            var excludedTracks = GetExcludedTracks(current).ToList();
+            if (current != null && !excludedTracks.Any(t => IsSameTrack(t, current)))
+                excludedTracks.Add(current);
+
             string favoriteContext = "";
-            if (current?.Tag is IEnumerable<Track> favorites && favorites.Any())
+            if (favorites.Count > 0)
             {
                 var favList = favorites.Take(10).Select(t => $"{t.Title} by {t.Artist}").ToList();
                 favoriteContext = $" The user likes these songs: {string.Join(", ", favList)}. ";
@@ -194,8 +198,8 @@ Response rules:
 
             // Generate a music recommendation prompt based on current track and favorites
             var prompt = current != null
-                ? $"Based on the song '{current.Title}' by '{current.Artist}', {favoriteContext}recommend ONE similar or related song that would fit well in a radio playlist. Reply with ONLY the song name in Chinese or English (no other text)."
-                : "Recommend one popular song for an AI radio station. Reply with ONLY the song name in Chinese or English (no other text).";
+                ? $"Based on the song '{current.Title}' by '{current.Artist}', {favoriteContext}recommend ONE NEW similar or related song that is NOT already in the user's playlist. Do not recommend '{current.Title}'. Reply with ONLY the song name and artist if known (no other text)."
+                : "Recommend one NEW popular song for an AI radio station. Reply with ONLY the song name and artist if known (no other text).";
 
             var response = await _minimax.ChatAsync(prompt, new List<ChatMessage>());
             var cleaned = response.Trim();
@@ -228,16 +232,22 @@ Response rules:
             else if (cleaned.Length >= 2 && cleaned.Length <= 100)
             {
                 title = cleaned;
-                artist = current?.Artist; // fallback to current artist
+                artist = null;
             }
 
             if (string.IsNullOrWhiteSpace(title)) return null;
 
             // Search for the recommended song
             var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
-            var results = await _musicSearch.SearchAsync(searchQuery, 5);
+            var results = await _musicSearch.SearchAsync(searchQuery, 10);
             foreach (var item in results)
             {
+                if (IsExcluded(item, excludedTracks))
+                {
+                    Log.Debug("Skipped already-known DJ recommendation: {Title} by {Artist}", item.Title, item.Artist);
+                    continue;
+                }
+
                 var url = await _musicSearch.GetPlayUrlAsync(item.Id);
                 if (!string.IsNullOrEmpty(url))
                 {
@@ -254,5 +264,61 @@ Response rules:
             Log.Warning(ex, "DJ recommendation failed");
             return null;
         }
+    }
+
+    private static IReadOnlyCollection<Track> GetFavorites(Track? current)
+    {
+        if (current?.Tag is RecommendationContext context)
+            return context.Favorites;
+        if (current?.Tag is IEnumerable<Track> favorites)
+            return favorites.ToList();
+        return Array.Empty<Track>();
+    }
+
+    private static IEnumerable<Track> GetExcludedTracks(Track? current)
+    {
+        if (current?.Tag is RecommendationContext context)
+            return context.ExcludedTracks;
+        return Array.Empty<Track>();
+    }
+
+    private static bool IsExcluded(OnlineTrack candidate, IEnumerable<Track> excludedTracks)
+    {
+        return excludedTracks.Any(track =>
+            IsSameSource(track.SourceId, candidate.Id) ||
+            IsSameMusicIdentity(track.Title, track.Artist, candidate.Title, candidate.Artist));
+    }
+
+    private static bool IsSameTrack(Track left, Track right)
+    {
+        return IsSameSource(left.SourceId, right.SourceId) ||
+               IsSameMusicIdentity(left.Title, left.Artist, right.Title, right.Artist) ||
+               (!string.IsNullOrWhiteSpace(left.FilePath) && left.FilePath == right.FilePath);
+    }
+
+    private static bool IsSameSource(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            return false;
+        return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSameMusicIdentity(string titleA, string artistA, string titleB, string artistB)
+    {
+        var titleLeft = NormalizeMusicText(titleA);
+        var titleRight = NormalizeMusicText(titleB);
+        if (string.IsNullOrWhiteSpace(titleLeft) || titleLeft != titleRight)
+            return false;
+
+        var artistLeft = NormalizeMusicText(artistA);
+        var artistRight = NormalizeMusicText(artistB);
+        return string.IsNullOrWhiteSpace(artistLeft) ||
+               string.IsNullOrWhiteSpace(artistRight) ||
+               artistLeft == artistRight;
+    }
+
+    private static string NormalizeMusicText(string value)
+    {
+        return Regex.Replace(value.ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
     }
 }

@@ -176,4 +176,46 @@ public class DJServiceTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task RecommendNextTrackAsync_SkipsTracksAlreadyInPlaylist()
+    {
+        var minimax = new Mock<IMinimaxService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new DJService(minimax.Object, search.Object);
+        var existing = new Track
+        {
+            Title = "Existing Song",
+            Artist = "Known Artist",
+            SourceId = "netease:old",
+            FilePath = "http://example.com/old.mp3"
+        };
+        var current = new Track
+        {
+            Title = "Current Song",
+            Artist = "Known Artist",
+            SourceId = "netease:current",
+            Tag = new RecommendationContext
+            {
+                ExcludedTracks = new[] { existing }
+            }
+        };
+
+        minimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("Existing Song - Known Artist");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), 10))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                new() { Id = "netease:old", Title = "Existing Song", Artist = "Known Artist" },
+                new() { Id = "netease:new", Title = "Fresh Song", Artist = "New Artist" }
+            });
+        search.Setup(x => x.GetPlayUrlAsync("netease:new"))
+            .ReturnsAsync("http://example.com/new.mp3");
+
+        var result = await service.RecommendNextTrackAsync(current);
+
+        Assert.NotNull(result);
+        Assert.Equal("netease:new", result!.SourceId);
+        search.Verify(x => x.GetPlayUrlAsync("netease:old"), Times.Never);
+    }
 }

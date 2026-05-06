@@ -44,6 +44,12 @@ public class Track
     public override string ToString() => $"{Title} - {Artist}";
 }
 
+public class RecommendationContext
+{
+    public IReadOnlyCollection<Track> Favorites { get; init; } = Array.Empty<Track>();
+    public IReadOnlyCollection<Track> ExcludedTracks { get; init; } = Array.Empty<Track>();
+}
+
 public class ChatMessage
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();

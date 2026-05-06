@@ -295,6 +295,12 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         try
         {
+            if (IsFreshRecommendationRequest(text))
+            {
+                await RecommendFreshTrackAsync();
+                return;
+            }
+
             if (TryParseSongRequest(text, out var songQuery, out var requiresConfidentMatch) &&
                 (!requiresConfidentMatch || await HasConfidentSongMatchAsync(songQuery)))
             {
@@ -500,6 +506,58 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Log.Warning(ex, "Failed to preflight song request: {Query}", query);
             return false;
         }
+    }
+
+    private async Task RecommendFreshTrackAsync()
+    {
+        var current = _audioService.CurrentTrack ?? _audioService.Playlist.LastOrDefault();
+        if (current != null)
+        {
+            current.Tag = new RecommendationContext
+            {
+                Favorites = _audioService.Playlist.Where(t => t.IsFavorite).ToList(),
+                ExcludedTracks = _audioService.Playlist.ToList()
+            };
+        }
+
+        var recommended = await _djService.RecommendNextTrackAsync(current);
+        if (recommended == null)
+        {
+            Messages.Add(new ChatMessage
+            {
+                Role = MessageRole.Assistant,
+                Content = "暂时没找到新的可播放推荐。你可以给我一个风格或歌手关键词，我继续帮你找。"
+            });
+            return;
+        }
+
+        if (!_audioService.Playlist.Any(t => IsSameTrack(t, recommended)))
+        {
+            if (_trackAdded != null)
+                _trackAdded(recommended);
+            else
+                _audioService.AddTracks(new[] { recommended });
+        }
+
+        var index = FindAudioTrackIndex(recommended.SourceId ?? recommended.Id, recommended.FilePath);
+        var displayText = $"给你推荐《{recommended.Title}》 - {recommended.Artist}。";
+        await RespondWithCommandAsync(displayText, null, "happy");
+        if (index >= 0)
+            _audioService.PlayAtIndex(index);
+    }
+
+    private static bool IsFreshRecommendationRequest(string text)
+    {
+        var normalized = NormalizeSongQuery(text);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+        if (Regex.IsMatch(normalized, @"^(?:请|麻烦|帮我|给我)?\s*(?:播放|放|听|我想听|想听)\s+"))
+            return false;
+
+        return Regex.IsMatch(
+            normalized,
+            @"(推荐|推歌|换一首|来一首|来首|下一首|同类型|类似|相似|新歌|没听过|别的).*(歌|歌曲|音乐)?",
+            RegexOptions.IgnoreCase);
     }
 
     private static bool TryParseSongRequest(string text, out string query, out bool requiresConfidentMatch)
@@ -714,6 +772,18 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
 
         return -1;
+    }
+
+    private static bool IsSameTrack(Track left, Track right)
+    {
+        if (!string.IsNullOrWhiteSpace(left.SourceId) && left.SourceId == right.SourceId)
+            return true;
+        if (!string.IsNullOrWhiteSpace(left.FilePath) && left.FilePath == right.FilePath)
+            return true;
+        return NormalizeForMusicCompare(left.Title) == NormalizeForMusicCompare(right.Title) &&
+               (string.IsNullOrWhiteSpace(left.Artist) ||
+                string.IsNullOrWhiteSpace(right.Artist) ||
+                NormalizeForMusicCompare(left.Artist) == NormalizeForMusicCompare(right.Artist));
     }
 
     private static string MapExpression(string emotion) => emotion switch
