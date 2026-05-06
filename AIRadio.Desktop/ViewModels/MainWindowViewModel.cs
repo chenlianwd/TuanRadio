@@ -87,23 +87,19 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
             audioSvc.SetNextCallback(async () =>
             {
-                var favorites = PlaylistVM.Favorites.ToList();
                 var current = _audioService.CurrentTrack;
-                if (current != null && favorites.Count > 0)
-                    current.Tag = favorites;
+                AttachRecommendationContext(current);
                 var recommended = await _djService.RecommendNextTrackAsync(current);
-                if (recommended != null)
+                if (recommended != null && !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
                     PlaylistVM.AddExternalTrack(recommended);
                 return recommended;
             });
             audioSvc.SetPreviousCallback(async () =>
             {
-                var favorites = PlaylistVM.Favorites.ToList();
                 var current = _audioService.CurrentTrack;
-                if (current != null && favorites.Count > 0)
-                    current.Tag = favorites;
+                AttachRecommendationContext(current);
                 var recommended = await _djService.RecommendNextTrackAsync(current);
-                if (recommended != null)
+                if (recommended != null && !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
                     PlaylistVM.AddExternalTrack(recommended);
                 return recommended;
             });
@@ -389,12 +385,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
         try
         {
-            // If only one track in playlist, always ask DJ to recommend from online
-            if (PlaylistVM.Tracks.Count <= 1)
+            // Radio mode should expand the station with fresh online recommendations.
+            if (ShouldUseFreshRadioRecommendations())
             {
-                var favorites = PlaylistVM.Favorites.ToList();
-                if (favorites.Count > 0 && current != null)
-                    current.Tag = favorites;
+                AttachRecommendationContext(current);
                 var recommended = await _djService.RecommendNextTrackAsync(current);
                 if (recommended == null)
                 {
@@ -486,6 +480,19 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var candidates = differentArtist.Count > 0 ? differentArtist : pool;
         var random = new Random();
         return candidates[random.Next(candidates.Count)];
+    }
+
+    private static bool ShouldUseFreshRadioRecommendations() => true;
+
+    private void AttachRecommendationContext(Track? current)
+    {
+        if (current == null) return;
+
+        current.Tag = new RecommendationContext
+        {
+            Favorites = PlaylistVM.Favorites.ToList(),
+            ExcludedTracks = PlaylistVM.Tracks.ToList()
+        };
     }
 
     private static bool IsSameTrack(Track? left, Track? right)

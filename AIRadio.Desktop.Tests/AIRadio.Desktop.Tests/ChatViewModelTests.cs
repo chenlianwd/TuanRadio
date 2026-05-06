@@ -106,6 +106,32 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public async Task SendMessage_GenericRecommendation_UsesFreshDjRecommendation()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        var recommended = new Track
+        {
+            Id = "fresh",
+            SourceId = "netease:fresh",
+            Title = "Fresh Song",
+            Artist = "New Artist",
+            FilePath = "http://example.com/fresh.mp3"
+        };
+        djMock.Setup(x => x.RecommendNextTrackAsync(It.IsAny<Track?>()))
+            .ReturnsAsync(recommended);
+
+        vm.InputText = "再推荐点同类型的歌";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.RecommendNextTrackAsync(It.IsAny<Track?>()), Times.Once);
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
+            tracks.Any(t => t.SourceId == "netease:fresh"))), Times.Once);
+        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+    }
+
+    [Fact]
     public async Task SendMessage_WithTrackAddedCallback_DoesNotAddTrackTwice()
     {
         var playlist = new List<Track>();

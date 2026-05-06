@@ -33,6 +33,10 @@ Live2D 数字人主播 + MiniMax AI DJ + 多平台在线音乐
 cd AIRadio.Desktop && dotnet build
 ```
 
+## Commit Notes
+
+- This project should include `AGENTS.md` in commits/pushes when it has project memory updates.
+
 ## Issues Fixed
 
 - OFF mode auto-continue
@@ -44,7 +48,7 @@ cd AIRadio.Desktop && dotnet build
 <claude-mem-context>
 # Memory Context
 
-# [AIRadio] recent context, 2026-05-05 10:52pm GMT+8
+# [AIRadio] recent context, 2026-05-06 8:24pm GMT+8
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
