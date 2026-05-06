@@ -24,6 +24,7 @@ public class ChatViewModelTests
 
         var audioMock = new Mock<IAudioService>();
         audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audioMock.Setup(x => x.TtsError).Returns(new Subject<string>());
         audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
         audioMock.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
         audioMock.Setup(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()))
@@ -114,6 +115,7 @@ public class ChatViewModelTests
 
         var audioMock = new Mock<IAudioService>();
         audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audioMock.Setup(x => x.TtsError).Returns(new Subject<string>());
         audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
         audioMock.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
         audioMock.Setup(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()))

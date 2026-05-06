@@ -11,6 +11,7 @@ using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
@@ -27,6 +28,7 @@ public class SettingsViewModel : ViewModelBase
     private readonly IMinimaxService _minimaxService;
     private readonly IDJService _djService;
     private readonly ISecureStorage _secureStorage;
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
@@ -37,6 +39,7 @@ public class SettingsViewModel : ViewModelBase
     [Reactive] public string ApiKey { get; set; } = string.Empty;
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
+    [Reactive] public string TestConnectionButtonText { get; set; } = "测试连接";
     [Reactive] public bool TtsEnabled { get; set; } = true;
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool EnableStarfield { get; set; } = true;
@@ -178,37 +181,46 @@ public class SettingsViewModel : ViewModelBase
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
             IsTesting = true;
+            TestConnectionButtonText = "正在测试...";
             StatusMessage = "正在测试连接...";
         });
         try
         {
-            _minimaxService.SetApiKey(ApiKey);
+            var apiKey = ApiKey.Trim();
+            _minimaxService.SetApiKey(apiKey);
             var result = await _minimaxService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
+            await _secureStorage.SaveApiKeyAsync("minimax", apiKey);
             await Dispatcher.UIThread.InvokeAsync(() =>
                 StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Minimax API error");
+            var failure = ApiFailureInfo.FromException(ex);
+            Log.Error(ex, "AI service API error");
             await Dispatcher.UIThread.InvokeAsync(() =>
-                StatusMessage = $"连接失败：{ex.Message}");
+                StatusMessage = $"连接失败：{failure.Title}。{failure.RecoveryHint}");
         }
         finally
         {
-            await Dispatcher.UIThread.InvokeAsync(() => IsTesting = false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsTesting = false;
+                TestConnectionButtonText = "测试连接";
+            });
         }
     }
 
     private async Task SaveAsync()
     {
-        // Save current character overrides
-        if (SelectedCharacter != null && CharacterVoice != null)
-        {
-            _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
-        }
-
+        await _saveGate.WaitAsync();
         try
         {
+            // Save current character overrides
+            if (SelectedCharacter != null && CharacterVoice != null)
+            {
+                _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
+            }
+
             if (!string.IsNullOrWhiteSpace(ApiKey))
             {
                 await _secureStorage.SaveApiKeyAsync("minimax", ApiKey);
@@ -243,6 +255,10 @@ public class SettingsViewModel : ViewModelBase
             Log.Error(ex, "Failed to save settings");
             await Dispatcher.UIThread.InvokeAsync(() =>
                 StatusMessage = $"保存失败：{ex.Message}");
+        }
+        finally
+        {
+            _saveGate.Release();
         }
     }
 }

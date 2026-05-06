@@ -4,7 +4,7 @@
              x:Class="AIRadio.Desktop.Views.PlaylistView"
              x:DataType="vm:PlaylistViewModel">
 
-    <Grid RowDefinitions="Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,Auto,*">
         <!-- Tab header -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*" Margin="0,0,0,8">
             <Button Grid.Column="0" Command="{Binding ShowPlaylistCommand}" Padding="14,7" FontSize="12" FontWeight="600" CornerRadius="8,0,0,8"
@@ -27,11 +27,15 @@
         <!-- Search bar -->
         <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,0,0,8" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
             <TextBox Grid.Column="0" Text="{Binding SearchText, Mode=TwoWay}" Watermark="搜索歌曲..." Margin="0,0,6,0" KeyDown="OnSearchKeyDown"/>
-            <Button Grid.Column="1" Command="{Binding SearchCommand}" Content="搜索" Padding="14,8" Background="#FF1C1C1C"/>
+            <Button Grid.Column="1" Command="{Binding SearchCommand}" Content="{Binding SearchButtonText}"
+                    IsEnabled="{Binding IsSearching, Converter={StaticResource InvertBoolConverter}}"
+                    Padding="14,8" Background="#FF1C1C1C"/>
         </Grid>
+        <TextBlock Grid.Row="2" Text="{Binding SearchStatusMessage}" IsVisible="{Binding HasSearchStatus}"
+                   Foreground="#FFFFC86B" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
 
         <!-- Search results -->
-        <ListBox Grid.Row="2" ItemsSource="{Binding SearchResults}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}" SelectionMode="Single" Background="Transparent">
+        <ListBox Grid.Row="3" ItemsSource="{Binding SearchResults}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}" SelectionMode="Single" Background="Transparent">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <Border Padding="10,8" Margin="0,1" Background="#FF1C1C1C" CornerRadius="6">
@@ -51,7 +55,7 @@
         </ListBox>
 
         <!-- Favorites -->
-        <ListBox Grid.Row="2" ItemsSource="{Binding Favorites}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}" SelectionMode="Single" Background="Transparent">
+        <ListBox Grid.Row="3" ItemsSource="{Binding Favorites}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}" SelectionMode="Single" Background="Transparent">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <Border Padding="8,6" Margin="0,1" Background="#FF1C1C1C" CornerRadius="6">
@@ -75,7 +79,7 @@
         </ListBox>
 
         <!-- Playlist -->
-        <ListBox Grid.Row="2" ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}"
+        <ListBox Grid.Row="3" ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}"
                  IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}" SelectionMode="Single" Background="Transparent">
             <ListBox.ItemTemplate>
                 <DataTemplate>

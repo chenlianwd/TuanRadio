@@ -109,13 +109,15 @@ public class MinimaxServiceTests
     }
 
     [Fact]
-    public async Task ChatAsync_ThrowsOnNonSuccessStatus()
+    public async Task ChatAsync_ThrowsMinimaxApiExceptionOnNonSuccessStatus()
     {
         var httpClient = CreateMockHttpClient("error", HttpStatusCode.Unauthorized);
         var service = new MinimaxService(httpClient);
         service.SetApiKey("bad-key");
 
-        await Assert.ThrowsAsync<HttpRequestException>(
+        var ex = await Assert.ThrowsAsync<MinimaxApiException>(
             () => service.ChatAsync("test", new List<ChatMessage>()));
+
+        Assert.Equal(ApiFailureKind.Authentication, ex.Failure.Kind);
     }
 }

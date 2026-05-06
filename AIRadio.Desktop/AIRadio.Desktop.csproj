@@ -19,6 +19,11 @@
     <InternalsVisibleTo Include="AIRadio.Desktop.Tests" />
   </ItemGroup>
 
+  <Target Name="NpmInstall" BeforeTargets="Build"
+          Condition="!Exists('server\node_modules\.package-lock.json')">
+    <Exec Command="npm install" WorkingDirectory="server" />
+  </Target>
+
   <ItemGroup>
     <Content Include="wwwroot\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

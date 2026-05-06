@@ -18,6 +18,7 @@ public class DJService : IDJService
 
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
+    public ApiFailureInfo? LastFailure { get; private set; }
 
     public DJService(IMinimaxService minimax, IMusicSearchService? musicSearch = null)
     {
@@ -103,6 +104,7 @@ Response rules:
 
     public async Task<string> GenerateChatResponseAsync(string userMessage)
     {
+        LastFailure = null;
         try
         {
             var response = await _minimax.ChatAsync(userMessage, _chatHistory);
@@ -113,6 +115,7 @@ Response rules:
         }
         catch (Exception ex)
         {
+            LastFailure = ApiFailureInfo.FromException(ex);
             Log.Error(ex, "Failed to generate chat response");
             return _profile.Language == "en"
                 ? "Sorry, the signal drifted. Say that again? [calm]"
@@ -123,12 +126,14 @@ Response rules:
     public async Task<byte[]?> GenerateSpeechAsync(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
+        LastFailure = null;
         try
         {
             return await _minimax.TextToSpeechAsync(StripControlTags(text), _profile.VoiceId, _currentEmotion);
         }
         catch (Exception ex)
         {
+            LastFailure = ApiFailureInfo.FromException(ex);
             Log.Warning(ex, "TTS failed");
             return null;
         }

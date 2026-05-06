@@ -5,7 +5,7 @@
              x:DataType="vm:ChatViewModel">
 
     <Border Background="#FF181818" CornerRadius="8" Padding="16">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
             <!-- Header -->
             <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -19,7 +19,27 @@
             </Grid>
 
             <!-- Messages -->
-            <ScrollViewer x:Name="MessagesScroller" Grid.Row="1">
+            <Border Grid.Row="1"
+                    IsVisible="{Binding ShowStatusNotice}"
+                    Background="#EE050507"
+                    BorderBrush="#3356F5C4"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="10,8"
+                    Margin="0,0,0,10">
+                <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding StatusHeadline}" FontSize="12" FontWeight="700"
+                               Foreground="#FFB9FFE8"/>
+                    <TextBlock Text="{Binding StatusDetail}" FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="#FFD8D8EA"/>
+                    <TextBlock Text="{Binding StatusRecoveryHint}" FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="#FFFFC86B"/>
+                </StackPanel>
+            </Border>
+
+            <ScrollViewer x:Name="MessagesScroller" Grid.Row="2">
                 <ItemsControl ItemsSource="{Binding Messages}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -40,7 +60,7 @@
             </ScrollViewer>
 
             <!-- Input -->
-            <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,12,0,0">
+            <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,12,0,0">
                 <TextBox x:Name="InputBox" Text="{Binding InputText, Mode=TwoWay}" Watermark="输入消息..."
                          KeyDown="OnInputKeyDown" Margin="0,0,8,0"/>
                 <Button Grid.Column="1" Command="{Binding ToggleConversationModeCommand}"

@@ -528,7 +528,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                     _audioService.PlayTtsAudio(speechData);
                     try
                     {
-                        await tcs.Task;
+                        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(60));
+                    }
+                    catch (TimeoutException)
+                    {
+                        Log.Warning("Timed out waiting for TTS playback to finish");
                     }
                     finally
                     {

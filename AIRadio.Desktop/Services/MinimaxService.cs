@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using Serilog;
@@ -12,6 +13,7 @@ namespace AIRadio.Desktop.Services;
 
 public class MinimaxService : IMinimaxService
 {
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private readonly HttpClient _httpClient;
     private string _apiKey = string.Empty;
 
@@ -27,7 +29,7 @@ public class MinimaxService : IMinimaxService
 
     public async Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
     {
-        return await RetryPolicy.ExecuteAsync(async () =>
+        return await ExecuteMinimaxRequestAsync("AI chat", async token =>
         {
             var messages = new List<object>();
             foreach (var msg in history)
@@ -53,8 +55,8 @@ public class MinimaxService : IMinimaxService
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
 
-            var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+            var response = await _httpClient.SendAsync(request, token);
+            await EnsureSuccessAsync(response);
 
             var responseJson = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(responseJson);
@@ -72,7 +74,7 @@ public class MinimaxService : IMinimaxService
 
     public async Task<byte[]> TextToSpeechAsync(string text, string voiceId, string emotion = "neutral")
     {
-        return await RetryPolicy.ExecuteAsync(async () =>
+        return await ExecuteMinimaxRequestAsync("TTS", async token =>
         {
             var requestBody = new
             {
@@ -106,8 +108,8 @@ public class MinimaxService : IMinimaxService
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
 
-            var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+            var response = await _httpClient.SendAsync(request, token);
+            await EnsureSuccessAsync(response);
 
             var responseJson = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(responseJson);
@@ -120,7 +122,7 @@ public class MinimaxService : IMinimaxService
                 {
                     var statusMsg = baseResp.TryGetProperty("status_msg", out var msg) ? msg.GetString() : "Unknown TTS error";
                     Log.Warning("TTS API returned error {Code}: {Message}", statusCode, statusMsg);
-                    return Array.Empty<byte>();
+                    throw new MinimaxApiException(ApiFailureInfo.FromMinimaxBaseResponse(statusCode, statusMsg ?? string.Empty));
                 }
             }
 
@@ -139,6 +141,46 @@ public class MinimaxService : IMinimaxService
             Log.Warning("TTS response did not contain audio data");
             return Array.Empty<byte>();
         });
+    }
+
+    private async Task<T> ExecuteMinimaxRequestAsync<T>(string operation, Func<CancellationToken, Task<T>> action)
+    {
+        if (string.IsNullOrWhiteSpace(_apiKey))
+            throw new MinimaxApiException(ApiFailureInfo.MissingApiKey());
+
+        try
+        {
+            return await RetryPolicy.ExecuteAsync(async () =>
+            {
+                using var cts = new CancellationTokenSource(RequestTimeout);
+                return await action(cts.Token);
+            });
+        }
+        catch (MinimaxApiException)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            throw new MinimaxApiException(new ApiFailureInfo(
+                ApiFailureKind.Timeout,
+                "AI 响应超时",
+                $"{operation} 请求超过 {RequestTimeout.TotalSeconds:0} 秒仍未返回。",
+                "可以稍后重试，或检查网络代理/防火墙。"), ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new MinimaxApiException(ApiFailureInfo.FromException(ex), ex);
+        }
+    }
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+
+        var body = await response.Content.ReadAsStringAsync();
+        throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, body));
     }
 
     public async Task<string> GenerateTrackIntroductionAsync(Track current, Track next)

@@ -25,6 +25,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly ISttService _sttService;
     private readonly Action<Track>? _trackAdded;
     private readonly IDisposable _ttsSub;
+    private readonly IDisposable _ttsErrorSub;
     private readonly IDisposable _stateSub;
     private string? _pendingCommand;
 
@@ -32,6 +33,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private string? _tempWavPath;
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
+    private bool _hasFailureNotice;
+    private string _failureStatusText = "AI ERROR";
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
@@ -43,6 +46,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsConversationMode { get; set; }
     [Reactive] public string DjEmotion { get; set; } = "neutral";
     [Reactive] public string StatusText { get; set; } = "READY";
+    [Reactive] public string StatusHeadline { get; set; } = string.Empty;
+    [Reactive] public string StatusDetail { get; set; } = string.Empty;
+    [Reactive] public string StatusRecoveryHint { get; set; } = string.Empty;
+    [Reactive] public bool ShowStatusNotice { get; set; }
     [Reactive] public string MicButtonText { get; set; } = "HOLD";
 
     public event Action<string, string>? Live2DCommand; // expression, motion
@@ -83,6 +90,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
                     await ExecuteCommandAsync(cmd);
                 }
             });
+
+        _ttsErrorSub = _audioService.TtsError
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(message => SetFailureNotice(new ApiFailureInfo(
+                ApiFailureKind.InvalidResponse,
+                "语音播放失败",
+                message,
+                "可以在设置里暂时关闭语音播报，或检查系统默认音频输出设备。")));
 
         // Listen for track end to restart listening in conversation mode
         _stateSub = _audioService.StateChanged
@@ -274,6 +289,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         InputText = string.Empty;
         IsProcessing = true;
         RefreshStatus();
+        SetWorkingNotice("AI 正在回复", "正在请求 AI 服务，最多等待 30 秒。");
         _pendingCommand = null;
         _audioService.StopTts();
 
@@ -287,16 +303,25 @@ public class ChatViewModel : ViewModelBase, IDisposable
             }
 
             var response = await _djService.GenerateChatResponseAsync(text);
+            if (_djService.LastFailure is { } chatFailure)
+            {
+                AddFailureMessage("AI 回复失败", chatFailure);
+                SetFailureNotice(chatFailure);
+                return;
+            }
+
             var (displayText, command) = ParseResponse(response);
             await RespondWithCommandAsync(displayText, command, _djService.CurrentEmotion);
         }
-        catch
+        catch (Exception ex)
         {
+            var failure = ApiFailureInfo.FromException(ex);
             Messages.Add(new ChatMessage
             {
                 Role = MessageRole.Assistant,
-                Content = "网络有点问题，稍后再聊吧~"
+                Content = $"AI 回复失败：{failure.Title}。{failure.RecoveryHint}"
             });
+            SetFailureNotice(failure);
         }
         finally
         {
@@ -324,6 +349,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText))
         {
             StatusText = "VOICE...";
+            SetWorkingNotice("正在生成语音", "AI 文字已返回，正在调用语音服务。");
             var speechData = await _djService.GenerateSpeechAsync(ttsText);
             if (speechData is { Length: > 0 })
             {
@@ -331,7 +357,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                StatusText = "VOICE ERROR";
+                if (_djService.LastFailure is { } speechFailure)
+                    SetFailureNotice(speechFailure);
+                else
+                    SetFailureNotice(new ApiFailureInfo(
+                        ApiFailureKind.InvalidResponse,
+                        "语音生成失败",
+                        "语音服务没有返回可播放的音频数据。",
+                        "检查 API Key、账号权限和 TTS 额度后重试。"));
                 Log.Warning("TTS returned empty audio");
                 if (_pendingCommand != null)
                 {
@@ -355,6 +388,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(ttsText)) return;
 
         StatusText = "VOICE...";
+        SetWorkingNotice("正在生成语音", "正在调用语音服务。");
         var speechData = await _djService.GenerateSpeechAsync(ttsText);
         if (speechData is { Length: > 0 })
         {
@@ -362,19 +396,83 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            StatusText = "VOICE ERROR";
+            if (_djService.LastFailure is { } speechFailure)
+                SetFailureNotice(speechFailure);
+            else
+                SetFailureNotice(new ApiFailureInfo(
+                    ApiFailureKind.InvalidResponse,
+                    "语音生成失败",
+                    "语音服务没有返回可播放的音频数据。",
+                    "检查 API Key、账号权限和 TTS 额度后重试。"));
             Log.Warning("TTS returned empty audio");
         }
     }
 
     private void RefreshStatus()
     {
+        if (_hasFailureNotice && !IsProcessing && !IsSpeaking && !IsRecognizing && !IsListening)
+        {
+            StatusText = _failureStatusText;
+            ShowStatusNotice = true;
+            return;
+        }
+
         StatusText = IsSpeaking ? "SPEAKING"
             : IsRecognizing ? "RECOGNIZING"
             : IsListening ? "LISTENING"
             : IsProcessing ? "THINKING"
             : IsConversationMode ? "CONVERSATION"
             : "READY";
+
+        if (IsProcessing)
+        {
+            SetWorkingNotice("AI 正在回复", "正在请求 AI 服务，最多等待 30 秒。");
+        }
+        else if (IsSpeaking)
+        {
+            SetWorkingNotice("正在播报语音", "AI 回复已生成，正在播放 TTS 音频。");
+        }
+        else
+        {
+            ShowStatusNotice = false;
+        }
+    }
+
+    private void SetWorkingNotice(string headline, string detail)
+    {
+        _hasFailureNotice = false;
+        StatusHeadline = headline;
+        StatusDetail = detail;
+        StatusRecoveryHint = string.Empty;
+        ShowStatusNotice = true;
+    }
+
+    private void SetFailureNotice(ApiFailureInfo failure)
+    {
+        _hasFailureNotice = true;
+        _failureStatusText = failure.Kind switch
+        {
+            ApiFailureKind.MissingApiKey => "API KEY MISSING",
+            ApiFailureKind.Authentication => "API AUTH ERROR",
+            ApiFailureKind.Timeout => "AI TIMEOUT",
+            ApiFailureKind.Network => "NETWORK ERROR",
+            ApiFailureKind.RateLimited => "API LIMITED",
+            _ => "AI ERROR"
+        };
+        StatusText = _failureStatusText;
+        StatusHeadline = failure.Title;
+        StatusDetail = failure.Detail;
+        StatusRecoveryHint = failure.RecoveryHint;
+        ShowStatusNotice = true;
+    }
+
+    private void AddFailureMessage(string prefix, ApiFailureInfo failure)
+    {
+        Messages.Add(new ChatMessage
+        {
+            Role = MessageRole.Assistant,
+            Content = $"{prefix}：{failure.Title}。{failure.RecoveryHint}"
+        });
     }
 
     private static (string displayText, string? command) ParseResponse(string response)
@@ -445,6 +543,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (Regex.IsMatch(text, @"[?？,，。.!！;；:]"))
             return false;
         if (Regex.IsMatch(text, @"^(为什么|怎么|如何|你好|谢谢|再见)"))
+            return false;
+        if (Regex.IsMatch(text, @"^(换|切|跳过|下一首|上一首|换歌|换一首|切歌|暂停|继续|播放|停止|快进|后退)"))
             return false;
 
         return Regex.IsMatch(text, @"^[\p{IsCJKUnifiedIdeographs}A-Za-z0-9\s\-'&.]+$");
@@ -637,6 +737,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _ttsSub.Dispose();
+        _ttsErrorSub.Dispose();
         _stateSub.Dispose();
         _waveIn?.Dispose();
         if (!string.IsNullOrWhiteSpace(_tempWavPath))

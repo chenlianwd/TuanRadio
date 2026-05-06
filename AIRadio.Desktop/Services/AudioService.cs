@@ -26,6 +26,7 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<PlaybackState> _stateChangedSubject = new();
     private readonly Subject<TimeSpan> _positionChangedSubject = new();
     private readonly Subject<Track?> _trackEndedSubject = new();
+    private readonly Subject<string> _ttsErrorSubject = new();
     private readonly List<Track> _playlist = new();
     private int _currentIndex = -1;
     private bool _shuffle;
@@ -42,6 +43,7 @@ public class AudioService : IAudioService, IDisposable
     private long _trackStartedAtMs;
     private int _earlyEndRetryCount;
     private int _playbackErrorRetryCount;
+    private int _playRequestId;
     private readonly Random _rng = new();
     private PlaybackState _currentState = PlaybackState.Stopped;
 
@@ -78,6 +80,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<TimeSpan> PositionChanged => _positionChangedSubject.AsObservable();
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
+    public IObservable<string> TtsError => _ttsErrorSubject.AsObservable();
 
     public void SetUrlResolver(Func<string, Task<string?>> resolver) => _urlResolver = resolver;
     public void SetSpeechMixMode(string mode) => _speechMixMode = mode == "pause" ? "pause" : "duck";
@@ -383,6 +386,7 @@ public class AudioService : IAudioService, IDisposable
     {
         if (index < 0 || index >= _playlist.Count) return;
 
+        var requestId = Interlocked.Increment(ref _playRequestId);
         _currentIndex = index; // 确保 CurrentTrack 在 NotifyTrackChanged 时正确
         _trackStartedAtMs = Environment.TickCount64;
         if (!isRetry)
@@ -408,9 +412,10 @@ public class AudioService : IAudioService, IDisposable
                 {
                     if (isRetry || string.IsNullOrWhiteSpace(filePath))
                     {
-                        var newUrl = RefreshTrackUrlSync(track);
-                        if (!string.IsNullOrEmpty(newUrl))
-                            filePath = newUrl;
+                        _ = RefreshAndPlayTrackAsync(index, track, requestId);
+                        SetState(PlaybackState.Stopped);
+                        NotifyTrackChanged();
+                        return;
                     }
                     else
                     {
@@ -504,24 +509,29 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    private string? RefreshTrackUrlSync(Track track)
+    private async System.Threading.Tasks.Task RefreshAndPlayTrackAsync(int index, Track track, int requestId)
     {
         try
         {
-            var task = _urlResolver!(track.SourceId!);
-            var newUrl = task.GetAwaiter().GetResult();
+            var newUrl = await _urlResolver!(track.SourceId!);
             if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
             {
                 track.FilePath = newUrl;
-                Log.Debug("Sync refreshed URL for track {Track}", track.Title);
-                return newUrl;
+                Log.Debug("Refreshed URL before play for track {Track}", track.Title);
+            }
+
+            if (!string.IsNullOrEmpty(track.FilePath) &&
+                requestId == Volatile.Read(ref _playRequestId) &&
+                index >= 0 && index < _playlist.Count &&
+                ReferenceEquals(_playlist[index], track))
+            {
+                PlayTrack(index, isRetry: false);
             }
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to sync refresh URL for {Track}", track.Title);
+            Log.Warning(ex, "Failed to refresh URL before play for {Track}", track.Title);
         }
-        return null;
     }
 
     private void StartFadeIn()
@@ -643,6 +653,7 @@ public class AudioService : IAudioService, IDisposable
         _positionChangedSubject.Dispose();
         _trackEndedSubject.Dispose();
         _ttsStateSubject.Dispose();
+        _ttsErrorSubject.Dispose();
     }
 
     private readonly Subject<bool> _ttsStateSubject = new();
@@ -650,11 +661,12 @@ public class AudioService : IAudioService, IDisposable
 
     public void PlayTtsAudio(byte[] audioData)
     {
+        var tempPath = string.Empty;
         try
         {
             StopTtsInternal(notifyState: false);
 
-            var tempPath = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.mp3");
+            tempPath = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.mp3");
             File.WriteAllBytes(tempPath, audioData);
             _currentTtsFile = tempPath;
             var sessionId = Interlocked.Increment(ref _ttsSessionId);
@@ -662,10 +674,10 @@ public class AudioService : IAudioService, IDisposable
             _ttsReader = new MediaFoundationReader(tempPath);
             _ttsOutput = new WaveOutEvent
             {
-                DesiredLatency = 120,
-                Volume = 1.0f
+                DesiredLatency = 120
             };
             _ttsOutput.Init(_ttsReader);
+            TrySetTtsVolume(_ttsOutput, 1.0f);
             _ttsOutput.PlaybackStopped += (_, e) =>
             {
                 if (IsTtsSessionCancelled(sessionId))
@@ -690,8 +702,26 @@ public class AudioService : IAudioService, IDisposable
         }
         catch (Exception ex)
         {
+            StopTtsInternal(notifyState: false);
+            if (!string.IsNullOrWhiteSpace(tempPath))
+            {
+                try { File.Delete(tempPath); } catch { }
+            }
             _ttsStateSubject.OnNext(false);
+            _ttsErrorSubject.OnNext("语音播放设备不可用，请检查 Windows 默认输出设备或关闭语音播报。");
             Log.Warning(ex, "Failed to play TTS audio");
+        }
+    }
+
+    private static void TrySetTtsVolume(WaveOutEvent output, float volume)
+    {
+        try
+        {
+            output.Volume = volume;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to set TTS output volume; continuing with device default volume");
         }
     }
 

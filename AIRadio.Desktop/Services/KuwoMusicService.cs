@@ -22,39 +22,47 @@ public class KuwoMusicService : IMusicSearchService
 
     public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
     {
-        var url = $"http://www.kuwo.cn/api/www/search/searchMusicByhttp?key={Uri.EscapeDataString(keyword)}&pn=1&rn={limit}&httpsStatus=1";
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("Referer", "http://www.kuwo.cn/");
-        request.Headers.Add("csrf", "0");
-        request.Headers.Add("Cookie", "kw_token=0");
-
-        var response = await _httpClient.SendAsync(request);
-        var json = await response.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        if (!root.TryGetProperty("code", out var codeElement) || codeElement.GetInt32() != 200)
-            return new List<OnlineTrack>();
-
-        var tracks = new List<OnlineTrack>();
-        if (!root.TryGetProperty("data", out var dataElement) ||
-            !dataElement.TryGetProperty("list", out var listElement))
-            return tracks;
-
-        foreach (var item in listElement.EnumerateArray())
+        try
         {
-            tracks.Add(new OnlineTrack
-            {
-                Id = "kuwo:" + (item.TryGetProperty("rid", out var rid) ? rid.GetInt64().ToString() : "0"),
-                Title = item.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
-                Artist = item.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "",
-                Album = item.TryGetProperty("album", out var album) ? album.GetString() ?? "" : "",
-                DurationMs = item.TryGetProperty("duration", out var dur) ? dur.GetInt32() * 1000L : 0,
-                Source = "酷我"
-            });
-        }
+            var url = $"http://www.kuwo.cn/api/www/search/searchMusicByhttp?key={Uri.EscapeDataString(keyword)}&pn=1&rn={limit}&httpsStatus=1";
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("Referer", "http://www.kuwo.cn/");
+            request.Headers.Add("csrf", "0");
+            request.Headers.Add("Cookie", "kw_token=0");
 
-        return tracks;
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("code", out var codeElement) || codeElement.GetInt32() != 200)
+                return new List<OnlineTrack>();
+
+            var tracks = new List<OnlineTrack>();
+            if (!root.TryGetProperty("data", out var dataElement) ||
+                !dataElement.TryGetProperty("list", out var listElement))
+                return tracks;
+
+            foreach (var item in listElement.EnumerateArray())
+            {
+                tracks.Add(new OnlineTrack
+                {
+                    Id = "kuwo:" + (item.TryGetProperty("rid", out var rid) ? rid.GetInt64().ToString() : "0"),
+                    Title = item.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+                    Artist = item.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "",
+                    Album = item.TryGetProperty("album", out var album) ? album.GetString() ?? "" : "",
+                    DurationMs = item.TryGetProperty("duration", out var dur) ? dur.GetInt32() * 1000L : 0,
+                    Source = "酷我"
+                });
+            }
+
+            return tracks;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Kuwo search failed");
+            return new List<OnlineTrack>();
+        }
     }
 
     public async Task<string?> GetPlayUrlAsync(string trackId)
