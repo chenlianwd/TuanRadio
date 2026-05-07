@@ -140,11 +140,15 @@
       "Bash(curl -sL \"https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-05-05%2FMiniMax-M2.7%2F2043157035683422838%2Fa61ad20a39249bbea1cf9259ff68153b9c0f3e220cac352a511567472e313efe..png?Expires=1778036586&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=lozVjgDExvmKQ2Mqt1GnL02Kg2k%3D\" -o /tmp/screenshot2.png)",
       "Bash(git check-ignore *)",
       "Bash(echo \"exit: $?\")",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(cmdkey /list)",
+      "Bash(rm -rf .dotnet/ musicapi.err.log musicapi.out.log)",
+      "Bash(git pull *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\14870\\Documents",
-      "C:\\Users\\14870\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+      "C:\\Users\\14870\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+      "e:\\WorkProject\\TuanRadio\\.dotnet"
     ]
   }
 }
