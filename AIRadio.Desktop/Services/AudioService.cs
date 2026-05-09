@@ -403,25 +403,26 @@ public class AudioService : IAudioService, IDisposable
 
             string filePath = track.FilePath;
 
-            // Online tracks may be restored before their temporary play URL is available.
+            // Online tracks may have stale URLs — always refresh before playing to avoid 403.
+            // Fire-and-forget refresh only applies when we're in a retry path; normal
+            // playback must await the fresh URL so we don't play with an expired link.
             if (!string.IsNullOrEmpty(track.SourceId) && _urlResolver != null)
             {
                 var isOnlineUrl = filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                                   filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-                if (string.IsNullOrWhiteSpace(filePath) || isOnlineUrl)
+                if (isRetry || string.IsNullOrWhiteSpace(filePath))
                 {
-                    if (isRetry || string.IsNullOrWhiteSpace(filePath))
-                    {
-                        _ = RefreshAndPlayTrackAsync(index, track, requestId);
-                        SetState(PlaybackState.Stopped);
-                        NotifyTrackChanged();
-                        return;
-                    }
-                    else
-                    {
-                        // Fire-and-forget refresh for next play
-                        _ = RefreshTrackUrlAsync(track);
-                    }
+                    _ = RefreshAndPlayTrackAsync(index, track, requestId);
+                    SetState(PlaybackState.Stopped);
+                    NotifyTrackChanged();
+                    return;
+                }
+                // For online tracks with an existing URL, refresh the URL in the background
+                // to get a fresh link, but still play immediately with the current URL.
+                // Only skip if the URL looks like a local file path.
+                if (isOnlineUrl)
+                {
+                    _ = RefreshTrackUrlAsync(track);
                 }
             }
 
