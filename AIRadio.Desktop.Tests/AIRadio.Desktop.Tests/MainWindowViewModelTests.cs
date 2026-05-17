@@ -160,4 +160,51 @@ public class MainWindowViewModelTests
             vm.Dispose();
         }
     }
+
+    [Fact]
+    public void DislikeCurrentTrackCommand_RecordsCurrentTrackFeedback()
+    {
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var current = new Track
+        {
+            Id = "local-current",
+            SourceId = "netease:current",
+            Title = "Current",
+            Artist = "AIRadio",
+            FilePath = "http://example.com/current.mp3"
+        };
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => current);
+        var dj = new Mock<IDJService>();
+        var minimax = new Mock<IMinimaxService>();
+        var storage = new Mock<ISecureStorage>();
+        var search = new Mock<IMusicSearchService>();
+        var stt = new Mock<ISttService>();
+        var recommendations = new Mock<IRecommendationService>();
+        recommendations.SetupGet(x => x.FeedbackHistory).Returns(Array.Empty<UserMusicFeedback>());
+
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            dj.Object,
+            minimax.Object,
+            storage.Object,
+            search.Object,
+            stt.Object,
+            CreateTempPlaylistFile(),
+            recommendations.Object);
+
+        try
+        {
+            vm.DislikeCurrentTrackCommand.Execute().Subscribe();
+
+            recommendations.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(feedback =>
+                feedback.TrackId == "netease:current" &&
+                feedback.Action == MusicFeedbackAction.Dislike)), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
 }

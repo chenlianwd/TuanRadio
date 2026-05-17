@@ -65,9 +65,9 @@ public class SettingsViewModelTests
         var vm = new SettingsViewModel(_mockMinimax.Object, _mockDJ.Object, _mockStorage.Object);
 
         Assert.True(vm.Characters.Count >= 6);
-        Assert.Contains(vm.Characters, c => c.Id == "haru");
-        Assert.Contains(vm.Characters, c => c.Id == "hiyori");
-        Assert.Contains(vm.Characters, c => c.Id == "mao");
+        Assert.Contains(vm.Characters, c => c.Id == "haru" && c.DisplayName == "Lumen");
+        Assert.Contains(vm.Characters, c => c.Id == "hiyori" && c.DisplayName == "Aster");
+        Assert.Contains(vm.Characters, c => c.Id == "mao" && c.DisplayName == "Noir");
     }
 
     [Fact]

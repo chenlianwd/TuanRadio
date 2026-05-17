@@ -52,7 +52,7 @@ public partial class MainWindow : Window
     private IDisposable? _searchDebounceSub;
     private IDisposable? _themeSub;
     private NotifyCollectionChangedEventHandler? _chatHandler;
-    private Action<string, string>? _live2dHandler;
+    private Action<string, string>? _djVisualCueHandler;
 
     public MainWindow()
     {
@@ -69,10 +69,10 @@ public partial class MainWindow : Window
             {
                 if (_activeVm != null)
                 {
-                    if (_live2dHandler != null)
+                    if (_djVisualCueHandler != null)
                     {
-                        _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
-                        _activeVm.Live2DCommand -= _live2dHandler;
+                        _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
+                        _activeVm.DjVisualCue -= _djVisualCueHandler;
                     }
                     if (_chatHandler != null)
                         _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
@@ -84,9 +84,9 @@ public partial class MainWindow : Window
                 }
 
                 _activeVm = vm;
-                _live2dHandler = OnLive2DCommand;
-                vm.ChatVM.Live2DCommand += _live2dHandler;
-                vm.Live2DCommand += _live2dHandler;
+                _djVisualCueHandler = OnDjVisualCue;
+                vm.ChatVM.DjVisualCue += _djVisualCueHandler;
+                vm.DjVisualCue += _djVisualCueHandler;
                 vm.ChatVM.Messages.CollectionChanged -= _chatHandler;
                 _chatHandler = OnChatMessagesChanged;
                 vm.ChatVM.Messages.CollectionChanged += _chatHandler;
@@ -395,7 +395,7 @@ public partial class MainWindow : Window
         vm.IsLibraryOpen = true;
     }
 
-    private async void OnLive2DCommand(string expression, string motion)
+    private async void OnDjVisualCue(string expression, string motion)
     {
         if (_avatarBorder is Border border)
         {
@@ -453,10 +453,10 @@ public partial class MainWindow : Window
         _searchDebounceSub?.Dispose();
         if (_activeVm != null)
         {
-            if (_live2dHandler != null)
+            if (_djVisualCueHandler != null)
             {
-                _activeVm.ChatVM.Live2DCommand -= _live2dHandler;
-                _activeVm.Live2DCommand -= _live2dHandler;
+                _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
+                _activeVm.DjVisualCue -= _djVisualCueHandler;
             }
             if (_chatHandler != null)
                 _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;

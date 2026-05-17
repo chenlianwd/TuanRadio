@@ -3,7 +3,6 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.ReactiveUI;
 using Avalonia.Threading;
-using AvaloniaWebView;
 using System;
 using System.IO;
 
@@ -18,7 +17,6 @@ namespace AIRadio.Desktop;
 public partial class App : Application
 {
     private IServiceProvider? _serviceProvider;
-    private Live2DStaticServer? _live2DServer;
     private MusicApiServer? _musicApiServer;
     private MainWindowViewModel? _mainVm;
 
@@ -30,7 +28,6 @@ public partial class App : Application
     public override void RegisterServices()
     {
         base.RegisterServices();
-        AvaloniaWebViewBuilder.Initialize(default);
     }
 
     public override void OnFrameworkInitializationCompleted()
@@ -61,18 +58,6 @@ public partial class App : Application
                 var services = new ServiceCollection();
                 ConfigureServices(services);
                 _serviceProvider = services.BuildServiceProvider();
-
-                var wwwrootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
-                if (Directory.Exists(wwwrootPath))
-                {
-                    _live2DServer = new Live2DStaticServer();
-                    _live2DServer.Start(18080, wwwrootPath);
-                    Log.Information("Live2D server started at {Url}", _live2DServer.GetBaseUrl());
-                }
-                else
-                {
-                    Log.Warning("wwwroot not found at {Path}", wwwrootPath);
-                }
 
                 var mainWindow = new Views.MainWindow();
                 _mainVm = _serviceProvider.GetRequiredService<MainWindowViewModel>();
@@ -122,6 +107,7 @@ public partial class App : Application
             new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         services.AddSingleton<IDJService>(sp =>
             new DJService(sp.GetRequiredService<IMinimaxService>(), sp.GetRequiredService<IMusicSearchService>()));
+        services.AddSingleton<IRecommendationService, RecommendationService>();
         services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<ISttService, WhisperSttService>();
         services.AddSingleton<MainWindowViewModel>();
@@ -132,7 +118,6 @@ public partial class App : Application
         Log.Information("AI Radio shutting down...");
         _mainVm?.Dispose();
         _musicApiServer?.Dispose();
-        _live2DServer?.Dispose();
         (_serviceProvider as IDisposable)?.Dispose();
         Log.CloseAndFlush();
     }
