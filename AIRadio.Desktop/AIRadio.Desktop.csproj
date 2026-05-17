@@ -25,9 +25,6 @@
   </Target>
 
   <ItemGroup>
-    <Content Include="wwwroot\**">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="server\**" Exclude="server\node_modules\.package-lock.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -49,25 +46,19 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
 
-    <!-- 音频 -->
+    <!-- Audio playback -->
     <PackageReference Include="LibVLCSharp" Version="3.9.7.1" />
     <PackageReference Include="System.Reactive" Version="6.1.0" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
 
-    <!-- 语音识别 -->
+    <!-- Speech and metadata -->
     <PackageReference Include="NAudio" Version="2.3.0" />
-
-    <!-- 元数据 -->
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
 
-    <!-- 日志 -->
+    <!-- Logging -->
     <PackageReference Include="Serilog" Version="4.3.1" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
-
-    <!-- WebView -->
-    <PackageReference Include="WebView.Avalonia" Version="11.0.0.1" />
-    <PackageReference Include="WebView.Avalonia.Desktop" Version="11.0.0.1" />
 
     <!-- Diagnostics -->
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1">

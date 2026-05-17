@@ -20,6 +20,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDJService _djService;
     private readonly IMinimaxService _minimaxService;
     private readonly IMusicSearchService _musicSearchService;
+    private readonly IRecommendationService _recommendationService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
     private readonly IDisposable _darkModePersistSub;
@@ -37,7 +38,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
 
-    public event Action<string, string>? Live2DCommand; // expression, motion
+    public event Action<string, string>? DjVisualCue; // expression, motion
 
     [Reactive] public bool IsSettingsOpen { get; set; }
     [Reactive] public bool IsLibraryOpen { get; set; }
@@ -45,6 +46,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public CharacterProfile SelectedCharacter { get; set; }
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool IsCurrentFavorite { get; set; }
+    [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
 
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleLibraryCommand { get; }
@@ -57,6 +59,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCurrentFavoriteCommand { get; }
+    public ReactiveCommand<Unit, Unit> LikeCurrentTrackCommand { get; }
+    public ReactiveCommand<Unit, Unit> DislikeCurrentTrackCommand { get; }
+    public ReactiveCommand<Unit, Unit> SimilarToCurrentTrackCommand { get; }
+    public ReactiveCommand<Unit, Unit> CalmerRecommendationCommand { get; }
+    public ReactiveCommand<Unit, Unit> EnergeticRecommendationCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
@@ -65,12 +72,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ISecureStorage secureStorage,
         IMusicSearchService musicSearchService,
         ISttService sttService,
-        string? playlistFile = null)
+        string? playlistFile = null,
+        IRecommendationService? recommendationService = null)
     {
         _audioService = audioService;
         _djService = djService;
         _minimaxService = minimaxService;
         _musicSearchService = musicSearchService;
+        _recommendationService = recommendationService ?? new RecommendationService(minimaxService, musicSearchService);
 
         SelectedCharacter = Characters[0];
 
@@ -89,7 +98,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 var current = _audioService.CurrentTrack;
                 AttachRecommendationContext(current);
-                var recommended = await _djService.RecommendNextTrackAsync(current);
+                var recommended = await GetRecommendedTrackAsync(current);
                 if (recommended != null && !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
                     PlaylistVM.AddExternalTrack(recommended);
                 return recommended;
@@ -98,7 +107,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 var current = _audioService.CurrentTrack;
                 AttachRecommendationContext(current);
-                var recommended = await _djService.RecommendNextTrackAsync(current);
+                var recommended = await GetRecommendedTrackAsync(current);
                 if (recommended != null && !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
                     PlaylistVM.AddExternalTrack(recommended);
                 return recommended;
@@ -134,8 +143,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 SettingsVM.IsDarkMode = isDark;
                 SettingsVM.SaveCommand.Execute().Subscribe();
-            });
+        });
         ToggleCurrentFavoriteCommand = ReactiveCommand.Create(ToggleCurrentFavorite);
+        LikeCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Like));
+        DislikeCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Dislike));
+        SimilarToCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Similar));
+        CalmerRecommendationCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Calmer));
+        EnergeticRecommendationCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Energetic));
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(character =>
         {
             SwitchCharacter(character);
@@ -176,6 +190,25 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IsCurrentFavorite = current.IsFavorite;
     }
 
+    private void RecordCurrentTrackFeedback(MusicFeedbackAction action)
+    {
+        var current = _audioService.CurrentTrack;
+        var trackId = current?.SourceId;
+        if (string.IsNullOrWhiteSpace(trackId))
+            trackId = current?.Id;
+        if (string.IsNullOrWhiteSpace(trackId))
+            return;
+
+        _recommendationService.RecordFeedback(new UserMusicFeedback
+        {
+            TrackId = trackId,
+            Action = action
+        });
+
+        if (action == MusicFeedbackAction.Dislike)
+            ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en" ? "Got it. I will avoid this track in the current session." : "收到，这首本轮先避开。");
+    }
+
     private void SwitchCharacter(CharacterProfile character)
     {
         if (character == null) return;
@@ -207,7 +240,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             var script = await _djService.GenerateTrackIntroductionAsync(current, next);
             ChatVM.AddAssistantMessage(script.Text);
             Log.Information("DJ: {Text}", script.Text);
-            Live2DCommand?.Invoke(script.Expression, script.Motion);
+            DjVisualCue?.Invoke(script.Expression, script.Motion);
 
             if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
             {
@@ -290,7 +323,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             : $"这里是 {SelectedCharacter.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。";
 
         ChatVM.AddAssistantMessage(text);
-        Live2DCommand?.Invoke("smile", "wave");
+        DjVisualCue?.Invoke("smile", "wave");
         await SpeakDjTextAsync(text);
         if (PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
             _audioService.Play();
@@ -309,7 +342,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrWhiteSpace(text)) return;
 
             ChatVM.AddAssistantMessage(text);
-            Live2DCommand?.Invoke("smile", "wave");
+            DjVisualCue?.Invoke("smile", "wave");
 
             await SpeakDjTextAsync(text);
         }
@@ -361,7 +394,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             }
 
             ChatVM.AddAssistantMessage(script.Text);
-            Live2DCommand?.Invoke(script.Expression, script.Motion);
+            DjVisualCue?.Invoke(script.Expression, script.Motion);
 
             if (_audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, originalTrack))
             {
@@ -388,20 +421,19 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             // Radio mode should expand the station with fresh online recommendations.
             if (ShouldUseFreshRadioRecommendations())
             {
-                AttachRecommendationContext(current);
-                var recommended = await _djService.RecommendNextTrackAsync(current);
+                var recommended = await GetRecommendedTrackAsync(current);
                 if (recommended == null)
                 {
                     ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en"
                         ? "Couldn't find a song to play next. The station needs more tracks to keep going."
-                        : "推荐出错了，歌单里没新歌了。你可以搜一首，或者让我继续播现有的。");
+                        : "暂时没找到下一首可播放推荐。你可以搜一首歌，或者让我继续播放现有歌单。");
                     Interlocked.Exchange(ref _autoRadioAdvancing, 0);
                     return;
                 }
 
                 if (current != null && IsSameTrackIdentity(recommended, current))
                 {
-                    var retry = await _djService.RecommendNextTrackAsync(current);
+                    var retry = await GetRecommendedTrackAsync(current);
                     if (retry != null && !IsSameTrackIdentity(retry, current))
                         recommended = retry;
                 }
@@ -415,7 +447,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
 
                 ChatVM.AddAssistantMessage(script.Text);
-                Live2DCommand?.Invoke(script.Expression, script.Motion);
+                DjVisualCue?.Invoke(script.Expression, script.Motion);
                 await SpeakDjTextAsync(script.Text);
 
                 var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrackIdentity(t, recommended));
@@ -452,7 +484,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
 
                 ChatVM.AddAssistantMessage(script.Text);
-                Live2DCommand?.Invoke(script.Expression, script.Motion);
+                DjVisualCue?.Invoke(script.Expression, script.Motion);
                 await SpeakDjTextAsync(script.Text);
                 if (IsSameTrack(_audioService.CurrentTrack, current))
                     _audioService.PlayAtIndex(index);
@@ -495,6 +527,33 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         };
     }
 
+    private async System.Threading.Tasks.Task<Track?> GetRecommendedTrackAsync(Track? current)
+    {
+        AttachRecommendationContext(current);
+        var request = new RecommendationRequest
+        {
+            UserIntent = "继续当前电台",
+            CurrentTrack = current,
+            Favorites = PlaylistVM.Favorites.ToList(),
+            Playlist = PlaylistVM.Tracks.ToList(),
+            ExcludedTracks = PlaylistVM.Tracks.ToList()
+        };
+
+        try
+        {
+            var recommended = await _recommendationService.GetNextTrackAsync(request);
+            CurrentRadioProgram = _recommendationService.CurrentProgram;
+            if (recommended != null)
+                return recommended;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Program recommendation failed, falling back to DJ single-track recommendation");
+        }
+
+        return await _djService.RecommendNextTrackAsync(current);
+    }
+
     private static bool IsSameTrack(Track? left, Track? right)
     {
         if (ReferenceEquals(left, right))
@@ -530,6 +589,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private static string StripDjControlTags(string text)
     {
         var cleaned = Regex.Replace(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, @"<cmd>\s*\{.*?\}\s*</cmd>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         cleaned = Regex.Replace(cleaned, @"【(?:play:.+?|next|pause|resume)】", "", RegexOptions.IgnoreCase);
         return cleaned.Trim();
     }

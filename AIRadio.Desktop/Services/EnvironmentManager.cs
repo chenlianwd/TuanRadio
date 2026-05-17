@@ -3,8 +3,6 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
-using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -20,11 +18,10 @@ public static class EnvironmentManager
     public static string NodeJsPath => NodeExe;
 
     /// <summary>
-    /// 确保 Node.js 可用。优先用系统安装的，否则下载便携版。
+    /// Ensure Node.js is available. Prefer a system installation, otherwise download a portable copy.
     /// </summary>
     public static async Task<string> EnsureNodeJsAsync()
     {
-        // 1. 尝试系统 Node.js
         try
         {
             var proc = Process.Start(new ProcessStartInfo
@@ -39,23 +36,24 @@ public static class EnvironmentManager
             {
                 var version = await proc.StandardOutput.ReadToEndAsync();
                 await proc.WaitForExitAsync();
-                if (proc.ExitCode == 0 && version.StartsWith("v"))
+                if (proc.ExitCode == 0 && version.StartsWith("v", StringComparison.OrdinalIgnoreCase))
                 {
                     Log.Information("Using system Node.js {Version}", version.Trim());
                     return "node";
                 }
             }
         }
-        catch { }
+        catch
+        {
+            // Fall through to the portable runtime.
+        }
 
-        // 2. 尝试已下载的便携版
         if (File.Exists(NodeExe))
         {
             Log.Information("Using portable Node.js at {Path}", NodeExe);
             return NodeExe;
         }
 
-        // 3. 下载便携版
         Log.Information("Node.js not found, downloading portable version...");
         await DownloadNodeJsAsync();
         return NodeExe;
@@ -65,7 +63,6 @@ public static class EnvironmentManager
     {
         Directory.CreateDirectory(NodeDir);
 
-        // Use Node.js v20 LTS for stability and smaller size
         var url = "https://nodejs.org/dist/v20.18.3/node-v20.18.3-win-x64.zip";
         var zipPath = Path.Combine(NodeDir, "node.zip");
 
@@ -76,7 +73,6 @@ public static class EnvironmentManager
         await File.WriteAllBytesAsync(zipPath, bytes);
         Log.Information("Node.js downloaded ({Size}MB), extracting...", bytes.Length / 1024 / 1024);
 
-        // Extract only node.exe to keep it small
         using var archive = ZipFile.OpenRead(zipPath);
         foreach (var entry in archive.Entries)
         {
@@ -88,34 +84,6 @@ public static class EnvironmentManager
             }
         }
 
-        // Clean up zip
         try { File.Delete(zipPath); } catch { }
-    }
-
-    /// <summary>
-    /// 检查 WebView2 Runtime 是否已安装
-    /// </summary>
-    [SupportedOSPlatform("windows")]
-    public static bool IsWebView2Installed()
-    {
-        try
-        {
-            var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}");
-            if (key?.GetValue("pv") is string pv && !string.IsNullOrEmpty(pv))
-                return true;
-        }
-        catch { }
-
-        try
-        {
-            var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}");
-            if (key?.GetValue("pv") is string pv && !string.IsNullOrEmpty(pv))
-                return true;
-        }
-        catch { }
-
-        return false;
     }
 }

@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NAudio.Wave;
@@ -52,7 +53,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     [Reactive] public bool ShowStatusNotice { get; set; }
     [Reactive] public string MicButtonText { get; set; } = "HOLD";
 
-    public event Action<string, string>? Live2DCommand; // expression, motion
+    public event Action<string, string>? DjVisualCue; // expression, motion
 
     public ReactiveCommand<Unit, Unit> SendMessageCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleVoiceInputCommand { get; }
@@ -316,8 +317,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var (displayText, command) = ParseResponse(response);
-            await RespondWithCommandAsync(displayText, command, _djService.CurrentEmotion);
+            var parsed = ParseDjResponse(response);
+            await RespondWithCommandAsync(parsed.DisplayText, parsed.Command, parsed.Emotion);
         }
         catch (Exception ex)
         {
@@ -344,7 +345,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Content = displayText
         });
         DjEmotion = emotion;
-        Live2DCommand?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
+        DjVisualCue?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
 
         if (command != null && !_djService.TtsEnabled)
             await ExecuteCommandAsync(command);
@@ -481,17 +482,59 @@ public class ChatViewModel : ViewModelBase, IDisposable
         });
     }
 
-    private static (string displayText, string? command) ParseResponse(string response)
+    public static DjResponse ParseDjResponse(string response)
     {
+        var emotion = "neutral";
+        var emotionMatch = Regex.Match(response, @"\[(happy|sad|calm|neutral|angry|surprised)\]", RegexOptions.IgnoreCase);
+        if (emotionMatch.Success)
+            emotion = emotionMatch.Groups[1].Value.ToLowerInvariant();
+
         var displayText = Regex.Replace(response, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
+        string? command = null;
 
-        var match = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$", RegexOptions.IgnoreCase);
-        if (!match.Success)
-            return (displayText.Trim(), null);
+        var jsonMatch = Regex.Match(displayText, @"<cmd>\s*(\{.*?\})\s*</cmd>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (jsonMatch.Success)
+        {
+            command = ParseJsonCommand(jsonMatch.Groups[1].Value);
+            displayText = displayText.Remove(jsonMatch.Index, jsonMatch.Length);
+        }
+        else
+        {
+            var legacyMatch = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$", RegexOptions.IgnoreCase);
+            if (legacyMatch.Success)
+            {
+                displayText = displayText[..legacyMatch.Index];
+                command = legacyMatch.Groups[1].Value;
+            }
+        }
 
-        displayText = displayText[..match.Index].TrimEnd('\n', '\r', ' ');
-        var command = match.Groups[1].Value;
-        return (displayText, command);
+        return new DjResponse(displayText.Trim(), command, emotion);
+    }
+
+    private static string? ParseJsonCommand(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("action", out var actionElement))
+                return null;
+            var action = actionElement.GetString()?.Trim().ToLowerInvariant();
+            return action switch
+            {
+                "play" when root.TryGetProperty("query", out var query) => $"play:{query.GetString()?.Trim()}",
+                "next" => "next",
+                "pause" => "pause",
+                "resume" => "resume",
+                "recommend_more" => "recommend_more",
+                "change_mood" when root.TryGetProperty("mood", out var mood) => $"change_mood:{mood.GetString()?.Trim()}",
+                _ => null
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<bool> HasConfidentSongMatchAsync(string query)
@@ -685,6 +728,21 @@ public class ChatViewModel : ViewModelBase, IDisposable
             {
                 _audioService.Play();
             }
+            else if (command == "recommend_more")
+            {
+                await RecommendFreshTrackAsync();
+            }
+            else if (command.StartsWith("change_mood:", StringComparison.OrdinalIgnoreCase))
+            {
+                var mood = command["change_mood:".Length..].Trim();
+                Messages.Add(new ChatMessage
+                {
+                    Role = MessageRole.Assistant,
+                    Content = string.IsNullOrWhiteSpace(mood)
+                        ? "我会调整接下来的推荐方向。"
+                        : $"我会把接下来的推荐调成 {mood} 一点。"
+                });
+            }
         }
         catch (Exception ex)
         {
@@ -816,3 +874,5 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
     }
 }
+
+public sealed record DjResponse(string DisplayText, string? Command, string Emotion);

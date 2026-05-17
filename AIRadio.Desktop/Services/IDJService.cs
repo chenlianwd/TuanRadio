@@ -1,4 +1,3 @@
-using System;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 
@@ -14,12 +13,4 @@ public interface IDJService
     string CurrentEmotion { get; }
     bool TtsEnabled { get; }
     ApiFailureInfo? LastFailure { get; }
-}
-
-public interface ILive2DViewer
-{
-    void SetExpression(string expressionName);
-    void PlayMotion(string motionName);
-    void UpdateLipSync(float[] spectrumData);
-    IObservable<string> MotionFinished { get; }
 }
