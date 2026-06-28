@@ -50,7 +50,7 @@ public class MainWindowViewModelTests
 
         var audio = new AudioService();
         var dj = new Mock<IDJService>();
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var storage = new Mock<ISecureStorage>();
         var search = new Mock<IMusicSearchService>();
         var stt = new Mock<ISttService>();
@@ -128,7 +128,7 @@ public class MainWindowViewModelTests
         Track? currentTrack = current;
         var audio = CreateAudioMock(playlist, () => currentTrack);
         var dj = new Mock<IDJService>();
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var storage = new Mock<ISecureStorage>();
         var search = new Mock<IMusicSearchService>();
         var stt = new Mock<ISttService>();
@@ -182,7 +182,7 @@ public class MainWindowViewModelTests
         var playlist = new List<Track>();
         var audio = CreateAudioMock(playlist, () => current);
         var dj = new Mock<IDJService>();
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var storage = new Mock<ISecureStorage>();
         var search = new Mock<IMusicSearchService>();
         var stt = new Mock<ISttService>();

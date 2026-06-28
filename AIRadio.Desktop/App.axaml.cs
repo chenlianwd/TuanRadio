@@ -100,14 +100,22 @@ public partial class App : Application
 
     private void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton(new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) });
+        var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        services.AddSingleton(http);
         services.AddSingleton<IAudioService, AudioService>();
-        services.AddSingleton<IMinimaxService, MinimaxService>();
+        services.AddSingleton<ILLMService, LLMService>();
+        services.AddSingleton<ITtsService, EdgeTtsService>();
         services.AddSingleton<IMusicSearchService>(sp =>
-            new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+            new MultiSourceMusicService(http));
         services.AddSingleton<IDJService>(sp =>
-            new DJService(sp.GetRequiredService<IMinimaxService>(), sp.GetRequiredService<IMusicSearchService>()));
-        services.AddSingleton<IRecommendationService, RecommendationService>();
+            new DJService(
+                sp.GetRequiredService<ILLMService>(),
+                sp.GetRequiredService<ITtsService>(),
+                sp.GetRequiredService<IMusicSearchService>()));
+        services.AddSingleton<IRecommendationService>(sp =>
+            new RecommendationService(
+                sp.GetRequiredService<ILLMService>(),
+                sp.GetRequiredService<IMusicSearchService>()));
         services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<ISttService, WhisperSttService>();
         services.AddSingleton<MainWindowViewModel>();

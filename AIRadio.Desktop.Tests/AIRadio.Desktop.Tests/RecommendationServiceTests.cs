@@ -12,7 +12,7 @@ public class RecommendationServiceTests
     [Fact]
     public async Task CreateProgramAsync_ReturnsProgramWithPlayableAndUnavailableCandidates()
     {
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var search = new Mock<IMusicSearchService>();
         var service = new RecommendationService(minimax.Object, search.Object);
 
@@ -43,7 +43,7 @@ public class RecommendationServiceTests
     [Fact]
     public async Task RecordFeedback_ExcludesDislikedTrackFromNextProgram()
     {
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var search = new Mock<IMusicSearchService>();
         var service = new RecommendationService(minimax.Object, search.Object);
 
@@ -73,7 +73,7 @@ public class RecommendationServiceTests
     [Fact]
     public async Task CreateProgramAsync_ContinuesSearchingWhenEarlyCandidatesAreUnavailable()
     {
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var search = new Mock<IMusicSearchService>();
         var service = new RecommendationService(minimax.Object, search.Object);
 
@@ -100,7 +100,7 @@ public class RecommendationServiceTests
     [Fact]
     public async Task CreateProgramAsync_EmptySearchResults_ReturnsEmptyProgram()
     {
-        var minimax = new Mock<IMinimaxService>();
+        var minimax = new Mock<ILLMService>();
         var search = new Mock<IMusicSearchService>();
         var service = new RecommendationService(minimax.Object, search.Object);
 

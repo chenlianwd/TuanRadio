@@ -18,7 +18,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 {
     private readonly IAudioService _audioService;
     private readonly IDJService _djService;
-    private readonly IMinimaxService _minimaxService;
+    private readonly ILLMService _llmService;
     private readonly IMusicSearchService _musicSearchService;
     private readonly IRecommendationService _recommendationService;
     private readonly IDisposable _trackEndedSub;
@@ -68,7 +68,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public MainWindowViewModel(
         IAudioService audioService,
         IDJService djService,
-        IMinimaxService minimaxService,
+        ILLMService llmService,
         ISecureStorage secureStorage,
         IMusicSearchService musicSearchService,
         ISttService sttService,
@@ -77,9 +77,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         _audioService = audioService;
         _djService = djService;
-        _minimaxService = minimaxService;
+        _llmService = llmService;
         _musicSearchService = musicSearchService;
-        _recommendationService = recommendationService ?? new RecommendationService(minimaxService, musicSearchService);
+        _recommendationService = recommendationService ?? new RecommendationService(llmService, musicSearchService);
 
         SelectedCharacter = Characters[0];
 
@@ -87,7 +87,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track));
-        SettingsVM = new SettingsViewModel(_minimaxService, _djService, secureStorage);
+        SettingsVM = new SettingsViewModel(_llmService, _djService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
         // Set URL resolver for re-fresh of online track URLs (prevents 403 from expired links)
@@ -258,8 +258,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     // Parameterless ctor for designer/testing only; production uses DI with shared HttpClient singleton
     public MainWindowViewModel() : this(
         new AudioService(),
-        new DJService(new MinimaxService(new System.Net.Http.HttpClient())),
-        new MinimaxService(new System.Net.Http.HttpClient()),
+        new DJService(new LLMService(new System.Net.Http.HttpClient()), new EdgeTtsService(new System.Net.Http.HttpClient())),
+        new LLMService(new System.Net.Http.HttpClient()),
         new WindowsSecureStorage(),
         new MultiSourceMusicService(new System.Net.Http.HttpClient()),
         new WhisperSttService())
