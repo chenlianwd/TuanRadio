@@ -16,6 +16,8 @@ public class MinimaxService : IMinimaxService
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private const string ChatModel = "MiniMax-M2.5";
     private const string TtsModel = "speech-2.8-hd";
+    private const int TtsSampleRate = 32000;
+    private const int TtsBitrate = 128000;
     private readonly HttpClient _httpClient;
     private string _apiKey = string.Empty;
 
@@ -95,8 +97,8 @@ public class MinimaxService : IMinimaxService
                 },
                 audio_setting = new
                 {
-                    sample_rate = 32000,
-                    bitrate = 128000,
+                    sample_rate = TtsSampleRate,
+                    bitrate = TtsBitrate,
                     format = "mp3",
                     channel = 1
                 }

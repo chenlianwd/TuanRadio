@@ -419,77 +419,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
         try
         {
-            // Radio mode should expand the station with fresh online recommendations.
             if (ShouldUseFreshRadioRecommendations())
-            {
-                var recommended = await GetRecommendedTrackAsync(current);
-                if (recommended == null)
-                {
-                    ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en"
-                        ? "Couldn't find a song to play next. The station needs more tracks to keep going."
-                        : "暂时没找到下一首可播放推荐。你可以搜一首歌，或者让我继续播放现有歌单。");
-                    Interlocked.Exchange(ref _autoRadioAdvancing, 0);
-                    return;
-                }
-
-                if (current != null && IsSameTrackIdentity(recommended, current))
-                {
-                    var retry = await GetRecommendedTrackAsync(current);
-                    if (retry != null && !IsSameTrackIdentity(retry, current))
-                        recommended = retry;
-                }
-
-                var alreadyInPlaylist = PlaylistVM.Tracks.Any(t => IsSameTrackIdentity(t, recommended));
-                if (!alreadyInPlaylist)
-                    PlaylistVM.AddExternalTrack(recommended);
-
-                var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
-                if (!IsSameTrack(_audioService.CurrentTrack, current))
-                    return;
-
-                ChatVM.AddAssistantMessage(script.Text);
-                DjVisualCue?.Invoke(script.Expression, script.Motion);
-                await SpeakDjTextAsync(script.Text);
-
-                var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrackIdentity(t, recommended));
-                if (playIndex >= 0 && IsSameTrack(_audioService.CurrentTrack, current))
-                    _audioService.PlayAtIndex(playIndex);
-                return;
-            }
-
-            var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
-            Track? next = null;
-
-            if (pool.Count > 0)
-            {
-                next = PickDiversifiedTrack(pool, current);
-            }
-
-            if (next == null)
-            {
-                Interlocked.Exchange(ref _autoRadioAdvancing, 0);
-                return;
-            }
-
-            // Add to playlist if not already there (for online recommendations)
-            if (!PlaylistVM.Tracks.Contains(next))
-            {
-                PlaylistVM.AddExternalTrack(next);
-            }
-
-            var index = PlaylistVM.Tracks.IndexOf(next);
-            if (index >= 0)
-            {
-                var script = await _djService.GenerateTrackIntroductionAsync(current, next);
-                if (!IsSameTrack(_audioService.CurrentTrack, current))
-                    return;
-
-                ChatVM.AddAssistantMessage(script.Text);
-                DjVisualCue?.Invoke(script.Expression, script.Motion);
-                await SpeakDjTextAsync(script.Text);
-                if (IsSameTrack(_audioService.CurrentTrack, current))
-                    _audioService.PlayAtIndex(index);
-            }
+                await PlayWithFreshRecommendation(current);
+            else
+                await PlayWithPlaylistRotation(current);
         }
         catch (Exception ex)
         {
@@ -499,6 +432,63 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         {
             Interlocked.Exchange(ref _autoRadioAdvancing, 0);
         }
+    }
+
+    private async System.Threading.Tasks.Task PlayWithFreshRecommendation(Track current)
+    {
+        var recommended = await GetRecommendedTrackAsync(current);
+        if (recommended == null)
+        {
+            ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en"
+                ? "Couldn't find a song to play next. The station needs more tracks to keep going."
+                : "暂时没找到下一首可播放推荐。你可以搜一首歌，或者让我继续播放现有歌单。");
+            return;
+        }
+
+        if (current != null && IsSameTrackIdentity(recommended, current))
+        {
+            var retry = await GetRecommendedTrackAsync(current);
+            if (retry != null && !IsSameTrackIdentity(retry, current))
+                recommended = retry;
+        }
+
+        if (!PlaylistVM.Tracks.Any(t => IsSameTrackIdentity(t, recommended)))
+            PlaylistVM.AddExternalTrack(recommended);
+
+        var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
+        if (!IsSameTrack(_audioService.CurrentTrack, current)) return;
+
+        ChatVM.AddAssistantMessage(script.Text);
+        DjVisualCue?.Invoke(script.Expression, script.Motion);
+        await SpeakDjTextAsync(script.Text);
+
+        var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrackIdentity(t, recommended));
+        if (playIndex >= 0 && IsSameTrack(_audioService.CurrentTrack, current))
+            _audioService.PlayAtIndex(playIndex);
+    }
+
+    private async System.Threading.Tasks.Task PlayWithPlaylistRotation(Track current)
+    {
+        var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
+        if (pool.Count == 0) return;
+
+        var next = PickDiversifiedTrack(pool, current);
+        if (next == null) return;
+
+        if (!PlaylistVM.Tracks.Contains(next))
+            PlaylistVM.AddExternalTrack(next);
+
+        var index = PlaylistVM.Tracks.IndexOf(next);
+        if (index < 0) return;
+
+        var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+        if (!IsSameTrack(_audioService.CurrentTrack, current)) return;
+
+        ChatVM.AddAssistantMessage(script.Text);
+        DjVisualCue?.Invoke(script.Expression, script.Motion);
+        await SpeakDjTextAsync(script.Text);
+        if (IsSameTrack(_audioService.CurrentTrack, current))
+            _audioService.PlayAtIndex(index);
     }
 
     private static Track? PickDiversifiedTrack(List<Track> pool, Track? current)

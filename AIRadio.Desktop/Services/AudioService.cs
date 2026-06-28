@@ -694,52 +694,58 @@ public class AudioService : IAudioService, IDisposable
         try
         {
             StopTtsInternal(notifyState: false);
-
-            tempPath = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.mp3");
-            File.WriteAllBytes(tempPath, audioData);
+            tempPath = WriteTtsTempFile(audioData);
             _currentTtsFile = tempPath;
             var sessionId = Interlocked.Increment(ref _ttsSessionId);
 
-            _ttsReader = new MediaFoundationReader(tempPath);
-            _ttsOutput = new WaveOutEvent
-            {
-                DesiredLatency = 120
-            };
-            _ttsOutput.Init(_ttsReader);
-            TrySetTtsVolume(_ttsOutput, 1.0f);
-            _ttsOutput.PlaybackStopped += (_, e) =>
-            {
-                if (IsTtsSessionCancelled(sessionId))
-                {
-                    return;
-                }
-                if (e.Exception != null)
-                    Log.Warning(e.Exception, "TTS NAudio playback failed");
-                else
-                    Log.Information("TTS playback ended");
-
-                _ttsStateSubject.OnNext(false);
-                try { File.Delete(tempPath); } catch { }
-                if (_currentTtsFile == tempPath)
-                    _currentTtsFile = null;
-            };
-
+            InitTtsPlayback(tempPath, sessionId, tempPath);
             var signature = BitConverter.ToString(audioData.Take(Math.Min(8, audioData.Length)).ToArray());
             _ttsStateSubject.OnNext(true);
-            _ttsOutput.Play();
+            _ttsOutput!.Play();
             Log.Information("TTS NAudio playback started: {Bytes} bytes, header={Header}, file={File}", audioData.Length, signature, tempPath);
         }
         catch (Exception ex)
         {
             StopTtsInternal(notifyState: false);
-            if (!string.IsNullOrWhiteSpace(tempPath))
-            {
-                try { File.Delete(tempPath); } catch { }
-            }
+            CleanupTtsFile(tempPath);
             _ttsStateSubject.OnNext(false);
             _ttsErrorSubject.OnNext("语音播放设备不可用，请检查 Windows 默认输出设备或关闭语音播报。");
             Log.Warning(ex, "Failed to play TTS audio");
         }
+    }
+
+    private string WriteTtsTempFile(byte[] audioData)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tts_{Guid.NewGuid():N}.mp3");
+        File.WriteAllBytes(path, audioData);
+        return path;
+    }
+
+    private void InitTtsPlayback(string filePath, int sessionId, string tempPath)
+    {
+        _ttsReader = new MediaFoundationReader(filePath);
+        _ttsOutput = new WaveOutEvent { DesiredLatency = 120 };
+        _ttsOutput.Init(_ttsReader);
+        TrySetTtsVolume(_ttsOutput, 1.0f);
+        _ttsOutput.PlaybackStopped += (_, e) =>
+        {
+            if (IsTtsSessionCancelled(sessionId)) return;
+            if (e.Exception != null)
+                Log.Warning(e.Exception, "TTS NAudio playback failed");
+            else
+                Log.Information("TTS playback ended");
+
+            _ttsStateSubject.OnNext(false);
+            CleanupTtsFile(tempPath);
+            if (_currentTtsFile == tempPath)
+                _currentTtsFile = null;
+        };
+    }
+
+    private static void CleanupTtsFile(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            try { File.Delete(path); } catch { }
     }
 
     private static void TrySetTtsVolume(WaveOutEvent output, float volume)
