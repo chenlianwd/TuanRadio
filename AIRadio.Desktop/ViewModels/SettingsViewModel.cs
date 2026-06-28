@@ -244,6 +244,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 language = SelectedLanguage,
                 character_overrides = overridesJson
             };
+            // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(SettingsFile, json);
 

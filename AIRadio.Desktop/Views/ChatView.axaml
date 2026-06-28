@@ -95,13 +95,15 @@
                 <Button Grid.Column="1" Command="{Binding ToggleConversationModeCommand}"
                         Padding="12,8" Margin="0,0,8,0" CornerRadius="500"
                         Background="{Binding IsConversationMode, Converter={StaticResource ConvModeBgConverter}}"
-                        Foreground="#FFFFFFFF" ToolTip.Tip="连续对话模式">
+                        Foreground="#FFFFFFFF" ToolTip.Tip="连续对话模式"
+                        AutomationProperties.Name="Conversation Mode">
                     <TextBlock Text="{Binding IsConversationMode, Converter={StaticResource ConvModeIconConverter}}" FontSize="16"/>
                 </Button>
                 <Button Grid.Column="2" Command="{Binding ToggleVoiceInputCommand}"
                         Padding="12,8" Margin="0,0,8,0" CornerRadius="500"
                         Background="{Binding IsListening, Converter={StaticResource MicBgConverter}}"
-                        Foreground="#FFFFFFFF" ToolTip.Tip="语音转文字">
+                        Foreground="#FFFFFFFF" ToolTip.Tip="语音转文字"
+                        AutomationProperties.Name="Voice Input">
                     <TextBlock Text="{Binding IsListening, Converter={StaticResource MicIconConverter}}" FontSize="16"/>
                 </Button>
                 <Button Grid.Column="3" Command="{Binding SendMessageCommand}"

@@ -62,7 +62,7 @@ public class NeteaseMusicService : IMusicSearchService
                     Artist = artistName,
                     Album = albumName,
                     DurationMs = song.TryGetProperty("duration", out var durEl) ? durEl.GetInt64() : 0,
-                    Source = "netease"
+                    Source = "网易"
                 });
             }
 
