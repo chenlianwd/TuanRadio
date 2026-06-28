@@ -50,13 +50,17 @@ public partial class ChatView : UserControl
 
 public class MessageRoleToBrushConverter : IValueConverter
 {
+    private static readonly SolidColorBrush UserBrush = new(Color.Parse("#2196F3"));
+    private static readonly SolidColorBrush AssistantBrush = new(Color.Parse("#424242"));
+    private static readonly SolidColorBrush DefaultBrush = new(Color.Parse("#616161"));
+
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         return value is MessageRole role ? role switch
         {
-            MessageRole.User => new SolidColorBrush(Color.Parse("#2196F3")),
-            MessageRole.Assistant => new SolidColorBrush(Color.Parse("#424242")),
-            _ => new SolidColorBrush(Color.Parse("#616161"))
+            MessageRole.User => UserBrush,
+            MessageRole.Assistant => AssistantBrush,
+            _ => DefaultBrush
         } : null;
     }
 
@@ -81,11 +85,12 @@ public class MessageRoleToAlignmentConverter : IValueConverter
 
 public class MicBackgroundConverter : IValueConverter
 {
+    private static readonly SolidColorBrush ActiveBrush = new(Color.Parse("#FFE53935"));
+    private static readonly SolidColorBrush InactiveBrush = new(Color.Parse("#FF424242"));
+
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        return value is true
-            ? new SolidColorBrush(Color.Parse("#FFE53935"))
-            : new SolidColorBrush(Color.Parse("#FF424242"));
+        return value is true ? ActiveBrush : InactiveBrush;
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
@@ -105,11 +110,12 @@ public class MicIconConverter : IValueConverter
 
 public class ConversationModeBackgroundConverter : IValueConverter
 {
+    private static readonly SolidColorBrush ActiveBrush = new(Color.Parse("#FF1ED760"));
+    private static readonly SolidColorBrush InactiveBrush = new(Color.Parse("#FF424242"));
+
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        return value is true
-            ? new SolidColorBrush(Color.Parse("#FF1ED760"))
-            : new SolidColorBrush(Color.Parse("#FF424242"));
+        return value is true ? ActiveBrush : InactiveBrush;
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

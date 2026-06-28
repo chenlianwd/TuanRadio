@@ -53,7 +53,7 @@ public class MinimaxService : IMinimaxService
             {
                 Content = content
             };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Volatile.Read(ref _apiKey));
 
             var response = await _httpClient.SendAsync(request, token);
             await EnsureSuccessAsync(response);
@@ -62,10 +62,11 @@ public class MinimaxService : IMinimaxService
             using var doc = JsonDocument.Parse(responseJson);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+            if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("message", out var message) &&
+                message.TryGetProperty("content", out var msgContent))
             {
-                var message = choices[0].GetProperty("message");
-                return message.GetProperty("content").GetString() ?? string.Empty;
+                return msgContent.GetString() ?? string.Empty;
             }
 
             return string.Empty;
@@ -106,7 +107,7 @@ public class MinimaxService : IMinimaxService
             {
                 Content = content
             };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Volatile.Read(ref _apiKey));
 
             var response = await _httpClient.SendAsync(request, token);
             await EnsureSuccessAsync(response);
@@ -145,7 +146,7 @@ public class MinimaxService : IMinimaxService
 
     private async Task<T> ExecuteMinimaxRequestAsync<T>(string operation, Func<CancellationToken, Task<T>> action)
     {
-        if (string.IsNullOrWhiteSpace(_apiKey))
+        if (string.IsNullOrWhiteSpace(Volatile.Read(ref _apiKey)))
             throw new MinimaxApiException(ApiFailureInfo.MissingApiKey());
 
         try

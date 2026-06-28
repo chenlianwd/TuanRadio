@@ -82,9 +82,11 @@ public class KuwoMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (root.GetProperty("code").GetInt32() == 200)
+            if (root.TryGetProperty("code", out var codeEl) && codeEl.GetInt32() == 200 &&
+                root.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("url", out var urlEl))
             {
-                return root.GetProperty("data").GetProperty("url").GetString();
+                return urlEl.GetString();
             }
         }
         catch (Exception ex)

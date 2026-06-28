@@ -23,6 +23,11 @@ public partial class StarfieldView : UserControl
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        Unloaded += (_, _) =>
+        {
+            _timer?.Stop();
+            _initialized = false;
+        };
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)

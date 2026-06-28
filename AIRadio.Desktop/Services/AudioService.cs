@@ -299,68 +299,82 @@ public class AudioService : IAudioService, IDisposable
 
     public async void Next()
     {
-        if (_repeatMode == "radio" && _nextCallback != null)
+        try
         {
-            var track = await _nextCallback();
-            if (track != null)
+            if (_repeatMode == "radio" && _nextCallback != null)
             {
-                if (_currentIndex >= 0 && _currentIndex < _playlist.Count &&
-                    _playlist[_currentIndex].FilePath == track.FilePath)
+                var track = await _nextCallback();
+                if (track != null)
                 {
-                    var retry = await _nextCallback();
-                    if (retry != null && retry.FilePath != track.FilePath)
-                        track = retry;
-                }
+                    if (_currentIndex >= 0 && _currentIndex < _playlist.Count &&
+                        _playlist[_currentIndex].FilePath == track.FilePath)
+                    {
+                        var retry = await _nextCallback();
+                        if (retry != null && retry.FilePath != track.FilePath)
+                            track = retry;
+                    }
 
-                var index = FindTrackIndex(track);
-                if (index < 0)
-                {
-                    AddTracks(new[] { track });
-                    index = _playlist.Count - 1;
+                    var index = FindTrackIndex(track);
+                    if (index < 0)
+                    {
+                        AddTracks(new[] { track });
+                        index = _playlist.Count - 1;
+                    }
+                    PlayAtIndex(index);
                 }
-                PlayAtIndex(index);
+                return;
             }
-            return;
+
+            if (_playlist.Count == 0) return;
+
+            if (_shuffle)
+                _currentIndex = _rng.Next(_playlist.Count);
+            else
+                _currentIndex = (_currentIndex + 1) % _playlist.Count;
+
+            PlayTrack(_currentIndex);
         }
-
-        if (_playlist.Count == 0) return;
-
-        if (_shuffle)
-            _currentIndex = _rng.Next(_playlist.Count);
-        else
-            _currentIndex = (_currentIndex + 1) % _playlist.Count;
-
-        PlayTrack(_currentIndex);
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Next failed");
+        }
     }
 
     public async void Previous()
     {
-        if (_repeatMode == "radio" && _previousCallback != null)
+        try
         {
-            var track = await _previousCallback();
-            if (track != null)
+            if (_repeatMode == "radio" && _previousCallback != null)
             {
-                var index = FindTrackIndex(track);
-                if (index < 0)
+                var track = await _previousCallback();
+                if (track != null)
                 {
-                    AddTracks(new[] { track });
-                    index = _playlist.Count - 1;
+                    var index = FindTrackIndex(track);
+                    if (index < 0)
+                    {
+                        AddTracks(new[] { track });
+                        index = _playlist.Count - 1;
+                    }
+                    PlayAtIndex(index);
+                    return;
                 }
-                PlayAtIndex(index);
+            }
+
+            if (_playlist.Count == 0) return;
+
+            if (_player.Time > 3000)
+            {
+                Seek(TimeSpan.Zero);
                 return;
             }
+
+            _currentIndex = (_currentIndex - 1 + _playlist.Count) % _playlist.Count;
+            PlayTrack(_currentIndex);
         }
-
-        if (_playlist.Count == 0) return;
-
-        if (_player.Time > 3000)
+        catch (Exception ex)
         {
-            Seek(TimeSpan.Zero);
-            return;
+            Serilog.Log.Warning(ex, "Previous failed");
         }
-
-        _currentIndex = (_currentIndex - 1 + _playlist.Count) % _playlist.Count;
-        PlayTrack(_currentIndex);
     }
 
     public void PlayAtIndex(int index)

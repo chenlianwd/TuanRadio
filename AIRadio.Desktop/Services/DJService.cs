@@ -114,6 +114,11 @@ Response rules:
             var response = await _minimax.ChatAsync(userMessage, _chatHistory);
             _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
             _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
+
+            // Trim history to avoid unbounded growth (keep system prompt + last N messages)
+            const int maxHistoryMessages = 20;
+            while (_chatHistory.Count > maxHistoryMessages + 1)
+                _chatHistory.RemoveAt(1);
             _currentEmotion = DetectEmotion(response);
             return response;
         }

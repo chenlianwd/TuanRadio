@@ -26,6 +26,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly ISttService _sttService;
     private readonly Action<Track>? _trackAdded;
     private readonly IDisposable _ttsSub;
+    private readonly IDisposable _ttsCommandSub;
     private readonly IDisposable _ttsErrorSub;
     private readonly IDisposable _stateSub;
     private string? _pendingCommand;
@@ -86,18 +87,24 @@ public class ChatViewModel : ViewModelBase, IDisposable
         // Listen for TTS completion to play song AFTER TTS finishes
         _ttsSub = _audioService.TtsStateChanged
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(async playing =>
+            .Subscribe(playing =>
             {
                 IsSpeaking = playing;
                 RefreshStatus();
-
-                if (!playing && _pendingCommand != null)
-                {
-                    var cmd = _pendingCommand;
-                    _pendingCommand = null;
-                    await ExecuteCommandAsync(cmd);
-                }
             });
+
+        // Handle pending command after TTS ends (separate subscription to avoid async void)
+        _ttsCommandSub = _audioService.TtsStateChanged
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Where(playing => !playing && _pendingCommand != null)
+            .Select(_ =>
+            {
+                var cmd = _pendingCommand!;
+                _pendingCommand = null;
+                return cmd;
+            })
+            .SelectMany(cmd => Observable.FromAsync(() => ExecuteCommandAsync(cmd)))
+            .Subscribe();
 
         _ttsErrorSub = _audioService.TtsError
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -196,7 +203,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 writer.Dispose();
                 _waveIn?.Dispose();
                 _waveIn = null;
-                RecognizeFromWav(_tempWavPath);
+                _ = RecognizeFromWavAsync(_tempWavPath).ContinueWith(
+                    t => Log.Warning(t.Exception, "RecognizeFromWav failed"),
+                    TaskContinuationOptions.OnlyOnFaulted);
             };
 
             _waveIn.StartRecording();
@@ -237,7 +246,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async void RecognizeFromWav(string wavPath)
+    private async Task RecognizeFromWavAsync(string wavPath)
     {
         try
         {
@@ -279,7 +288,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 RefreshStatus();
             });
             _sendAfterHoldToTalk = false;
-            try { File.Delete(wavPath); } catch { }
+            try { File.Delete(wavPath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete temp file"); }
         }
     }
 
@@ -577,7 +586,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 _ => null
             };
         }
-        catch
+        catch (JsonException)
         {
             return null;
         }
@@ -911,13 +920,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _ttsSub.Dispose();
+        _ttsCommandSub.Dispose();
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
         _statusAutoDismissSub?.Dispose();
         _waveIn?.Dispose();
         if (!string.IsNullOrWhiteSpace(_tempWavPath))
         {
-            try { File.Delete(_tempWavPath); } catch { }
+            try { File.Delete(_tempWavPath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete temp file"); }
         }
     }
 }

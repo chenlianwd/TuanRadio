@@ -262,7 +262,7 @@ public partial class MainWindow : Window
             if (this.FindControl<TextBlock>("DateDisplay") is TextBlock date)
                 date.Text = now.ToString("dd-MMM-yyyy").ToUpper();
         }
-        catch { }
+        catch (Exception ex) { Serilog.Log.Debug(ex, "UpdateClock failed"); }
     }
 
     private void OnProgressSliderReleased(object? sender, PointerReleasedEventArgs e)

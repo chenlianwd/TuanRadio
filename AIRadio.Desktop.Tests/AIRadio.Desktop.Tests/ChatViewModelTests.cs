@@ -253,8 +253,9 @@ public class ChatViewModelTests
         try
         {
             service.PlayTtsAudio(Array.Empty<byte>());
-            // TTS ends quickly when no data
-            Assert.True(ttsEnded || true); // Non-blocking check
+            // TTS ends quickly when no data — wait briefly for async playback to complete
+            Thread.Sleep(500);
+            Assert.True(ttsEnded, "TTS should have ended after playing empty data");
         }
         finally
         {

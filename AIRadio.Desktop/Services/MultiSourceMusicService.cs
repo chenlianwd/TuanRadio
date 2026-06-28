@@ -72,7 +72,7 @@ public class MultiSourceMusicService : IMusicSearchService
                 var url = await GetPlayUrlWithTimeout(source, trackId);
                 if (url != null) return url;
             }
-            catch { }
+            catch (Exception ex) { Log.Warning(ex, "Source {Name} failed for {Id}", source.Name, trackId); }
         }
 
         return null;
