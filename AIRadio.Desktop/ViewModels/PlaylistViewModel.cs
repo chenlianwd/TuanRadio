@@ -16,7 +16,7 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class PlaylistViewModel : ViewModelBase
+public class PlaylistViewModel : ViewModelBase, IDisposable
 {
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
@@ -24,6 +24,7 @@ public class PlaylistViewModel : ViewModelBase
     private readonly string _playlistFile;
     private bool _isPlayingOnline;
     private bool _isLoading;
+    private readonly IDisposable _selectedTrackSub;
     private readonly HashSet<string> _favoriteIds = new();
     private static readonly string DefaultPlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -63,14 +64,14 @@ public class PlaylistViewModel : ViewModelBase
         {
             _audioService.RemoveTrack(track);
             Tracks.Remove(track);
-            _ = SaveAsync();
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
         ClearPlaylistCommand = ReactiveCommand.Create(() =>
         {
             _audioService.ClearPlaylist();
             Tracks.Clear();
-            _ = SaveAsync();
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
         ShowPlaylistCommand = ReactiveCommand.Create(() =>
@@ -137,7 +138,7 @@ public class PlaylistViewModel : ViewModelBase
                 if (!Favorites.Contains(playlistTrack))
                     Favorites.Add(playlistTrack);
             }
-            _ = SaveAsync();
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
         PlayFavoriteCommand = ReactiveCommand.Create<Track>(track =>
@@ -147,7 +148,7 @@ public class PlaylistViewModel : ViewModelBase
                 _audioService.PlayAtIndex(index);
         });
 
-        this.WhenAnyValue(x => x.SelectedTrack)
+        _selectedTrackSub = this.WhenAnyValue(x => x.SelectedTrack)
             .WhereNotNull()
             .Subscribe(track =>
             {
@@ -164,7 +165,7 @@ public class PlaylistViewModel : ViewModelBase
 
     private void OnTracksChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        if (!_isLoading) _ = SaveAsync();
+        if (!_isLoading) _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
 
     public async Task LoadAsync()
@@ -248,7 +249,7 @@ public class PlaylistViewModel : ViewModelBase
         {
             _isLoading = false;
             Tracks.CollectionChanged += OnTracksChanged;
-            _ = SaveAsync(); // save once after load completes
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted); // save once after load completes
         }
     }
 
@@ -378,7 +379,7 @@ public class PlaylistViewModel : ViewModelBase
                 _favoriteIds.Add(existing.Id);
                 if (!Favorites.Contains(existing))
                     Favorites.Add(existing);
-                _ = SaveAsync();
+                _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
             }
             return;
         }
@@ -388,7 +389,7 @@ public class PlaylistViewModel : ViewModelBase
         if (_favoriteIds.Contains(track.Id) && !Favorites.Contains(track))
             Favorites.Add(track);
         TabIndex = 0;
-        _ = SaveAsync();
+        _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private Track? FindMatchingTrack(Track track)
@@ -416,7 +417,13 @@ public class PlaylistViewModel : ViewModelBase
             _audioService.AddTracks(added);
 
         TabIndex = 0;
-        _ = SaveAsync();
+        _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    public void Dispose()
+    {
+        _selectedTrackSub.Dispose();
+        Tracks.CollectionChanged -= OnTracksChanged;
     }
 }
 

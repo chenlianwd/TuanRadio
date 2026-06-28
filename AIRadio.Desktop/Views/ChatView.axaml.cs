@@ -14,6 +14,9 @@ namespace AIRadio.Desktop.Views;
 
 public partial class ChatView : UserControl
 {
+    private NotifyCollectionChangedEventHandler? _messagesHandler;
+    private ChatViewModel? _currentVm;
+
     public ChatView()
     {
         Resources["MessageRoleConverter"] = new MessageRoleToBrushConverter();
@@ -26,15 +29,27 @@ public partial class ChatView : UserControl
 
         DataContextChanged += (_, _) =>
         {
+            // Unsubscribe from old ViewModel
+            if (_currentVm != null && _messagesHandler != null)
+            {
+                _currentVm.Messages.CollectionChanged -= _messagesHandler;
+            }
+
             if (DataContext is ChatViewModel vm)
             {
-                vm.Messages.CollectionChanged += (_, _) =>
+                _currentVm = vm;
+                _messagesHandler = (_, _) =>
                 {
                     if (MessagesScroller != null)
                     {
                         MessagesScroller.Offset = MessagesScroller.Offset.WithY(MessagesScroller.Extent.Height);
                     }
                 };
+                vm.Messages.CollectionChanged += _messagesHandler;
+            }
+            else
+            {
+                _currentVm = null;
             }
         };
     }

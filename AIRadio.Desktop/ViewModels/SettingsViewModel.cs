@@ -23,12 +23,13 @@ public class VoiceOption
     public string DisplayName { get; set; } = "";
 }
 
-public class SettingsViewModel : ViewModelBase
+public class SettingsViewModel : ViewModelBase, IDisposable
 {
     private readonly IMinimaxService _minimaxService;
     private readonly IDJService _djService;
     private readonly ISecureStorage _secureStorage;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly IDisposable _selectedCharacterSub;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
@@ -90,7 +91,7 @@ public class SettingsViewModel : ViewModelBase
         SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync);
 
         // When character selection changes, load its overrides
-        this.WhenAnyValue(x => x.SelectedCharacter)
+        _selectedCharacterSub = this.WhenAnyValue(x => x.SelectedCharacter)
             .Where(c => c != null)
             .Subscribe(c => LoadCharacterOverrides(c!));
 
@@ -260,5 +261,11 @@ public class SettingsViewModel : ViewModelBase
         {
             _saveGate.Release();
         }
+    }
+
+    public void Dispose()
+    {
+        _selectedCharacterSub.Dispose();
+        _saveGate.Dispose();
     }
 }
