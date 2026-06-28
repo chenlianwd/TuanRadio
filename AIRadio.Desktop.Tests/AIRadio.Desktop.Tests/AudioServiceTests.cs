@@ -110,10 +110,13 @@ public class AudioServiceTests
     {
         var svc = new AudioService();
         svc.Volume = 1.5f;
-        Assert.True(svc.Volume <= 1.0f && svc.Volume >= 0.0f);
+        Assert.InRange(svc.Volume, 0.0f, 1.0f);
+
+        svc.Volume = -0.5f;
+        Assert.InRange(svc.Volume, 0.0f, 1.0f);
 
         svc.Volume = 0.5f;
-        Assert.True(svc.Volume >= 0.0f && svc.Volume <= 1.0f);
+        Assert.InRange(svc.Volume, 0.0f, 1.0f);
         svc.Dispose();
     }
 

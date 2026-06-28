@@ -79,7 +79,7 @@ public class MusicApiServer : IDisposable
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
 
-            // Wait for server to be ready
+            // Short-lived HttpClient for startup health check only (called once)
             using var http = new HttpClient();
             for (int i = 0; i < MaxStartupRetries; i++)
             {

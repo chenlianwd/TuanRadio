@@ -70,9 +70,12 @@ public static class EnvironmentManager
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         Log.Information("Downloading Node.js from {Url}...", url);
 
-        var bytes = await http.GetByteArrayAsync(url);
-        await File.WriteAllBytesAsync(zipPath, bytes);
-        Log.Information("Node.js downloaded ({Size}MB), extracting...", bytes.Length / 1024 / 1024);
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        await using var fileStream = File.Create(zipPath);
+        await using var downloadStream = await response.Content.ReadAsStreamAsync();
+        await downloadStream.CopyToAsync(fileStream);
+        Log.Information("Node.js downloaded ({Size}MB), extracting...", fileStream.Length / 1024 / 1024);
 
         using var archive = ZipFile.OpenRead(zipPath);
         foreach (var entry in archive.Entries)
