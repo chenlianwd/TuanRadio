@@ -7,6 +7,7 @@ using Xunit;
 
 namespace AIRadio.Desktop.Tests;
 
+// Note: all tests use real AudioService (requires LibVLC native libs). Consider mocking for CI (L25).
 public class PlayerViewModelTests
 {
     [Fact]

@@ -226,6 +226,7 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    // Note: uses real AudioService (requires LibVLC native libs). Consider mocking for CI reliability (M44).
     public async Task AudioService_Volume_SetAndGet()
     {
         var service = new AudioService();
