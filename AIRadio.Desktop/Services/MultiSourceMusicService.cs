@@ -20,7 +20,7 @@ public class MultiSourceMusicService : IMusicSearchService
 
     public string Name => "多平台聚合";
 
-    public MultiSourceMusicService(HttpClient httpClient)
+    public MultiSourceMusicService(HttpClient httpClient, params IMusicSearchService[] extraSources)
     {
         _httpClient = httpClient;
         _sources = new List<IMusicSearchService>
@@ -30,6 +30,7 @@ public class MultiSourceMusicService : IMusicSearchService
             new KugouMusicService(httpClient),
             new MiguMusicService(httpClient)
         };
+        _sources.AddRange(extraSources); // YouTube 等额外源作为最低优先级
     }
 
     public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
