@@ -35,7 +35,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
     private bool _hasFailureNotice;
+    private bool _isStatusNoticeDismissed;
     private string _failureStatusText = "AI ERROR";
+    private IDisposable? _statusAutoDismissSub;
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
@@ -51,6 +53,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     [Reactive] public string StatusDetail { get; set; } = string.Empty;
     [Reactive] public string StatusRecoveryHint { get; set; } = string.Empty;
     [Reactive] public bool ShowStatusNotice { get; set; }
+    [Reactive] public bool ShowStatusRecall { get; set; }
     [Reactive] public string MicButtonText { get; set; } = "HOLD";
 
     public event Action<string, string>? DjVisualCue; // expression, motion
@@ -58,6 +61,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> SendMessageCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleVoiceInputCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleConversationModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> DismissStatusNoticeCommand { get; }
+    public ReactiveCommand<Unit, Unit> RestoreStatusNoticeCommand { get; }
 
     public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService, Action<Track>? trackAdded = null)
     {
@@ -75,6 +80,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         ToggleVoiceInputCommand = ReactiveCommand.Create(ToggleVoiceInput);
         ToggleConversationModeCommand = ReactiveCommand.Create(ToggleConversationMode);
+        DismissStatusNoticeCommand = ReactiveCommand.Create(DismissStatusNotice);
+        RestoreStatusNoticeCommand = ReactiveCommand.Create(RestoreStatusNotice);
 
         // Listen for TTS completion to play song AFTER TTS finishes
         _ttsSub = _audioService.TtsStateChanged
@@ -420,7 +427,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (_hasFailureNotice && !IsProcessing && !IsSpeaking && !IsRecognizing && !IsListening)
         {
             StatusText = _failureStatusText;
-            ShowStatusNotice = true;
+            ShowStatusNotice = !_isStatusNoticeDismissed;
+            ShowStatusRecall = _isStatusNoticeDismissed;
             return;
         }
 
@@ -442,21 +450,25 @@ public class ChatViewModel : ViewModelBase, IDisposable
         else
         {
             ShowStatusNotice = false;
+            ShowStatusRecall = false;
         }
     }
 
     private void SetWorkingNotice(string headline, string detail)
     {
         _hasFailureNotice = false;
+        _isStatusNoticeDismissed = false;
         StatusHeadline = headline;
         StatusDetail = detail;
         StatusRecoveryHint = string.Empty;
         ShowStatusNotice = true;
+        ShowStatusRecall = false;
     }
 
     private void SetFailureNotice(ApiFailureInfo failure)
     {
         _hasFailureNotice = true;
+        _isStatusNoticeDismissed = false;
         _failureStatusText = failure.Kind switch
         {
             ApiFailureKind.MissingApiKey => "API KEY MISSING",
@@ -471,6 +483,40 @@ public class ChatViewModel : ViewModelBase, IDisposable
         StatusDetail = failure.Detail;
         StatusRecoveryHint = failure.RecoveryHint;
         ShowStatusNotice = true;
+        ShowStatusRecall = false;
+        ScheduleStatusNoticeAutoDismiss();
+    }
+
+    private void DismissStatusNotice()
+    {
+        if (string.IsNullOrWhiteSpace(StatusHeadline))
+            return;
+
+        _isStatusNoticeDismissed = true;
+        ShowStatusNotice = false;
+        ShowStatusRecall = _hasFailureNotice;
+    }
+
+    private void RestoreStatusNotice()
+    {
+        if (string.IsNullOrWhiteSpace(StatusHeadline))
+            return;
+
+        _isStatusNoticeDismissed = false;
+        ShowStatusNotice = true;
+        ShowStatusRecall = false;
+    }
+
+    private void ScheduleStatusNoticeAutoDismiss()
+    {
+        _statusAutoDismissSub?.Dispose();
+        _statusAutoDismissSub = Observable
+            .Timer(TimeSpan.FromSeconds(6), RxApp.MainThreadScheduler)
+            .Subscribe(_ =>
+            {
+                if (_hasFailureNotice && ShowStatusNotice)
+                    DismissStatusNotice();
+            });
     }
 
     private void AddFailureMessage(string prefix, ApiFailureInfo failure)
@@ -867,6 +913,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         _ttsSub.Dispose();
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
+        _statusAutoDismissSub?.Dispose();
         _waveIn?.Dispose();
         if (!string.IsNullOrWhiteSpace(_tempWavPath))
         {

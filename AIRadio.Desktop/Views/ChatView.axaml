@@ -28,8 +28,20 @@
                     Padding="10,8"
                     Margin="0,0,0,10">
                 <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding StatusHeadline}" FontSize="12" FontWeight="700"
-                               Foreground="#FFB9FFE8"/>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding StatusHeadline}" FontSize="12" FontWeight="700"
+                                   Foreground="#FFB9FFE8"/>
+                        <Button Grid.Column="1"
+                                Command="{Binding DismissStatusNoticeCommand}"
+                                Content="x"
+                                Width="22" Height="22"
+                                Padding="0"
+                                Background="#00000000"
+                                Foreground="#FFB9FFE8"
+                                BorderThickness="0"
+                                ToolTip.Tip="收起提示"/>
+                    </Grid>
                     <TextBlock Text="{Binding StatusDetail}" FontSize="11"
                                TextWrapping="Wrap"
                                Foreground="#FFD8D8EA"/>
@@ -38,6 +50,23 @@
                                Foreground="#FFFFC86B"/>
                 </StackPanel>
             </Border>
+
+            <Button Grid.Row="1"
+                    IsVisible="{Binding ShowStatusRecall}"
+                    Command="{Binding RestoreStatusNoticeCommand}"
+                    HorizontalAlignment="Left"
+                    Padding="10,6"
+                    Margin="0,0,0,10"
+                    Background="#EE050507"
+                    BorderBrush="#3356F5C4"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    ToolTip.Tip="查看语音播放提示">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                    <TextBlock Text="VOICE" FontSize="11" Foreground="#FFB9FFE8"/>
+                </StackPanel>
+            </Button>
 
             <ScrollViewer x:Name="MessagesScroller" Grid.Row="2">
                 <ItemsControl ItemsSource="{Binding Messages}">

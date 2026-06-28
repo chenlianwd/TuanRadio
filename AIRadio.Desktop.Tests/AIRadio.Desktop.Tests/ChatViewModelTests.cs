@@ -37,6 +37,54 @@ public class ChatViewModelTests
         return (vm, djMock, audioMock, searchMock);
     }
 
+    private static (ChatViewModel vm, Subject<string> ttsErrors) CreateVmWithTtsErrors()
+    {
+        var playlist = new List<Track>();
+        var djMock = new Mock<IDJService>();
+        djMock.SetupGet(x => x.TtsEnabled).Returns(false);
+        djMock.SetupGet(x => x.CurrentEmotion).Returns("neutral");
+
+        var ttsErrors = new Subject<string>();
+        var audioMock = new Mock<IAudioService>();
+        audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audioMock.Setup(x => x.TtsError).Returns(ttsErrors);
+        audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audioMock.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
+
+        var searchMock = new Mock<IMusicSearchService>();
+        var sttMock = new Mock<ISttService>();
+
+        var vm = new ChatViewModel(djMock.Object, audioMock.Object, searchMock.Object, sttMock.Object);
+        return (vm, ttsErrors);
+    }
+
+    [Fact]
+    public void DismissStatusNotice_HidesNoticeAndShowsRecall()
+    {
+        var (vm, ttsErrors) = CreateVmWithTtsErrors();
+
+        ttsErrors.OnNext("语音播放设备不可用。");
+        vm.DismissStatusNoticeCommand.Execute().Subscribe();
+
+        Assert.False(vm.ShowStatusNotice);
+        Assert.True(vm.ShowStatusRecall);
+        Assert.Equal("语音播放失败", vm.StatusHeadline);
+    }
+
+    [Fact]
+    public void RestoreStatusNotice_ReopensDismissedNotice()
+    {
+        var (vm, ttsErrors) = CreateVmWithTtsErrors();
+
+        ttsErrors.OnNext("语音播放设备不可用。");
+        vm.DismissStatusNoticeCommand.Execute().Subscribe();
+        vm.RestoreStatusNoticeCommand.Execute().Subscribe();
+
+        Assert.True(vm.ShowStatusNotice);
+        Assert.False(vm.ShowStatusRecall);
+        Assert.Equal("语音播放失败", vm.StatusHeadline);
+    }
+
     [Fact]
     public void ParseResponse_StripsEmotionTags()
     {

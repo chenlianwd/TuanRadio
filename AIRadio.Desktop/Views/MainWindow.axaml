@@ -329,21 +329,32 @@
                     </Grid>
 
                     <Border IsVisible="{Binding ChatVM.ShowStatusNotice}"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Bottom"
-                            Margin="22,0,22,14"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            Margin="22,56,22,0"
                             Background="#EE050507"
                             BorderBrush="#3356F5C4"
                             BorderThickness="1"
                             CornerRadius="4"
                             Padding="12,9"
-                            MaxWidth="520">
+                            MaxWidth="360">
                         <StackPanel Spacing="3">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding ChatVM.StatusHeadline}" FontSize="12" FontWeight="700"
-                                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFB9FFE8"/>
-                            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                    <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ChatVM.StatusHeadline}" FontSize="12" FontWeight="700"
+                                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFB9FFE8"/>
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Command="{Binding ChatVM.DismissStatusNoticeCommand}"
+                                        Content="x"
+                                        Width="22" Height="22"
+                                        Padding="0"
+                                        Background="#00000000"
+                                        Foreground="#FFB9FFE8"
+                                        BorderThickness="0"
+                                        ToolTip.Tip="收起提示"/>
+                            </Grid>
                             <TextBlock Text="{Binding ChatVM.StatusDetail}" FontSize="11"
                                        TextWrapping="Wrap"
                                        FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFD8D8EA"/>
@@ -352,6 +363,24 @@
                                        FontFamily="Microsoft YaHei UI" Foreground="#FFFFC86B"/>
                         </StackPanel>
                     </Border>
+
+                    <Button IsVisible="{Binding ChatVM.ShowStatusRecall}"
+                            Command="{Binding ChatVM.RestoreStatusNoticeCommand}"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            Margin="22,56,22,0"
+                            Padding="10,6"
+                            Background="#EE050507"
+                            BorderBrush="#3356F5C4"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            ToolTip.Tip="查看语音播放提示">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                            <TextBlock Text="VOICE" FontSize="11" FontFamily="Consolas"
+                                       Foreground="#FFB9FFE8"/>
+                        </StackPanel>
+                    </Button>
 
                     <Border IsVisible="{Binding ChatVM.IsListening}"
                             HorizontalAlignment="Right"
