@@ -106,7 +106,11 @@ public partial class App : Application
         services.AddSingleton<ILLMService, LLMService>();
         services.AddSingleton<ITtsService, EdgeTtsService>();
         services.AddSingleton<IMusicSearchService>(sp =>
-            new MultiSourceMusicService(http));
+        {
+            var ytdlpPath = YtdlpManager.GetYtdlpPath();
+            var ytSource = new YouTubeMusicService(ytdlpPath);
+            return new MultiSourceMusicService(http, ytSource);
+        });
         services.AddSingleton<IDJService>(sp =>
             new DJService(
                 sp.GetRequiredService<ILLMService>(),
