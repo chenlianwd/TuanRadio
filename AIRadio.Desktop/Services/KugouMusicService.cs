@@ -84,6 +84,7 @@ public class KugouMusicService : IMusicSearchService
         var hash = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
         try
         {
+            // appid=1014, platid=4 are Kugou's public web client identifiers
             var url = $"https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash={hash}&appid=1014&mid=&platid=4&album_id=";
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://www.kugou.com/");

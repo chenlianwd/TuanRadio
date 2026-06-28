@@ -45,6 +45,7 @@ public class MainWindowViewModelTests
     [Fact]
     public async Task RadioNext_AddsRecommendedTrackToDisplayedPlaylist()
     {
+        var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
 
         var audio = new AudioService();
@@ -97,12 +98,14 @@ public class MainWindowViewModelTests
         {
             vm.Dispose();
             audio.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
         }
     }
 
     [Fact]
     public async Task AutoRadio_DoesNotPlayStaleRecommendationAfterCurrentTrackChanges()
     {
+        var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
 
         var current = new Track
@@ -158,12 +161,14 @@ public class MainWindowViewModelTests
         finally
         {
             vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
         }
     }
 
     [Fact]
     public void DislikeCurrentTrackCommand_RecordsCurrentTrackFeedback()
     {
+        var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
 
         var current = new Track
@@ -205,6 +210,7 @@ public class MainWindowViewModelTests
         finally
         {
             vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
         }
     }
 }
