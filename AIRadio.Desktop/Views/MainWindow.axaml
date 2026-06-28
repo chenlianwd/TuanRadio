@@ -1,5 +1,6 @@
 <!-- TODO: This file exceeds 600 lines. Consider extracting sections into UserControls:
      TitleBar, ClockStage, PlayerDeck, ChatArea, InputArea, LibraryDrawer, SettingsOverlay -->
+<!-- TODO: UI strings mix Chinese and English; consider introducing a localization resource system (L12) -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"

@@ -17,6 +17,8 @@ public partial class PlaylistView : UserControl
 {
     public PlaylistView()
     {
+        // Note: InvertBoolValueConverter is functionally equivalent to MainWindow's InverseBoolConverter.
+        // Consider consolidating into a shared Converters/ directory (H14).
         Resources["InvertBoolConverter"] = new InvertBoolValueConverter();
         Resources["TabBgPlaylistConverter"] = new TabBgConverter(0);
         Resources["TabFgPlaylistConverter"] = new TabFgConverter(0);
