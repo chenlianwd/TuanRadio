@@ -79,7 +79,7 @@ public class NeteaseMusicService : IMusicSearchService
     {
         try
         {
-            var url = $"{_baseUrl}/song/url/v1?id={trackId}&level=exhigh";
+            var url = $"{_baseUrl}/song/url/v1?id={Uri.EscapeDataString(trackId)}&level=exhigh";
             var response = await _httpClient.GetStringAsync(url);
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;

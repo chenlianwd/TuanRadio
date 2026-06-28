@@ -510,8 +510,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var differentArtist = pool.Except(sameArtist).ToList();
 
         var candidates = differentArtist.Count > 0 ? differentArtist : pool;
-        var random = new Random();
-        return candidates[random.Next(candidates.Count)];
+        return candidates[Random.Shared.Next(candidates.Count)];
     }
 
     private static bool ShouldUseFreshRadioRecommendations() => true;

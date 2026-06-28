@@ -27,6 +27,7 @@ public class KuwoMusicService : IMusicSearchService
             var url = $"https://www.kuwo.cn/api/www/search/searchMusicByhttp?key={Uri.EscapeDataString(keyword)}&pn=1&rn={limit}&httpsStatus=1";
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://www.kuwo.cn/");
+            // Kuwo requires these headers; the token value "0" works as a placeholder
             request.Headers.Add("csrf", "0");
             request.Headers.Add("Cookie", "kw_token=0");
 
@@ -74,6 +75,7 @@ public class KuwoMusicService : IMusicSearchService
             var url = $"https://www.kuwo.cn/api/v1/www/music/playUrl?mid={id}&type=music&httpsStatus=1";
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://www.kuwo.cn/");
+            // Kuwo requires these headers; the token value "0" works as a placeholder
             request.Headers.Add("csrf", "0");
             request.Headers.Add("Cookie", "kw_token=0");
 

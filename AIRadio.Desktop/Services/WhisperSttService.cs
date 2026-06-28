@@ -77,7 +77,7 @@ public class WhisperSttService : ISttService, IDisposable
             }
 
             var result = sb.ToString().Trim();
-            Log.Information("Whisper result: {Text}", result);
+            Log.Information("Whisper result: {Length} chars", result.Length);
             return result;
         }
         catch (Exception ex)

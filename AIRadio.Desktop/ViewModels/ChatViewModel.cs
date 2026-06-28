@@ -32,6 +32,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private string? _pendingCommand;
 
     private WaveInEvent? _waveIn;
+    private WaveFileWriter? _waveWriter;
     private string? _tempWavPath;
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
@@ -191,16 +192,17 @@ public class ChatViewModel : ViewModelBase, IDisposable
             {
                 WaveFormat = new WaveFormat(16000, 16, 1)
             };
-            var writer = new WaveFileWriter(_tempWavPath, _waveIn.WaveFormat);
+            _waveWriter = new WaveFileWriter(_tempWavPath, _waveIn.WaveFormat);
 
             _waveIn.DataAvailable += (_, e) =>
             {
-                writer.Write(e.Buffer, 0, e.BytesRecorded);
+                _waveWriter?.Write(e.Buffer, 0, e.BytesRecorded);
             };
 
             _waveIn.RecordingStopped += (_, _) =>
             {
-                writer.Dispose();
+                _waveWriter?.Dispose();
+                _waveWriter = null;
                 _waveIn?.Dispose();
                 _waveIn = null;
                 _ = RecognizeFromWavAsync(_tempWavPath).ContinueWith(
@@ -924,6 +926,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
         _statusAutoDismissSub?.Dispose();
+        _waveWriter?.Dispose();
         _waveIn?.Dispose();
         if (!string.IsNullOrWhiteSpace(_tempWavPath))
         {
