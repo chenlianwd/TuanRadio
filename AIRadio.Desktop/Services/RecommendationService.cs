@@ -113,6 +113,11 @@ public class RecommendationService : IRecommendationService
     {
         if (string.IsNullOrWhiteSpace(feedback.TrackId)) return;
         _feedback.Add(feedback);
+
+        // Cap feedback history to avoid unbounded growth
+        const int maxFeedback = 200;
+        if (_feedback.Count > maxFeedback)
+            _feedback.RemoveRange(0, _feedback.Count - maxFeedback);
     }
 
     private List<Track> BuildExcludedTracks(RecommendationRequest request)

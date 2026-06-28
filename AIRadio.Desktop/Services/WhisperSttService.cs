@@ -70,13 +70,13 @@ public class WhisperSttService : ISttService, IDisposable
             await using var fileStream = File.OpenRead(wavFilePath);
             var segments = processor.ProcessAsync(fileStream);
 
-            var text = "";
+            var sb = new System.Text.StringBuilder();
             await foreach (var segment in segments)
             {
-                text += segment.Text;
+                sb.Append(segment.Text);
             }
 
-            var result = text.Trim();
+            var result = sb.ToString().Trim();
             Log.Information("Whisper result: {Text}", result);
             return result;
         }

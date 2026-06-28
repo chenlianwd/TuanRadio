@@ -160,7 +160,7 @@ public class MusicApiServer : IDisposable
                             p.Kill(entireProcessTree: true);
                             Log.Information("Killed leftover process PID {Pid} on port {Port}", pid, _port);
                         }
-                        catch { }
+                        catch (Exception ex) { Log.Debug(ex, "Failed to kill process PID {Pid}", pid); }
                     }
                 }
             }

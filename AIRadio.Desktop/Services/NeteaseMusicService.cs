@@ -84,14 +84,17 @@ public class NeteaseMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
 
-            if (root.GetProperty("code").GetInt32() != 200)
+            if (!root.TryGetProperty("code", out var codeEl) || codeEl.GetInt32() != 200)
                 return null;
 
-            var data = root.GetProperty("data");
-            if (data.GetArrayLength() > 0)
+            if (root.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
             {
-                var playUrl = data[0].GetProperty("url").GetString();
-                return string.IsNullOrEmpty(playUrl) ? null : playUrl;
+                var first = data[0];
+                if (first.TryGetProperty("url", out var urlEl))
+                {
+                    var playUrl = urlEl.GetString();
+                    return string.IsNullOrEmpty(playUrl) ? null : playUrl;
+                }
             }
 
             return null;

@@ -47,10 +47,15 @@ public class KugouMusicService : IMusicSearchService
             {
                 foreach (var item in lists.EnumerateArray())
                 {
-                    var songName = item.GetProperty("SongName").GetString() ?? "";
-                    var singerName = item.GetProperty("SingerName").GetString() ?? "";
+                    if (!item.TryGetProperty("SongName", out var songNameEl) ||
+                        !item.TryGetProperty("SingerName", out var singerNameEl) ||
+                        !item.TryGetProperty("FileHash", out var fileIdEl))
+                        continue;
+
+                    var songName = songNameEl.GetString() ?? "";
+                    var singerName = singerNameEl.GetString() ?? "";
                     var albumName = item.TryGetProperty("AlbumName", out var a) ? a.GetString() ?? "" : "";
-                    var fileId = item.GetProperty("FileHash").GetString() ?? "";
+                    var fileId = fileIdEl.GetString() ?? "";
                     var duration = item.TryGetProperty("Duration", out var d) ? d.GetInt32() : 0;
 
                     tracks.Add(new OnlineTrack

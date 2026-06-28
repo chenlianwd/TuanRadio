@@ -43,9 +43,9 @@ public static class EnvironmentManager
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fall through to the portable runtime.
+            Log.Debug(ex, "Node.js detection failed, falling through to portable runtime");
         }
 
         if (File.Exists(NodeExe))
