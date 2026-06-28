@@ -17,6 +17,8 @@ using Serilog;
 
 namespace AIRadio.Desktop.Views;
 
+// Note: functionally equivalent to ChatView's MessageRoleToAlignmentConverter.
+// Consider consolidating into a shared Converters/ directory (H15).
 public class MessageAlignConverter : IValueConverter
 {
     public static readonly MessageAlignConverter Instance = new();
