@@ -154,53 +154,62 @@ Response rules:
 
         try
         {
-            var favorites = GetFavorites(current);
             var excludedTracks = GetExcludedTracks(current).ToList();
             if (current != null && !excludedTracks.Any(t => IsSameTrack(t, current)))
                 excludedTracks.Add(current);
 
-            var favoriteContext = "";
-            if (favorites.Count > 0)
-            {
-                var favList = favorites.Take(10).Select(t => $"{t.Title} by {t.Artist}").ToList();
-                favoriteContext = $" The user likes these songs: {string.Join(", ", favList)}. ";
-            }
-
-            var prompt = current != null
-                ? $"Based on the song '{current.Title}' by '{current.Artist}', {favoriteContext}recommend ONE NEW similar or related song that is NOT already in the user's playlist. Do not recommend '{current.Title}'. Reply with ONLY the song name and artist if known."
-                : "Recommend one NEW popular song for an AI radio station. Reply with ONLY the song name and artist if known.";
-
+            var prompt = BuildRecommendationPrompt(current);
             var response = await _minimax.ChatAsync(prompt, new List<ChatMessage>());
             var cleaned = CleanRecommendationText(response);
             var (title, artist) = ParseRecommendedSong(cleaned);
             if (string.IsNullOrWhiteSpace(title)) return null;
 
-            var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
-            var results = await _musicSearch.SearchAsync(searchQuery, 10);
-            foreach (var item in results)
-            {
-                if (IsExcluded(item, excludedTracks))
-                {
-                    Log.Debug("Skipped already-known DJ recommendation: {Title} by {Artist}", item.Title, item.Artist);
-                    continue;
-                }
-
-                var url = await _musicSearch.GetPlayUrlAsync(item.Id);
-                if (!string.IsNullOrEmpty(url))
-                {
-                    Log.Information("DJ recommended: {Title} by {Artist}", item.Title, item.Artist);
-                    return item.ToTrack(url);
-                }
-            }
-
-            Log.Warning("DJ could not find track for recommendation: {Response}", cleaned);
-            return null;
+            return await SearchRecommendedTrack(title, artist, excludedTracks);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DJ recommendation failed");
             return null;
         }
+    }
+
+    private string BuildRecommendationPrompt(Track? current)
+    {
+        var favorites = GetFavorites(current);
+        var favoriteContext = "";
+        if (favorites.Count > 0)
+        {
+            var favList = favorites.Take(10).Select(t => $"{t.Title} by {t.Artist}").ToList();
+            favoriteContext = $" The user likes these songs: {string.Join(", ", favList)}. ";
+        }
+
+        return current != null
+            ? $"Based on the song '{current.Title}' by '{current.Artist}', {favoriteContext}recommend ONE NEW similar or related song that is NOT already in the user's playlist. Do not recommend '{current.Title}'. Reply with ONLY the song name and artist if known."
+            : "Recommend one NEW popular song for an AI radio station. Reply with ONLY the song name and artist if known.";
+    }
+
+    private async Task<Track?> SearchRecommendedTrack(string title, string? artist, List<Track> excludedTracks)
+    {
+        var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
+        var results = await _musicSearch!.SearchAsync(searchQuery, 10);
+        foreach (var item in results)
+        {
+            if (IsExcluded(item, excludedTracks))
+            {
+                Log.Debug("Skipped already-known DJ recommendation: {Title} by {Artist}", item.Title, item.Artist);
+                continue;
+            }
+
+            var url = await _musicSearch.GetPlayUrlAsync(item.Id);
+            if (!string.IsNullOrEmpty(url))
+            {
+                Log.Information("DJ recommended: {Title} by {Artist}", item.Title, item.Artist);
+                return item.ToTrack(url);
+            }
+        }
+
+        Log.Warning("DJ could not find track for recommendation: {Title}", title);
+        return null;
     }
 
     private static readonly string[] ValidEmotions = ["happy", "sad", "calm", "neutral", "angry", "surprised"];

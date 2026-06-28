@@ -448,6 +448,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     }
 }
 
+// ObservableCollection lacks FindIndex; used by MainWindowViewModel and ChatViewModel
 public static class ObservableCollectionExtensions
 {
     public static int FindIndex<T>(this ObservableCollection<T> collection, Func<T, bool> predicate)
@@ -460,6 +461,7 @@ public static class ObservableCollectionExtensions
     }
 }
 
+// DTOs for JSON deserialization — mutable setters required by JsonSerializer
 internal class PlaylistData
 {
     public List<PlaylistTrack> Tracks { get; set; } = new();

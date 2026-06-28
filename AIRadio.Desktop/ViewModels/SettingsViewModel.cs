@@ -19,8 +19,8 @@ namespace AIRadio.Desktop.ViewModels;
 
 public class VoiceOption
 {
-    public string Id { get; set; } = "";
-    public string DisplayName { get; set; } = "";
+    public string Id { get; init; } = "";
+    public string DisplayName { get; init; } = "";
 }
 
 public class SettingsViewModel : ViewModelBase, IDisposable
