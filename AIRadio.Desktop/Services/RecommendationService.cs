@@ -10,13 +10,13 @@ namespace AIRadio.Desktop.Services;
 
 public class RecommendationService : IRecommendationService
 {
-    private readonly IMinimaxService _minimax;
+    private readonly ILLMService _llm;
     private readonly IMusicSearchService _musicSearch;
     private readonly List<UserMusicFeedback> _feedback = new();
 
-    public RecommendationService(IMinimaxService minimax, IMusicSearchService musicSearch)
+    public RecommendationService(ILLMService llm, IMusicSearchService musicSearch)
     {
-        _minimax = minimax;
+        _llm = llm;
         _musicSearch = musicSearch;
     }
 
@@ -141,7 +141,7 @@ public class RecommendationService : IRecommendationService
                 当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
                 收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}
                 """;
-            var response = await _minimax.ChatAsync(prompt, new List<ChatMessage>());
+            var response = await _llm.ChatAsync(prompt, new List<ChatMessage>());
             var queries = response
                 .Split(new[] { '\r', '\n', ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(CleanQuery)

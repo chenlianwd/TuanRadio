@@ -25,7 +25,7 @@ public class VoiceOption
 
 public class SettingsViewModel : ViewModelBase, IDisposable
 {
-    private readonly IMinimaxService _minimaxService;
+    private readonly ILLMService _llmService;
     private readonly IDJService _djService;
     private readonly ISecureStorage _secureStorage;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -81,9 +81,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     // Notify MainWindow when character settings change so it can re-apply
     public event Action? CharacterSettingsChanged;
 
-    public SettingsViewModel(IMinimaxService minimaxService, IDJService djService, ISecureStorage secureStorage)
+    public SettingsViewModel(ILLMService llmService, IDJService djService, ISecureStorage secureStorage)
     {
-        _minimaxService = minimaxService;
+        _llmService = llmService;
         _djService = djService;
         _secureStorage = secureStorage;
 
@@ -121,7 +121,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(key))
             {
                 await Dispatcher.UIThread.InvokeAsync(() => ApiKey = key);
-                _minimaxService.SetApiKey(key);
+                _llmService.Configure(new LLMConfig { ApiKey = key });
             }
 
             if (File.Exists(SettingsFile))
@@ -188,8 +188,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         try
         {
             var apiKey = ApiKey.Trim();
-            _minimaxService.SetApiKey(apiKey);
-            var result = await _minimaxService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
+            _llmService.Configure(new LLMConfig { ApiKey = apiKey });
+            var result = await _llmService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
             await _secureStorage.SaveApiKeyAsync("minimax", apiKey);
             await Dispatcher.UIThread.InvokeAsync(() =>
                 StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...");
@@ -225,7 +225,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrWhiteSpace(ApiKey))
             {
                 await _secureStorage.SaveApiKeyAsync("minimax", ApiKey);
-                _minimaxService.SetApiKey(ApiKey);
+                _llmService.Configure(new LLMConfig { ApiKey = ApiKey });
             }
 
             Directory.CreateDirectory(SettingsDir);

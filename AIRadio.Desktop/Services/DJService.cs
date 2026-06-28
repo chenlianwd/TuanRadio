@@ -10,7 +10,8 @@ namespace AIRadio.Desktop.Services;
 
 public class DJService : IDJService
 {
-    private readonly IMinimaxService _minimax;
+    private readonly ILLMService _llm;
+    private readonly ITtsService? _tts;
     private readonly IMusicSearchService? _musicSearch;
     private DJProfile _profile = new();
     private string _currentEmotion = "neutral";
@@ -20,9 +21,10 @@ public class DJService : IDJService
     public bool TtsEnabled => _profile.TtsEnabled;
     public ApiFailureInfo? LastFailure { get; private set; }
 
-    public DJService(IMinimaxService minimax, IMusicSearchService? musicSearch = null)
+    public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null)
     {
-        _minimax = minimax;
+        _llm = llm;
+        _tts = tts;
         _musicSearch = musicSearch;
     }
 
@@ -82,7 +84,7 @@ Response rules:
     {
         try
         {
-            var text = await _minimax.GenerateTrackIntroductionAsync(current, next);
+            var text = await _llm.GenerateTrackIntroductionAsync(current, next);
             var emotion = DetectEmotion(text);
 
             return new DJScript
@@ -111,7 +113,7 @@ Response rules:
         LastFailure = null;
         try
         {
-            var response = await _minimax.ChatAsync(userMessage, _chatHistory);
+            var response = await _llm.ChatAsync(userMessage, _chatHistory);
             _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
             _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
 
@@ -138,7 +140,8 @@ Response rules:
         LastFailure = null;
         try
         {
-            return await _minimax.TextToSpeechAsync(StripControlTags(text), _profile.VoiceId, _currentEmotion);
+            if (_tts == null) return Array.Empty<byte>();
+            return await _tts.SynthesizeAsync(StripControlTags(text), _profile.VoiceId, _currentEmotion);
         }
         catch (Exception ex)
         {
@@ -159,7 +162,7 @@ Response rules:
                 excludedTracks.Add(current);
 
             var prompt = BuildRecommendationPrompt(current);
-            var response = await _minimax.ChatAsync(prompt, new List<ChatMessage>());
+            var response = await _llm.ChatAsync(prompt, new List<ChatMessage>());
             var cleaned = CleanRecommendationText(response);
             var (title, artist) = ParseRecommendedSong(cleaned);
             if (string.IsNullOrWhiteSpace(title)) return null;

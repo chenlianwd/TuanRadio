@@ -10,13 +10,13 @@ namespace AIRadio.Desktop.Tests;
 
 public class DJServiceTests
 {
-    private readonly Mock<IMinimaxService> _mockMinimax;
+    private readonly Mock<ILLMService> _mockLlm;
     private readonly DJService _djService;
 
     public DJServiceTests()
     {
-        _mockMinimax = new Mock<IMinimaxService>();
-        _djService = new DJService(_mockMinimax.Object);
+        _mockLlm = new Mock<ILLMService>();
+        _djService = new DJService(_mockLlm.Object);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class DJServiceTests
         var current = new Track { Title = "歌曲A", Artist = "歌手A" };
         var next = new Track { Title = "歌曲B", Artist = "歌手B" };
 
-        _mockMinimax
+        _mockLlm
             .Setup(m => m.GenerateTrackIntroductionAsync(current, next))
             .ReturnsAsync("即将播放歌曲B，太好听了！[happy]");
 
@@ -106,7 +106,7 @@ public class DJServiceTests
         var current = new Track { Title = "歌曲A", Artist = "歌手A" };
         var next = new Track { Title = "歌曲B", Artist = "歌手B" };
 
-        _mockMinimax
+        _mockLlm
             .Setup(m => m.GenerateTrackIntroductionAsync(current, next))
             .ThrowsAsync(new Exception("API error"));
 
@@ -120,7 +120,7 @@ public class DJServiceTests
     [Fact]
     public async Task GenerateChatResponseAsync_UpdatesEmotion()
     {
-        _mockMinimax
+        _mockLlm
             .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("这首歌太棒了！[excited]");
 
@@ -132,7 +132,7 @@ public class DJServiceTests
     [Fact]
     public async Task GenerateChatResponseAsync_FallbackOnException()
     {
-        _mockMinimax
+        _mockLlm
             .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ThrowsAsync(new Exception("Network error"));
 
@@ -144,12 +144,14 @@ public class DJServiceTests
     [Fact]
     public async Task GenerateSpeechAsync_ReturnsAudioBytes()
     {
+        var mockTts = new Mock<ITtsService>();
         byte[] fakeAudio = new byte[] { 0x1, 0x2, 0x3 };
-        _mockMinimax
-            .Setup(m => m.TextToSpeechAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+        mockTts
+            .Setup(m => m.SynthesizeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync(fakeAudio);
 
-        var result = await _djService.GenerateSpeechAsync("测试语音");
+        var service = new DJService(_mockLlm.Object, mockTts.Object);
+        var result = await service.GenerateSpeechAsync("测试语音");
 
         Assert.NotNull(result);
         Assert.Equal(3, result.Length);
@@ -168,11 +170,13 @@ public class DJServiceTests
     [Fact]
     public async Task GenerateSpeechAsync_ReturnsNullOnException()
     {
-        _mockMinimax
-            .Setup(m => m.TextToSpeechAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+        var mockTts = new Mock<ITtsService>();
+        mockTts
+            .Setup(m => m.SynthesizeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
             .ThrowsAsync(new Exception("TTS failed"));
 
-        var result = await _djService.GenerateSpeechAsync("测试");
+        var service = new DJService(_mockLlm.Object, mockTts.Object);
+        var result = await service.GenerateSpeechAsync("测试");
 
         Assert.Null(result);
     }
@@ -180,9 +184,9 @@ public class DJServiceTests
     [Fact]
     public async Task RecommendNextTrackAsync_SkipsTracksAlreadyInPlaylist()
     {
-        var minimax = new Mock<IMinimaxService>();
+        var llm = new Mock<ILLMService>();
         var search = new Mock<IMusicSearchService>();
-        var service = new DJService(minimax.Object, search.Object);
+        var service = new DJService(llm.Object, null, search.Object);
         var existing = new Track
         {
             Title = "Existing Song",
@@ -201,7 +205,7 @@ public class DJServiceTests
             }
         };
 
-        minimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("Existing Song - Known Artist");
         search.Setup(x => x.SearchAsync(It.IsAny<string>(), 10))
             .ReturnsAsync(new List<OnlineTrack>
@@ -222,18 +226,18 @@ public class DJServiceTests
     [Fact]
     public async Task GenerateChatResponseAsync_AccumulatesHistory()
     {
-        _mockMinimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+        _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("response1");
 
         await _djService.GenerateChatResponseAsync("hello");
 
-        _mockMinimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+        _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("response2");
 
         await _djService.GenerateChatResponseAsync("world");
 
         // Verify history was passed (2 calls, second call should have 2 messages in history)
-        _mockMinimax.Verify(x => x.ChatAsync(
+        _mockLlm.Verify(x => x.ChatAsync(
             "world",
             It.Is<List<ChatMessage>>(h => h.Count >= 2)), Times.Once);
     }
