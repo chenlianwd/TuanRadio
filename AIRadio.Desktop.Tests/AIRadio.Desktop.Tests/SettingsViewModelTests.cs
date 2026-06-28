@@ -105,4 +105,15 @@ public class SettingsViewModelTests
 
         Assert.NotNull(vm.TestConnectionCommand);
     }
+
+    [Fact]
+    public async Task TestConnectionCommand_EmptyKey_SetsErrorMessage()
+    {
+        var vm = new SettingsViewModel(_mockMinimax.Object, _mockDJ.Object, _mockStorage.Object);
+        vm.ApiKey = "";
+
+        await vm.TestConnectionCommand.Execute();
+
+        Assert.False(string.IsNullOrEmpty(vm.StatusMessage));
+    }
 }

@@ -96,4 +96,21 @@ public class RecommendationServiceTests
 
         Assert.Contains(program.Tracks, item => item.Track.SourceId == "netease:6" && item.IsPlayable);
     }
+
+    [Fact]
+    public async Task CreateProgramAsync_EmptySearchResults_ReturnsEmptyProgram()
+    {
+        var minimax = new Mock<IMinimaxService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(minimax.Object, search.Object);
+
+        minimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("安静钢琴曲\n轻音乐");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "安静" });
+
+        Assert.Empty(program.Tracks);
+    }
 }

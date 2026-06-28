@@ -1,3 +1,9 @@
+// TODO: Additional edge case tests needed (L23):
+// - Very long input (>100 chars)
+// - Mixed Chinese+English input
+// - Input with special characters
+// - "播放音乐" (generic music request)
+// - "推荐一首歌" (recommendation request)
 using System;
 using System.Collections.Generic;
 using System.Linq;
