@@ -218,4 +218,23 @@ public class DJServiceTests
         Assert.Equal("netease:new", result!.SourceId);
         search.Verify(x => x.GetPlayUrlAsync("netease:old"), Times.Never);
     }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_AccumulatesHistory()
+    {
+        _mockMinimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("response1");
+
+        await _djService.GenerateChatResponseAsync("hello");
+
+        _mockMinimax.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("response2");
+
+        await _djService.GenerateChatResponseAsync("world");
+
+        // Verify history was passed (2 calls, second call should have 2 messages in history)
+        _mockMinimax.Verify(x => x.ChatAsync(
+            "world",
+            It.Is<List<ChatMessage>>(h => h.Count >= 2)), Times.Once);
+    }
 }
