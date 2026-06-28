@@ -127,9 +127,11 @@ public class AudioServiceTests
         svc.LoadTracks(new[] { new Track { Title = "A", FilePath = "" } });
 
         svc.PlayAtIndex(5);  // out of range
-        svc.PlayAtIndex(-1); // negative
+        Assert.NotNull(svc.CurrentTrack);
 
-        // Should not throw - index is clamped internally
+        svc.PlayAtIndex(-1); // negative
+        Assert.NotNull(svc.CurrentTrack);
+
         svc.Dispose();
     }
 
