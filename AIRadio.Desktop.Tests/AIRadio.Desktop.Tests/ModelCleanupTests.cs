@@ -13,6 +13,14 @@ public class ModelCleanupTests
     }
 
     [Fact]
+    public void ChatMessage_SenderName_DefaultRole_ReturnsEmpty()
+    {
+        // Verify the default case returns empty string
+        var msg = new ChatMessage { Role = (MessageRole)999 };
+        Assert.Equal(string.Empty, msg.SenderName);
+    }
+
+    [Fact]
     public void CharacterPresets_DoNotExposeLive2DModelDirectories()
     {
         Assert.All(CharacterProfile.Presets, character =>

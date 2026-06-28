@@ -413,9 +413,11 @@ public class AudioService : IAudioService, IDisposable
         var track = _playlist[index];
         try
         {
-            // Stop current playback - do NOT dispose old media here,
-            // LibVLC may still be using it internally during cleanup
+            // Delayed dispose of old media — LibVLC may still reference it during cleanup
+            var oldMedia = _player.Media;
             _player.Stop();
+            if (oldMedia != null)
+                Task.Delay(2000).ContinueWith(_ => { try { oldMedia.Dispose(); } catch { } });
 
             string filePath = track.FilePath;
 

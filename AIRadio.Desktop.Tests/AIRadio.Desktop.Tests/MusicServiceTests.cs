@@ -9,9 +9,11 @@ namespace AIRadio.Desktop.Tests;
 
 // Integration tests — hit real external APIs, require network connectivity
 [Trait("Category", "Integration")]
-public class MusicServiceTests
+public class MusicServiceTests : IDisposable
 {
     private readonly HttpClient _httpClient = new();
+
+    public void Dispose() => _httpClient.Dispose();
 
     [Fact]
     public async Task NeteaseMusicService_Search_ReturnsResults()

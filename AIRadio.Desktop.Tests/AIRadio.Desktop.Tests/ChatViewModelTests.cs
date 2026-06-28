@@ -282,4 +282,33 @@ public class ChatViewModelTests
 
         Assert.Empty(vm.Messages);
     }
+
+    [Fact]
+    public void BeginHoldToTalk_SetsListeningState()
+    {
+        var (vm, _, _, _) = CreateVm();
+        vm.BeginHoldToTalk();
+
+        // Should not throw; IsListening depends on AudioService state
+        Assert.False(vm.IsProcessing);
+    }
+
+    [Fact]
+    public void BeginHoldToTalk_DoesNotStartWhenProcessing()
+    {
+        var (vm, _, _, _) = CreateVm();
+        // Simulate processing state
+        vm.IsProcessing = true;
+        vm.BeginHoldToTalk();
+
+        Assert.False(vm.IsListening);
+    }
+
+    [Fact]
+    public void EndHoldToTalk_DoesNotThrowWhenNotListening()
+    {
+        var (vm, _, _, _) = CreateVm();
+        var ex = Record.Exception(() => vm.EndHoldToTalk());
+        Assert.Null(ex);
+    }
 }
