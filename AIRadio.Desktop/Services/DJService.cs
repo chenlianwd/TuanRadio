@@ -300,28 +300,9 @@ Response rules:
     }
 
     private static bool IsSameSource(string? left, string? right)
-    {
-        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
-            return false;
-        return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
-    }
+        => MusicIdentity.IsSameSource(left, right);
 
     private static bool IsSameMusicIdentity(string titleA, string artistA, string titleB, string artistB)
-    {
-        var titleLeft = NormalizeMusicText(titleA);
-        var titleRight = NormalizeMusicText(titleB);
-        if (string.IsNullOrWhiteSpace(titleLeft) || titleLeft != titleRight)
-            return false;
+        => MusicIdentity.IsSameMusicIdentity(titleA, artistA, titleB, artistB);
 
-        var artistLeft = NormalizeMusicText(artistA);
-        var artistRight = NormalizeMusicText(artistB);
-        return string.IsNullOrWhiteSpace(artistLeft) ||
-               string.IsNullOrWhiteSpace(artistRight) ||
-               artistLeft == artistRight;
-    }
-
-    private static string NormalizeMusicText(string value)
-    {
-        return Regex.Replace(value.ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
-    }
 }

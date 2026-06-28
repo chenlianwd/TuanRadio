@@ -46,6 +46,8 @@ public class AudioService : IAudioService, IDisposable
     private int _playRequestId;
     private readonly Random _rng = new();
     private PlaybackState _currentState = PlaybackState.Stopped;
+    private readonly IDisposable _ttsDuckSub;
+    private readonly IDisposable _ttsPauseSub;
 
     // Crossfade
     private float _userVolume = 0.8f;
@@ -122,7 +124,7 @@ public class AudioService : IAudioService, IDisposable
         _spectrumTimer = new System.Threading.Timer(_ => EmitSimulatedSpectrum(), null, 100, 33);
 
         // Duck main player volume when TTS is speaking
-        _ttsStateSubject.Subscribe(ttsPlaying =>
+        _ttsDuckSub = _ttsStateSubject.Subscribe(ttsPlaying =>
         {
             if (ttsPlaying)
             {
@@ -154,7 +156,7 @@ public class AudioService : IAudioService, IDisposable
         _positionTimer = new System.Threading.Timer(_ => EmitPosition(), null, 500, 500);
 
         // Pause TTS when music is paused, resume when music plays
-        _stateChangedSubject.Subscribe(state =>
+        _ttsPauseSub = _stateChangedSubject.Subscribe(state =>
         {
             if (state == PlaybackState.Paused)
             {
@@ -442,6 +444,16 @@ public class AudioService : IAudioService, IDisposable
 
             var isUrl = filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                      || filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+            // Validate URL to prevent playing arbitrary or malformed URLs
+            if (isUrl && (!Uri.TryCreate(filePath, UriKind.Absolute, out var uri) ||
+                          (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+            {
+                Log.Warning("Invalid or unsupported URL for track {Track}: {Url}", track.Title, filePath);
+                Next();
+                return;
+            }
+
             var media = new Media(_libVLC, filePath, isUrl ? FromType.FromLocation : FromType.FromPath);
             if (isUrl)
             {
@@ -654,6 +666,8 @@ public class AudioService : IAudioService, IDisposable
 
     public void Dispose()
     {
+        _ttsDuckSub.Dispose();
+        _ttsPauseSub.Dispose();
         _spectrumTimer?.Dispose();
         _fadeTimer?.Dispose();
         _positionTimer?.Dispose();

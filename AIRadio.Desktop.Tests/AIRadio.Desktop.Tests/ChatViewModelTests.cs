@@ -88,12 +88,12 @@ public class ChatViewModelTests
     [Fact]
     public void ParseResponse_StripsEmotionTags()
     {
-        // Test the static method indirectly through behavior
         var response = "今天天气真好呢[happy]【next】";
-        var hasEmotionTag = response.Contains("[happy]");
-        var hasCommand = response.Contains("【next】");
-        Assert.True(hasEmotionTag);
-        Assert.True(hasCommand);
+        var parsed = ChatViewModel.ParseDjResponse(response);
+
+        Assert.DoesNotContain("[happy]", parsed.DisplayText);
+        Assert.Equal("happy", parsed.Emotion);
+        Assert.Equal("next", parsed.Command);
     }
 
     [Fact]

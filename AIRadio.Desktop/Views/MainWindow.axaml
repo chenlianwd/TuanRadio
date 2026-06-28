@@ -314,6 +314,7 @@
                                             <TextBlock Text="{Binding SenderName}" FontSize="10"
                                                        FontFamily="Consolas, Microsoft YaHei UI"
                                                        Foreground="#FFA783FF" Margin="0,0,0,4"/>
+                                            <!-- MaxWidth must match ChatBubbleMaxWidth in MainWindow.axaml.cs -->
                                             <Border Background="#EE050507" CornerRadius="4" Padding="14,10"
                                                     MaxWidth="380">
                                                 <TextBlock Text="{Binding Content}" TextWrapping="Wrap"

@@ -196,11 +196,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
             Tracks.Clear();
             Favorites.Clear();
+
+            // Separate online and local tracks
+            var onlineItems = new List<(PlaylistTrack Item, Track Track)>();
             foreach (var item in data.Tracks)
             {
                 if (item.IsOnline && !string.IsNullOrEmpty(item.SourceId))
                 {
-                    var url = await _musicSearchService.GetPlayUrlAsync(item.SourceId);
                     var track = new Track
                     {
                         Id = item.Id,
@@ -208,17 +210,17 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                         Artist = item.Artist,
                         Album = item.Album,
                         Duration = TimeSpan.FromMilliseconds(item.DurationMs),
-                        FilePath = url ?? item.FilePath,
+                        FilePath = item.FilePath,
                         SourceId = item.SourceId,
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
+                    onlineItems.Add((item, track));
                     Tracks.Add(track);
                     if (track.IsFavorite)
                         Favorites.Add(track);
                 }
                 else if (!string.IsNullOrEmpty(item.FilePath) && File.Exists(item.FilePath))
                 {
-                    // Local file - verify exists
                     var track = new Track
                     {
                         Id = item.Id,
@@ -233,6 +235,25 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                     if (track.IsFavorite)
                         Favorites.Add(track);
                 }
+            }
+
+            // Refresh online URLs in parallel
+            if (onlineItems.Count > 0)
+            {
+                var tasks = onlineItems.Select(async x =>
+                {
+                    try
+                    {
+                        var url = await _musicSearchService.GetPlayUrlAsync(x.Item.SourceId);
+                        if (!string.IsNullOrEmpty(url))
+                            x.Track.FilePath = url;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to refresh URL for {SourceId}", x.Item.SourceId);
+                    }
+                });
+                await Task.WhenAll(tasks);
             }
 
             if (Tracks.Count > 0)
