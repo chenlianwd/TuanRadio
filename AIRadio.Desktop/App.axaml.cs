@@ -100,7 +100,7 @@ public partial class App : Application
 
     private void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton(new System.Net.Http.HttpClient());
+        services.AddSingleton(new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) });
         services.AddSingleton<IAudioService, AudioService>();
         services.AddSingleton<IMinimaxService, MinimaxService>();
         services.AddSingleton<IMusicSearchService>(sp =>

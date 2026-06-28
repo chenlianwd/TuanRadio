@@ -77,7 +77,7 @@ public sealed record ApiFailureInfo(
             _ => new ApiFailureInfo(
                 ApiFailureKind.InvalidResponse,
                 $"AI 请求失败 ({(int)statusCode})",
-                body,
+                string.IsNullOrWhiteSpace(body) ? "未知错误" : $"服务返回错误（{(int)statusCode}）",
                 "检查设置和日志后重试。")
         };
     }

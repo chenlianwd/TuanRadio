@@ -1,8 +1,9 @@
 // Auto-start NeteaseCloudMusicApi server for AIRadio
 const http = require('http');
 
-// Set port before requiring the API module
+// Set port and bind to localhost only before requiring the API module
 process.env.PORT = '37250';
+process.env.HOST = '127.0.0.1';
 
 try {
   require('./node_modules/NeteaseCloudMusicApi/app.js');
