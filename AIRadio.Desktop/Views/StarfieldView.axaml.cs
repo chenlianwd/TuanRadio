@@ -16,7 +16,7 @@ public partial class StarfieldView : UserControl
     private DispatcherTimer? _timer;
     private float[] _spectrum = new float[32];
     private double _canvasW, _canvasH;
-    private const int StarCount = 55;
+    private const int StarCount = 55; // Visual density — higher = more stars, lower = better performance
     private bool _initialized;
 
     public StarfieldView()

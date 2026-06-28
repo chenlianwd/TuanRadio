@@ -38,8 +38,11 @@ public class InverseBoolConverter : IValueConverter
         => value is bool b ? !b : false;
 }
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IDisposable
 {
+    // Must match MaxWidth in MainWindow.axaml chat message Border
+    private const double ChatBubbleMaxWidth = 380;
+
     private System.Timers.Timer? _clockTimer;
     private Button? _themeButton;
     private ViewModels.MainWindowViewModel? _activeVm;
@@ -158,7 +161,7 @@ public partial class MainWindow : Window
 
         foreach (var border in this.GetVisualDescendants().OfType<Border>())
         {
-            if (Math.Abs(border.MaxWidth - 380) > 0.1 || border.Child is not TextBlock message)
+            if (Math.Abs(border.MaxWidth - ChatBubbleMaxWidth) > 0.1 || border.Child is not TextBlock message)
                 continue;
 
             border.Background = bubbleBrush;
