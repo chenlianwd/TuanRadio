@@ -1,3 +1,5 @@
+<!-- TODO: This file exceeds 600 lines. Consider extracting sections into UserControls:
+     TitleBar, ClockStage, PlayerDeck, ChatArea, InputArea, LibraryDrawer, SettingsOverlay -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
@@ -19,6 +21,7 @@
         <local:InverseBoolConverter x:Key="InverseBoolConverter"/>
     </Window.Resources>
 
+    <!-- TODO: Extract hardcoded colors into a ResourceDictionary with design tokens (M20) -->
     <Window.Styles>
         <Style Selector="Button">
             <Setter Property="Background" Value="#11121620"/>
@@ -155,6 +158,7 @@
                                             HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                             Height="118" Margin="0,0,18,0"/>
                         <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                                <!-- TODO: Convert x:Name clock elements to ViewModel bindings (M25) -->
                                 <TextBlock x:Name="ClockDisplay" Text="--:--" FontSize="56" FontWeight="700"
                                            FontFamily="Consolas" Foreground="#FFFFFFFF"
                                            HorizontalAlignment="Center"/>

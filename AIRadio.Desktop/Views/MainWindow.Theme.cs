@@ -63,6 +63,8 @@ public partial class MainWindow
         }
     }
 
+    // Note: walks the visual tree on every theme switch. If performance becomes an issue,
+    // tag elements that need theming with an attached property and use Name-based lookups.
     private void SetShellTextForeground(string color)
     {
         if (this.FindControl<Border>("ShellCard") is not Border shell) return;
