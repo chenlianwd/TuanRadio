@@ -262,4 +262,24 @@ public class ChatViewModelTests
             service.Dispose();
         }
     }
+
+    [Fact]
+    public void SendMessage_EmptyInput_DoesNotAddMessage()
+    {
+        var (vm, _, _, _) = CreateVm();
+        vm.InputText = "";
+        vm.SendMessageCommand.Execute().Subscribe();
+
+        Assert.Empty(vm.Messages);
+    }
+
+    [Fact]
+    public void SendMessage_WhitespaceInput_DoesNotAddMessage()
+    {
+        var (vm, _, _, _) = CreateVm();
+        vm.InputText = "   ";
+        vm.SendMessageCommand.Execute().Subscribe();
+
+        Assert.Empty(vm.Messages);
+    }
 }

@@ -7,6 +7,8 @@ using Xunit;
 
 namespace AIRadio.Desktop.Tests;
 
+// Integration tests — hit real external APIs, require network connectivity
+[Trait("Category", "Integration")]
 public class MusicServiceTests
 {
     private readonly HttpClient _httpClient = new();
