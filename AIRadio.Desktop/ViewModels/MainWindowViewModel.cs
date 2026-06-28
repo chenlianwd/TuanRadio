@@ -554,37 +554,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         return await _djService.RecommendNextTrackAsync(current);
     }
 
-    private static bool IsSameTrack(Track? left, Track? right)
-    {
-        if (ReferenceEquals(left, right))
-            return true;
-        if (left == null || right == null)
-            return false;
-        if (!string.IsNullOrWhiteSpace(left.SourceId) && left.SourceId == right.SourceId)
-            return true;
-        if (!string.IsNullOrWhiteSpace(left.FilePath) && left.FilePath == right.FilePath)
-            return true;
-        return !string.IsNullOrWhiteSpace(left.Id) && left.Id == right.Id;
-    }
+    private static bool IsSameTrack(Track? left, Track? right) => TrackComparer.IsSameTrack(left, right);
 
-    private static bool IsSameTrackIdentity(Track? left, Track? right)
-    {
-        if (ReferenceEquals(left, right))
-            return true;
-        if (left == null || right == null)
-            return false;
-        // SourceId is the stable identity for online tracks; URL may change on refresh.
-        if (!string.IsNullOrWhiteSpace(left.SourceId) && !string.IsNullOrWhiteSpace(right.SourceId) &&
-            left.SourceId == right.SourceId)
-            return true;
-        // Fall back to file path for local tracks.
-        if (!string.IsNullOrWhiteSpace(left.FilePath) && !string.IsNullOrWhiteSpace(right.FilePath) &&
-            left.FilePath == right.FilePath)
-            return true;
-        if (!string.IsNullOrWhiteSpace(left.Id) && !string.IsNullOrWhiteSpace(right.Id) && left.Id == right.Id)
-            return true;
-        return false;
-    }
+    private static bool IsSameTrackIdentity(Track? left, Track? right) => TrackComparer.IsSameTrackIdentity(left, right);
 
     private static string StripDjControlTags(string text)
     {
@@ -648,6 +620,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlayerVM?.Dispose();
         ChatVM?.Dispose();
         SpectrumVM?.Dispose();
+        PlaylistVM?.Dispose();
+        SettingsVM?.Dispose();
         _ttsLock.Dispose();
     }
 }
