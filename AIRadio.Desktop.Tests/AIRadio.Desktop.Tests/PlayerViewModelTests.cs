@@ -38,9 +38,9 @@ public class PlayerViewModelTests
         try
         {
             vm.StartSeek();
-            // _isDragging should be true, DisplaySeconds won't update from position
             vm.EndSeek(100.0);
-            // _isDragging should be false again
+            // _isDragging is private; this test verifies StartSeek/EndSeek don't throw.
+            // Position-related behavior is covered by AudioService integration.
         }
         finally
         {
