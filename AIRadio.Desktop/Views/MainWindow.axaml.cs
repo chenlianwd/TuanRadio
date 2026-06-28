@@ -372,25 +372,7 @@ public partial class MainWindow : Window, IDisposable
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel == null) return;
 
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "选择音频文件",
-            AllowMultiple = true,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("音频文件")
-                {
-                    Patterns = ["*.mp3", "*.flac", "*.wav", "*.ogg", "*.m4a", "*.wma", "*.aac"]
-                }
-            ]
-        });
-
-        var paths = files
-            .Select(f => f.TryGetLocalPath())
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => p!)
-            .ToArray();
-
+        var paths = await FilePickerHelper.PickAudioFilesAsync(topLevel);
         if (paths.Length == 0) return;
 
         vm.PlaylistVM.AddFiles(paths);

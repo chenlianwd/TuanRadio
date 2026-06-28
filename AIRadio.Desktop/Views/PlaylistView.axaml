@@ -35,7 +35,7 @@
                    Foreground="#FFFFC86B" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"/>
 
         <!-- Search results -->
-        <ListBox Grid.Row="3" ItemsSource="{Binding SearchResults}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}" SelectionMode="Single" Background="Transparent">
+        <ListBox Grid.Row="3" ItemsSource="{Binding SearchResults}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}" Background="Transparent">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <Border Padding="10,8" Margin="0,1" Background="#FF1C1C1C" CornerRadius="6">
@@ -55,7 +55,7 @@
         </ListBox>
 
         <!-- Favorites -->
-        <ListBox Grid.Row="3" ItemsSource="{Binding Favorites}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}" SelectionMode="Single" Background="Transparent">
+        <ListBox Grid.Row="3" ItemsSource="{Binding Favorites}" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}" Background="Transparent">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <Border Padding="8,6" Margin="0,1" Background="#FF1C1C1C" CornerRadius="6">

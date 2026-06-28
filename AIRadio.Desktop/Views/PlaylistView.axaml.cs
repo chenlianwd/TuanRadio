@@ -36,22 +36,10 @@ public partial class PlaylistView : UserControl
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel == null) return;
 
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var paths = await FilePickerHelper.PickAudioFilesAsync(topLevel);
+        if (paths.Length > 0)
         {
-            Title = "选择音频文件",
-            AllowMultiple = true,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("音频文件")
-                {
-                    Patterns = ["*.mp3", "*.flac", "*.wav", "*.ogg", "*.m4a", "*.wma", "*.aac"]
-                }
-            ]
-        });
-
-        if (files.Count > 0)
-        {
-            vm.AddFiles(files.Select(f => f.TryGetLocalPath()!).Where(p => p != null).ToArray());
+            vm.AddFiles(paths);
         }
     }
 
