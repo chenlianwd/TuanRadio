@@ -30,3 +30,6 @@ Desktop.ini
 .idea/
 *.swp
 *~
+
+# OpenAI Codex CLI
+.codex/
