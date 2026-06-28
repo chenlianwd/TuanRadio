@@ -432,7 +432,8 @@
                 <Border x:Name="InputDeck" Grid.Row="5" Background="#E91B1B2A" Padding="22,10">
                     <Grid ColumnDefinitions="*,56,50" ColumnSpacing="9">
                         <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
-                                 Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown"/>
+                                 Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown"
+                                 TabIndex="10"/>
                         <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
                                 Background="#33262835"
                                 PointerPressed="OnMicPointerPressed"

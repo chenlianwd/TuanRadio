@@ -278,4 +278,17 @@ public class PlaylistViewModelTests
         Assert.NotEmpty(vm.Tracks);
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Once);
     }
+
+    [Fact]
+    public async Task LoadAsync_MalformedJson_DoesNotThrow()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        await File.WriteAllTextAsync(playlistFile, "{ invalid json !!!");
+
+        var (vm, _, _) = CreateVm(playlistFile);
+
+        var ex = await Record.ExceptionAsync(() => vm.LoadAsync());
+        Assert.Null(ex);
+        Assert.Empty(vm.Tracks);
+    }
 }

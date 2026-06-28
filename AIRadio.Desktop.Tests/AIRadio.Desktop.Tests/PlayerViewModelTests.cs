@@ -78,7 +78,12 @@ public class PlayerViewModelTests
         try
         {
             service.Next();
+            Assert.NotNull(service.CurrentTrack);
+
             service.Previous();
+            Assert.NotNull(service.CurrentTrack);
+
+            Assert.Equal(2, service.Playlist.Count);
         }
         finally
         {
