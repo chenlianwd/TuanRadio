@@ -188,10 +188,10 @@
 
                         <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                     HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}" ToolTip.Tip="上一首">
+                            <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}" ToolTip.Tip="上一首" AutomationProperties.Name="Previous">
                                 <PathIcon Width="16" Height="16" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
                             </Button>
-                            <Button Width="38" Height="38" Background="#302B2E3C" Command="{Binding PlayerVM.PlayCommand}" ToolTip.Tip="播放/暂停">
+                            <Button Width="38" Height="38" Background="#302B2E3C" Command="{Binding PlayerVM.PlayCommand}" ToolTip.Tip="播放/暂停" AutomationProperties.Name="Play/Pause">
                                 <Grid>
                                     <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
                                               Data="M8,5 L19,12 L8,19 Z"/>
@@ -199,7 +199,7 @@
                                               Data="M7,5 L10,5 L10,19 L7,19 Z M14,5 L17,5 L17,19 L14,19 Z"/>
                                 </Grid>
                             </Button>
-                            <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首">
+                            <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首" AutomationProperties.Name="Next">
                                 <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                             </Button>
                             <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}" ToolTip.Tip="循环模式">
