@@ -32,6 +32,8 @@ public class ChatViewModelTests
 
         var searchMock = new Mock<IMusicSearchService>();
         var sttMock = new Mock<ISttService>();
+        sttMock.Setup(x => x.TranscribeAsync(It.IsAny<string>()))
+            .ReturnsAsync("测试语音");
 
         var vm = new ChatViewModel(djMock.Object, audioMock.Object, searchMock.Object, sttMock.Object);
         return (vm, djMock, audioMock, searchMock);

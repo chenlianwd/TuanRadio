@@ -788,7 +788,7 @@ public class AudioService : IAudioService, IDisposable
             _ttsWasPlayingWhenMusicPaused = false;
         }
 
-        try { output?.Stop(); } catch { }
+        try { output?.Stop(); } catch { } // Best-effort: may throw if device disconnected
         output?.Dispose();
         reader?.Dispose();
         if (ttsFile != null)

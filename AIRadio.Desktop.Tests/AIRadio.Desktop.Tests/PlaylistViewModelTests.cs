@@ -33,6 +33,8 @@ public class PlaylistViewModelTests
         return (vm, audioMock, searchMock);
     }
 
+    // Temp directories are created per-test and not cleaned up (M45).
+    // OS temp cleanup handles them; for CI, consider adding IDisposable with cleanup.
     private static string CreateTempPlaylistFile()
     {
         var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
