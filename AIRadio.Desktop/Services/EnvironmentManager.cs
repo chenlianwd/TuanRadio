@@ -63,6 +63,7 @@ public static class EnvironmentManager
     {
         Directory.CreateDirectory(NodeDir);
 
+        // TODO: Verify SHA256 hash after download to ensure integrity
         var url = "https://nodejs.org/dist/v20.18.3/node-v20.18.3-win-x64.zip";
         var zipPath = Path.Combine(NodeDir, "node.zip");
 

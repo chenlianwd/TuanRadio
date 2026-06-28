@@ -11,12 +11,14 @@ public class MusicApiServer : IDisposable
 {
     private Process? _process;
     private readonly int _port;
+    private const int DefaultPort = 37250;
+    private const int MaxStartupRetries = 30;
     private readonly string _serverDir;
 
     public int Port => _port;
     public bool IsRunning => _process is { HasExited: false };
 
-    public MusicApiServer(int port = 37250)
+    public MusicApiServer(int port = DefaultPort)
     {
         _port = port;
         _serverDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server");
@@ -79,7 +81,7 @@ public class MusicApiServer : IDisposable
 
             // Wait for server to be ready
             using var http = new HttpClient();
-            for (int i = 0; i < 30; i++)
+            for (int i = 0; i < MaxStartupRetries; i++)
             {
                 try
                 {

@@ -360,11 +360,6 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void OnSearchTextChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
-    {
-        // Triggers WhenAnyValue in the debounced subscription in DataContextChanged
-    }
-
     private async void OnImportFiles(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not ViewModels.MainWindowViewModel vm) return;

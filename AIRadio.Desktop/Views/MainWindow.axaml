@@ -69,14 +69,16 @@
                     <Button Width="30" Height="24" Padding="0" BorderThickness="0"
                             Background="#00000000"
                             Foreground="#FF8A8A96" Click="OnMinimizeClicked"
-                            ToolTip.Tip="Minimize">
+                            ToolTip.Tip="Minimize" AutomationProperties.Name="Minimize"
+                            TabIndex="1">
                         <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FF8A8A96" StrokeThickness="2"
                               Data="M5 15 L19 15" Fill="Transparent" StrokeLineCap="Round"/>
                     </Button>
                     <Button Width="30" Height="24" Padding="0" BorderThickness="0"
                             Background="#00000000"
                             Foreground="#FF6E6E80" Click="OnCloseClicked"
-                            ToolTip.Tip="Close">
+                            ToolTip.Tip="Close" AutomationProperties.Name="Close"
+                            TabIndex="2">
                         <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FF6E6E80" StrokeThickness="2"
                               Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
                     </Button>
@@ -153,12 +155,12 @@
                                             HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                             Height="118" Margin="0,0,18,0"/>
                         <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
-                                <TextBlock x:Name="ClockDisplay" Text="21:11" FontSize="56" FontWeight="700"
+                                <TextBlock x:Name="ClockDisplay" Text="--:--" FontSize="56" FontWeight="700"
                                            FontFamily="Consolas" Foreground="#FFFFFFFF"
                                            HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="DayDisplay" Text="Monday" FontSize="13" FontFamily="Consolas"
+                            <TextBlock x:Name="DayDisplay" Text="" FontSize="13" FontFamily="Consolas"
                                        Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="DateDisplay" Text="20-APR-2026" FontSize="10" FontFamily="Consolas"
+                            <TextBlock x:Name="DateDisplay" Text="" FontSize="10" FontFamily="Consolas"
                                        Foreground="#FF858594" HorizontalAlignment="Center"/>
                         </StackPanel>
                         <local:SpectrumView Grid.Column="2" DataContext="{Binding SpectrumVM}"
@@ -431,13 +433,15 @@
                                 PointerPressed="OnMicPointerPressed"
                                 PointerReleased="OnMicPointerReleased"
                                 PointerCaptureLost="OnMicPointerCaptureLost"
-                                ToolTip.Tip="Hold to talk">
+                                ToolTip.Tip="Hold to talk"
+                                AutomationProperties.Name="Microphone">
                             <Path Width="18" Height="18" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
                         </Button>
                         <Button Grid.Column="2" FontSize="11"
                                 Background="#FF7F7896" Foreground="#FF111118"
                                 Command="{Binding ChatVM.SendMessageCommand}"
-                                ToolTip.Tip="Send">
+                                ToolTip.Tip="Send"
+                                AutomationProperties.Name="Send">
                             <Path Width="18" Height="18" Stretch="Uniform" Stroke="#FF111118" StrokeThickness="2.2" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
                         </Button>
                     </Grid>
@@ -498,7 +502,7 @@
                               IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
                             <TextBox Text="{Binding PlaylistVM.SearchText, Mode=TwoWay}"
                                      Watermark="Search songs..." KeyDown="OnSearchKeyDown"
-                                     TextChanged="OnSearchTextChanged"/>
+                                     />
                             <Button Grid.Column="1" Content="{Binding PlaylistVM.SearchButtonText}"
                                     IsEnabled="{Binding PlaylistVM.IsSearching, Converter={StaticResource InverseBoolConverter}}"
                                     Command="{Binding PlaylistVM.SearchCommand}"/>

@@ -204,10 +204,11 @@ Response rules:
     }
 
     private static readonly string[] ValidEmotions = ["happy", "sad", "calm", "neutral", "angry", "surprised"];
+    private static readonly string EmotionPattern = $@"\[({string.Join("|", ValidEmotions)})\]";
 
     private static string DetectEmotion(string text)
     {
-        var match = Regex.Match(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]", RegexOptions.IgnoreCase);
+        var match = Regex.Match(text, EmotionPattern, RegexOptions.IgnoreCase);
         if (match.Success)
         {
             var emotion = match.Groups[1].Value.ToLowerInvariant();

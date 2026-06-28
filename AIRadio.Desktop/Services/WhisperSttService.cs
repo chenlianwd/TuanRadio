@@ -62,6 +62,7 @@ public class WhisperSttService : ISttService, IDisposable
 
         try
         {
+            // Language hardcoded to Chinese; TODO: make configurable via settings
             using var processor = _factory.CreateBuilder()
                 .WithLanguage("zh")
                 .WithNoSpeechThreshold(0.3f)

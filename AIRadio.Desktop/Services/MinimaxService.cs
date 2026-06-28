@@ -14,6 +14,8 @@ namespace AIRadio.Desktop.Services;
 public class MinimaxService : IMinimaxService
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+    private const string ChatModel = "MiniMax-M2.5";
+    private const string TtsModel = "speech-2.8-hd";
     private readonly HttpClient _httpClient;
     private string _apiKey = string.Empty;
 
@@ -40,7 +42,7 @@ public class MinimaxService : IMinimaxService
 
             var requestBody = new
             {
-                model = "MiniMax-M2.5",
+                model = ChatModel,
                 messages,
                 max_tokens = 200,
                 temperature = 1.0
@@ -79,7 +81,7 @@ public class MinimaxService : IMinimaxService
         {
             var requestBody = new
             {
-                model = "speech-2.8-hd",
+                model = TtsModel,
                 text,
                 stream = false,
                 language_boost = "Chinese",
