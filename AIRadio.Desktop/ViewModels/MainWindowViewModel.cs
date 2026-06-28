@@ -255,6 +255,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    // Parameterless ctor for designer/testing only; production uses DI with shared HttpClient singleton
     public MainWindowViewModel() : this(
         new AudioService(),
         new DJService(new MinimaxService(new System.Net.Http.HttpClient())),

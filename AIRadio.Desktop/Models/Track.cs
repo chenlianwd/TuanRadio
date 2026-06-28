@@ -3,6 +3,9 @@ using System.Collections.Generic;
 
 namespace AIRadio.Desktop.Models;
 
+// Track is intentionally mutable — instances are owned by ViewModels and mutated in-place
+// for performance (e.g., IsFavorite toggle, FilePath URL refresh). Converting to a record
+// or immutable type would require significant refactoring of PlaylistViewModel and AudioService.
 public class Track
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
