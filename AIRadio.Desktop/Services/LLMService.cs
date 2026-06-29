@@ -21,6 +21,7 @@ public class LLMService : ILLMService
         ["openai"] = ("https://api.openai.com/v1", "gpt-4o-mini"),
         ["deepseek"] = ("https://api.deepseek.com/v1", "deepseek-chat"),
         ["claude"] = ("https://api.anthropic.com/v1", "claude-3-haiku-20240307"),
+        ["openrouter"] = ("https://openrouter.ai/api/v1", "anthropic/claude-3-haiku"),
         ["ollama"] = ("http://localhost:11434/v1", "llama3")
     };
 
@@ -38,7 +39,7 @@ public class LLMService : ILLMService
     {
         _config = config;
 
-        if (Providers.TryGetValue(config.Provider.ToLowerInvariant(), out var provider))
+        if (Providers.TryGetValue((config.Provider ?? "none").ToLowerInvariant(), out var provider))
         {
             _baseUrl = string.IsNullOrWhiteSpace(config.BaseUrl) ? provider.BaseUrl : config.BaseUrl;
             _model = string.IsNullOrWhiteSpace(config.Model) ? provider.DefaultModel : config.Model;
@@ -52,7 +53,7 @@ public class LLMService : ILLMService
 
     public async Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
     {
-        if (_config.Provider == "none" || string.IsNullOrWhiteSpace(_config.ApiKey))
+        if (_config.Provider is null or "none" || string.IsNullOrWhiteSpace(_config.ApiKey))
             return "请先在设置中配置 AI 服务。";
 
         try
@@ -69,7 +70,7 @@ public class LLMService : ILLMService
 
     public async Task<string> GenerateTrackIntroductionAsync(Track current, Track next)
     {
-        if (_config.Provider == "none" || string.IsNullOrWhiteSpace(_config.ApiKey))
+        if (_config.Provider is null or "none" || string.IsNullOrWhiteSpace(_config.ApiKey))
             return $"接下来播放 {next.Title}。";
 
         try
@@ -116,41 +117,41 @@ public class LLMService : ILLMService
 
     private async Task<string> CallChatCompletionAsync(List<object> messages)
     {
-        var requestBody = new
-        {
-            model = _model,
-            messages,
-            max_tokens = 300,
-            temperature = 0.8
-        };
-
-        var json = JsonSerializer.Serialize(requestBody);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/chat/completions")
-        {
-            Content = content
-        };
-
-        // Handle different auth header formats
+        // Claude uses a different API format
         if (_config.Provider == "claude")
-        {
-            request.Headers.Add("x-api-key", _config.ApiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
-        }
-        else
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ApiKey);
-        }
+            return await CallClaudeApiAsync(messages);
 
-        var response = await _httpClient.SendAsync(request);
-        var responseJson = await response.Content.ReadAsStringAsync();
+        var baseUrl = _baseUrl;
+        var model = _model;
+        var apiKey = _config.ApiKey;
 
-        if (!response.IsSuccessStatusCode)
+        return await RetryPolicy.ExecuteAsync(async () =>
         {
-            Log.Warning("LLM API error {StatusCode}: {Body}", response.StatusCode, responseJson);
-            throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
-        }
+            var requestBody = new
+            {
+                model,
+                messages,
+                max_tokens = 300,
+                temperature = 0.8
+            };
+
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
+            {
+                Content = content
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            var response = await _httpClient.SendAsync(request);
+            var responseJson = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.Warning("LLM API error {StatusCode}: {Body}", response.StatusCode, responseJson);
+                throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
+            }
 
         using var doc = JsonDocument.Parse(responseJson);
         var root = doc.RootElement;
@@ -163,6 +164,59 @@ public class LLMService : ILLMService
             return msgContent.GetString() ?? "";
         }
 
+        Log.Warning("Unrecognized LLM response format");
+        return "";
+        });
+    }
+
+    private async Task<string> CallClaudeApiAsync(List<object> messages)
+    {
+        // Extract system message and convert to Claude format
+        string systemPrompt = "";
+        var claudeMessages = new List<object>();
+        foreach (var msg in messages)
+        {
+            var msgDict = JsonSerializer.Deserialize<Dictionary<string, object>>(JsonSerializer.Serialize(msg));
+            if (msgDict == null) continue;
+            var role = msgDict.GetValueOrDefault("role")?.ToString() ?? "user";
+            var msgContent = msgDict.GetValueOrDefault("content")?.ToString() ?? "";
+            if (role == "system")
+                systemPrompt = msgContent;
+            else
+                claudeMessages.Add(new { role, content = msgContent });
+        }
+
+        var model = _model;
+        var requestBody = new
+        {
+            model,
+            system = systemPrompt,
+            messages = claudeMessages,
+            max_tokens = 300
+        };
+
+        var json = JsonSerializer.Serialize(requestBody);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/messages")
+        {
+            Content = content
+        };
+        request.Headers.Add("x-api-key", _config.ApiKey);
+        request.Headers.Add("anthropic-version", "2023-06-01");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseJson = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            Log.Warning("Claude API error {StatusCode}: {Body}", response.StatusCode, responseJson);
+            throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
+        }
+
+        using var doc = JsonDocument.Parse(responseJson);
+        var root = doc.RootElement;
+
         // Claude format: content[0].text
         if (root.TryGetProperty("content", out var contentArr) && contentArr.GetArrayLength() > 0 &&
             contentArr[0].TryGetProperty("text", out var text))
@@ -170,6 +224,7 @@ public class LLMService : ILLMService
             return text.GetString() ?? "";
         }
 
+        Log.Warning("Unrecognized Claude response format");
         return "";
     }
 }

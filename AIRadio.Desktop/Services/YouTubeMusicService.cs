@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using Serilog;
@@ -133,10 +134,31 @@ public class YouTubeMusicService : IMusicSearchService
             using var process = Process.Start(psi);
             if (process == null) return null;
 
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
 
-            return process.ExitCode == 0 ? output : null;
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                Log.Warning("yt-dlp timed out after 30s");
+                return null;
+            }
+
+            var output = await outputTask;
+            var stderr = await errorTask;
+
+            if (process.ExitCode != 0)
+            {
+                Log.Warning("yt-dlp exited with code {Code}: {Error}", process.ExitCode, stderr);
+                return null;
+            }
+
+            return output;
         }
         catch (Exception ex)
         {
@@ -146,5 +168,10 @@ public class YouTubeMusicService : IMusicSearchService
     }
 
     private static string EscapeArg(string arg)
-        => arg.Contains(' ') ? $"\"{arg}\"" : arg;
+    {
+        // Strip control characters and escape embedded double quotes for safe process arguments
+        var sanitized = arg.Replace("\r", "").Replace("\n", "").Replace("\0", "");
+        var escaped = sanitized.Replace("\"", "\"\"");
+        return $"\"{escaped}\"";
+    }
 }
