@@ -139,7 +139,15 @@ public class EdgeTtsService : ITtsService, IDisposable
                     goto done;
 
                 if (result.MessageType == WebSocketMessageType.Binary)
+                {
                     msgBuffer.Write(buffer, 0, result.Count);
+                }
+                else if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var textMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    if (textMsg.Contains("turn.end"))
+                        break; // Audio stream complete
+                }
             } while (!result.EndOfMessage);
 
             // Parse the complete binary message: skip 2-byte header length + header

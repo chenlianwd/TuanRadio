@@ -26,9 +26,9 @@ public class LLMService : ILLMService
     };
 
     private readonly HttpClient _httpClient;
-    private LLMConfig _config = new();
-    private string _baseUrl = "https://api.openai.com/v1";
-    private string _model = "gpt-4o-mini";
+    private volatile LLMConfig _config = new();
+    private volatile string _baseUrl = "https://api.openai.com/v1";
+    private volatile string _model = "gpt-4o-mini";
 
     public LLMService(HttpClient httpClient)
     {
@@ -104,11 +104,14 @@ public class LLMService : ILLMService
 
         foreach (var msg in history.TakeLast(20))
         {
-            messages.Add(new
+            var role = msg.Role switch
             {
-                role = msg.Role == MessageRole.User ? "user" : "assistant",
-                content = msg.Content
-            });
+                MessageRole.User => "user",
+                MessageRole.Assistant => "assistant",
+                MessageRole.System => "system",
+                _ => "assistant"
+            };
+            messages.Add(new { role, content = msg.Content });
         }
 
         messages.Add(new { role = "user", content = userMessage });
@@ -164,7 +167,7 @@ public class LLMService : ILLMService
             return msgContent.GetString() ?? "";
         }
 
-        Log.Warning("Unrecognized LLM response format");
+        Log.Warning("Unrecognized LLM response format: {Response}", responseJson[..Math.Min(200, responseJson.Length)]);
         return "";
         });
     }
