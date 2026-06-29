@@ -26,10 +26,18 @@ public class EdgeTtsService : ITtsService, IDisposable
     {
         ["happy"] = "cheerful",
         ["sad"] = "sad",
-        ["calm"] = "calm",
+        ["calm"] = "gentle",
         ["angry"] = "angry",
         ["neutral"] = "chat",
-        ["surprised"] = "excited"
+        ["surprised"] = "excited",
+        ["affectionate"] = "affectionate",
+        ["lyrical"] = "lyrical",
+        ["embarrassed"] = "embarrassed",
+        ["depressed"] = "depressed",
+        ["envious"] = "envious",
+        ["fearful"] = "fearful",
+        ["gentle"] = "gentle",
+        ["serious"] = "serious"
     };
 
     private readonly HttpClient _httpClient;
