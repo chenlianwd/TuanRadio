@@ -29,13 +29,14 @@ public class YouTubeMusicService : IMusicSearchService
     {
         try
         {
-            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --print id --print title --print duration_string --print channel --no-download --no-warnings --ignore-errors";
+            // Use --dump-json for structured output (one JSON object per line)
+            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings --ignore-errors";
             var output = await RunYtdlpAsync(args);
 
             if (string.IsNullOrWhiteSpace(output))
                 return new List<OnlineTrack>();
 
-            return ParseSearchResults(output);
+            return ParseSearchResultsJson(output);
         }
         catch (Exception ex)
         {
@@ -71,50 +72,42 @@ public class YouTubeMusicService : IMusicSearchService
         }
     }
 
-    private List<OnlineTrack> ParseSearchResults(string output)
+    private List<OnlineTrack> ParseSearchResultsJson(string output)
     {
         var tracks = new List<OnlineTrack>();
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
-        // Each result has 4 lines: id, title, duration, channel
-        for (int i = 0; i + 3 < lines.Length; i += 4)
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var id = lines[i].Trim();
-            var title = lines[i + 1].Trim();
-            var durationStr = lines[i + 2].Trim();
-            var channel = lines[i + 3].Trim();
-
-            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title))
-                continue;
-
-            var durationMs = ParseDuration(durationStr);
-
-            tracks.Add(new OnlineTrack
+            try
             {
-                Id = $"youtube:{id}",
-                Title = title,
-                Artist = channel,
-                Source = "YouTube",
-                DurationMs = durationMs
-            });
+                using var doc = JsonDocument.Parse(line.Trim());
+                var root = doc.RootElement;
+
+                var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                var title = root.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null;
+                var channel = root.TryGetProperty("channel", out var chEl) ? chEl.GetString() : null;
+                var duration = root.TryGetProperty("duration", out var durEl) ? durEl.GetInt64() : 0;
+
+                if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title))
+                    continue;
+
+                tracks.Add(new OnlineTrack
+                {
+                    Id = $"youtube:{id}",
+                    Title = title,
+                    Artist = channel ?? "",
+                    Source = "YouTube",
+                    DurationMs = duration * 1000
+                });
+            }
+            catch (JsonException)
+            {
+                // Skip malformed lines
+                continue;
+            }
         }
 
         return tracks;
-    }
-
-    private static long ParseDuration(string durationStr)
-    {
-        // Format: HH:MM:SS or MM:SS
-        try
-        {
-            var parts = durationStr.Split(':').Select(int.Parse).ToArray();
-            if (parts.Length == 3)
-                return (long)(new TimeSpan(parts[0], parts[1], parts[2])).TotalMilliseconds;
-            if (parts.Length == 2)
-                return (long)(new TimeSpan(0, parts[0], parts[1])).TotalMilliseconds;
-        }
-        catch { }
-        return 0;
     }
 
     private async Task<string?> RunYtdlpAsync(string args)
