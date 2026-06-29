@@ -15,6 +15,11 @@ public class WhisperSttService : ISttService, IDisposable
     private readonly string _modelPath;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
+    /// <summary>
+    /// Whisper 语言代码，如 "zh"、"en"。默认 "zh"。
+    /// </summary>
+    public string Language { get; set; } = "zh";
+
     public WhisperSttService()
     {
         _modelDir = Path.Combine(
@@ -62,9 +67,8 @@ public class WhisperSttService : ISttService, IDisposable
 
         try
         {
-            // Language hardcoded to Chinese; TODO: make configurable via settings
             using var processor = _factory.CreateBuilder()
-                .WithLanguage("zh")
+                .WithLanguage(Language)
                 .WithNoSpeechThreshold(0.3f)
                 .Build();
 

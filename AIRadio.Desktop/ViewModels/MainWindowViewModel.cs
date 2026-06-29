@@ -21,6 +21,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ILLMService _llmService;
     private readonly IMusicSearchService _musicSearchService;
     private readonly IRecommendationService _recommendationService;
+    private readonly ISttService _sttService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
     private readonly IDisposable _darkModePersistSub;
@@ -77,6 +78,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         _audioService = audioService;
         _djService = djService;
+        _sttService = sttService;
         _llmService = llmService;
         _musicSearchService = musicSearchService;
         _recommendationService = recommendationService ?? new RecommendationService(llmService, musicSearchService);
@@ -164,6 +166,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(_ => SwitchCharacter(SelectedCharacter));
         _speechMixSub = SettingsVM.WhenAnyValue(x => x.SpeechMixMode)
             .Subscribe(mode => _audioService.SetSpeechMixMode(mode));
+
+        // Sync STT language with settings
+        if (_sttService is WhisperSttService whisper)
+        {
+            whisper.Language = SettingsVM.SelectedLanguage == "en" ? "en" : "zh";
+            SettingsVM.WhenAnyValue(x => x.SelectedLanguage)
+                .Subscribe(lang => whisper.Language = lang == "en" ? "en" : "zh");
+        }
 
         _trackEndedSub = _audioService.TrackEnded
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -420,9 +430,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             if (ShouldUseFreshRadioRecommendations())
-                await PlayWithFreshRecommendation(current);
+            {
+                var success = await PlayWithFreshRecommendation(current);
+                if (!success)
+                    await PlayWithPlaylistRotation(current);
+            }
             else
+            {
                 await PlayWithPlaylistRotation(current);
+            }
         }
         catch (Exception ex)
         {
@@ -434,15 +450,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async System.Threading.Tasks.Task PlayWithFreshRecommendation(Track current)
+    private async System.Threading.Tasks.Task<bool> PlayWithFreshRecommendation(Track current)
     {
         var recommended = await GetRecommendedTrackAsync(current);
         if (recommended == null)
         {
-            ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en"
-                ? "Couldn't find a song to play next. The station needs more tracks to keep going."
-                : "暂时没找到下一首可播放推荐。你可以搜一首歌，或者让我继续播放现有歌单。");
-            return;
+            Log.Information("Fresh recommendation returned null, falling back to playlist rotation");
+            return false;
         }
 
         if (current != null && IsSameTrackIdentity(recommended, current))
@@ -456,7 +470,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.AddExternalTrack(recommended);
 
         var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
-        if (!IsSameTrack(_audioService.CurrentTrack, current)) return;
+        if (!IsSameTrack(_audioService.CurrentTrack, current)) return true;
 
         ChatVM.AddAssistantMessage(script.Text);
         DjVisualCue?.Invoke(script.Expression, script.Motion);
@@ -465,6 +479,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrackIdentity(t, recommended));
         if (playIndex >= 0 && IsSameTrack(_audioService.CurrentTrack, current))
             _audioService.PlayAtIndex(playIndex);
+        return true;
     }
 
     private async System.Threading.Tasks.Task PlayWithPlaylistRotation(Track current)
