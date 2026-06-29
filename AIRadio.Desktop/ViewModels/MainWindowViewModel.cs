@@ -98,6 +98,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
             audioSvc.SetNextCallback(async () =>
             {
+                _audioService.StopTts(); // Cancel TTS when user skips
                 var current = _audioService.CurrentTrack;
                 AttachRecommendationContext(current);
                 var recommended = await GetRecommendedTrackAsync(current);
@@ -107,6 +108,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             });
             audioSvc.SetPreviousCallback(async () =>
             {
+                _audioService.StopTts(); // Cancel TTS when user skips
                 var current = _audioService.CurrentTrack;
                 AttachRecommendationContext(current);
                 var recommended = await GetRecommendedTrackAsync(current);
@@ -427,6 +429,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (Interlocked.Exchange(ref _autoRadioAdvancing, 1) == 1) return;
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
+        _audioService.StopTts(); // Cancel any ongoing TTS before advancing
         try
         {
             if (ShouldUseFreshRadioRecommendations())

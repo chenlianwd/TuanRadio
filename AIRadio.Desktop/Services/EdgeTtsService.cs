@@ -44,6 +44,12 @@ public class EdgeTtsService : ITtsService, IDisposable
     private IReadOnlyList<VoiceOption>? _voiceCache;
     private readonly SemaphoreSlim _voiceCacheLock = new(1, 1);
 
+    // Persistent WebSocket connection for TTS synthesis
+    private ClientWebSocket? _ws;
+    private readonly SemaphoreSlim _wsLock = new(1, 1);
+    private DateTime _wsCreatedAt = DateTime.MinValue;
+    private static readonly TimeSpan WsMaxAge = TimeSpan.FromMinutes(5);
+
     public EdgeTtsService(HttpClient httpClient)
     {
         _httpClient = httpClient;
@@ -110,66 +116,94 @@ public class EdgeTtsService : ITtsService, IDisposable
         }
     }
 
-    private async Task<byte[]> SynthesizeViaWebSocketAsync(string text, string voice, string style)
+    private async Task<ClientWebSocket> GetOrCreateWebSocketAsync(CancellationToken ct)
     {
+        if (_ws != null && _ws.State == WebSocketState.Open &&
+            DateTime.UtcNow - _wsCreatedAt < WsMaxAge)
+            return _ws;
+
+        _ws?.Dispose();
         var connectionId = Guid.NewGuid().ToString("N");
         var url = string.Format(WssUrl, connectionId);
-
-        using var ws = new ClientWebSocket();
-        using var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold");
-        await ws.ConnectAsync(new Uri(url), connectCts.Token);
+        await ws.ConnectAsync(new Uri(url), ct);
+        _ws = ws;
+        _wsCreatedAt = DateTime.UtcNow;
+        return ws;
+    }
 
-        // Send speech config
-        var configMsg = BuildConfigMessage(voice, style);
-        await SendWebSocketMessageAsync(ws, configMsg, connectCts.Token);
-
-        // Send SSML
-        var ssml = BuildSsml(text, voice, style);
-        var ssmlMsg = BuildSsmlMessage(ssml);
-        await SendWebSocketMessageAsync(ws, ssmlMsg, connectCts.Token);
-
-        // Read audio data
-        using var audioStream = new MemoryStream();
-        var buffer = new byte[8192];
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-
-        while (ws.State == WebSocketState.Open)
+    private async Task<byte[]> SynthesizeViaWebSocketAsync(string text, string voice, string style)
+    {
+        await _wsLock.WaitAsync();
+        try
         {
-            // Accumulate binary frames until EndOfMessage
-            using var msgBuffer = new MemoryStream();
-            WebSocketReceiveResult result;
-            do
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var ws = await GetOrCreateWebSocketAsync(cts.Token);
+
+            // Send speech config
+            var configMsg = BuildConfigMessage(voice, style);
+            await SendWebSocketMessageAsync(ws, configMsg, cts.Token);
+
+            // Send SSML
+            var ssml = BuildSsml(text, voice, style);
+            var ssmlMsg = BuildSsmlMessage(ssml);
+            await SendWebSocketMessageAsync(ws, ssmlMsg, cts.Token);
+
+            // Read audio data
+            using var audioStream = new MemoryStream();
+            var buffer = new byte[8192];
+
+            while (ws.State == WebSocketState.Open)
             {
-                result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
-
-                if (result.MessageType == WebSocketMessageType.Close)
-                    goto done;
-
-                if (result.MessageType == WebSocketMessageType.Binary)
+                using var msgBuffer = new MemoryStream();
+                WebSocketReceiveResult result;
+                do
                 {
-                    msgBuffer.Write(buffer, 0, result.Count);
-                }
-                else if (result.MessageType == WebSocketMessageType.Text)
-                {
-                    var textMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    if (textMsg.Contains("turn.end"))
-                        break; // Audio stream complete
-                }
-            } while (!result.EndOfMessage);
+                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
 
-            // Parse the complete binary message: skip 2-byte header length + header
-            var msgBytes = msgBuffer.ToArray();
-            if (msgBytes.Length > 2)
-            {
-                var headerLen = (msgBytes[0] << 8) | msgBytes[1];
-                if (msgBytes.Length > headerLen + 2)
-                    audioStream.Write(msgBytes, headerLen + 2, msgBytes.Length - headerLen - 2);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        goto done;
+
+                    if (result.MessageType == WebSocketMessageType.Binary)
+                    {
+                        msgBuffer.Write(buffer, 0, result.Count);
+                    }
+                    else if (result.MessageType == WebSocketMessageType.Text)
+                    {
+                        var textMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        if (textMsg.Contains("turn.end"))
+                            goto turnEnd;
+                    }
+                } while (!result.EndOfMessage);
+
+                var msgBytes = msgBuffer.ToArray();
+                if (msgBytes.Length > 2)
+                {
+                    var headerLen = (msgBytes[0] << 8) | msgBytes[1];
+                    if (msgBytes.Length > headerLen + 2)
+                        audioStream.Write(msgBytes, headerLen + 2, msgBytes.Length - headerLen - 2);
+                }
+                continue;
+
+                turnEnd:
+                // Consume remaining frames for this turn
+                break;
             }
+            done:
+            return audioStream.ToArray();
         }
-        done:
-
-        return audioStream.ToArray();
+        catch (Exception)
+        {
+            // Connection broken — dispose so next call creates a new one
+            _ws?.Dispose();
+            _ws = null;
+            throw;
+        }
+        finally
+        {
+            _wsLock.Release();
+        }
     }
 
     private static string BuildConfigMessage(string voice, string style)
@@ -214,7 +248,9 @@ public class EdgeTtsService : ITtsService, IDisposable
 
     public void Dispose()
     {
-        // No persistent resources to dispose
+        _ws?.Dispose();
+        _wsLock.Dispose();
+        _voiceCacheLock.Dispose();
     }
 
     private class EdgeVoice
