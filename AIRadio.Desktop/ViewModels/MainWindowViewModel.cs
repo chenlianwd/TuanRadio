@@ -87,7 +87,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track));
-        SettingsVM = new SettingsViewModel(_llmService, _djService, secureStorage);
+        SettingsVM = new SettingsViewModel(_llmService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
         // Set URL resolver for re-fresh of online track URLs (prevents 403 from expired links)

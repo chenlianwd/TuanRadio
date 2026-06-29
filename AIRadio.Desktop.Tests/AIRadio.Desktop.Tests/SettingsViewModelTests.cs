@@ -27,7 +27,7 @@ public class SettingsViewModelTests
     [Fact]
     public void GetOverride_ReturnsStoredOverride()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
         vm.SelectedCharacter = vm.Characters.First();
 
         // Override not set yet
@@ -42,7 +42,7 @@ public class SettingsViewModelTests
     [Fact]
     public void Voices_ListContainsAllOptions()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.Equal(6, vm.Voices.Count);
         Assert.Contains(vm.Voices, v => v.Id == "male-qn-qingse");
@@ -52,7 +52,7 @@ public class SettingsViewModelTests
     [Fact]
     public void Languages_ListContainsZhAndEn()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.Equal(2, vm.Languages.Count);
         Assert.Contains(vm.Languages, l => l.Id == "zh");
@@ -62,7 +62,7 @@ public class SettingsViewModelTests
     [Fact]
     public void Characters_ListContainsPresets()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.True(vm.Characters.Count >= 6);
         Assert.Contains(vm.Characters, c => c.Id == "haru" && c.DisplayName == "Lumen");
@@ -73,7 +73,7 @@ public class SettingsViewModelTests
     [Fact]
     public void SelectedCharacter_DefaultsToFirst()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.NotNull(vm.SelectedCharacter);
         Assert.Equal("haru", vm.SelectedCharacter.Id);
@@ -82,7 +82,7 @@ public class SettingsViewModelTests
     [Fact]
     public void TtsEnabled_DefaultsToTrue()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.True(vm.TtsEnabled);
     }
@@ -90,7 +90,7 @@ public class SettingsViewModelTests
     [Fact]
     public void SelectedLanguage_DefaultsToZh()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.Equal("zh", vm.SelectedLanguage);
     }
@@ -98,7 +98,7 @@ public class SettingsViewModelTests
     [Fact]
     public void TestConnectionCommand_CanBeCreated()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
         vm.ApiKey = "";
 
         vm.TestConnectionCommand.Subscribe(_ => { });
@@ -109,7 +109,7 @@ public class SettingsViewModelTests
     [Fact]
     public async Task TestConnectionCommand_EmptyKey_SetsErrorMessage()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockDJ.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
         vm.ApiKey = "";
 
         await vm.TestConnectionCommand.Execute();

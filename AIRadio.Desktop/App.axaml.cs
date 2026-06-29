@@ -109,7 +109,7 @@ public partial class App : Application
         {
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
             var ytSource = new YouTubeMusicService(ytdlpPath);
-            return new MultiSourceMusicService(http, ytSource);
+            return new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>(), ytSource);
         });
         services.AddSingleton<IDJService>(sp =>
             new DJService(

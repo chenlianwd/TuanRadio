@@ -26,7 +26,6 @@ public class VoiceOption
 public class SettingsViewModel : ViewModelBase, IDisposable
 {
     private readonly ILLMService _llmService;
-    private readonly IDJService _djService;
     private readonly ISecureStorage _secureStorage;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
@@ -81,10 +80,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     // Notify MainWindow when character settings change so it can re-apply
     public event Action? CharacterSettingsChanged;
 
-    public SettingsViewModel(ILLMService llmService, IDJService djService, ISecureStorage secureStorage)
+    public SettingsViewModel(ILLMService llmService, ISecureStorage secureStorage)
     {
         _llmService = llmService;
-        _djService = djService;
         _secureStorage = secureStorage;
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
