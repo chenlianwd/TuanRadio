@@ -109,11 +109,24 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         _ttsErrorSub = _audioService.TtsError
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(message => SetFailureNotice(new ApiFailureInfo(
-                ApiFailureKind.InvalidResponse,
-                "语音播放失败",
-                message,
-                "可以在设置里暂时关闭语音播报，或检查系统默认音频输出设备。")));
+            .Subscribe(message =>
+            {
+                SetFailureNotice(new ApiFailureInfo(
+                    ApiFailureKind.InvalidResponse,
+                    "语音播放失败",
+                    message,
+                    "可以在设置里暂时关闭语音播报，或检查系统默认音频输出设备。"));
+
+                // TTS failed — still execute pending command so user action is not lost
+                if (_pendingCommand != null)
+                {
+                    var cmd = _pendingCommand;
+                    _pendingCommand = null;
+                    _ = ExecuteCommandAsync(cmd).ContinueWith(
+                        t => Log.Warning(t.Exception, "ExecuteCommand failed after TTS error"),
+                        TaskContinuationOptions.OnlyOnFaulted);
+                }
+            });
 
         // Listen for track end to restart listening in conversation mode
         _stateSub = _audioService.StateChanged
@@ -332,6 +345,22 @@ public class ChatViewModel : ViewModelBase, IDisposable
             {
                 AddFailureMessage("AI 回复失败", chatFailure);
                 SetFailureNotice(chatFailure);
+                return;
+            }
+
+            // LLM not configured — show setup prompt instead of raw message
+            if (response.StartsWith("请先在设置中配置"))
+            {
+                Messages.Add(new ChatMessage
+                {
+                    Role = MessageRole.System,
+                    Content = "AI 服务尚未配置。请在设置中填写 API Key 后再试。"
+                });
+                SetFailureNotice(new ApiFailureInfo(
+                    ApiFailureKind.MissingApiKey,
+                    "AI 服务未配置",
+                    "需要在设置中配置 LLM API Key 才能使用 AI 对话功能。",
+                    "打开设置页填写 API Key。"));
                 return;
             }
 
