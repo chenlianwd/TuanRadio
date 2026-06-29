@@ -156,19 +156,19 @@ public class LLMService : ILLMService
                 throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
             }
 
-        using var doc = JsonDocument.Parse(responseJson);
-        var root = doc.RootElement;
+            using var doc = JsonDocument.Parse(responseJson);
+            var root = doc.RootElement;
 
-        // OpenAI format: choices[0].message.content
-        if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0 &&
-            choices[0].TryGetProperty("message", out var message) &&
-            message.TryGetProperty("content", out var msgContent))
-        {
-            return msgContent.GetString() ?? "";
-        }
+            // OpenAI format: choices[0].message.content
+            if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("message", out var message) &&
+                message.TryGetProperty("content", out var msgContent))
+            {
+                return msgContent.GetString() ?? "";
+            }
 
-        Log.Warning("Unrecognized LLM response format: {Response}", responseJson[..Math.Min(200, responseJson.Length)]);
-        return "";
+            Log.Warning("Unrecognized LLM response format: {Response}", responseJson[..Math.Min(200, responseJson.Length)]);
+            return "";
         });
     }
 
