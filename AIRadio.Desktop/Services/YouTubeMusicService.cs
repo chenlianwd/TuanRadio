@@ -30,7 +30,7 @@ public class YouTubeMusicService : IMusicSearchService
         try
         {
             // Use --dump-json for structured output (one JSON object per line)
-            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings --ignore-errors";
+            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings";
             var output = await RunYtdlpAsync(args);
 
             if (string.IsNullOrWhiteSpace(output))
@@ -51,6 +51,15 @@ public class YouTubeMusicService : IMusicSearchService
         {
             // trackId format: "youtube:VIDEO_ID"
             var videoId = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
+
+            // Validate YouTube video ID format (11 chars, alphanumeric + _ -)
+            if (string.IsNullOrWhiteSpace(videoId) || videoId.Length > 20 ||
+                videoId.Any(c => !char.IsLetterOrDigit(c) && c != '_' && c != '-'))
+            {
+                Log.Warning("Invalid YouTube video ID: {VideoId}", videoId);
+                return null;
+            }
+
             var url = $"https://www.youtube.com/watch?v={videoId}";
 
             var args = $"-f ba --get-url --no-warnings --ignore-errors {EscapeArg(url)}";
