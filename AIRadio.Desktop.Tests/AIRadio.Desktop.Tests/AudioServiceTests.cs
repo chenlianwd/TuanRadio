@@ -121,6 +121,22 @@ public class AudioServiceTests
     }
 
     [Fact]
+    public void Volume_ReturnsConfiguredUserVolumeWithoutPlayback()
+    {
+        var svc = new AudioService();
+        try
+        {
+            svc.Volume = 0.5f;
+
+            Assert.Equal(0.5f, svc.Volume, precision: 2);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
     public void PlayAtIndex_ClampsToValidRange()
     {
         var svc = new AudioService();

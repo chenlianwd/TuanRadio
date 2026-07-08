@@ -244,6 +244,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 {
                     try
                     {
+                        if (string.IsNullOrWhiteSpace(x.Item.SourceId))
+                            return;
+
                         var url = await _musicSearchService.GetPlayUrlAsync(x.Item.SourceId);
                         if (!string.IsNullOrEmpty(url))
                             x.Track.FilePath = url;

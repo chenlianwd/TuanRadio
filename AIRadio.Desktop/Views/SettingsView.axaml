@@ -7,10 +7,17 @@
     <StackPanel Spacing="20">
         <TextBlock Text="设置" FontSize="20" FontWeight="700" Foreground="#FFFFFFFF"/>
 
-        <!-- API Key -->
+        <!-- LLM -->
         <StackPanel Spacing="6">
-            <TextBlock Text="AI 服务 API Key" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <TextBlock Text="AI 服务" FontWeight="700" Foreground="#FFFFFFFF" FontSize="13"/>
+            <ComboBox SelectedValue="{Binding SelectedProvider}"
+                      ItemsSource="{Binding LlmProviders}"
+                      SelectedValueBinding="{Binding Id}"
+                      DisplayMemberBinding="{Binding DisplayName}"
+                      HorizontalAlignment="Stretch"/>
             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="输入你的 API Key" PasswordChar="•"/>
+            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="自定义 Base URL（可选）"/>
+            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="模型名称，例如 gpt-4o-mini / deepseek-chat"/>
             <Button Command="{Binding TestConnectionCommand}"
                     Content="{Binding TestConnectionButtonText}"
                     IsEnabled="{Binding !IsTesting}"

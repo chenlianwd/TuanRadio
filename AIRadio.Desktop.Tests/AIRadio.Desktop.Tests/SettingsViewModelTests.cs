@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
@@ -22,6 +23,8 @@ public class SettingsViewModelTests
         _mockLlm = new Mock<ILLMService>();
         _mockDJ = new Mock<IDJService>();
         _mockStorage = new Mock<ISecureStorage>();
+        _mockStorage.Setup(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
     }
 
     [Fact]
@@ -93,6 +96,81 @@ public class SettingsViewModelTests
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.Equal("zh", vm.SelectedLanguage);
+    }
+
+    [Fact]
+    public void LlmSettings_DefaultToOpenAiCompatibleProfile()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+
+        Assert.Equal("openai", vm.SelectedProvider);
+        Assert.Equal("gpt-4o-mini", vm.Model);
+        Assert.Contains(vm.LlmProviders, p => p.Id == "deepseek");
+        Assert.Contains(vm.LlmProviders, p => p.Id == "ollama");
+    }
+
+    [Fact]
+    public async Task SaveCommand_StoresLlmKeyAndConfiguresSelectedProvider()
+    {
+        LLMConfig? captured = null;
+        _mockLlm.Setup(x => x.Configure(It.IsAny<LLMConfig>()))
+            .Callback<LLMConfig>(config => captured = config);
+
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+        {
+            SelectedProvider = "deepseek",
+            ApiKey = "test-key",
+            BaseUrl = "https://example.com/v1",
+            Model = "deepseek-chat"
+        };
+
+        await vm.SaveCommand.Execute();
+
+        _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", "test-key"), Times.Once);
+        Assert.NotNull(captured);
+        Assert.Equal("deepseek", captured!.Provider);
+        Assert.Equal("https://example.com/v1", captured.BaseUrl);
+        Assert.Equal("deepseek-chat", captured.Model);
+        Assert.Equal("test-key", captured.ApiKey);
+    }
+
+    [Fact]
+    public void SelectedProvider_UpdatesModelToProviderDefault()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+
+        vm.SelectedProvider = "deepseek";
+        Assert.Equal("deepseek-chat", vm.Model);
+
+        vm.SelectedProvider = "ollama";
+        Assert.Equal("llama3", vm.Model);
+    }
+
+    [Fact]
+    public async Task TestConnectionCommand_OllamaWithoutApiKey_CallsLlm()
+    {
+        _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("本地模型正常");
+        LLMConfig? captured = null;
+        _mockLlm.Setup(x => x.Configure(It.IsAny<LLMConfig>()))
+            .Callback<LLMConfig>(config => captured = config);
+
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object)
+        {
+            SelectedProvider = "ollama",
+            ApiKey = string.Empty,
+            BaseUrl = "http://localhost:11434/v1"
+        };
+
+        await vm.TestConnectionCommand.Execute();
+
+        _mockLlm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
+        _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", It.IsAny<string>()), Times.Never);
+        Assert.NotNull(captured);
+        Assert.Equal("ollama", captured!.Provider);
+        Assert.Equal(string.Empty, captured.ApiKey);
+        Assert.Contains("连接成功", vm.StatusMessage);
     }
 
     [Fact]

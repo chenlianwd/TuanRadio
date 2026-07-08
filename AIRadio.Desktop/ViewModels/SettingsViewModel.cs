@@ -2,7 +2,6 @@ using ReactiveUI;
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
-using Avalonia.Threading;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -25,10 +24,15 @@ public class VoiceOption
 
 public class SettingsViewModel : ViewModelBase, IDisposable
 {
+    private const string LlmCredentialService = "llm";
+    private const string LegacyMinimaxCredentialService = "minimax";
     private readonly ILLMService _llmService;
     private readonly ISecureStorage _secureStorage;
+    private readonly string _settingsDir;
+    private readonly string _settingsFile;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
+    private readonly IDisposable _providerSub;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
@@ -37,6 +41,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly Dictionary<string, (string VoiceId, string Personality)> _overrides = new();
 
     [Reactive] public string ApiKey { get; set; } = string.Empty;
+    [Reactive] public string SelectedProvider { get; set; } = "openai";
+    [Reactive] public string BaseUrl { get; set; } = string.Empty;
+    [Reactive] public string Model { get; set; } = "gpt-4o-mini";
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
     [Reactive] public string TestConnectionButtonText { get; set; } = "测试连接";
@@ -68,6 +75,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         new() { Id = "en", DisplayName = "English" },
     };
 
+    public List<VoiceOption> LlmProviders { get; } = new()
+    {
+        new() { Id = "openai", DisplayName = "OpenAI" },
+        new() { Id = "deepseek", DisplayName = "DeepSeek" },
+        new() { Id = "openrouter", DisplayName = "OpenRouter" },
+        new() { Id = "claude", DisplayName = "Claude" },
+        new() { Id = "ollama", DisplayName = "Ollama 本地模型" },
+        new() { Id = "none", DisplayName = "关闭 AI 对话" },
+    };
+
     public List<VoiceOption> SpeechMixModes { get; } = new()
     {
         new() { Id = "duck", DisplayName = "说话时降低音乐音量" },
@@ -80,10 +97,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     // Notify MainWindow when character settings change so it can re-apply
     public event Action? CharacterSettingsChanged;
 
-    public SettingsViewModel(ILLMService llmService, ISecureStorage secureStorage)
+    public SettingsViewModel(ILLMService llmService, ISecureStorage secureStorage, string? settingsFile = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
+        _settingsFile = settingsFile ?? SettingsFile;
+        _settingsDir = Path.GetDirectoryName(_settingsFile) ?? SettingsDir;
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync);
@@ -92,6 +111,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _selectedCharacterSub = this.WhenAnyValue(x => x.SelectedCharacter)
             .Where(c => c != null)
             .Subscribe(c => LoadCharacterOverrides(c!));
+
+        _providerSub = this.WhenAnyValue(x => x.SelectedProvider)
+            .Skip(1)
+            .Subscribe(provider => Model = GetDefaultModel(provider));
 
         // Default selection
         SelectedCharacter = Characters[0];
@@ -115,18 +138,27 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var key = await _secureStorage.GetApiKeyAsync("minimax");
+            var key = await _secureStorage.GetApiKeyAsync(LlmCredentialService)
+                ?? await _secureStorage.GetApiKeyAsync(LegacyMinimaxCredentialService);
             if (!string.IsNullOrEmpty(key))
             {
-                await Dispatcher.UIThread.InvokeAsync(() => ApiKey = key);
-                _llmService.Configure(new LLMConfig { ApiKey = key });
+                ApiKey = key;
             }
 
-            if (File.Exists(SettingsFile))
+            if (File.Exists(_settingsFile))
             {
-                var json = await File.ReadAllTextAsync(SettingsFile);
+                var json = await File.ReadAllTextAsync(_settingsFile);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
+
+                if (root.TryGetProperty("llm_provider", out var provider))
+                    SelectedProvider = provider.GetString() ?? "openai";
+
+                if (root.TryGetProperty("llm_base_url", out var baseUrl))
+                    BaseUrl = baseUrl.GetString() ?? string.Empty;
+
+                if (root.TryGetProperty("llm_model", out var model))
+                    Model = model.GetString() ?? GetDefaultModel(SelectedProvider);
 
                 if (root.TryGetProperty("language", out var lang))
                     SelectedLanguage = lang.GetString() ?? "zh";
@@ -157,6 +189,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             // Apply first character
             if (SelectedCharacter != null)
                 LoadCharacterOverrides(SelectedCharacter);
+
+            ConfigureLlm();
         }
         catch (Exception ex)
         {
@@ -171,41 +205,34 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
     private async Task TestConnectionAsync()
     {
-        if (string.IsNullOrWhiteSpace(ApiKey))
+        if (RequiresApiKey(SelectedProvider) && string.IsNullOrWhiteSpace(ApiKey))
         {
-            await Dispatcher.UIThread.InvokeAsync(() => StatusMessage = "请先输入 API Key");
+            StatusMessage = "请先输入 API Key";
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            IsTesting = true;
-            TestConnectionButtonText = "正在测试...";
-            StatusMessage = "正在测试连接...";
-        });
+        IsTesting = true;
+        TestConnectionButtonText = "正在测试...";
+        StatusMessage = "正在测试连接...";
         try
         {
             var apiKey = ApiKey.Trim();
-            _llmService.Configure(new LLMConfig { ApiKey = apiKey });
+            ConfigureLlm(apiKey);
             var result = await _llmService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
-            await _secureStorage.SaveApiKeyAsync("minimax", apiKey);
-            await Dispatcher.UIThread.InvokeAsync(() =>
-                StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...");
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                await _secureStorage.SaveApiKeyAsync(LlmCredentialService, apiKey);
+            StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...";
         }
         catch (Exception ex)
         {
             var failure = ApiFailureInfo.FromException(ex);
             Log.Error(ex, "AI service API error");
-            await Dispatcher.UIThread.InvokeAsync(() =>
-                StatusMessage = $"连接失败：{failure.Title}。{failure.RecoveryHint}");
+            StatusMessage = $"连接失败：{failure.Title}。{failure.RecoveryHint}";
         }
         finally
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                IsTesting = false;
-                TestConnectionButtonText = "测试连接";
-            });
+            IsTesting = false;
+            TestConnectionButtonText = "测试连接";
         }
     }
 
@@ -222,11 +249,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             if (!string.IsNullOrWhiteSpace(ApiKey))
             {
-                await _secureStorage.SaveApiKeyAsync("minimax", ApiKey);
-                _llmService.Configure(new LLMConfig { ApiKey = ApiKey });
+                await _secureStorage.SaveApiKeyAsync(LlmCredentialService, ApiKey);
             }
 
-            Directory.CreateDirectory(SettingsDir);
+            ConfigureLlm();
+
+            Directory.CreateDirectory(_settingsDir);
             var overridesJson = new Dictionary<string, object>();
             foreach (var kv in _overrides)
             {
@@ -235,6 +263,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             var settingsData = new
             {
+                llm_provider = SelectedProvider,
+                llm_base_url = BaseUrl,
+                llm_model = Model,
                 tts_enabled = TtsEnabled,
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
@@ -244,17 +275,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             };
             // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(SettingsFile, json);
+            await File.WriteAllTextAsync(_settingsFile, json);
 
             CharacterSettingsChanged?.Invoke();
-            await Dispatcher.UIThread.InvokeAsync(() => StatusMessage = "设置已保存");
-            Log.Information("Settings saved to {Path}", SettingsFile);
+            StatusMessage = "设置已保存";
+            Log.Information("Settings saved to {Path}", _settingsFile);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to save settings");
-            await Dispatcher.UIThread.InvokeAsync(() =>
-                StatusMessage = $"保存失败：{ex.Message}");
+            StatusMessage = $"保存失败：{ex.Message}";
         }
         finally
         {
@@ -265,6 +295,32 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _selectedCharacterSub.Dispose();
+        _providerSub.Dispose();
         _saveGate.Dispose();
     }
+
+    private void ConfigureLlm(string? apiKeyOverride = null)
+    {
+        _llmService.Configure(new LLMConfig
+        {
+            Provider = string.IsNullOrWhiteSpace(SelectedProvider) ? "openai" : SelectedProvider,
+            ApiKey = apiKeyOverride ?? ApiKey,
+            BaseUrl = BaseUrl,
+            Model = string.IsNullOrWhiteSpace(Model) ? GetDefaultModel(SelectedProvider) : Model
+        });
+    }
+
+    private static string GetDefaultModel(string provider) => provider switch
+    {
+        "deepseek" => "deepseek-chat",
+        "claude" => "claude-3-haiku-20240307",
+        "openrouter" => "anthropic/claude-3-haiku",
+        "ollama" => "llama3",
+        "none" => string.Empty,
+        _ => "gpt-4o-mini"
+    };
+
+    private static bool RequiresApiKey(string provider)
+        => !string.Equals(provider, "ollama", StringComparison.OrdinalIgnoreCase) &&
+           !string.Equals(provider, "none", StringComparison.OrdinalIgnoreCase);
 }
