@@ -62,7 +62,7 @@ public class AudioService : IAudioService, IDisposable
     public TimeSpan Duration => TimeSpan.FromMilliseconds(_player.Length);
     public float Volume
     {
-        get => _player.Volume / 100f;
+        get => _userVolume;
         set
         {
             _userVolume = Math.Clamp(value, 0f, 1f);

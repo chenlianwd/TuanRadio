@@ -53,7 +53,7 @@ public class LLMService : ILLMService
 
     public async Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
     {
-        if (_config.Provider is null or "none" || string.IsNullOrWhiteSpace(_config.ApiKey))
+        if (!IsConfigured())
             return "请先在设置中配置 AI 服务。";
 
         try
@@ -70,7 +70,7 @@ public class LLMService : ILLMService
 
     public async Task<string> GenerateTrackIntroductionAsync(Track current, Track next)
     {
-        if (_config.Provider is null or "none" || string.IsNullOrWhiteSpace(_config.ApiKey))
+        if (!IsConfigured())
             return $"接下来播放 {next.Title}。";
 
         try
@@ -145,7 +145,8 @@ public class LLMService : ILLMService
             {
                 Content = content
             };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
             var response = await _httpClient.SendAsync(request);
             var responseJson = await response.Content.ReadAsStringAsync();
@@ -229,5 +230,15 @@ public class LLMService : ILLMService
 
         Log.Warning("Unrecognized Claude response format");
         return "";
+    }
+
+    private bool IsConfigured()
+    {
+        var provider = _config.Provider;
+        if (provider is null or "none")
+            return false;
+
+        return provider.Equals("ollama", StringComparison.OrdinalIgnoreCase) ||
+               !string.IsNullOrWhiteSpace(_config.ApiKey);
     }
 }
