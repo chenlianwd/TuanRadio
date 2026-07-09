@@ -1,5 +1,7 @@
 # AIRadio.Desktop 全量代码审查报告
 
+> 历史文档：本文记录 2026-06 当时的审查结论，其中部分问题已修复或已随架构迁移失效；当前状态以 `README.md` 和 `ai-radio-plan.md` 为准。
+
 > 审查日期：2026-06-20
 > 审查范围：全部 53 个 C# 文件 + 8 个 AXAML 视图文件 + 12 个测试文件
 > 审查维度：Services 层、ViewModels 层、Views/AXAML、安全与 API、测试覆盖率

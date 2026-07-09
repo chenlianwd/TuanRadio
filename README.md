@@ -61,4 +61,3 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 - AI 控制协议已支持 JSON 控制块，但旧格式仍保留短期兼容。
 - 多源音乐 API 响应格式不稳定，需要继续补充失败原因和 fallback UI。
 - 频谱视觉目前是模拟数据，真实 FFT 评估放在后续阶段。
-- `EdgeTTS.Net` 当前会产生 net8.0 兼容性警告，需要后续确认是否删除或替换依赖。

@@ -1,4 +1,7 @@
 using AIRadio.Desktop.Models;
+using System;
+using System.IO;
+using System.Linq;
 
 namespace AIRadio.Desktop.Tests;
 
@@ -30,5 +33,54 @@ public class ModelCleanupTests
             Assert.False(string.IsNullOrWhiteSpace(character.PersonalityPrompt));
             Assert.DoesNotContain("Live2D", character.PersonalityPrompt, StringComparison.OrdinalIgnoreCase);
         });
+    }
+
+    [Fact]
+    public void ProductionCode_DoesNotExposeLegacyMinimaxRuntimeSurface()
+    {
+        var projectRoot = FindRepositoryRoot();
+        var productionFiles = Directory.GetFiles(Path.Combine(projectRoot, "AIRadio.Desktop"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+        var legacySymbols = new[]
+        {
+            "IMinimaxService",
+            "MinimaxService",
+            "MinimaxApiException",
+            "FromMinimaxBaseResponse",
+            "MinimaxApiKey"
+        };
+
+        var matches = productionFiles
+            .SelectMany(path => legacySymbols
+                .Where(symbol => File.ReadAllText(path).Contains(symbol, StringComparison.Ordinal))
+                .Select(symbol => $"{Path.GetRelativePath(projectRoot, path)} contains {symbol}"))
+            .ToArray();
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void DesktopProject_DoesNotReferenceUnusedEdgeTtsPackages()
+    {
+        var projectRoot = FindRepositoryRoot();
+        var projectFile = File.ReadAllText(Path.Combine(projectRoot, "AIRadio.Desktop", "AIRadio.Desktop.csproj"));
+
+        Assert.DoesNotContain("EdgeTTS.Net", projectFile, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("EdgeTtsSharp", projectFile, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AIRadio.Desktop", "AIRadio.Desktop.csproj")))
+                return directory.FullName;
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not find AIRadio repository root.");
     }
 }

@@ -26,7 +26,7 @@ public sealed record ApiFailureInfo(
 {
     public static ApiFailureInfo FromException(Exception ex)
     {
-        if (ex is MinimaxApiException apiEx)
+        if (ex is LlmApiException apiEx)
             return apiEx.Failure;
 
         if (ex is TaskCanceledException or TimeoutException)
@@ -34,8 +34,8 @@ public sealed record ApiFailureInfo(
             return new ApiFailureInfo(
                 ApiFailureKind.Timeout,
                 "AI 响应超时",
-                "AI 服务在限定时间内没有返回，可能是网络慢或服务繁忙。",
-                "可以稍后重试，或检查网络代理/防火墙。");
+                "AI 服务在限定时间内没有返回，可能是网络较慢或服务繁忙。",
+                "稍后重试，或检查网络代理和防火墙设置。");
         }
 
         if (ex is HttpRequestException)
@@ -77,7 +77,7 @@ public sealed record ApiFailureInfo(
             _ => new ApiFailureInfo(
                 ApiFailureKind.InvalidResponse,
                 $"AI 请求失败 ({(int)statusCode})",
-                string.IsNullOrWhiteSpace(body) ? "未知错误" : $"服务返回错误（{(int)statusCode}）",
+                $"服务返回错误：{body}",
                 "检查设置和日志后重试。")
         };
     }
@@ -87,27 +87,19 @@ public sealed record ApiFailureInfo(
         "未配置 AI 服务 API Key",
         "当前没有可用于 AI 回复和语音合成的 API Key。",
         "打开设置页填写 API Key，保存后再测试连接。");
-
-    public static ApiFailureInfo FromMinimaxBaseResponse(int code, string message) => new(
-        code == 1004 || message.Contains("Authorization", StringComparison.OrdinalIgnoreCase)
-            ? ApiFailureKind.Authentication
-            : ApiFailureKind.InvalidResponse,
-        code == 1004 ? "语音服务鉴权失败" : $"AI 服务返回错误 {code}",
-        string.IsNullOrWhiteSpace(message) ? "AI 服务没有返回详细错误信息。" : message,
-        code == 1004 ? "打开设置页重新填写并保存 API Key。" : "稍后重试，或查看日志里的 AI 服务响应。");
 }
 
-public sealed class MinimaxApiException : Exception
+public sealed class LlmApiException : Exception
 {
     public ApiFailureInfo Failure { get; }
 
-    public MinimaxApiException(ApiFailureInfo failure)
+    public LlmApiException(ApiFailureInfo failure)
         : base($"{failure.Title}: {failure.Detail}")
     {
         Failure = failure;
     }
 
-    public MinimaxApiException(ApiFailureInfo failure, Exception innerException)
+    public LlmApiException(ApiFailureInfo failure, Exception innerException)
         : base($"{failure.Title}: {failure.Detail}", innerException)
     {
         Failure = failure;
