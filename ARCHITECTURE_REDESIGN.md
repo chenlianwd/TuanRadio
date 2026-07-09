@@ -1,5 +1,7 @@
 # AIRadio 架构重构设计文档
 
+> 历史文档：本文记录 2026-06 架构迁移方案，当前状态以 `README.md` 和 `ai-radio-plan.md` 为准。
+
 > 日期：2026-06-28
 > 目标：替换 Minimax 为 Edge TTS + 可选 LLM，新增 YouTube 音乐源
 

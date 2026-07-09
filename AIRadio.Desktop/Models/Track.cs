@@ -232,7 +232,6 @@ public class CharacterProfile
 
 public class RadioSettings
 {
-    public string MinimaxApiKey { get; set; } = string.Empty;
     public DJProfile DjProfile { get; set; } = new();
     public PlaybackSettings Playback { get; set; } = new();
     public AudioSettings Audio { get; set; } = new();

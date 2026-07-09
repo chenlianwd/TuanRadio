@@ -64,7 +64,7 @@ public class LLMService : ILLMService
         catch (Exception ex)
         {
             Log.Warning(ex, "LLM chat failed");
-            throw new MinimaxApiException(ApiFailureInfo.FromException(ex));
+            throw new LlmApiException(ApiFailureInfo.FromException(ex));
         }
     }
 
@@ -154,7 +154,7 @@ public class LLMService : ILLMService
             if (!response.IsSuccessStatusCode)
             {
                 Log.Warning("LLM API error {StatusCode}: {Body}", response.StatusCode, responseJson);
-                throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
+                throw new LlmApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
             }
 
             using var doc = JsonDocument.Parse(responseJson);
@@ -215,7 +215,7 @@ public class LLMService : ILLMService
         if (!response.IsSuccessStatusCode)
         {
             Log.Warning("Claude API error {StatusCode}: {Body}", response.StatusCode, responseJson);
-            throw new MinimaxApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
+            throw new LlmApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
         }
 
         using var doc = JsonDocument.Parse(responseJson);

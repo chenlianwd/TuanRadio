@@ -30,10 +30,10 @@ public class ApiFailureInfoTests
     }
 
     [Fact]
-    public void FromException_MinimaxApiException_ReturnsFailure()
+    public void FromException_LlmApiException_ReturnsFailure()
     {
         var inner = new ApiFailureInfo(ApiFailureKind.Authentication, "Auth failed", "detail", "hint");
-        var result = ApiFailureInfo.FromException(new MinimaxApiException(inner));
+        var result = ApiFailureInfo.FromException(new LlmApiException(inner));
         Assert.Equal(ApiFailureKind.Authentication, result.Kind);
         Assert.Equal("Auth failed", result.Title);
     }
