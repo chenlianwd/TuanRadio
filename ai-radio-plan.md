@@ -13,7 +13,7 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 
 - Avalonia + ReactiveUI 桌面框架。
 - LibVLCSharp 播放核心和 NAudio TTS 播放。
-- LLM 服务抽象：`ILLMService` + OpenAI 兼容 `LLMService`。
+- LLM 服务抽象：`ILLMService` + OpenAI 兼容 / Anthropic 兼容 / 本地模型三种格式的 `LLMService`。
 - Edge TTS 服务抽象：`ITtsService` + `EdgeTtsService`。
 - Whisper 本地语音识别入口。
 - 多音源搜索：网易云、酷我、酷狗、咪咕、YouTube/yt-dlp 兜底。
@@ -72,7 +72,7 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - 状态机覆盖 `Idle`、`Curating`、`Searching`、`Speaking`、`Playing`、`Error`。
 - 推荐理由放在 DJ 气泡，卡片只保留短标签。
 - 外部音源失败原因和 fallback UI 继续细化。
-- 设置页补齐 Provider/Base URL/Model 后，还需补充更完整的 provider 默认值和连接诊断。
+- 设置页只保留 OpenAI 兼容、Anthropic 兼容和本地模型三种格式，后续继续完善连接诊断。
 
 ### P3 增强：后续评估
 

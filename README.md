@@ -9,7 +9,7 @@ AIRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI DJ
 | 桌面框架 | .NET 8 / Avalonia 11.3.9 |
 | MVVM | ReactiveUI + ReactiveUI.Fody |
 | 音频播放 | LibVLCSharp + NAudio |
-| AI DJ | OpenAI 兼容 LLM 接口，可配置 OpenAI / DeepSeek / OpenRouter / Claude / Ollama |
+| AI DJ | 支持 OpenAI 兼容、Anthropic 兼容和本地模型三种接口格式 |
 | TTS | Edge TTS WebSocket 服务 |
 | 在线音乐 | NeteaseCloudMusicApi(Node.js) + 酷我/酷狗/咪咕 HTTP API + YouTube yt-dlp 兜底 |
 | 语音识别 | Whisper 本地 ASR |

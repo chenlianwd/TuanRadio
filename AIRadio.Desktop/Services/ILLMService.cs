@@ -5,7 +5,7 @@ using AIRadio.Desktop.Models;
 namespace AIRadio.Desktop.Services;
 
 /// <summary>
-/// 纯聊天接口，可接 OpenAI/Claude/Ollama 等兼容 LLM。
+/// 纯聊天接口，可接 OpenAI 兼容、Anthropic 兼容或本地 LLM。
 /// </summary>
 public interface ILLMService
 {
@@ -31,17 +31,17 @@ public interface ILLMService
 public record LLMConfig
 {
     /// <summary>
-    /// 提供商标识："openai", "claude", "deepseek", "ollama", "none"
+    /// 接口格式："openai", "anthropic", "local"
     /// </summary>
-    public string Provider { get; init; } = "none";
+    public string Provider { get; init; } = "openai";
 
     /// <summary>
-    /// API Key（Ollama 不需要）。
+    /// API Key（本地模型通常不需要）。
     /// </summary>
     public string ApiKey { get; init; } = "";
 
     /// <summary>
-    /// 自定义端点（如 Ollama: http://localhost:11434/v1）。
+    /// 自定义端点（如本地模型: http://localhost:11434/v1）。
     /// </summary>
     public string BaseUrl { get; init; } = "";
 

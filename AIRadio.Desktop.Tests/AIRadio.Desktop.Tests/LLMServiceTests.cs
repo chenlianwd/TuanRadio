@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
@@ -13,14 +14,15 @@ namespace AIRadio.Desktop.Tests;
 
 public class LLMServiceTests
 {
-    private static HttpClient CreateMockHttpClient(string responseJson)
+    private static HttpClient CreateMockHttpClient(string responseJson, Action<HttpRequestMessage>? onRequest = null)
     {
         var handler = new Mock<HttpMessageHandler>();
         handler.Protected()
             .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>())
+                 "SendAsync",
+                 ItExpr.IsAny<HttpRequestMessage>(),
+                 ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) => onRequest?.Invoke(request))
             .ReturnsAsync(new HttpResponseMessage
             {
                 StatusCode = HttpStatusCode.OK,
@@ -31,7 +33,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public async Task ChatAsync_AllowsOllamaWithoutApiKey()
+    public async Task ChatAsync_AllowsLocalModelWithoutApiKey()
     {
         var responseJson = @"{
             ""choices"": [{
@@ -43,7 +45,7 @@ public class LLMServiceTests
         var service = new LLMService(CreateMockHttpClient(responseJson));
         service.Configure(new LLMConfig
         {
-            Provider = "ollama",
+            Provider = "local",
             BaseUrl = "http://localhost:11434/v1",
             Model = "llama3",
             ApiKey = string.Empty
@@ -52,5 +54,34 @@ public class LLMServiceTests
         var result = await service.ChatAsync("你好", new List<ChatMessage>());
 
         Assert.Equal("本地模型回复", result);
+    }
+
+    [Theory]
+    [InlineData("https://api.kimi.com/coding/", "https://api.kimi.com/coding/v1/messages")]
+    [InlineData("https://proxy.example/v1/", "https://proxy.example/v1/messages")]
+    [InlineData("https://proxy.example/v1/messages", "https://proxy.example/v1/messages")]
+    public async Task ChatAsync_AnthropicFormat_UsesNormalizedMessagesEndpointAndApiKeyHeader(
+        string baseUrl,
+        string expectedEndpoint)
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var service = new LLMService(CreateMockHttpClient(
+            """{"content":[{"text":"ok"}]}""",
+            request => capturedRequest = request));
+        service.Configure(new LLMConfig
+        {
+            Provider = "anthropic",
+            BaseUrl = baseUrl,
+            Model = "claude-test",
+            ApiKey = "  test-key  "
+        });
+
+        var result = await service.ChatAsync("hello", new List<ChatMessage>());
+
+        Assert.Equal("ok", result);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(expectedEndpoint, capturedRequest!.RequestUri!.ToString());
+        Assert.Null(capturedRequest.Headers.Authorization);
+        Assert.Contains("test-key", capturedRequest.Headers.GetValues("x-api-key"));
     }
 }

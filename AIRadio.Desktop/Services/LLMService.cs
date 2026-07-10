@@ -12,23 +12,21 @@ using Serilog;
 namespace AIRadio.Desktop.Services;
 
 /// <summary>
-/// OpenAI 兼容的 LLM 服务，支持 OpenAI/Claude/DeepSeek/Ollama 等提供商。
+/// LLM 服务，支持 OpenAI 兼容、Anthropic 兼容和本地 OpenAI 兼容接口。
 /// </summary>
 public class LLMService : ILLMService
 {
-    private static readonly Dictionary<string, (string BaseUrl, string DefaultModel)> Providers = new()
+    private static readonly Dictionary<string, string> Providers = new()
     {
-        ["openai"] = ("https://api.openai.com/v1", "gpt-4o-mini"),
-        ["deepseek"] = ("https://api.deepseek.com/v1", "deepseek-chat"),
-        ["claude"] = ("https://api.anthropic.com/v1", "claude-3-haiku-20240307"),
-        ["openrouter"] = ("https://openrouter.ai/api/v1", "anthropic/claude-3-haiku"),
-        ["ollama"] = ("http://localhost:11434/v1", "llama3")
+        ["openai"] = "https://api.openai.com/v1",
+        ["anthropic"] = "https://api.anthropic.com/v1",
+        ["local"] = "http://localhost:11434/v1"
     };
 
     private readonly HttpClient _httpClient;
     private volatile LLMConfig _config = new();
     private volatile string _baseUrl = "https://api.openai.com/v1";
-    private volatile string _model = "gpt-4o-mini";
+    private volatile string _model = string.Empty;
 
     public LLMService(HttpClient httpClient)
     {
@@ -37,18 +35,21 @@ public class LLMService : ILLMService
 
     public void Configure(LLMConfig config)
     {
-        _config = config;
+        var provider = NormalizeProvider(config.Provider);
+        var apiKey = (config.ApiKey ?? string.Empty).Trim();
+        var baseUrl = (config.BaseUrl ?? string.Empty).Trim();
+        var model = (config.Model ?? string.Empty).Trim();
+        _config = config with
+        {
+            Provider = provider,
+            ApiKey = apiKey,
+            BaseUrl = baseUrl,
+            Model = model
+        };
 
-        if (Providers.TryGetValue((config.Provider ?? "none").ToLowerInvariant(), out var provider))
-        {
-            _baseUrl = string.IsNullOrWhiteSpace(config.BaseUrl) ? provider.BaseUrl : config.BaseUrl;
-            _model = string.IsNullOrWhiteSpace(config.Model) ? provider.DefaultModel : config.Model;
-        }
-        else
-        {
-            _baseUrl = string.IsNullOrWhiteSpace(config.BaseUrl) ? "https://api.openai.com/v1" : config.BaseUrl;
-            _model = string.IsNullOrWhiteSpace(config.Model) ? "gpt-4o-mini" : config.Model;
-        }
+        var defaultBaseUrl = Providers[provider];
+        _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? defaultBaseUrl : baseUrl.TrimEnd('/');
+        _model = model;
     }
 
     public async Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
@@ -120,9 +121,8 @@ public class LLMService : ILLMService
 
     private async Task<string> CallChatCompletionAsync(List<object> messages)
     {
-        // Claude uses a different API format
-        if (_config.Provider == "claude")
-            return await CallClaudeApiAsync(messages);
+        if (_config.Provider == "anthropic")
+            return await CallAnthropicApiAsync(messages);
 
         var baseUrl = _baseUrl;
         var model = _model;
@@ -173,7 +173,7 @@ public class LLMService : ILLMService
         });
     }
 
-    private async Task<string> CallClaudeApiAsync(List<object> messages)
+    private async Task<string> CallAnthropicApiAsync(List<object> messages)
     {
         // Extract system message and convert to Claude format
         string systemPrompt = "";
@@ -202,7 +202,7 @@ public class LLMService : ILLMService
         var json = JsonSerializer.Serialize(requestBody);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/messages")
+        var request = new HttpRequestMessage(HttpMethod.Post, BuildAnthropicMessagesEndpoint(_baseUrl))
         {
             Content = content
         };
@@ -214,7 +214,7 @@ public class LLMService : ILLMService
 
         if (!response.IsSuccessStatusCode)
         {
-            Log.Warning("Claude API error {StatusCode}: {Body}", response.StatusCode, responseJson);
+            Log.Warning("Anthropic API error {StatusCode}: {Body}", response.StatusCode, responseJson);
             throw new LlmApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
         }
 
@@ -228,17 +228,39 @@ public class LLMService : ILLMService
             return text.GetString() ?? "";
         }
 
-        Log.Warning("Unrecognized Claude response format");
+        Log.Warning("Unrecognized Anthropic response format");
         return "";
     }
 
     private bool IsConfigured()
     {
         var provider = _config.Provider;
-        if (provider is null or "none")
+        if (provider is null)
             return false;
 
-        return provider.Equals("ollama", StringComparison.OrdinalIgnoreCase) ||
+        if (string.IsNullOrWhiteSpace(_model))
+            return false;
+
+        return provider.Equals("local", StringComparison.OrdinalIgnoreCase) ||
                !string.IsNullOrWhiteSpace(_config.ApiKey);
+    }
+
+    private static string NormalizeProvider(string? provider) => provider?.ToLowerInvariant() switch
+    {
+        "claude" or "anthropic" => "anthropic",
+        "ollama" or "local" => "local",
+        _ => "openai"
+    };
+
+    private static string BuildAnthropicMessagesEndpoint(string baseUrl)
+    {
+        // Kimi 等兼容服务可能给出 /v1 的上一级 Base URL，标准 Anthropic 地址则通常已经包含 /v1。
+        var normalized = baseUrl.TrimEnd('/');
+        if (normalized.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+            return normalized;
+        if (normalized.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            return $"{normalized}/messages";
+
+        return $"{normalized}/v1/messages";
     }
 }

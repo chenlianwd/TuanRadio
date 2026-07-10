@@ -33,6 +33,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
     private readonly IDisposable _providerSub;
+    private bool _isLoadingSettings;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
@@ -43,7 +44,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public string ApiKey { get; set; } = string.Empty;
     [Reactive] public string SelectedProvider { get; set; } = "openai";
     [Reactive] public string BaseUrl { get; set; } = string.Empty;
-    [Reactive] public string Model { get; set; } = "gpt-4o-mini";
+    [Reactive] public string Model { get; set; } = string.Empty;
     [Reactive] public string StatusMessage { get; set; } = string.Empty;
     [Reactive] public bool IsTesting { get; set; }
     [Reactive] public string TestConnectionButtonText { get; set; } = "测试连接";
@@ -77,12 +78,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
     public List<VoiceOption> LlmProviders { get; } = new()
     {
-        new() { Id = "openai", DisplayName = "OpenAI" },
-        new() { Id = "deepseek", DisplayName = "DeepSeek" },
-        new() { Id = "openrouter", DisplayName = "OpenRouter" },
-        new() { Id = "claude", DisplayName = "Claude" },
-        new() { Id = "ollama", DisplayName = "Ollama 本地模型" },
-        new() { Id = "none", DisplayName = "关闭 AI 对话" },
+        new() { Id = "openai", DisplayName = "OpenAI 兼容格式" },
+        new() { Id = "anthropic", DisplayName = "Anthropic 兼容格式" },
+        new() { Id = "local", DisplayName = "本地模型" },
     };
 
     public List<VoiceOption> SpeechMixModes { get; } = new()
@@ -114,7 +112,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
         _providerSub = this.WhenAnyValue(x => x.SelectedProvider)
             .Skip(1)
-            .Subscribe(provider => Model = GetDefaultModel(provider));
+            .Subscribe(_ =>
+            {
+                if (_isLoadingSettings)
+                    return;
+
+                ApiKey = string.Empty;
+                BaseUrl = string.Empty;
+                Model = string.Empty;
+            });
 
         // Default selection
         SelectedCharacter = Characters[0];
@@ -136,10 +142,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
     public async Task LoadAsync()
     {
+        _isLoadingSettings = true;
         try
         {
-            var key = await _secureStorage.GetApiKeyAsync(LlmCredentialService)
-                ?? await _secureStorage.GetApiKeyAsync(LegacyMinimaxCredentialService);
+            var key = await _secureStorage.GetApiKeyAsync(LlmCredentialService);
             if (!string.IsNullOrEmpty(key))
             {
                 ApiKey = key;
@@ -152,13 +158,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 var root = doc.RootElement;
 
                 if (root.TryGetProperty("llm_provider", out var provider))
-                    SelectedProvider = provider.GetString() ?? "openai";
+                    SelectedProvider = NormalizeProvider(provider.GetString());
 
                 if (root.TryGetProperty("llm_base_url", out var baseUrl))
                     BaseUrl = baseUrl.GetString() ?? string.Empty;
 
                 if (root.TryGetProperty("llm_model", out var model))
-                    Model = model.GetString() ?? GetDefaultModel(SelectedProvider);
+                    Model = model.GetString() ?? string.Empty;
 
                 if (root.TryGetProperty("language", out var lang))
                     SelectedLanguage = lang.GetString() ?? "zh";
@@ -196,6 +202,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         {
             Log.Warning(ex, "Failed to load settings");
         }
+        finally
+        {
+            _isLoadingSettings = false;
+        }
     }
 
     public (string VoiceId, string Personality)? GetOverride(string characterId)
@@ -210,17 +220,20 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             StatusMessage = "请先输入 API Key";
             return;
         }
+        if (string.IsNullOrWhiteSpace(Model))
+        {
+            StatusMessage = "请先输入模型名称";
+            return;
+        }
 
         IsTesting = true;
         TestConnectionButtonText = "正在测试...";
         StatusMessage = "正在测试连接...";
         try
         {
-            var apiKey = ApiKey.Trim();
-            ConfigureLlm(apiKey);
+            NormalizeLlmInputs();
+            ConfigureLlm(ApiKey);
             var result = await _llmService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
-            if (!string.IsNullOrWhiteSpace(apiKey))
-                await _secureStorage.SaveApiKeyAsync(LlmCredentialService, apiKey);
             StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...";
         }
         catch (Exception ex)
@@ -241,6 +254,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         await _saveGate.WaitAsync();
         try
         {
+            NormalizeLlmInputs();
+
             // Save current character overrides
             if (SelectedCharacter != null && CharacterVoice != null)
             {
@@ -251,6 +266,11 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             {
                 await _secureStorage.SaveApiKeyAsync(LlmCredentialService, ApiKey);
             }
+            else
+            {
+                _secureStorage.DeleteApiKey(LlmCredentialService);
+            }
+            _secureStorage.DeleteApiKey(LegacyMinimaxCredentialService);
 
             ConfigureLlm();
 
@@ -303,24 +323,27 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         _llmService.Configure(new LLMConfig
         {
-            Provider = string.IsNullOrWhiteSpace(SelectedProvider) ? "openai" : SelectedProvider,
-            ApiKey = apiKeyOverride ?? ApiKey,
-            BaseUrl = BaseUrl,
-            Model = string.IsNullOrWhiteSpace(Model) ? GetDefaultModel(SelectedProvider) : Model
+            Provider = NormalizeProvider(SelectedProvider),
+            ApiKey = (apiKeyOverride ?? ApiKey ?? string.Empty).Trim(),
+            BaseUrl = (BaseUrl ?? string.Empty).Trim(),
+            Model = (Model ?? string.Empty).Trim()
         });
     }
 
-    private static string GetDefaultModel(string provider) => provider switch
+    private void NormalizeLlmInputs()
     {
-        "deepseek" => "deepseek-chat",
-        "claude" => "claude-3-haiku-20240307",
-        "openrouter" => "anthropic/claude-3-haiku",
-        "ollama" => "llama3",
-        "none" => string.Empty,
-        _ => "gpt-4o-mini"
+        ApiKey = (ApiKey ?? string.Empty).Trim();
+        BaseUrl = (BaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        Model = (Model ?? string.Empty).Trim();
+    }
+
+    private static string NormalizeProvider(string? provider) => provider?.ToLowerInvariant() switch
+    {
+        "claude" or "anthropic" => "anthropic",
+        "ollama" or "local" => "local",
+        _ => "openai"
     };
 
     private static bool RequiresApiKey(string provider)
-        => !string.Equals(provider, "ollama", StringComparison.OrdinalIgnoreCase) &&
-           !string.Equals(provider, "none", StringComparison.OrdinalIgnoreCase);
+        => !string.Equals(NormalizeProvider(provider), "local", StringComparison.OrdinalIgnoreCase);
 }
