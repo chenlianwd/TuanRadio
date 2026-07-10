@@ -104,9 +104,11 @@ public class SettingsViewModelTests
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
         Assert.Equal("openai", vm.SelectedProvider);
-        Assert.Equal("gpt-4o-mini", vm.Model);
-        Assert.Contains(vm.LlmProviders, p => p.Id == "deepseek");
-        Assert.Contains(vm.LlmProviders, p => p.Id == "ollama");
+        Assert.Empty(vm.Model);
+        Assert.Equal(3, vm.LlmProviders.Count);
+        Assert.Contains(vm.LlmProviders, p => p.Id == "openai");
+        Assert.Contains(vm.LlmProviders, p => p.Id == "anthropic");
+        Assert.Contains(vm.LlmProviders, p => p.Id == "local");
     }
 
     [Fact]
@@ -119,36 +121,40 @@ public class SettingsViewModelTests
         var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
         {
-            SelectedProvider = "deepseek",
-            ApiKey = "test-key",
-            BaseUrl = "https://example.com/v1",
-            Model = "deepseek-chat"
+            SelectedProvider = "openai",
+            ApiKey = "  test-key  ",
+            BaseUrl = "  https://example.com/v1/  ",
+            Model = "  deepseek-chat  "
         };
 
         await vm.SaveCommand.Execute();
 
         _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", "test-key"), Times.Once);
         Assert.NotNull(captured);
-        Assert.Equal("deepseek", captured!.Provider);
+        Assert.Equal("openai", captured!.Provider);
         Assert.Equal("https://example.com/v1", captured.BaseUrl);
         Assert.Equal("deepseek-chat", captured.Model);
         Assert.Equal("test-key", captured.ApiKey);
+        Assert.Equal("test-key", vm.ApiKey);
     }
 
     [Fact]
-    public void SelectedProvider_UpdatesModelToProviderDefault()
+    public void SelectedProvider_ClearsProviderSpecificValues()
     {
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
-        vm.SelectedProvider = "deepseek";
-        Assert.Equal("deepseek-chat", vm.Model);
+        vm.ApiKey = "remote-secret";
+        vm.Model = "deepseek-chat";
+        vm.BaseUrl = "https://api.deepseek.com/v1";
 
-        vm.SelectedProvider = "ollama";
-        Assert.Equal("llama3", vm.Model);
+        vm.SelectedProvider = "local";
+        Assert.Empty(vm.ApiKey);
+        Assert.Empty(vm.Model);
+        Assert.Empty(vm.BaseUrl);
     }
 
     [Fact]
-    public async Task TestConnectionCommand_OllamaWithoutApiKey_CallsLlm()
+    public async Task TestConnectionCommand_LocalWithoutApiKey_CallsLlm()
     {
         _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("本地模型正常");
@@ -158,9 +164,10 @@ public class SettingsViewModelTests
 
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object)
         {
-            SelectedProvider = "ollama",
+            SelectedProvider = "local",
             ApiKey = string.Empty,
-            BaseUrl = "http://localhost:11434/v1"
+            BaseUrl = "http://localhost:11434/v1",
+            Model = "llama3"
         };
 
         await vm.TestConnectionCommand.Execute();
@@ -168,7 +175,7 @@ public class SettingsViewModelTests
         _mockLlm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
         _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", It.IsAny<string>()), Times.Never);
         Assert.NotNull(captured);
-        Assert.Equal("ollama", captured!.Provider);
+        Assert.Equal("local", captured!.Provider);
         Assert.Equal(string.Empty, captured.ApiKey);
         Assert.Contains("连接成功", vm.StatusMessage);
     }
@@ -193,5 +200,77 @@ public class SettingsViewModelTests
         await vm.TestConnectionCommand.Execute();
 
         Assert.False(string.IsNullOrEmpty(vm.StatusMessage));
+    }
+
+    [Fact]
+    public async Task TestConnectionCommand_WithRemoteKey_DoesNotPersistConfiguration()
+    {
+        _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("连接正常");
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object)
+        {
+            ApiKey = "test-key",
+            Model = "gpt-4o-mini"
+        };
+
+        await vm.TestConnectionCommand.Execute();
+
+        _mockStorage.Verify(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        Assert.Contains("连接成功", vm.StatusMessage);
+    }
+
+    [Fact]
+    public async Task SaveCommand_EmptyKey_RemovesCurrentAndLegacyCredentials()
+    {
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                ApiKey = string.Empty,
+                Model = "gpt-4o-mini"
+            };
+
+            await vm.SaveCommand.Execute();
+
+            _mockStorage.Verify(x => x.DeleteApiKey("llm"), Times.Once);
+            _mockStorage.Verify(x => x.DeleteApiKey("minimax"), Times.Once);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_NormalizesLegacyProviderAndKeepsCurrentKey()
+    {
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "claude",
+              "llm_base_url": "https://proxy.example/v1",
+              "llm_model": "claude-test"
+            }
+            """);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync("current-key");
+        _mockStorage.Setup(x => x.GetApiKeyAsync("minimax")).ReturnsAsync("legacy-key");
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            await vm.LoadAsync();
+
+            Assert.Equal("anthropic", vm.SelectedProvider);
+            Assert.Equal("https://proxy.example/v1", vm.BaseUrl);
+            Assert.Equal("claude-test", vm.Model);
+            Assert.Equal("current-key", vm.ApiKey);
+            _mockStorage.Verify(x => x.GetApiKeyAsync("minimax"), Times.Never);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
     }
 }

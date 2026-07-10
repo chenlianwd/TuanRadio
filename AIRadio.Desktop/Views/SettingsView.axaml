@@ -16,8 +16,8 @@
                       DisplayMemberBinding="{Binding DisplayName}"
                       HorizontalAlignment="Stretch"/>
             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="输入你的 API Key" PasswordChar="•"/>
-            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="自定义 Base URL（可选）"/>
-            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="模型名称，例如 gpt-4o-mini / deepseek-chat"/>
+            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="Base URL；留空使用该格式默认地址"/>
+            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="输入模型名称，例如 gpt-4o-mini / deepseek-chat"/>
             <Button Command="{Binding TestConnectionCommand}"
                     Content="{Binding TestConnectionButtonText}"
                     IsEnabled="{Binding !IsTesting}"

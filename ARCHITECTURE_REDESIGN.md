@@ -16,7 +16,7 @@
 
 ### 重构目标
 1. **TTS 替换为 Edge TTS**：免费、中文效果好、无需 API Key
-2. **LLM 可选**：支持 OpenAI/Claude/本地模型，用户可配置
+2. **LLM 可选**：支持 OpenAI 兼容、Anthropic 兼容和本地模型三种格式
 3. **新增 YouTube 音乐源**：通过 yt-dlp 获取音频流，作为现有四源的兜底
 4. **保持电台/DJ 功能完整**：AI 对话、语音播报、自动推荐均保留
 
@@ -56,10 +56,10 @@ public interface ITtsService
 
 public record LLMConfig
 {
-    public string Provider { get; init; } = "openai"; // "openai", "claude", "ollama", "none"
+    public string Provider { get; init; } = "openai"; // "openai", "anthropic", "local"
     public string ApiKey { get; init; } = "";
-    public string BaseUrl { get; init; } = ""; // 自定义端点（Ollama 等）
-    public string Model { get; init; } = "gpt-4o-mini";
+    public string BaseUrl { get; init; } = ""; // 自定义端点
+    public string Model { get; init; } = "";
 }
 ```
 
@@ -111,25 +111,23 @@ Services/
 
 ### 3.2 LLM 服务实现
 
-**方案：统一 OpenAI 兼容接口**
+**方案：统一为三种接口格式**
 
-大多数 LLM 提供商都兼容 OpenAI API 格式：
-- OpenAI：`https://api.openai.com/v1/chat/completions`
-- Claude（通过 OpenAI 兼容层）：`https://api.anthropic.com/v1/messages`
-- Ollama：`http://localhost:11434/v1/chat/completions`
-- DeepSeek：`https://api.deepseek.com/v1/chat/completions`
+接口类型只暴露三类：
+- OpenAI 兼容：OpenAI、DeepSeek、OpenRouter 等 `/chat/completions` 接口
+- Anthropic 兼容：Anthropic `/messages` 接口
+- 本地模型：Ollama、LM Studio 等本地 OpenAI 兼容接口
 
 **实现步骤：**
-1. 创建 `OpenAICompatibleLLMService` 实现 `ILLMService`
-2. 通过 `BaseUrl` 和 `Model` 配置不同提供商
+1. 创建 `LLMService` 实现 `ILLMService`
+2. 通过接口格式、`BaseUrl` 和 `Model` 配置不同服务
 3. 保持现有的 system prompt 和对话历史管理
 4. `GenerateTrackIntroductionAsync` 逻辑从 `MinimaxService` 迁移
 
 **文件结构：**
 ```
 Services/
-├── LLMService.cs              # ILLMService 实现（OpenAI 兼容）
-├── LLMProviders.cs            # 提供商配置预设
+├── LLMService.cs              # 三种接口格式的 ILLMService 实现
 ```
 
 ### 3.3 YouTube 音乐源实现
@@ -222,7 +220,7 @@ public DJService(ILLMService llm, ITtsService tts, IMusicSearchService? musicSea
 ### 4.3 SettingsViewModel 变更
 
 **当前：** 设置页配置 Minimax API Key
-**改为：** 设置页配置 LLM 提供商、API Key、Base URL、Model、TTS 语音选择
+**改为：** 设置页配置三种 LLM 接口格式、API Key、Base URL、Model、TTS 语音选择
 
 ---
 
@@ -259,8 +257,8 @@ public DJService(ILLMService llm, ITtsService tts, IMusicSearchService? musicSea
 ## 6. 兼容性考虑
 
 ### 6.1 API Key 迁移
-- 现有用户的 Minimax API Key 存储在 Windows Credential Manager
-- 如果用户有 OpenAI API Key，可直接复用
+- 旧 Minimax API Key 不自动复用为通用 LLM Key
+- 保存空 API Key 时删除通用和旧版凭据
 - 首次启动时检测并提示用户配置 LLM
 
 ### 6.2 语音切换
@@ -284,7 +282,7 @@ public DJService(ILLMService llm, ITtsService tts, IMusicSearchService? musicSea
 - **验证：** DJ 语音播报正常工作
 
 ### 阶段 2：LLM 服务替换
-- 实现 `LLMService`（OpenAI 兼容）
+- 实现 `LLMService`（OpenAI 兼容 / Anthropic 兼容 / 本地模型）
 - 修改 `DJService` 和 `RecommendationService` 使用 `ILLMService`
 - 更新设置页面
 - **验证：** DJ 对话和歌曲推荐正常工作
