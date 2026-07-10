@@ -33,6 +33,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public string ShuffleText { get; set; } = "🔀";
     [Reactive] public string RepeatMode { get; set; } = "radio";
     [Reactive] public string RepeatText { get; set; } = "DJ";
+    [Reactive] public string RepeatModeTip { get; set; } = "电台模式";
 
     private bool _isDragging;
 
@@ -45,6 +46,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     public PlayerViewModel(IAudioService audioService)
     {
         _audioService = audioService;
+        UpdateRepeatMode(_audioService.RepeatMode);
 
         PlayCommand = ReactiveCommand.Create(() =>
         {
@@ -71,14 +73,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                 _ => "radio"
             };
             _audioService.SetRepeatMode(next);
-            RepeatMode = next;
-            RepeatText = next switch
-            {
-                "radio" => "DJ",
-                "single" => "ONE",
-                "list" => "ALL",
-                _ => "OFF"
-            };
+            UpdateRepeatMode(next);
         });
 
         _trackSub = _audioService.TrackChanged
@@ -153,5 +148,17 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         return ts.Hours > 0
             ? $"{ts.Hours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
             : $"{ts.Minutes}:{ts.Seconds:D2}";
+    }
+
+    private void UpdateRepeatMode(string mode)
+    {
+        RepeatMode = mode;
+        (RepeatText, RepeatModeTip) = mode switch
+        {
+            "radio" => ("DJ", "电台模式"),
+            "list" => ("ALL", "列表循环"),
+            "single" => ("ONE", "单曲循环"),
+            _ => ("OFF", "关闭循环")
+        };
     }
 }

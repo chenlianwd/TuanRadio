@@ -66,7 +66,7 @@ public class LLMServiceTests
     {
         HttpRequestMessage? capturedRequest = null;
         var service = new LLMService(CreateMockHttpClient(
-            """{"content":[{"text":"ok"}]}""",
+            """{"content":[{"type":"thinking","thinking":"分析中"},{"type":"text","text":"第一段"},{"type":"text","text":"第二段"}]}""",
             request => capturedRequest = request));
         service.Configure(new LLMConfig
         {
@@ -78,7 +78,7 @@ public class LLMServiceTests
 
         var result = await service.ChatAsync("hello", new List<ChatMessage>());
 
-        Assert.Equal("ok", result);
+        Assert.Equal("第一段\n第二段", result);
         Assert.NotNull(capturedRequest);
         Assert.Equal(expectedEndpoint, capturedRequest!.RequestUri!.ToString());
         Assert.Null(capturedRequest.Headers.Authorization);

@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -19,25 +21,22 @@ namespace AIRadio.Desktop.Services;
 /// </summary>
 public class EdgeTtsService : ITtsService, IDisposable
 {
-    private const string WssUrl = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&ConnectionId={0}";
-    private const string VoiceListUrl = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    private const string TrustedClientToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    private const string ChromiumFullVersion = "143.0.3650.75";
+    private const string SecMsGecVersion = $"1-{ChromiumFullVersion}";
+    private const string WssUrl = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
+    private const string VoiceListUrl = $"https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken={TrustedClientToken}";
+    private const string EdgeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
 
-    private static readonly Dictionary<string, string> EmotionToStyle = new()
+    private static readonly Dictionary<string, string> LegacyVoiceMap = new()
     {
-        ["happy"] = "cheerful",
-        ["sad"] = "sad",
-        ["calm"] = "gentle",
-        ["angry"] = "angry",
-        ["neutral"] = "chat",
-        ["surprised"] = "excited",
-        ["affectionate"] = "affectionate",
-        ["lyrical"] = "lyrical",
-        ["embarrassed"] = "embarrassed",
-        ["depressed"] = "depressed",
-        ["envious"] = "envious",
-        ["fearful"] = "fearful",
-        ["gentle"] = "gentle",
-        ["serious"] = "serious"
+        ["female-shaonv"] = "zh-CN-XiaoxiaoNeural",
+        ["female-yujie"] = "zh-CN-XiaoyiNeural",
+        ["female-chengshu"] = "zh-CN-XiaoxiaoNeural",
+        ["male-qn-qingse"] = "zh-CN-YunxiNeural",
+        ["male-qn-jingying"] = "zh-CN-YunjianNeural",
+        ["male-qn-badao"] = "zh-CN-YunyangNeural"
     };
 
     private readonly HttpClient _httpClient;
@@ -60,12 +59,11 @@ public class EdgeTtsService : ITtsService, IDisposable
         if (string.IsNullOrWhiteSpace(text))
             return Array.Empty<byte>();
 
-        var voice = string.IsNullOrWhiteSpace(voiceId) ? "zh-CN-XiaoxiaoNeural" : voiceId;
-        var style = EmotionToStyle.TryGetValue(emotion, out var s) ? s : "chat";
+        var voice = ResolveVoice(voiceId);
 
         try
         {
-            return await SynthesizeViaWebSocketAsync(text, voice, style);
+            return await SynthesizeViaWebSocketAsync(text, voice, emotion);
         }
         catch (Exception ex)
         {
@@ -124,16 +122,25 @@ public class EdgeTtsService : ITtsService, IDisposable
 
         _ws?.Dispose();
         var connectionId = Guid.NewGuid().ToString("N");
-        var url = string.Format(WssUrl, connectionId);
+        var secMsGec = GenerateSecMsGec(DateTimeOffset.UtcNow);
+        var url = $"{WssUrl}?TrustedClientToken={TrustedClientToken}" +
+                  $"&Sec-MS-GEC={secMsGec}" +
+                  $"&Sec-MS-GEC-Version={SecMsGecVersion}" +
+                  $"&ConnectionId={connectionId}";
         var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold");
+        ws.Options.SetRequestHeader("User-Agent", EdgeUserAgent);
+        ws.Options.SetRequestHeader("Pragma", "no-cache");
+        ws.Options.SetRequestHeader("Cache-Control", "no-cache");
+        ws.Options.SetRequestHeader("Accept-Language", "en-US,en;q=0.9");
+        ws.Options.SetRequestHeader("Cookie", $"muid={Guid.NewGuid().ToString("N").ToUpperInvariant()};");
         await ws.ConnectAsync(new Uri(url), ct);
         _ws = ws;
         _wsCreatedAt = DateTime.UtcNow;
         return ws;
     }
 
-    private async Task<byte[]> SynthesizeViaWebSocketAsync(string text, string voice, string style)
+    private async Task<byte[]> SynthesizeViaWebSocketAsync(string text, string voice, string emotion)
     {
         await _wsLock.WaitAsync();
         try
@@ -142,11 +149,11 @@ public class EdgeTtsService : ITtsService, IDisposable
             var ws = await GetOrCreateWebSocketAsync(cts.Token);
 
             // Send speech config
-            var configMsg = BuildConfigMessage(voice, style);
+            var configMsg = BuildConfigMessage();
             await SendWebSocketMessageAsync(ws, configMsg, cts.Token);
 
             // Send SSML
-            var ssml = BuildSsml(text, voice, style);
+            var ssml = BuildSsml(text, voice, emotion);
             var ssmlMsg = BuildSsmlMessage(ssml);
             await SendWebSocketMessageAsync(ws, ssmlMsg, cts.Token);
 
@@ -206,14 +213,14 @@ public class EdgeTtsService : ITtsService, IDisposable
         }
     }
 
-    private static string BuildConfigMessage(string voice, string style)
+    internal static string BuildConfigMessage()
     {
-        var timestamp = DateTime.UtcNow.ToString("R");
-        var json = "{\"context\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}";
+        var timestamp = BuildTimestamp();
+        var json = "{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}";
         return $"X-Timestamp:{timestamp}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{json}";
     }
 
-    private static string BuildSsml(string text, string voice, string style)
+    internal static string BuildSsml(string text, string voice, string? emotion = null)
     {
         // Escape XML special characters
         var escaped = text
@@ -223,11 +230,42 @@ public class EdgeTtsService : ITtsService, IDisposable
             .Replace("\"", "&quot;")
             .Replace("'", "&apos;");
 
+        var (pitch, rate, volume) = ResolveProsody(emotion);
+
         return $"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-CN'>" +
                $"<voice name='{voice}'>" +
-               $"<mstts:express-as style='{style}'>" +
+               $"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>" +
                $"{escaped}" +
-               $"</mstts:express-as></voice></speak>";
+               "</prosody></voice></speak>";
+    }
+
+    internal static (string Pitch, string Rate, string Volume) ResolveProsody(string? emotion)
+        => emotion?.Trim().ToLowerInvariant() switch
+        {
+            "happy" => ("+2Hz", "+8%", "+0%"),
+            "sad" => ("-2Hz", "-8%", "-5%"),
+            "calm" => ("-1Hz", "-12%", "-5%"),
+            "angry" => ("+3Hz", "+12%", "+3%"),
+            "surprised" => ("+4Hz", "+10%", "+2%"),
+            _ => ("+0Hz", "+0%", "+0%")
+        };
+
+    internal static string ResolveVoice(string? voiceId)
+    {
+        if (string.IsNullOrWhiteSpace(voiceId))
+            return "zh-CN-XiaoxiaoNeural";
+
+        return LegacyVoiceMap.GetValueOrDefault(voiceId, voiceId);
+    }
+
+    internal static string GenerateSecMsGec(DateTimeOffset utcNow)
+    {
+        const long windowsEpochSeconds = 11_644_473_600;
+        var seconds = utcNow.ToUnixTimeSeconds() + windowsEpochSeconds;
+        seconds -= seconds % 300;
+        var ticks = checked(seconds * 10_000_000);
+        var input = ticks.ToString(CultureInfo.InvariantCulture) + TrustedClientToken;
+        return Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(input)));
     }
 
     private static string BuildSsmlMessage(string ssml)
@@ -235,10 +273,15 @@ public class EdgeTtsService : ITtsService, IDisposable
         var requestId = Guid.NewGuid().ToString("N");
         return $"X-RequestId:{requestId}\r\n" +
                $"Content-Type:application/ssml+xml\r\n" +
-               $"X-Timestamp:{DateTime.UtcNow:R}\r\n" +
+               $"X-Timestamp:{BuildTimestamp()}Z\r\n" +
                $"Path:ssml\r\n\r\n" +
                ssml;
     }
+
+    private static string BuildTimestamp()
+        => DateTime.UtcNow.ToString(
+            "ddd MMM dd yyyy HH:mm:ss 'GMT+0000 (Coordinated Universal Time)'",
+            CultureInfo.InvariantCulture);
 
     private static async Task SendWebSocketMessageAsync(ClientWebSocket ws, string message, CancellationToken ct = default)
     {

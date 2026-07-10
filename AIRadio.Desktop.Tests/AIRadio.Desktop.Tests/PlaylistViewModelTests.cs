@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -18,7 +19,7 @@ namespace AIRadio.Desktop.Tests;
 public class PlaylistViewModelTests
 {
     private static (PlaylistViewModel vm, Mock<IAudioService> audioMock, Mock<IMusicSearchService> searchMock)
-        CreateVm(string? playlistFile = null)
+        CreateVm(string? playlistFile = null, Func<string, string, Task>? writeAllTextAsync = null)
     {
         var audioMock = new Mock<IAudioService>();
         audioMock.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
@@ -29,7 +30,11 @@ public class PlaylistViewModelTests
         searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
             .ReturnsAsync(new List<OnlineTrack>());
 
-        var vm = new PlaylistViewModel(audioMock.Object, searchMock.Object, playlistFile ?? CreateTempPlaylistFile());
+        var vm = new PlaylistViewModel(
+            audioMock.Object,
+            searchMock.Object,
+            playlistFile ?? CreateTempPlaylistFile(),
+            writeAllTextAsync);
         return (vm, audioMock, searchMock);
     }
 
@@ -292,5 +297,52 @@ public class PlaylistViewModelTests
         var ex = await Record.ExceptionAsync(() => vm.LoadAsync());
         Assert.Null(ex);
         Assert.Empty(vm.Tracks);
+    }
+
+    [Fact]
+    public async Task SaveAsync_ConcurrentRequests_ProduceValidPlaylistFile()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var sync = new object();
+        var activeWriters = 0;
+        var maxConcurrentWriters = 0;
+
+        async Task ObservedWriteAsync(string path, string contents)
+        {
+            lock (sync)
+            {
+                activeWriters++;
+                maxConcurrentWriters = Math.Max(maxConcurrentWriters, activeWriters);
+            }
+
+            try
+            {
+                await Task.Delay(20);
+                await File.WriteAllTextAsync(path, contents);
+            }
+            finally
+            {
+                lock (sync)
+                    activeWriters--;
+            }
+        }
+
+        var (vm, _, _) = CreateVm(playlistFile, ObservedWriteAsync);
+        for (var i = 0; i < 20; i++)
+        {
+            vm.Tracks.Add(new Track
+            {
+                Id = $"track-{i}",
+                Title = $"Track {i}",
+                FilePath = $"http://example.com/{i}.mp3"
+            });
+        }
+
+        await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => vm.SaveAsync()));
+
+        var json = await File.ReadAllTextAsync(playlistFile);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(1, maxConcurrentWriters);
+        Assert.Equal(20, doc.RootElement.GetProperty("Tracks").GetArrayLength());
     }
 }

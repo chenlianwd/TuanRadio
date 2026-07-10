@@ -99,7 +99,7 @@ Edge TTS 使用微软的免费 TTS 服务。已有成熟的 C# 封装库：
 1. 安装 NuGet 包：`dotnet add package MsEdgeTts`
 2. 创建 `EdgeTtsService` 实现 `ITtsService`
 3. 使用 `MsEdgeTtsClient` 的 `SynthesizeAsync` 方法
-4. 实现情感映射（`happy` → SSML style `cheerful` 等）
+4. 使用 Edge 支持的 SSML `prosody`（rate、pitch、volume）映射情绪
 5. 缓存常用语音（可选）
 
 **文件结构：**

@@ -3,6 +3,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using Moq;
 using Xunit;
 
 namespace AIRadio.Desktop.Tests;
@@ -10,6 +11,39 @@ namespace AIRadio.Desktop.Tests;
 // Note: all tests use real AudioService (requires LibVLC native libs). Consider mocking for CI (L25).
 public class PlayerViewModelTests
 {
+    [Fact]
+    public void ToggleRepeatCommand_UpdatesModeTextAndTooltip()
+    {
+        var mode = "radio";
+        var audio = new Mock<IAudioService>();
+        audio.SetupGet(x => x.RepeatMode).Returns(() => mode);
+        audio.Setup(x => x.SetRepeatMode(It.IsAny<string>()))
+            .Callback<string>(value => mode = value);
+        audio.SetupGet(x => x.TrackChanged).Returns(new Subject<Track?>());
+        audio.SetupGet(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+
+        using var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(audio.Object);
+        Assert.Equal("电台模式", vm.RepeatModeTip);
+
+        vm.ToggleRepeatCommand.Execute().Subscribe();
+        Assert.Equal("list", vm.RepeatMode);
+        Assert.Equal("ALL", vm.RepeatText);
+        Assert.Equal("列表循环", vm.RepeatModeTip);
+
+        vm.ToggleRepeatCommand.Execute().Subscribe();
+        Assert.Equal("single", vm.RepeatMode);
+        Assert.Equal("单曲循环", vm.RepeatModeTip);
+
+        vm.ToggleRepeatCommand.Execute().Subscribe();
+        Assert.Equal("none", vm.RepeatMode);
+        Assert.Equal("关闭循环", vm.RepeatModeTip);
+
+        vm.ToggleRepeatCommand.Execute().Subscribe();
+        Assert.Equal("radio", vm.RepeatMode);
+        Assert.Equal("电台模式", vm.RepeatModeTip);
+    }
+
     [Fact]
     public void PlayerViewModel_SeekTo_DoesNotThrow()
     {
