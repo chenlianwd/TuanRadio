@@ -80,7 +80,8 @@
                 <!-- Repeat -->
                 <Button Grid.Column="2" Command="{Binding ToggleRepeatCommand}"
                         Width="36" Height="36" CornerRadius="18"
-                        VerticalAlignment="Center" HorizontalAlignment="Right">
+                        VerticalAlignment="Center" HorizontalAlignment="Right"
+                        ToolTip.Tip="{Binding RepeatModeTip}">
                     <Button.Background>
                         <Binding Path="RepeatMode" Converter="{StaticResource RepeatToBg}"/>
                     </Button.Background>

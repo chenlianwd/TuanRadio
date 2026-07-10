@@ -11,6 +11,7 @@ using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
@@ -22,9 +23,11 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly string _playlistDir;
     private readonly string _playlistFile;
+    private readonly Func<string, string, Task> _writeAllTextAsync;
     private bool _isPlayingOnline;
     private bool _isLoading;
     private readonly IDisposable _selectedTrackSub;
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
     private static readonly string DefaultPlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -53,12 +56,17 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Track, Unit> ToggleFavoriteCommand { get; }
     public ReactiveCommand<Track, Unit> PlayFavoriteCommand { get; }
 
-    public PlaylistViewModel(IAudioService audioService, IMusicSearchService musicSearchService, string? playlistFile = null)
+    public PlaylistViewModel(
+        IAudioService audioService,
+        IMusicSearchService musicSearchService,
+        string? playlistFile = null,
+        Func<string, string, Task>? writeAllTextAsync = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
+        _writeAllTextAsync = writeAllTextAsync ?? ((path, contents) => File.WriteAllTextAsync(path, contents));
 
         RemoveTrackCommand = ReactiveCommand.Create<Track>(track =>
         {
@@ -277,8 +285,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task SaveAsync()
+    internal async Task SaveAsync()
     {
+        await _saveGate.WaitAsync();
         try
         {
             Directory.CreateDirectory(_playlistDir);
@@ -299,12 +308,16 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 FavoriteIds = _favoriteIds.ToList()
             };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(_playlistFile, json);
+            await _writeAllTextAsync(_playlistFile, json);
             Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", Tracks.Count, _favoriteIds.Count);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to save playlist");
+        }
+        finally
+        {
+            _saveGate.Release();
         }
     }
 

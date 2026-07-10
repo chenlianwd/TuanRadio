@@ -221,14 +221,38 @@ public class LLMService : ILLMService
         using var doc = JsonDocument.Parse(responseJson);
         var root = doc.RootElement;
 
-        // Claude format: content[0].text
-        if (root.TryGetProperty("content", out var contentArr) && contentArr.GetArrayLength() > 0 &&
-            contentArr[0].TryGetProperty("text", out var text))
+        // Anthropic 可能先返回 thinking 块，正文不一定是 content[0]。
+        if (root.TryGetProperty("content", out var contentElement))
         {
-            return text.GetString() ?? "";
+            if (contentElement.ValueKind == JsonValueKind.String)
+                return contentElement.GetString() ?? "";
+
+            if (contentElement.ValueKind == JsonValueKind.Array)
+            {
+                var textParts = new List<string>();
+                foreach (var block in contentElement.EnumerateArray())
+                {
+                    if (block.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(block.GetString()))
+                    {
+                        textParts.Add(block.GetString()!);
+                    }
+
+                    if (block.ValueKind == JsonValueKind.Object &&
+                        block.TryGetProperty("text", out var text) &&
+                        !string.IsNullOrWhiteSpace(text.GetString()))
+                    {
+                        textParts.Add(text.GetString()!);
+                    }
+                }
+
+                if (textParts.Count > 0)
+                    return string.Join("\n", textParts);
+            }
         }
 
-        Log.Warning("Unrecognized Anthropic response format");
+        Log.Warning("Unrecognized Anthropic response format: {Response}",
+            responseJson[..Math.Min(200, responseJson.Length)]);
         return "";
     }
 

@@ -209,7 +209,8 @@
                             <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首" AutomationProperties.Name="Next">
                                 <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                             </Button>
-                            <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}" ToolTip.Tip="循环模式">
+                            <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
+                                    ToolTip.Tip="{Binding PlayerVM.RepeatModeTip}">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
                                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
                                     <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9"/>
