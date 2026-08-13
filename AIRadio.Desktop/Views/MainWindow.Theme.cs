@@ -74,6 +74,9 @@ public partial class MainWindow
         {
             if (text.GetVisualAncestors().OfType<Border>().Any(IsDarkMessageBubble))
                 continue;
+            // 跳过自管主题的子控件（StatusBar 等用 DynamicResource/Converter 自行配色）
+            if (text.GetVisualAncestors().OfType<StatusBar>().Any())
+                continue;
             text.Foreground = brush;
         }
     }
