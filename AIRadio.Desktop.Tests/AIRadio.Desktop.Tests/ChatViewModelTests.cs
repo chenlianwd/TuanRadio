@@ -320,4 +320,13 @@ public class ChatViewModelTests
         var ex = Record.Exception(() => vm.EndHoldToTalk());
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void HasFailure_DefaultsFalse_AndIsReactive()
+    {
+        var (vm, _, _, _) = CreateVm();
+        Assert.False(vm.HasFailure);
+        vm.HasFailure = true;
+        Assert.True(vm.HasFailure);
+    }
 }
