@@ -1,0 +1,100 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
+             x:Class="AIRadio.Desktop.Views.PlayerDeck"
+             x:DataType="vm:MainWindowViewModel">
+    <UserControl.Resources>
+        <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
+    </UserControl.Resources>
+
+    <Border Background="#E91B1B2A" BorderBrush="#223D3D4F" BorderThickness="0,1" Padding="22,10">
+        <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="165,*,175">
+            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <Border Width="3" Height="11" Background="#FF56F5C4" CornerRadius="2"/>
+                    <Border Width="3" Height="17" Background="#FF56F5C4" CornerRadius="2"/>
+                    <Border Width="3" Height="9" Background="#FF56F5C4" CornerRadius="2"/>
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontSize="14" FontWeight="700"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFFFFFFF"
+                               TextTrimming="CharacterEllipsis" MaxWidth="128"/>
+                    <TextBlock Text="{Binding PlayerVM.TrackArtist}" FontSize="11"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FF9A9AA8"
+                               TextTrimming="CharacterEllipsis" MaxWidth="128"/>
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}" ToolTip.Tip="上一首" AutomationProperties.Name="Previous">
+                    <PathIcon Width="16" Height="16" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
+                </Button>
+                <Button Width="38" Height="38" Background="#302B2E3C" Command="{Binding PlayerVM.PlayCommand}" ToolTip.Tip="播放/暂停" AutomationProperties.Name="Play/Pause">
+                    <Grid>
+                        <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
+                                  Data="M8,5 L19,12 L8,19 Z"/>
+                        <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying}"
+                                  Data="M7,5 L10,5 L10,19 L7,19 Z M14,5 L17,5 L17,19 L14,19 Z"/>
+                    </Grid>
+                </Button>
+                <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首" AutomationProperties.Name="Next">
+                    <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
+                </Button>
+                <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
+                        ToolTip.Tip="{Binding PlayerVM.RepeatModeTip}">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
+                        <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9"/>
+                    </StackPanel>
+                </Button>
+                <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="收藏当前歌曲">
+                    <Grid>
+                        <PathIcon Width="17" Height="17" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
+                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                        <PathIcon Width="17" Height="17" Foreground="#FF56F5C4" IsVisible="{Binding IsCurrentFavorite}"
+                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                    </Grid>
+                </Button>
+            </StackPanel>
+
+            <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button Width="32" Height="30" Padding="0" Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="Library">
+                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L20,18"/>
+                </Button>
+                <Button Width="32" Height="30" Padding="0" Command="{Binding OpenFavoritesCommand}" ToolTip.Tip="Favorites">
+                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                </Button>
+                <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
+                           Foreground="#FF8A8A96" VerticalAlignment="Center"/>
+                <Slider Width="120" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
+                        PointerReleased="OnVolumeSliderReleased"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                        HorizontalAlignment="Center" Margin="0,9,0,0">
+                <Button Width="42" Height="24" Padding="0" Content="LIKE"
+                        FontSize="9" Command="{Binding LikeCurrentTrackCommand}" ToolTip.Tip="喜欢"/>
+                <Button Width="42" Height="24" Padding="0" Content="NOPE"
+                        FontSize="9" Command="{Binding DislikeCurrentTrackCommand}" ToolTip.Tip="不喜欢"/>
+                <Button Width="42" Height="24" Padding="0" Content="SIM"
+                        FontSize="9" Command="{Binding SimilarToCurrentTrackCommand}" ToolTip.Tip="再来类似"/>
+                <Button Width="42" Height="24" Padding="0" Content="CALM"
+                        FontSize="9" Command="{Binding CalmerRecommendationCommand}" ToolTip.Tip="换安静一点"/>
+                <Button Width="42" Height="24" Padding="0" Content="FIRE"
+                        FontSize="9" Command="{Binding EnergeticRecommendationCommand}" ToolTip.Tip="换燃一点"/>
+            </StackPanel>
+
+            <Grid Grid.Row="2" Grid.ColumnSpan="3" ColumnDefinitions="42,*,42" Margin="0,10,0,0">
+                <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}" FontSize="11"
+                           FontFamily="Consolas" Foreground="#FF9A9AA6" VerticalAlignment="Center"/>
+                <Slider Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                        Value="{Binding PlayerVM.CurrentSeconds}" PointerReleased="OnProgressSliderReleased"/>
+                <TextBlock Grid.Column="2" Text="{Binding PlayerVM.DurationText}" FontSize="11"
+                           FontFamily="Consolas" Foreground="#FF9A9AA6" HorizontalAlignment="Right"/>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

@@ -84,22 +84,6 @@ public partial class MainWindow : Window, IDisposable
         }, Avalonia.Threading.DispatcherPriority.Background);
     }
 
-    private void OnProgressSliderReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (sender is Slider slider && DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            vm.PlayerVM.SeekTo(slider.Value);
-        }
-    }
-
-    private void OnVolumeSliderReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (sender is Slider slider && DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            vm.PlayerVM.Volume = (float)slider.Value;
-        }
-    }
-
     private void OnChatInputKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
     {
         if (e.Key == Avalonia.Input.Key.Enter && DataContext is ViewModels.MainWindowViewModel vm)
