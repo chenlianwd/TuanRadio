@@ -7,6 +7,7 @@
         xmlns:models="using:AIRadio.Desktop.Models"
         xmlns:services="using:AIRadio.Desktop.Services"
         xmlns:local="using:AIRadio.Desktop.Views"
+        xmlns:conv="using:AIRadio.Desktop.Converters"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="AIRadio FM"
@@ -19,7 +20,7 @@
     <Window.Resources>
         <local:TabVisibleConverter x:Key="TabVisibleConverter"/>
         <local:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
-        <local:InverseBoolConverter x:Key="InverseBoolConverter"/>
+        <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
     </Window.Resources>
 
     <!-- TODO: Extract hardcoded colors into a ResourceDictionary with design tokens (M20) -->
@@ -75,8 +76,7 @@
                             Foreground="#FF8A8A96" Click="OnMinimizeClicked"
                             ToolTip.Tip="Minimize" AutomationProperties.Name="Minimize"
                             TabIndex="1">
-                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FF8A8A96" StrokeThickness="2"
-                              Data="M5 15 L19 15" Fill="Transparent" StrokeLineCap="Round"/>
+                        <Rectangle Width="14" Height="2" RadiusX="1" RadiusY="1" Fill="#FF8A8A96"/>
                     </Button>
                     <Button Width="30" Height="24" Padding="0" BorderThickness="0"
                             Background="#00000000"
@@ -318,7 +318,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel Margin="0,8"
-                                                    HorizontalAlignment="{Binding Role, Converter={x:Static local:MessageAlignConverter.Instance}}">
+                                                    HorizontalAlignment="{Binding Role, Converter={x:Static conv:MessageAlignConverter.Instance}}">
                                             <TextBlock Text="{Binding SenderName}" FontSize="10"
                                                        FontFamily="Consolas, Microsoft YaHei UI"
                                                        Foreground="#FFA783FF" Margin="0,0,0,4"/>
