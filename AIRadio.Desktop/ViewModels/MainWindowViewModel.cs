@@ -152,11 +152,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
 
-        // Persist IsDarkMode to settings when it changes
+        // Apply initial theme variant + sync RequestedThemeVariant on change (spec §5.4.2)
+        if (Avalonia.Application.Current is { } app0)
+            app0.RequestedThemeVariant = IsDarkMode ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
         _darkModePersistSub = this.WhenAnyValue(x => x.IsDarkMode)
             .Skip(1)
             .Subscribe(isDark =>
             {
+                if (Avalonia.Application.Current is { } app)
+                    app.RequestedThemeVariant = isDark ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
                 SettingsVM.IsDarkMode = isDark;
                 SettingsVM.SaveCommand.Execute().Subscribe();
         });

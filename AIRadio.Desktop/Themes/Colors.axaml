@@ -1,0 +1,13 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- PoC：验证 ThemeDictionaries + RequestedThemeVariant 在 Avalonia 11.3.9 的刷新行为（spec §5.4.2）。
+         Task 7 全量提取时这里会扩展为完整 token 集。 -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="TestToken">#FF000000</Color>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+            <Color x:Key="TestToken">#FFFFFFFF</Color>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>
