@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.ViewModels;
+using AIRadio.Desktop.Converters;
 using System;
 using System.Collections.Specialized;
 using System.Globalization;
@@ -20,7 +21,7 @@ public partial class ChatView : UserControl
     public ChatView()
     {
         Resources["MessageRoleConverter"] = new MessageRoleToBrushConverter();
-        Resources["MessageAlignmentConverter"] = new MessageRoleToAlignmentConverter();
+        Resources["MessageAlignmentConverter"] = new MessageAlignConverter();
         Resources["MicBgConverter"] = new MicBackgroundConverter();
         Resources["MicIconConverter"] = new MicIconConverter();
         Resources["ConvModeBgConverter"] = new ConversationModeBackgroundConverter();
@@ -77,21 +78,6 @@ public class MessageRoleToBrushConverter : IValueConverter
             MessageRole.Assistant => AssistantBrush,
             _ => DefaultBrush
         } : null;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => BindingOperations.DoNothing;
-}
-
-public class MessageRoleToAlignmentConverter : IValueConverter
-{
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        return value is MessageRole role ? role switch
-        {
-            MessageRole.User => Avalonia.Layout.HorizontalAlignment.Right,
-            _ => Avalonia.Layout.HorizontalAlignment.Left
-        } : Avalonia.Layout.HorizontalAlignment.Left;
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

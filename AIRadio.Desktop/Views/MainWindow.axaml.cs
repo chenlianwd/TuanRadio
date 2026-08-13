@@ -17,29 +17,6 @@ using Serilog;
 
 namespace AIRadio.Desktop.Views;
 
-// Note: functionally equivalent to ChatView's MessageRoleToAlignmentConverter.
-// Consider consolidating into a shared Converters/ directory (H15).
-public class MessageAlignConverter : IValueConverter
-{
-    public static readonly MessageAlignConverter Instance = new();
-    public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
-    {
-        if (value is MessageRole role)
-            return role == MessageRole.User ? Avalonia.Layout.HorizontalAlignment.Right : Avalonia.Layout.HorizontalAlignment.Left;
-        return Avalonia.Layout.HorizontalAlignment.Left;
-    }
-    public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => null;
-}
-
-public class InverseBoolConverter : IValueConverter
-{
-    public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
-        => value is bool b ? !b : true;
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
-        => value is bool b ? !b : false;
-}
-
 public partial class MainWindow : Window, IDisposable
 {
     // Must match MaxWidth in MainWindow.axaml chat message Border

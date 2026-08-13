@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using AIRadio.Desktop.ViewModels;
+using AIRadio.Desktop.Converters;
 using System;
 using System.Globalization;
 using System.Linq;
@@ -19,7 +20,7 @@ public partial class PlaylistView : UserControl
     {
         // Note: InvertBoolValueConverter is functionally equivalent to MainWindow's InverseBoolConverter.
         // Consider consolidating into a shared Converters/ directory (H14).
-        Resources["InvertBoolConverter"] = new InvertBoolValueConverter();
+        Resources["InvertBoolConverter"] = new InverseBoolConverter();
         Resources["TabBgPlaylistConverter"] = new TabBgConverter(0);
         Resources["TabFgPlaylistConverter"] = new TabFgConverter(0);
         Resources["TabBgFavoritesConverter"] = new TabBgConverter(1);
@@ -52,15 +53,6 @@ public partial class PlaylistView : UserControl
             vm.SearchCommand.Execute().Subscribe();
         }
     }
-}
-
-public class InvertBoolValueConverter : IValueConverter
-{
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool b ? !b : value;
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is bool b ? !b : value;
 }
 
 // Tab button background: active when TabIndex matches tabIndex parameter
