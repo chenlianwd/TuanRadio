@@ -88,8 +88,6 @@ public partial class MainWindow
     {
         var line = string.Join("  ", Enumerable.Repeat(".", 74));
         var field = string.Join(Environment.NewLine, Enumerable.Repeat(line, 20));
-        if (this.FindControl<TextBlock>("ClockDots") is { } clockDots)
-            clockDots.Text = field;
         if (this.FindControl<TextBlock>("RoomDots") is { } roomDots)
             roomDots.Text = field;
     }

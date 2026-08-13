@@ -24,6 +24,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISttService _sttService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
+    private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
     private readonly IDisposable _languageTtsSub;
     private readonly IDisposable _speechMixSub;
@@ -48,6 +49,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool IsCurrentFavorite { get; set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
+
+    /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
+    [Reactive] public DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
 
     /// <summary>统一电台状态，由子 VM flags 派生（spec §5.2）。</summary>
     [ObservableAsProperty] public RadioState CurrentState { get; }
@@ -215,6 +219,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 DeriveRadioState)
             .ObserveOn(RxApp.MainThreadScheduler)
             .ToProperty(this, x => x.CurrentState);
+
+        // 1s 时钟推进（spec §5.5）
+        _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(_ => Now = DateTimeOffset.Now);
     }
 
     private void ToggleCurrentFavorite()
@@ -651,6 +660,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _darkModePersistSub?.Dispose();
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();
+        _clockSub?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();
         ChatVM?.Dispose();

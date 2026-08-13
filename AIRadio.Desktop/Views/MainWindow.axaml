@@ -117,37 +117,7 @@
                     </Grid>
                 </Border>
 
-                <!-- Clock stage -->
-                <Grid x:Name="ClockStage" Grid.Row="1" Background="#F008080D">
-                    <TextBlock IsHitTestVisible="False"
-                               Opacity="0.20"
-                               FontSize="11"
-                               LineHeight="17"
-                               FontFamily="Consolas"
-                               Foreground="#FF44465C"
-                               TextWrapping="Wrap"
-                               x:Name="ClockDots"/>
-                    <local:StarfieldView x:Name="Starfield"
-                                         IsHitTestVisible="False"/>
-                    <Grid ColumnDefinitions="*,Auto,*" Margin="24,10">
-                        <local:SpectrumView Grid.Column="0" DataContext="{Binding SpectrumVM}"
-                                            HorizontalAlignment="Stretch" VerticalAlignment="Center"
-                                            Height="118" Margin="0,0,18,0"/>
-                        <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
-                                <!-- TODO: Convert x:Name clock elements to ViewModel bindings (M25) -->
-                                <TextBlock x:Name="ClockDisplay" Text="--:--" FontSize="56" FontWeight="700"
-                                           FontFamily="Consolas" Foreground="#FFFFFFFF"
-                                           HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="DayDisplay" Text="" FontSize="13" FontFamily="Consolas"
-                                       Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="DateDisplay" Text="" FontSize="10" FontFamily="Consolas"
-                                       Foreground="#FF858594" HorizontalAlignment="Center"/>
-                        </StackPanel>
-                        <local:SpectrumView Grid.Column="2" DataContext="{Binding SpectrumVM}"
-                                            HorizontalAlignment="Stretch" VerticalAlignment="Center"
-                                            Height="118" Margin="18,0,0,0"/>
-                    </Grid>
-                </Grid>
+                <local:ClockStage Grid.Row="1" DataContext="{Binding}"/>
 
                 <!-- Player deck -->
                 <Border x:Name="PlayerDeck" Grid.Row="2" Background="#E91B1B2A" BorderBrush="#223D3D4F" BorderThickness="0,1" Padding="22,10">
