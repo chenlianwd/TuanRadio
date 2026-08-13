@@ -49,6 +49,18 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsCurrentFavorite { get; set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
 
+    /// <summary>统一电台状态，由子 VM flags 派生（spec §5.2）。</summary>
+    [ObservableAsProperty] public RadioState CurrentState { get; }
+
+    /// <summary>状态派生纯函数：Error &gt; Speaking &gt; Searching &gt; Curating &gt; Playing &gt; Idle。</summary>
+    public static RadioState DeriveRadioState(bool hasFailure, bool isSpeaking, bool isSearching, bool isProcessing, bool isPlaying)
+        => hasFailure ? RadioState.Error
+           : isSpeaking ? RadioState.Speaking
+           : isSearching ? RadioState.Searching
+           : isProcessing ? RadioState.Curating
+           : isPlaying ? RadioState.Playing
+           : RadioState.Idle;
+
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleLibraryCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenPlaylistCommand { get; }
@@ -188,6 +200,17 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _trackChangedSub = _audioService.TrackChanged
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(track => IsCurrentFavorite = track?.IsFavorite == true);
+
+        // 统一电台状态机：从子 VM flags 派生 CurrentState（spec §5.2）
+        this.WhenAnyValue(
+                x => x.ChatVM.HasFailure,
+                x => x.ChatVM.IsSpeaking,
+                x => x.PlaylistVM.IsSearching,
+                x => x.ChatVM.IsProcessing,
+                x => x.PlayerVM.IsPlaying,
+                DeriveRadioState)
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .ToProperty(this, x => x.CurrentState);
     }
 
     private void ToggleCurrentFavorite()
