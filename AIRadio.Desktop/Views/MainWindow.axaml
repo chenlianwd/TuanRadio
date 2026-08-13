@@ -63,32 +63,7 @@
     </Window.Styles>
 
     <Grid x:Name="RootGrid" Background="#FF030305" RowDefinitions="30,*">
-        <Border x:Name="TitleBar" Grid.Row="0" Background="#FF050507" PointerPressed="OnTitleBarPointerPressed">
-            <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0">
-                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Border Width="10" Height="10" CornerRadius="5" Background="#FF56F5C4"/>
-                    <TextBlock Text="AIRadio FM" FontSize="12" FontFamily="Consolas"
-                               Foreground="#FFBFC3D6" VerticalAlignment="Center"/>
-                </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Button Width="30" Height="24" Padding="0" BorderThickness="0"
-                            Background="#00000000"
-                            Foreground="#FF8A8A96" Click="OnMinimizeClicked"
-                            ToolTip.Tip="Minimize" AutomationProperties.Name="Minimize"
-                            TabIndex="1">
-                        <Rectangle Width="14" Height="2" RadiusX="1" RadiusY="1" Fill="#FF8A8A96"/>
-                    </Button>
-                    <Button Width="30" Height="24" Padding="0" BorderThickness="0"
-                            Background="#00000000"
-                            Foreground="#FF6E6E80" Click="OnCloseClicked"
-                            ToolTip.Tip="Close" AutomationProperties.Name="Close"
-                            TabIndex="2">
-                        <Path Width="16" Height="16" Stretch="Uniform" Stroke="#FF6E6E80" StrokeThickness="2"
-                              Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
-                    </Button>
-                </StackPanel>
-            </Grid>
-        </Border>
+        <local:TitleBar Grid.Row="0"/>
 
         <Border x:Name="ShellCard" Grid.Row="1"
                 Margin="14"

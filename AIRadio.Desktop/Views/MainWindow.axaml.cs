@@ -260,22 +260,6 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-            BeginMoveDrag(e);
-    }
-
-    private void OnMinimizeClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        WindowState = WindowState.Minimized;
-    }
-
-    private void OnCloseClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        Close();
-    }
-
     protected override void OnClosed(EventArgs e)
     {
         Dispose();
