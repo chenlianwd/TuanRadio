@@ -36,7 +36,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private string? _tempWavPath;
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
-    private bool _hasFailureNotice;
+    [Reactive] public bool HasFailure { get; set; }
     private bool _isStatusNoticeDismissed;
     private string _failureStatusText = "AI ERROR";
     private IDisposable? _statusAutoDismissSub;
@@ -464,7 +464,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void RefreshStatus()
     {
-        if (_hasFailureNotice && !IsProcessing && !IsSpeaking && !IsRecognizing && !IsListening)
+        if (HasFailure && !IsProcessing && !IsSpeaking && !IsRecognizing && !IsListening)
         {
             StatusText = _failureStatusText;
             ShowStatusNotice = !_isStatusNoticeDismissed;
@@ -496,7 +496,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void SetWorkingNotice(string headline, string detail)
     {
-        _hasFailureNotice = false;
+        HasFailure = false;
         _isStatusNoticeDismissed = false;
         StatusHeadline = headline;
         StatusDetail = detail;
@@ -507,7 +507,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void SetFailureNotice(ApiFailureInfo failure)
     {
-        _hasFailureNotice = true;
+        HasFailure = true;
         _isStatusNoticeDismissed = false;
         _failureStatusText = failure.Kind switch
         {
@@ -534,7 +534,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         _isStatusNoticeDismissed = true;
         ShowStatusNotice = false;
-        ShowStatusRecall = _hasFailureNotice;
+        ShowStatusRecall = HasFailure;
     }
 
     private void RestoreStatusNotice()
@@ -554,7 +554,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             .Timer(TimeSpan.FromSeconds(6), RxApp.MainThreadScheduler)
             .Subscribe(_ =>
             {
-                if (_hasFailureNotice && ShowStatusNotice)
+                if (HasFailure && ShowStatusNotice)
                     DismissStatusNotice();
             });
     }
