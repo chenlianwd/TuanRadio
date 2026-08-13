@@ -26,4 +26,14 @@ public class ConverterEquivalenceTests
         Assert.Equal(HorizontalAlignment.Right, c.Convert(MessageRole.User, typeof(object), null, CultureInfo.InvariantCulture));
         Assert.Equal(HorizontalAlignment.Left, c.Convert(MessageRole.Assistant, typeof(object), null, CultureInfo.InvariantCulture));
     }
+
+    [Theory]
+    [InlineData(RadioState.Idle, "AIRADIO FM")]
+    [InlineData(RadioState.Curating, "CURATING")]
+    [InlineData(RadioState.Searching, "SEARCHING")]
+    [InlineData(RadioState.Speaking, "SPEAKING")]
+    [InlineData(RadioState.Playing, "ON AIR")]
+    [InlineData(RadioState.Error, "ERROR")]
+    public void RadioStateToText_MapsCorrectly(RadioState state, string expected)
+        => Assert.Equal(expected, RadioStateToTextConverter.Instance.Convert(state, typeof(string), null, CultureInfo.InvariantCulture));
 }

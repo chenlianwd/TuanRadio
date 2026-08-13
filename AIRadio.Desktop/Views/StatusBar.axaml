@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
+             x:Class="AIRadio.Desktop.Views.StatusBar"
+             x:DataType="vm:MainWindowViewModel">
+
+    <Border Background="#F0222234" Padding="22,0">
+        <Grid ColumnDefinitions="*,Auto">
+            <!-- TestToken 作 Theme 机制验证锚点（Task 15 删，改正式 token） -->
+            <TextBlock Text="AIRADIO FM" FontSize="11" FontFamily="Consolas"
+                       Foreground="{DynamicResource TestToken}" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1"
+                       Text="{Binding CurrentState, Converter={x:Static conv:RadioStateToTextConverter.Instance}}"
+                       Foreground="{Binding CurrentState, Converter={x:Static conv:RadioStateToBrushConverter.Instance}}"
+                       FontSize="11" FontFamily="Consolas" VerticalAlignment="Center"/>
+        </Grid>
+    </Border>
+</UserControl>

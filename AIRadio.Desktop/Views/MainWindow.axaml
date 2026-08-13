@@ -454,15 +454,8 @@
                     </Grid>
                 </Border>
 
-                <!-- Footer -->
-                <Border x:Name="FooterBar" Grid.Row="6" Background="#F0222234" Padding="22,0">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock Text="AIRADIO FM" FontSize="11" FontFamily="Consolas"
-                                   Foreground="#FFB5B5C8" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="1" Text="{Binding ChatVM.StatusText}" FontSize="11" FontFamily="Consolas"
-                                   Foreground="#FFD8D8EA" VerticalAlignment="Center"/>
-                    </Grid>
-                </Border>
+                <!-- StatusBar（统一电台状态，替换原 FooterBar） -->
+                <local:StatusBar Grid.Row="6" DataContext="{Binding}"/>
             </Grid>
 
             <Border IsVisible="{Binding IsLibraryOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
