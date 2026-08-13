@@ -22,15 +22,11 @@ public partial class MainWindow : Window, IDisposable
     // Must match MaxWidth in MainWindow.axaml chat message Border
     private const double ChatBubbleMaxWidth = 380;
 
-    private System.Timers.Timer? _clockTimer;
     private Button? _themeButton;
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
     private TextBlock? _avatarLetter;
     private Button? _micButton;
-    private StarfieldView? _starfield;
-    private Action<float[]>? _spectrumHandler;
-    private IDisposable? _starfieldVisSub;
     private IDisposable? _searchDebounceSub;
     private IDisposable? _themeSub;
     private NotifyCollectionChangedEventHandler? _chatHandler;
@@ -41,8 +37,6 @@ public partial class MainWindow : Window, IDisposable
         InitializeComponent();
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
         _avatarLetter = this.FindControl<TextBlock>("AvatarLetter");
-        _starfield = this.FindControl<StarfieldView>("Starfield");
-        StartClock();
         FillDotFields();
 
         DataContextChanged += (_, _) =>
@@ -59,10 +53,7 @@ public partial class MainWindow : Window, IDisposable
                     if (_chatHandler != null)
                         _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
                     _themeSub?.Dispose();
-                    _starfieldVisSub?.Dispose();
                     _searchDebounceSub?.Dispose();
-                    if (_spectrumHandler != null)
-                        _activeVm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
                 }
 
                 _activeVm = vm;
@@ -74,16 +65,6 @@ public partial class MainWindow : Window, IDisposable
                 vm.ChatVM.Messages.CollectionChanged += _chatHandler;
                 _themeSub = vm.WhenAnyValue(x => x.IsDarkMode).Subscribe(isDark => UpdateThemeButtons(isDark));
                 UpdateThemeButtons(vm.IsDarkMode);
-
-                // Wire starfield: push spectrum data + bind visibility
-                if (_spectrumHandler != null)
-                    vm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
-                _spectrumHandler = data => _starfield?.PushSpectrum(data);
-                vm.SpectrumVM.SpectrumReceived += _spectrumHandler;
-
-                _starfieldVisSub?.Dispose();
-                _starfieldVisSub = vm.SettingsVM.WhenAnyValue(x => x.EnableStarfield)
-                    .Subscribe(v => { if (_starfield != null) _starfield.IsVisible = v; });
 
                 // Keep search explicit. Auto-search can leave the UI waiting on a
                 // partial keyword while the user is still typing.
@@ -101,29 +82,6 @@ public partial class MainWindow : Window, IDisposable
                 ApplyChatMessageTheme(_activeVm.IsDarkMode);
             this.FindControl<ScrollViewer>("ChatScrollViewer")?.ScrollToEnd();
         }, Avalonia.Threading.DispatcherPriority.Background);
-    }
-
-    private void StartClock()
-    {
-        UpdateClock();
-        _clockTimer = new System.Timers.Timer(1000);
-        _clockTimer.Elapsed += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(UpdateClock);
-        _clockTimer.Start();
-    }
-
-    private void UpdateClock()
-    {
-        try
-        {
-            var now = DateTime.Now;
-            if (this.FindControl<TextBlock>("ClockDisplay") is TextBlock clock)
-                clock.Text = now.ToString("HH:mm");
-            if (this.FindControl<TextBlock>("DayDisplay") is TextBlock day)
-                day.Text = now.ToString("dddd");
-            if (this.FindControl<TextBlock>("DateDisplay") is TextBlock date)
-                date.Text = now.ToString("dd-MMM-yyyy").ToUpper();
-        }
-        catch (Exception ex) { Serilog.Log.Debug(ex, "UpdateClock failed"); }
     }
 
     private void OnProgressSliderReleased(object? sender, PointerReleasedEventArgs e)
@@ -268,10 +226,7 @@ public partial class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
-        _clockTimer?.Stop();
-        _clockTimer?.Dispose();
         _themeSub?.Dispose();
-        _starfieldVisSub?.Dispose();
         _searchDebounceSub?.Dispose();
         if (_activeVm != null)
         {
@@ -282,8 +237,6 @@ public partial class MainWindow : Window, IDisposable
             }
             if (_chatHandler != null)
                 _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
-            if (_spectrumHandler != null)
-                _activeVm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
         }
     }
 }

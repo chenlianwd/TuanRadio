@@ -1,0 +1,37 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:local="using:AIRadio.Desktop.Views"
+             x:Class="AIRadio.Desktop.Views.ClockStage"
+             x:DataType="vm:MainWindowViewModel">
+
+    <Grid Background="#F008080D">
+        <TextBlock x:Name="ClockDots"
+                   IsHitTestVisible="False"
+                   Opacity="0.20"
+                   FontSize="11"
+                   LineHeight="17"
+                   FontFamily="Consolas"
+                   Foreground="#FF44465C"
+                   TextWrapping="Wrap"/>
+        <local:StarfieldView x:Name="Starfield"
+                             IsHitTestVisible="False"/>
+        <Grid ColumnDefinitions="*,Auto,*" Margin="24,10">
+            <local:SpectrumView Grid.Column="0" DataContext="{Binding SpectrumVM}"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                Height="118" Margin="0,0,18,0"/>
+            <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                <TextBlock Text="{Binding Now, StringFormat='HH:mm'}" FontSize="56" FontWeight="700"
+                           FontFamily="Consolas" Foreground="#FFFFFFFF"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding Now, StringFormat='dddd'}" FontSize="13" FontFamily="Consolas"
+                           Foreground="#FFE5E5EC" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding Now, StringFormat='dd-MMM-yyyy'}" FontSize="10" FontFamily="Consolas"
+                           Foreground="#FF858594" HorizontalAlignment="Center"/>
+            </StackPanel>
+            <local:SpectrumView Grid.Column="2" DataContext="{Binding SpectrumVM}"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                Height="118" Margin="18,0,0,0"/>
+        </Grid>
+    </Grid>
+</UserControl>
