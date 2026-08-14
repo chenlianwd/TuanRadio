@@ -19,9 +19,6 @@ namespace AIRadio.Desktop.Views;
 
 public partial class MainWindow : Window, IDisposable
 {
-    // Must match MaxWidth in MainWindow.axaml chat message Border
-    private const double ChatBubbleMaxWidth = 380;
-
     private Button? _themeButton;
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
@@ -33,7 +30,6 @@ public partial class MainWindow : Window, IDisposable
     {
         InitializeComponent();
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
-        FillDotFields();
 
         DataContextChanged += (_, _) =>
         {
