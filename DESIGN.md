@@ -1,5 +1,7 @@
 # Design System Inspired by Spotify
 
+> 历史文档：本文记录 2026-05 初期的 Spotify 风格视觉参考。当前实际颜色以 `AIRadio.Desktop/Themes/Colors.axaml` 的 token 为准；当前状态见 `README.md` 和 `ai-radio-plan.md`。
+
 ## 1. Visual Theme & Atmosphere
 
 Spotify's web interface is a dark, immersive music player that wraps listeners in a near-black cocoon (`#121212`, `#181818`, `#1f1f1f`) where album art and content become the primary source of color. The design philosophy is "content-first darkness" — the UI recedes into shadow so that music, podcasts, and playlists can glow. Every surface is a shade of charcoal, creating a theater-like environment where the only true color comes from the iconic Spotify Green (`#1ed760`) and the album artwork itself.

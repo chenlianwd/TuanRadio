@@ -4,7 +4,7 @@
 
 AIRadio 是一个 Windows 桌面 AI 电台播放器。
 
-技术栈：.NET 8、Avalonia 11.3.2、ReactiveUI、LibVLCSharp、NAudio、MiniMax、Whisper、多平台在线音乐搜索。
+技术栈：.NET 10、Avalonia 11.3.9、ReactiveUI、LibVLCSharp、NAudio、LLM（OpenAI/Anthropic 兼容/本地三格式）、Edge TTS、Whisper、多平台在线音乐搜索。
 
 产品定位：复古 AI 电台、AI DJ、节目单推荐、TTS 串场、音乐搜索、星空/频谱视觉反馈。
 
@@ -13,19 +13,17 @@ AIRadio 是一个 Windows 桌面 AI 电台播放器。
 - 不再保留旧 Web 静态资源、模型资源或相关运行时依赖。
 - AI DJ 角色保留为名称、声音、人设提示和轻量头像动效。
 - 推荐闭环先做当前会话级，不做长期用户画像数据库。
-- 天气、日历、歌词和真实 FFT 暂不进入第一轮开发。
+- 天气、日历、歌词暂不进入第一轮开发。
 
 ## Recent Work
 
-- Radio Mode 自动续播和播放列表同步。
-- TTS 中断：发送新消息前停止当前 TTS。
-- ViewModel 事件订阅释放，降低泄漏风险。
-- OFF 模式不再自动续播。
-- 收藏数据迁移到 `FavoriteIds`。
-- DJ 推荐会根据当前曲目、收藏和排除列表寻找新歌。
-- AI 控制协议升级为 JSON 控制块，并保留旧格式兼容。
-- 推荐模型和 `RecommendationService` v1 已开始落地。
-- 星空视觉反馈由频谱数据驱动，目前频谱仍为模拟视觉数据。
+- 视图重构 + 统一状态机落地：MainWindow 拆为 TitleBar/ClockStage/PlayerDeck/ChatArea/PlaylistDrawer/StatusBar/CharacterPicker UserControl，`RadioState` 状态机驱动 StatusBar。
+- Theme 全量 token 化：全部颜色走 `Themes/Colors.axaml`，Light/Dark 切换可用。
+- 真实 FFT 频谱：WasapiLoopbackCapture + FFT 替换模拟数据，驱动频谱与星空。
+- SongStory：STORY 按钮触发现曲 LLM 讲述。
+- 节目单视图（库抽屉第 4 个 tab）显示推荐标签，推荐理由经 DjOpening 走 DJ 气泡。
+- 搜索状态逐源透传（成功/超时/失败），设置页带连接诊断。
+- 升级 .NET 10，Tmds.DBus.Protocol 固定 0.21.3 修复漏洞通告。
 
 ## Architecture Notes
 
@@ -39,8 +37,10 @@ AIRadio 是一个 Windows 桌面 AI 电台播放器。
 
 ```bash
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
-dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal --no-restore /p:UseSharedCompilation=false
+dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"
 ```
+
+> Git Bash 下 `/p:` 参数必须加引号，否则 MSBuild 解析报 MSB1008。
 
 ## Notes For Future Agents
 
