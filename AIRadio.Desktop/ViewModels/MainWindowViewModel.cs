@@ -70,6 +70,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> OpenPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenFavoritesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenSearchCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenProgramCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
@@ -149,6 +150,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         OpenSearchCommand = ReactiveCommand.Create(() =>
         {
             PlaylistVM.TabIndex = 2;
+            IsLibraryOpen = true;
+        });
+        OpenProgramCommand = ReactiveCommand.Create(() =>
+        {
+            PlaylistVM.TabIndex = 3;
             IsLibraryOpen = true;
         });
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
@@ -586,7 +592,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             var recommended = await _recommendationService.GetNextTrackAsync(request);
+            var prevOpening = CurrentRadioProgram?.DjOpening;
             CurrentRadioProgram = _recommendationService.CurrentProgram;
+            // 新节目单的开场白作为 DJ 气泡推荐理由（去重，避免续播每首刷屏）
+            if (CurrentRadioProgram != null && CurrentRadioProgram.DjOpening != prevOpening
+                && !string.IsNullOrWhiteSpace(CurrentRadioProgram.DjOpening))
+            {
+                ChatVM.AddAssistantMessage(CurrentRadioProgram.DjOpening);
+            }
             if (recommended != null)
                 return recommended;
         }
