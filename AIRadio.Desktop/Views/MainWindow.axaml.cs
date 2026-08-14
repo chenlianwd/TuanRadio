@@ -93,25 +93,6 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void OnCharacterSelected(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is Border { DataContext: Models.CharacterProfile character } &&
-            DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            if (character == vm.SelectedCharacter) return;
-
-            if (_avatarBorder is Border border && _avatarLetter is TextBlock letter)
-            {
-                _ = Animations.PlayCharacterSwitchAsync(border, letter, character.DisplayName,
-                    () => vm.SelectCharacterCommand.Execute(character).Subscribe());
-            }
-            else
-            {
-                vm.SelectCharacterCommand.Execute(character).Subscribe();
-            }
-        }
-    }
-
     protected override void OnClosed(EventArgs e)
     {
         Dispose();
