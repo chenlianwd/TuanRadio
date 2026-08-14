@@ -1,5 +1,4 @@
-<ResourceDictionary xmlns="https://github.com/avaloniaui"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<ResourceDictionary xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Dark">
             <Color x:Key="TestToken">#FFFFFFFF</Color>
@@ -15,6 +14,43 @@
             <Color x:Key="ChromeButton">#FF8A8A96</Color>
             <Color x:Key="ChromeButtonClose">#FF6E6E80</Color>
             <Color x:Key="SurfaceFooter">#F0222234</Color>
+            <Color x:Key="C_00000000">#00000000</Color>
+            <Color x:Key="C_2221ED76">#2221ED76</Color>
+            <Color x:Key="C_222F303A">#222F303A</Color>
+            <Color x:Key="C_223D3D4F">#223D3D4F</Color>
+            <Color x:Key="C_253D3D4A">#253D3D4A</Color>
+            <Color x:Key="C_302B2E3C">#302B2E3C</Color>
+            <Color x:Key="C_33262835">#33262835</Color>
+            <Color x:Key="C_3356F5C4">#3356F5C4</Color>
+            <Color x:Key="C_66111113">#66111113</Color>
+            <Color x:Key="C_6656F5C4">#6656F5C4</Color>
+            <Color x:Key="C_667B7898">#667B7898</Color>
+            <Color x:Key="C_66A783FF">#66A783FF</Color>
+            <Color x:Key="C_CC202126">#CC202126</Color>
+            <Color x:Key="C_E9161623">#E9161623</Color>
+            <Color x:Key="C_E91B1B2A">#E91B1B2A</Color>
+            <Color x:Key="C_EE050507">#EE050507</Color>
+            <Color x:Key="C_F008080D">#F008080D</Color>
+            <Color x:Key="C_FC0E0E15">#FC0E0E15</Color>
+            <Color x:Key="C_FF111118">#FF111118</Color>
+            <Color x:Key="C_FF44465C">#FF44465C</Color>
+            <Color x:Key="C_FF56F5C4">#FF56F5C4</Color>
+            <Color x:Key="C_FF7F7896">#FF7F7896</Color>
+            <Color x:Key="C_FF858594">#FF858594</Color>
+            <Color x:Key="C_FF8A8A96">#FF8A8A96</Color>
+            <Color x:Key="C_FF8DFFC8">#FF8DFFC8</Color>
+            <Color x:Key="C_FF8E8E9C">#FF8E8E9C</Color>
+            <Color x:Key="C_FF9A9AA6">#FF9A9AA6</Color>
+            <Color x:Key="C_FF9A9AA8">#FF9A9AA8</Color>
+            <Color x:Key="C_FF9B9BA8">#FF9B9BA8</Color>
+            <Color x:Key="C_FFA783FF">#FFA783FF</Color>
+            <Color x:Key="C_FFB9FFE8">#FFB9FFE8</Color>
+            <Color x:Key="C_FFD8D8EA">#FFD8D8EA</Color>
+            <Color x:Key="C_FFE4D9FF">#FFE4D9FF</Color>
+            <Color x:Key="C_FFE5E5EC">#FFE5E5EC</Color>
+            <Color x:Key="C_FFEDEDF5">#FFEDEDF5</Color>
+            <Color x:Key="C_FFFFC86B">#FFFFC86B</Color>
+            <Color x:Key="C_FFFFFFFF">#FFFFFFFF</Color>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <Color x:Key="TestToken">#FF000000</Color>
@@ -30,6 +66,43 @@
             <Color x:Key="ChromeButton">#FF6E6E80</Color>
             <Color x:Key="ChromeButtonClose">#FF535353</Color>
             <Color x:Key="SurfaceFooter">#EAE7F3FF</Color>
+            <Color x:Key="C_00000000">#00000000</Color>
+            <Color x:Key="C_2221ED76">#2221ED76</Color>
+            <Color x:Key="C_222F303A">#222F303A</Color>
+            <Color x:Key="C_223D3D4F">#223D3D4F</Color>
+            <Color x:Key="C_253D3D4A">#253D3D4A</Color>
+            <Color x:Key="C_302B2E3C">#302B2E3C</Color>
+            <Color x:Key="C_33262835">#33262835</Color>
+            <Color x:Key="C_3356F5C4">#3356F5C4</Color>
+            <Color x:Key="C_66111113">#66111113</Color>
+            <Color x:Key="C_6656F5C4">#6656F5C4</Color>
+            <Color x:Key="C_667B7898">#667B7898</Color>
+            <Color x:Key="C_66A783FF">#66A783FF</Color>
+            <Color x:Key="C_CC202126">#CC202126</Color>
+            <Color x:Key="C_E9161623">#E9161623</Color>
+            <Color x:Key="C_E91B1B2A">#E91B1B2A</Color>
+            <Color x:Key="C_EE050507">#EE050507</Color>
+            <Color x:Key="C_F008080D">#F008080D</Color>
+            <Color x:Key="C_FC0E0E15">#FC0E0E15</Color>
+            <Color x:Key="C_FF111118">#FF111118</Color>
+            <Color x:Key="C_FF44465C">#FF44465C</Color>
+            <Color x:Key="C_FF56F5C4">#FF56F5C4</Color>
+            <Color x:Key="C_FF7F7896">#FF7F7896</Color>
+            <Color x:Key="C_FF858594">#FF858594</Color>
+            <Color x:Key="C_FF8A8A96">#FF8A8A96</Color>
+            <Color x:Key="C_FF8DFFC8">#FF8DFFC8</Color>
+            <Color x:Key="C_FF8E8E9C">#FF8E8E9C</Color>
+            <Color x:Key="C_FF9A9AA6">#FF9A9AA6</Color>
+            <Color x:Key="C_FF9A9AA8">#FF9A9AA8</Color>
+            <Color x:Key="C_FF9B9BA8">#FF9B9BA8</Color>
+            <Color x:Key="C_FFA783FF">#FFA783FF</Color>
+            <Color x:Key="C_FFB9FFE8">#FFB9FFE8</Color>
+            <Color x:Key="C_FFD8D8EA">#FFD8D8EA</Color>
+            <Color x:Key="C_FFE4D9FF">#FFE4D9FF</Color>
+            <Color x:Key="C_FFE5E5EC">#FFE5E5EC</Color>
+            <Color x:Key="C_FFEDEDF5">#FFEDEDF5</Color>
+            <Color x:Key="C_FFFFC86B">#FFFFC86B</Color>
+            <Color x:Key="C_FFFFFFFF">#FFFFFFFF</Color>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>
