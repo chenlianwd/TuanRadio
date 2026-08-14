@@ -382,9 +382,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 SearchResults.Add(track);
             }
             TabIndex = 2; // auto-switch to search results
-            SetSearchStatus(results.Count == 0
-                ? "没有找到可用结果。可以换个关键词，或检查网络/音乐 API 服务。"
-                : $"找到 {results.Count} 个结果。");
+            SetSearchStatus(BuildSearchStatusMessage(results.Count));
             Log.Information("Search '{Query}' returned {Count} results", SearchText, results.Count);
         }
         catch (Exception ex)
@@ -397,6 +395,23 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             IsSearching = false;
             SearchButtonText = "搜索";
         }
+    }
+
+    /// <summary>构造搜索状态消息：透传各音源成功/超时/失败（子项目 5）。</summary>
+    private string BuildSearchStatusMessage(int totalCount)
+    {
+        if (_musicSearchService is not Services.MultiSourceMusicService multi || multi.LastSearchReport.Count == 0)
+            return totalCount == 0
+                ? "没有找到可用结果。可以换个关键词，或检查网络/音乐 API 服务。"
+                : $"找到 {totalCount} 个结果。";
+
+        var perSource = string.Join("；", multi.LastSearchReport.Select(s =>
+            s.Status == "ok" ? $"{s.Name}成功{s.Count}条"
+            : s.Status == "timeout" ? $"{s.Name}超时"
+            : $"{s.Name}失败:{s.Error}"));
+        return totalCount == 0
+            ? $"未找到结果。{perSource}"
+            : $"找到 {totalCount} 个结果。{perSource}";
     }
 
     private void SetSearchStatus(string message)
