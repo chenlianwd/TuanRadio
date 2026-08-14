@@ -23,7 +23,6 @@ public partial class MainWindow
                 "#E91B1B2A", "#F007070A", "#E9161623", "#66111113", "#F0222234",
                 "#33494B66");
             SetShellTextForeground("#FFEDEDF5");
-            ApplyChatMessageTheme(isDark);
         }
         else
         {
@@ -34,34 +33,9 @@ public partial class MainWindow
                 "#ECEEE9FF", "#F4F3F8FF", "#F8FFFFFF", "#99EEEAF5", "#EAE7F3FF",
                 "#664E4862");
             SetShellTextForeground("#FF17171F");
-            ApplyChatMessageTheme(isDark);
         }
     }
 
-    private void ApplyChatMessageTheme(bool isDark)
-    {
-        var bubbleBrush = new SolidColorBrush(Color.Parse(isDark ? "#EE15151E" : "#FFF0ECF7"));
-        var bubbleBorderBrush = new SolidColorBrush(Color.Parse(isDark ? "#223C3C48" : "#FFD9D1E8"));
-        var messageBrush = new SolidColorBrush(Color.Parse(isDark ? "#FFF0EEF8" : "#FF474255"));
-        var senderBrush = new SolidColorBrush(Color.Parse(isDark ? "#FFA783FF" : "#FF7A68A4"));
-
-        foreach (var border in this.GetVisualDescendants().OfType<Border>())
-        {
-            if (Math.Abs(border.MaxWidth - ChatBubbleMaxWidth) > 0.1 || border.Child is not TextBlock message)
-                continue;
-
-            border.Background = bubbleBrush;
-            border.BorderBrush = bubbleBorderBrush;
-            border.BorderThickness = new Thickness(1);
-            message.Foreground = messageBrush;
-
-            if (border.GetVisualParent() is StackPanel panel)
-            {
-                foreach (var sender in panel.Children.OfType<TextBlock>())
-                    sender.Foreground = senderBrush;
-            }
-        }
-    }
 
     // Note: walks the visual tree on every theme switch. If performance becomes an issue,
     // tag elements that need theming with an attached property and use Name-based lookups.
@@ -72,25 +46,13 @@ public partial class MainWindow
         var brush = new SolidColorBrush(Color.Parse(color));
         foreach (var text in shell.GetVisualDescendants().OfType<TextBlock>())
         {
-            if (text.GetVisualAncestors().OfType<Border>().Any(IsDarkMessageBubble))
-                continue;
-            // 跳过自管主题的子控件（StatusBar 等用 DynamicResource/Converter 自行配色）
-            if (text.GetVisualAncestors().OfType<StatusBar>().Any())
+            // 跳过自管主题的子控件（UserControl 用 DynamicResource/硬编码自行配色）
+            if (text.GetVisualAncestors().OfType<Avalonia.Controls.UserControl>().Any())
                 continue;
             text.Foreground = brush;
         }
     }
 
-    private static bool IsDarkMessageBubble(Border border)
-        => border.Child is TextBlock && Math.Abs(border.MaxWidth - ChatBubbleMaxWidth) <= 0.1;
-
-    private void FillDotFields()
-    {
-        var line = string.Join("  ", Enumerable.Repeat(".", 74));
-        var field = string.Join(Environment.NewLine, Enumerable.Repeat(line, 20));
-        if (this.FindControl<TextBlock>("RoomDots") is { } roomDots)
-            roomDots.Text = field;
-    }
 
     private void SetThemeColors(
         string root, string title, string shell, string header, string clock,
