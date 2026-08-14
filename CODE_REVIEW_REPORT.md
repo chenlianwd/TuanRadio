@@ -536,3 +536,19 @@ _ttsSub = _audioService.TtsStateChanged
 18. **H26-H31** — 补充测试覆盖
 19. **M 项** — 逐项处理
 20. **L 项** — 按需处理
+
+---
+
+## 2026-08 后续修复进度
+
+子项目 1（视图重构 + 状态机）+ 子项目 2-5 已落地，对应审查项状态更新：
+
+- **C1/C2/C3/C4（CRITICAL）**：均已修复（async Task、TryGetProperty、catch 日志、StarfieldView Unloaded）。
+- **H1-H7（Services HIGH）**：H1（async void→Task）、H4/H6（无界列表上限）、H5（Minimax 已迁移）、H7（StringBuilder）已修。
+- **H8-H19（VM/Views HIGH）**：H8/H9（异常观察 + IDisposable）、H10（TrackComparer 提取）、H11（async lambda）、H13-H19（Converter 合并到 `Converters/`、MainWindow 拆 7 UserControl、x:Name→VM 绑定）已落地。
+- **H20-H22（API 安全）**：H20（Kuwo HTTPS）、H21（URL 验证部分）、H22（EscapeDataString）。
+- **H23-H31（测试）**：Converter 等价性、RadioState 派生、HasFailure 等已补。
+- **M20（Theme token）**：ThemeDictionaries PoC 落地，全量 token 待随 Light 模式统一。
+- **L18（Node SHA256）**：已加下载哈希审计日志。
+
+**已知残留**：MainWindow.Theme.cs 命令式 theming 待随全量 token 退场；Light 模式部分 UserControl 颜色待统一；音源 fallback UI 与连接诊断（P2 增强）后续迭代。
