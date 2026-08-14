@@ -66,13 +66,21 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - 用户反馈动作影响当前会话推荐。
 - Radio Mode 优先消耗当前节目单，节目单耗尽后再生成新节目单。
 
-### P2 产品化：下一阶段重点
+### P2 产品化：进行中
 
-- 节目单 UI 区分当前节目单、收藏、搜索。
-- 状态机覆盖 `Idle`、`Curating`、`Searching`、`Speaking`、`Playing`、`Error`。
-- 推荐理由放在 DJ 气泡，卡片只保留短标签。
-- 外部音源失败原因和 fallback UI 继续细化。
-- 设置页只保留 OpenAI 兼容、Anthropic 兼容和本地模型三种格式，后续继续完善连接诊断。
+**已完成（视图重构 + 状态机，2026-08）：**
+- 统一状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error）派生 `MainWindowViewModel.CurrentState`，StatusBar 绑定显示。
+- MainWindow 拆为 UserControl：TitleBar / ClockStage / PlayerDeck / ChatArea / PlaylistDrawer / CharacterPicker / StatusBar（MainWindow.axaml 668→163 行，.cs 467→113 行）。
+- Converter 合并到 `Converters/`（InverseBool / MessageAlign / RadioStateTo*）。
+- Theme ThemeDictionaries + RequestedThemeVariant PoC 落地（`Themes/Colors.axaml`）。
+- 时钟迁 VM（`Now` 属性），Starfield 自订阅频谱。
+
+**待做：**
+- 节目单 UI 区分当前节目单、收藏、搜索（子项目 2）。
+- 推荐理由放在 DJ 气泡，卡片只保留短标签（子项目 2）。
+- 外部音源失败原因和 fallback UI 继续细化（子项目 5）。
+- 设置页连接诊断完善（子项目 5）。
+- Theme 全量 token 化（融入拆分进行中，Light 模式部分控件待统一）、MainWindow.Theme.cs 命令式 theming 待随全量 token 退场。
 
 ### P3 增强：后续评估
 
