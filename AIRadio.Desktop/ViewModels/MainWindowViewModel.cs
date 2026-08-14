@@ -9,6 +9,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using Serilog;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
@@ -82,6 +83,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> SimilarToCurrentTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> CalmerRecommendationCommand { get; }
     public ReactiveCommand<Unit, Unit> EnergeticRecommendationCommand { get; }
+    public ReactiveCommand<Unit, Unit> TellSongStoryCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
@@ -180,6 +182,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SimilarToCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Similar));
         CalmerRecommendationCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Calmer));
         EnergeticRecommendationCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Energetic));
+        TellSongStoryCommand = ReactiveCommand.CreateFromTask(TellSongStoryAsync);
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(character =>
         {
             SwitchCharacter(character);
@@ -242,6 +245,16 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         PlaylistVM.ToggleFavoriteCommand.Execute(current).Subscribe();
         IsCurrentFavorite = current.IsFavorite;
+    }
+
+    private async Task TellSongStoryAsync()
+    {
+        var current = _audioService.CurrentTrack;
+        if (current == null) return;
+        var story = await _djService.GenerateSongStoryAsync(current);
+        if (story.Lines.Count == 0) return;
+        var joined = string.Join(" ", story.Lines.Select(l => l.Text));
+        ChatVM.AddAssistantMessage(joined);
     }
 
     private void RecordCurrentTrackFeedback(MusicFeedbackAction action)
