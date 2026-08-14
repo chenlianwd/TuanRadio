@@ -82,6 +82,13 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - 设置页连接诊断完善（子项目 5）。
 - Theme 全量 token 化（融入拆分进行中，Light 模式部分控件待统一）、MainWindow.Theme.cs 命令式 theming 待随全量 token 退场。
 
+### 子项目 1 收尾（2026-08-14）
+
+- Theme 全量 token 化达成 spec §9 零残留：MainWindow.axaml / SettingsView.axaml / SpectrumView.axaml / ChatArea.axaml.cs 全部迁移到 `Themes/Colors.xaml` 的 `C_<HEX>` token；Light/Dark 双套字典已就位（Light 暂占位同值）。
+- 孤儿旧 View（ChatView/PlayerView/PlaylistView）删除，其中活跃引用的 `TabVisibleConverter` / `FavoriteIconConverter` 迁入 `Converters/` 目录。
+- 子项目 2「节目单卡片只留短标签」落地：移除卡片 Reason，节目单整体推荐理由通过 `DjOpening` 已进 DJ 气泡；修复 PlaylistDrawer 标签背景 `C_2221ED76}0` 拼写 typo。
+- 子项目 5「音源 fallback UI + 设置连接诊断」确认落地：`BuildSearchStatusMessage` 透传各源成功/超时/失败；`TestConnectionAsync` 覆盖空 Key/模型名/成功/失败+RecoveryHint。
+
 ### P3 增强：后续评估
 
 - Song Story v1：单曲 3-5 句 DJ 讲述脚本。
