@@ -108,6 +108,27 @@ Response rules:
         }
     }
 
+    public async Task<SongStory> GenerateSongStoryAsync(Track track)
+    {
+        try
+        {
+            var prompt = $"歌曲《{track.Title}》- {track.Artist}。用 3-5 句话给电台听众讲讲这首歌的背景、风格或趣闻，亲切口语化，每句独占一行。";
+            var text = await _llm.ChatAsync(prompt, new List<ChatMessage>());
+            var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                             .Select(t => t.Trim())
+                             .Where(t => t.Length > 0)
+                             .Take(5)
+                             .Select(t => new DjScriptLine { Text = t, Emotion = DetectEmotion(t) })
+                             .ToList();
+            return new SongStory { Title = track.Title, Track = track, Lines = lines };
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to generate song story for {Track}", track.Title);
+            return new SongStory { Title = track.Title, Track = track, Lines = new() };
+        }
+    }
+
     public async Task<string> GenerateChatResponseAsync(string userMessage)
     {
         LastFailure = null;
