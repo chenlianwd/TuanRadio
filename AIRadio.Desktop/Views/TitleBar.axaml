@@ -11,14 +11,14 @@
             </StackPanel>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <Button Width="30" Height="24" Padding="0" BorderThickness="0"
-                        Background="#00000000"
+                        Background="{DynamicResource C_00000000}"
                         Foreground="{DynamicResource ChromeButton}" Click="OnMinimizeClicked"
                         ToolTip.Tip="Minimize" AutomationProperties.Name="Minimize"
                         TabIndex="1">
                     <Rectangle Width="14" Height="2" RadiusX="1" RadiusY="1" Fill="{DynamicResource ChromeButton}"/>
                 </Button>
                 <Button Width="30" Height="24" Padding="0" BorderThickness="0"
-                        Background="#00000000"
+                        Background="{DynamicResource C_00000000}"
                         Foreground="{DynamicResource ChromeButtonClose}" Click="OnCloseClicked"
                         ToolTip.Tip="Close" AutomationProperties.Name="Close"
                         TabIndex="2">
