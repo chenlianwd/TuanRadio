@@ -20,6 +20,9 @@ public class MultiSourceMusicService : IMusicSearchService
 
     public string Name => "多平台聚合";
 
+    /// <summary>最近一次搜索的各源状态（供 UI 透传具体失败原因，子项目 5）。</summary>
+    public List<SourceSearchStatus> LastSearchReport { get; } = new();
+
     public MultiSourceMusicService(HttpClient httpClient, params IMusicSearchService[] extraSources)
     {
         _httpClient = httpClient;
@@ -35,6 +38,7 @@ public class MultiSourceMusicService : IMusicSearchService
 
     public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
     {
+        LastSearchReport.Clear();
         var primary = _sources.FirstOrDefault();
         if (primary != null)
         {
@@ -83,15 +87,19 @@ public class MultiSourceMusicService : IMusicSearchService
     {
         try
         {
-            return await source.SearchAsync(keyword, limit).WaitAsync(timeout);
+            var list = await source.SearchAsync(keyword, limit).WaitAsync(timeout);
+            LastSearchReport.Add(new SourceSearchStatus(source.Name, "ok", list.Count, null));
+            return list;
         }
         catch (TimeoutException)
         {
+            LastSearchReport.Add(new SourceSearchStatus(source.Name, "timeout", 0, $"超时({timeout.TotalSeconds}s)"));
             Log.Warning("Source {Name} search timed out after {Seconds}s", source.Name, timeout.TotalSeconds);
             return new List<OnlineTrack>();
         }
         catch (Exception ex)
         {
+            LastSearchReport.Add(new SourceSearchStatus(source.Name, "failed", 0, ex.Message));
             Log.Warning(ex, "Source {Name} search failed", source.Name);
             return new List<OnlineTrack>();
         }
@@ -110,3 +118,6 @@ public class MultiSourceMusicService : IMusicSearchService
         }
     }
 }
+
+/// <summary>单个音源搜索状态（成功/超时/失败 + 原因）。</summary>
+public record SourceSearchStatus(string Name, string Status, int Count, string? Error);
