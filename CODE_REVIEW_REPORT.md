@@ -551,4 +551,4 @@ _ttsSub = _audioService.TtsStateChanged
 - **M20（Theme token）**：ThemeDictionaries PoC 落地，全量 token 待随 Light 模式统一。
 - **L18（Node SHA256）**：已加下载哈希审计日志。
 
-**已知残留**：MainWindow.Theme.cs 命令式 theming 待随全量 token 退场；Light 模式部分 UserControl 颜色待统一；音源 fallback UI 与连接诊断（P2 增强）后续迭代。
+**已知残留**：MainWindow.Theme.cs 已随全量 token 化退场（文件已删除）；Light 模式 token 已占位就位（与 Dark 同值，后续可按需微调）；音源 fallback UI 与连接诊断（子项目 5）已落地——`BuildSearchStatusMessage` 透传各源成功/超时/失败、`SettingsViewModel.TestConnectionAsync` 完整覆盖空 Key/模型名/成功响应预览/失败 RecoveryHint。
