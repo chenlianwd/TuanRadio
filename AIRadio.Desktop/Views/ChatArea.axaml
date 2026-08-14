@@ -1,0 +1,134 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
+             x:Class="AIRadio.Desktop.Views.ChatArea"
+             x:DataType="vm:MainWindowViewModel">
+    <Grid RowDefinitions="*,Auto">
+        <!-- Radio room -->
+        <Grid Grid.Row="0" Background="#E9161623">
+            <TextBlock x:Name="RoomDots"
+                       IsHitTestVisible="False" Opacity="0.20" FontSize="11"
+                       LineHeight="17" FontFamily="Consolas"
+                       Foreground="#FF44465C" TextWrapping="Wrap"/>
+
+            <Border Background="#66111113" BorderBrush="#222F303A" BorderThickness="0,0,0,1"
+                    Height="46" VerticalAlignment="Top">
+                <Grid ColumnDefinitions="*,Auto" Margin="22,0">
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Ellipse Width="9" Height="9" Fill="#FF56F5C4"/>
+                        <TextBlock Text="AIRadio" FontSize="16" FontFamily="Consolas" Foreground="#FFEDEDF5"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="LIVE" FontSize="12" FontFamily="Consolas"
+                               Foreground="#FF8DFFC8" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <Grid Margin="22,60,22,12">
+                <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding ChatVM.Messages}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,8"
+                                            HorizontalAlignment="{Binding Role, Converter={x:Static conv:MessageAlignConverter.Instance}}">
+                                    <TextBlock Text="{Binding SenderName}" FontSize="10"
+                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                               Foreground="#FFA783FF" Margin="0,0,0,4"/>
+                                    <Border Background="#EE050507" CornerRadius="4" Padding="14,10" MaxWidth="380">
+                                        <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                                   FontSize="13" LineHeight="21"
+                                                   FontFamily="Microsoft YaHei UI" Foreground="#FFFFFFFF"/>
+                                    </Border>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+
+            <Border IsVisible="{Binding ChatVM.ShowStatusNotice}"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="22,56,22,0" Background="#EE050507"
+                    BorderBrush="#3356F5C4" BorderThickness="1" CornerRadius="4"
+                    Padding="12,9" MaxWidth="360">
+                <StackPanel Spacing="3">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                            <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding ChatVM.StatusHeadline}" FontSize="12" FontWeight="700"
+                                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFB9FFE8"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Command="{Binding ChatVM.DismissStatusNoticeCommand}"
+                                Content="x" Width="22" Height="22" Padding="0"
+                                Background="#00000000" Foreground="#FFB9FFE8" BorderThickness="0"
+                                ToolTip.Tip="收起提示"/>
+                    </Grid>
+                    <TextBlock Text="{Binding ChatVM.StatusDetail}" FontSize="11" TextWrapping="Wrap"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="#FFD8D8EA"/>
+                    <TextBlock Text="{Binding ChatVM.StatusRecoveryHint}" FontSize="11" TextWrapping="Wrap"
+                               FontFamily="Microsoft YaHei UI" Foreground="#FFFFC86B"/>
+                </StackPanel>
+            </Border>
+
+            <Button IsVisible="{Binding ChatVM.ShowStatusRecall}"
+                    Command="{Binding ChatVM.RestoreStatusNoticeCommand}"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="22,56,22,0"
+                    Padding="10,6" Background="#EE050507" BorderBrush="#3356F5C4"
+                    BorderThickness="1" CornerRadius="4" ToolTip.Tip="查看语音播放提示">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse Width="6" Height="6" Fill="#FF56F5C4" VerticalAlignment="Center"/>
+                    <TextBlock Text="VOICE" FontSize="11" FontFamily="Consolas" Foreground="#FFB9FFE8"/>
+                </StackPanel>
+            </Button>
+
+            <Border IsVisible="{Binding ChatVM.IsListening}"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="22,0,22,14"
+                    Background="#EE050507" BorderBrush="#6656F5C4" BorderThickness="1"
+                    CornerRadius="4" Padding="12,8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                        <Border Width="3" Height="8" Background="#FF56F5C4"/>
+                        <Border Width="3" Height="16" Background="#FF56F5C4"/>
+                        <Border Width="3" Height="11" Background="#FF56F5C4"/>
+                        <Border Width="3" Height="19" Background="#FF56F5C4"/>
+                    </StackPanel>
+                    <TextBlock Text="Release to transcribe..." FontSize="12"
+                               FontFamily="Consolas" Foreground="#FFB9FFE8"/>
+                </StackPanel>
+            </Border>
+
+            <Border IsVisible="{Binding ChatVM.IsRecognizing}"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="22,0,22,14"
+                    Background="#EE050507" BorderBrush="#66A783FF" BorderThickness="1"
+                    CornerRadius="4" Padding="12,8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="6" Height="6" Fill="#FFA783FF" VerticalAlignment="Center"/>
+                    <TextBlock Text="Transcribing Chinese..." FontSize="12"
+                               FontFamily="Consolas" Foreground="#FFE4D9FF"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Input -->
+        <Border Grid.Row="1" Background="#E91B1B2A" Padding="22,10">
+            <Grid ColumnDefinitions="*,56,50" ColumnSpacing="9">
+                <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
+                         Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown" TabIndex="10"/>
+                <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
+                        Background="#33262835"
+                        PointerPressed="OnMicPointerPressed"
+                        PointerReleased="OnMicPointerReleased"
+                        PointerCaptureLost="OnMicPointerCaptureLost"
+                        ToolTip.Tip="Hold to talk" AutomationProperties.Name="Microphone">
+                    <Path Width="18" Height="18" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
+                </Button>
+                <Button Grid.Column="2" FontSize="11"
+                        Background="#FF7F7896" Foreground="#FF111118"
+                        Command="{Binding ChatVM.SendMessageCommand}"
+                        ToolTip.Tip="Send" AutomationProperties.Name="Send">
+                    <Path Width="18" Height="18" Stretch="Uniform" Stroke="#FF111118" StrokeThickness="2.2" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

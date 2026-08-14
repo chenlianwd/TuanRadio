@@ -26,10 +26,8 @@ public partial class MainWindow : Window, IDisposable
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
     private TextBlock? _avatarLetter;
-    private Button? _micButton;
     private IDisposable? _searchDebounceSub;
     private IDisposable? _themeSub;
-    private NotifyCollectionChangedEventHandler? _chatHandler;
     private Action<string, string>? _djVisualCueHandler;
 
     public MainWindow()
@@ -50,8 +48,6 @@ public partial class MainWindow : Window, IDisposable
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
                         _activeVm.DjVisualCue -= _djVisualCueHandler;
                     }
-                    if (_chatHandler != null)
-                        _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
                     _themeSub?.Dispose();
                     _searchDebounceSub?.Dispose();
                 }
@@ -60,9 +56,6 @@ public partial class MainWindow : Window, IDisposable
                 _djVisualCueHandler = OnDjVisualCue;
                 vm.ChatVM.DjVisualCue += _djVisualCueHandler;
                 vm.DjVisualCue += _djVisualCueHandler;
-                vm.ChatVM.Messages.CollectionChanged -= _chatHandler;
-                _chatHandler = OnChatMessagesChanged;
-                vm.ChatVM.Messages.CollectionChanged += _chatHandler;
                 _themeSub = vm.WhenAnyValue(x => x.IsDarkMode).Subscribe(isDark => UpdateThemeButtons(isDark));
                 UpdateThemeButtons(vm.IsDarkMode);
 
@@ -72,66 +65,6 @@ public partial class MainWindow : Window, IDisposable
                 _searchDebounceSub = null;
             }
         };
-    }
-
-    private void OnChatMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            if (_activeVm != null)
-                ApplyChatMessageTheme(_activeVm.IsDarkMode);
-            this.FindControl<ScrollViewer>("ChatScrollViewer")?.ScrollToEnd();
-        }, Avalonia.Threading.DispatcherPriority.Background);
-    }
-
-    private void OnChatInputKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
-    {
-        if (e.Key == Avalonia.Input.Key.Enter && DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            vm.ChatVM.SendMessageCommand.Execute().Subscribe();
-        }
-    }
-
-    private void OnMicPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            _micButton = sender as Button;
-            if (_micButton != null)
-            {
-                _micButton.Background = new SolidColorBrush(Color.Parse("#FF56F5C4"));
-                _micButton.Foreground = new SolidColorBrush(Color.Parse("#FF050507"));
-            }
-            (sender as Control)?.Focus();
-            e.Pointer.Capture(sender as IInputElement);
-            vm.ChatVM.BeginHoldToTalk();
-            e.Handled = true;
-        }
-    }
-
-    private void OnMicPointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            ResetMicButton();
-            vm.ChatVM.EndHoldToTalk();
-            e.Pointer.Capture(null);
-            e.Handled = true;
-        }
-    }
-
-    private void OnMicPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
-    {
-        ResetMicButton();
-        if (DataContext is ViewModels.MainWindowViewModel vm)
-            vm.ChatVM.EndHoldToTalk();
-    }
-
-    private void ResetMicButton()
-    {
-        if (_micButton == null) return;
-        _micButton.Background = new SolidColorBrush(Color.Parse("#33262835"));
-        _micButton.Foreground = new SolidColorBrush(Color.Parse("#FFEDEDF5"));
     }
 
     private void OnDismissOverlayPressed(object? sender, PointerPressedEventArgs e)
@@ -219,8 +152,6 @@ public partial class MainWindow : Window, IDisposable
                 _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
                 _activeVm.DjVisualCue -= _djVisualCueHandler;
             }
-            if (_chatHandler != null)
-                _activeVm.ChatVM.Messages.CollectionChanged -= _chatHandler;
         }
     }
 }
