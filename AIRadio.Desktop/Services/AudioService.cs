@@ -38,7 +38,7 @@ public class AudioService : IAudioService, IDisposable
     private int _ttsSessionId;
     private readonly HashSet<int> _cancelledTtsSessions = new();
     private readonly System.Threading.Timer _positionTimer;
-    private readonly System.Threading.Timer _spectrumTimer;
+    private readonly SpectrumAnalyzer _spectrumAnalyzer;
     private long _lastPositionMs;
     private long _trackStartedAtMs;
     private int _earlyEndRetryCount;
@@ -121,7 +121,10 @@ public class AudioService : IAudioService, IDisposable
         };
 
         // No audio callbacks — use simulated spectrum (VLC handles output normally)
-        _spectrumTimer = new System.Threading.Timer(_ => EmitSimulatedSpectrum(), null, 100, 33);
+        // 真实频谱：WasapiLoopbackCapture + FFT（子项目 3，替换模拟）
+        _spectrumAnalyzer = new SpectrumAnalyzer();
+        _spectrumAnalyzer.SpectrumReady += data => _spectrumSubject.OnNext(data);
+        _spectrumAnalyzer.Start();
 
         // Duck main player volume when TTS is speaking
         _ttsDuckSub = _ttsStateSubject.Subscribe(ttsPlaying =>
@@ -622,32 +625,6 @@ public class AudioService : IAudioService, IDisposable
         _trackChangedSubject.OnNext(CurrentTrack);
     }
 
-    private void EmitSimulatedSpectrum()
-    {
-        if (_currentState != PlaybackState.Playing) return;
-
-        var time = Environment.TickCount64 / 1000.0;
-        var beat = 0.5 + 0.5 * Math.Sin(time * 3.2);
-        var bassPulse = Math.Pow(Math.Max(0, Math.Sin(time * 5.8)), 2);
-        var midPulse = 0.5 + 0.5 * Math.Sin(time * 2.1 + Math.Sin(time * 0.7));
-        var treblePulse = _rng.NextDouble() * 0.35;
-        var data = new float[32];
-        for (int i = 0; i < data.Length; i++)
-        {
-            var band = i / (double)(data.Length - 1);
-            var envelope = band < 0.25
-                ? 0.55 * bassPulse
-                : band < 0.7
-                    ? 0.38 * midPulse
-                    : 0.24 * treblePulse;
-            var wave = 0.24 * Math.Sin(time * (7 + band * 12) + i * 0.55);
-            var noise = (_rng.NextDouble() - 0.5) * 0.12;
-            data[i] = (float)(0.12 + envelope + beat * 0.18 + wave + noise);
-            data[i] = Math.Clamp(data[i], 0f, 1f);
-        }
-        _spectrumSubject.OnNext(data);
-    }
-
     private void EmitPosition()
     {
         if (_currentState == PlaybackState.Playing || _currentState == PlaybackState.Paused)
@@ -670,7 +647,7 @@ public class AudioService : IAudioService, IDisposable
     {
         _ttsDuckSub.Dispose();
         _ttsPauseSub.Dispose();
-        _spectrumTimer?.Dispose();
+        _spectrumAnalyzer.Dispose();
         _fadeTimer?.Dispose();
         _positionTimer?.Dispose();
         _ttsOutput?.Stop();
