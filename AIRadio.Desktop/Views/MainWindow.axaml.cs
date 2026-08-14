@@ -19,11 +19,9 @@ namespace AIRadio.Desktop.Views;
 
 public partial class MainWindow : Window, IDisposable
 {
-    private Button? _themeButton;
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
     private IDisposable? _searchDebounceSub;
-    private IDisposable? _themeSub;
     private Action<string, string>? _djVisualCueHandler;
 
     public MainWindow()
@@ -42,7 +40,6 @@ public partial class MainWindow : Window, IDisposable
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
                         _activeVm.DjVisualCue -= _djVisualCueHandler;
                     }
-                    _themeSub?.Dispose();
                     _searchDebounceSub?.Dispose();
                 }
 
@@ -50,8 +47,6 @@ public partial class MainWindow : Window, IDisposable
                 _djVisualCueHandler = OnDjVisualCue;
                 vm.ChatVM.DjVisualCue += _djVisualCueHandler;
                 vm.DjVisualCue += _djVisualCueHandler;
-                _themeSub = vm.WhenAnyValue(x => x.IsDarkMode).Subscribe(isDark => UpdateThemeButtons(isDark));
-                UpdateThemeButtons(vm.IsDarkMode);
 
                 // Keep search explicit. Auto-search can leave the UI waiting on a
                 // partial keyword while the user is still typing.
@@ -95,7 +90,6 @@ public partial class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
-        _themeSub?.Dispose();
         _searchDebounceSub?.Dispose();
         if (_activeVm != null)
         {
