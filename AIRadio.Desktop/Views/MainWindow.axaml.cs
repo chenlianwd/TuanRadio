@@ -21,7 +21,6 @@ public partial class MainWindow : Window, IDisposable
 {
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
-    private IDisposable? _searchDebounceSub;
     private Action<string, string>? _djVisualCueHandler;
 
     public MainWindow()
@@ -40,7 +39,6 @@ public partial class MainWindow : Window, IDisposable
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
                         _activeVm.DjVisualCue -= _djVisualCueHandler;
                     }
-                    _searchDebounceSub?.Dispose();
                 }
 
                 _activeVm = vm;
@@ -50,8 +48,6 @@ public partial class MainWindow : Window, IDisposable
 
                 // Keep search explicit. Auto-search can leave the UI waiting on a
                 // partial keyword while the user is still typing.
-                _searchDebounceSub?.Dispose();
-                _searchDebounceSub = null;
             }
         };
     }
@@ -90,7 +86,6 @@ public partial class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
-        _searchDebounceSub?.Dispose();
         if (_activeVm != null)
         {
             if (_djVisualCueHandler != null)
