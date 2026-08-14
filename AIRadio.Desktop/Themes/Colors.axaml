@@ -10,6 +10,11 @@
             <Color x:Key="SurfaceHeader">#CC1B1B2A</Color>
             <Color x:Key="BorderShell">#33494B66</Color>
             <Color x:Key="ShellText">#FFEDEDF5</Color>
+            <Color x:Key="AccentGreen">#FF56F5C4</Color>
+            <Color x:Key="TitleText">#FFBFC3D6</Color>
+            <Color x:Key="ChromeButton">#FF8A8A96</Color>
+            <Color x:Key="ChromeButtonClose">#FF6E6E80</Color>
+            <Color x:Key="SurfaceFooter">#F0222234</Color>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <Color x:Key="TestToken">#FF000000</Color>
@@ -20,6 +25,11 @@
             <Color x:Key="SurfaceHeader">#EDEBE5FF</Color>
             <Color x:Key="BorderShell">#664E4862</Color>
             <Color x:Key="ShellText">#FF17171F</Color>
+            <Color x:Key="AccentGreen">#FF169C46</Color>
+            <Color x:Key="TitleText">#FF3A3A4A</Color>
+            <Color x:Key="ChromeButton">#FF6E6E80</Color>
+            <Color x:Key="ChromeButtonClose">#FF535353</Color>
+            <Color x:Key="SurfaceFooter">#EAE7F3FF</Color>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>
