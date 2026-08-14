@@ -230,34 +230,3 @@ public class CharacterProfile
     };
 }
 
-public class RadioSettings
-{
-    public DJProfile DjProfile { get; set; } = new();
-    public PlaybackSettings Playback { get; set; } = new();
-    public AudioSettings Audio { get; set; } = new();
-    public UISettings UI { get; set; } = new();
-}
-
-public class PlaybackSettings
-{
-    public double CrossfadeDuration { get; set; } = 2.0;
-    public bool AutoTransition { get; set; } = true;
-    public string TransitionMode { get; set; } = "track_start";
-    public double Volume { get; set; } = 0.8;
-    public bool Shuffle { get; set; }
-    public string RepeatMode { get; set; } = "list";
-}
-
-public class AudioSettings
-{
-    public bool SpectrumEnabled { get; set; } = true;
-    public int SpectrumUpdateRate { get; set; } = 30;
-}
-
-public class UISettings
-{
-    public string Theme { get; set; } = "dark";
-    public double WindowWidth { get; set; } = 1000;
-    public double WindowHeight { get; set; } = 700;
-    public double SplitterRatio { get; set; } = 0.65;
-}
