@@ -25,7 +25,6 @@ public partial class MainWindow : Window, IDisposable
     private Button? _themeButton;
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
-    private TextBlock? _avatarLetter;
     private IDisposable? _searchDebounceSub;
     private IDisposable? _themeSub;
     private Action<string, string>? _djVisualCueHandler;
@@ -34,7 +33,6 @@ public partial class MainWindow : Window, IDisposable
     {
         InitializeComponent();
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
-        _avatarLetter = this.FindControl<TextBlock>("AvatarLetter");
         FillDotFields();
 
         DataContextChanged += (_, _) =>
