@@ -23,6 +23,10 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - 推荐服务 v1 模型与服务骨架。
 - JSON DJ 控制块解析，兼容旧文本尾标。
 - 启动欢迎语、启动推荐、TTS 中断和 DJ 视觉 cue。
+- 视图重构 + 统一状态机：MainWindow 拆 7 个 UserControl，`RadioState` 状态机驱动 StatusBar。
+- Theme 全量 token 化（Light/Dark 双套，`Themes/Colors.axaml`）。
+- 真实 FFT 频谱：WasapiLoopbackCapture + FFT 替换模拟视觉数据。
+- SongStory v1：STORY 按钮触发现曲 3-5 句 LLM 讲述 + TTS。
 
 ## 当前流程
 
@@ -75,12 +79,12 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - Theme ThemeDictionaries + RequestedThemeVariant PoC 落地（`Themes/Colors.axaml`）。
 - 时钟迁 VM（`Now` 属性），Starfield 自订阅频谱。
 
-**待做：**
-- 节目单 UI 区分当前节目单、收藏、搜索（子项目 2）。
-- 推荐理由放在 DJ 气泡，卡片只保留短标签（子项目 2）。
-- 外部音源失败原因和 fallback UI 继续细化（子项目 5）。
-- 设置页连接诊断完善（子项目 5）。
-- Theme 全量 token 化（融入拆分进行中，Light 模式部分控件待统一）、MainWindow.Theme.cs 命令式 theming 待随全量 token 退场。
+**已全部落地（原待做，2026-08-14）：**
+- 节目单 UI 区分当前节目单、收藏、搜索（子项目 2）→ 库抽屉 4 tab。
+- 推荐理由放在 DJ 气泡，卡片只保留短标签（子项目 2）→ 卡片只留 Tags，理由经 DjOpening 入气泡。
+- 外部音源失败原因和 fallback UI 继续细化（子项目 5）→ 逐源成功/超时/失败透传。
+- 设置页连接诊断完善（子项目 5）→ TestConnection 覆盖空值/成功/失败+RecoveryHint。
+- Theme 全量 token 化 → spec §9 零残留。
 
 ### 子项目 1 收尾（2026-08-14）
 
@@ -91,14 +95,14 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 
 ### P3 增强：后续评估
 
-- Song Story v1：单曲 3-5 句 DJ 讲述脚本。
-- 真实 FFT 可行性评估。
 - 长期用户画像和跨会话推荐偏好。
+- 各音源失败重试策略与更细的 fallback 体验。
+- Light 模式浅色配色按视觉稿微调（token 结构已就位，当前与 Dark 同值）。
 - 天气、日历、歌词暂不进入第一轮开发。
 
 ## 构建与测试
 
 ```bash
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal --no-restore
-dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal --no-restore /p:UseSharedCompilation=false
+dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal --no-restore "/p:UseSharedCompilation=false"
 ```
