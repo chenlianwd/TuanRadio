@@ -1,5 +1,3 @@
-<!-- TODO: This file exceeds 600 lines. Consider extracting sections into UserControls:
-     TitleBar, ClockStage, PlayerDeck, ChatArea, InputArea, LibraryDrawer, SettingsOverlay -->
 <!-- TODO: UI strings mix Chinese and English; consider introducing a localization resource system (L12) -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -18,17 +16,16 @@
         KeyDown="OnWindowKeyDown">
 
     <Window.Resources>
-        <local:TabVisibleConverter x:Key="TabVisibleConverter"/>
-        <local:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
+        <conv:TabVisibleConverter x:Key="TabVisibleConverter"/>
+        <conv:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
         <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
     </Window.Resources>
 
-    <!-- TODO: Extract hardcoded colors into a ResourceDictionary with design tokens (M20) -->
     <Window.Styles>
         <Style Selector="Button">
-            <Setter Property="Background" Value="#11121620"/>
-            <Setter Property="Foreground" Value="#FFEDEDF5"/>
-            <Setter Property="BorderBrush" Value="#333A3D4A"/>
+            <Setter Property="Background" Value="{DynamicResource C_11121620}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_333A3D4A}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="14"/>
             <Setter Property="Padding" Value="10,5"/>
@@ -37,12 +34,12 @@
             <Setter Property="FontSize" Value="11"/>
         </Style>
         <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#24212632"/>
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
         </Style>
         <Style Selector="TextBox">
-            <Setter Property="Background" Value="#FF07070B"/>
-            <Setter Property="Foreground" Value="#FFFFFFFF"/>
-            <Setter Property="BorderBrush" Value="#889090A0"/>
+            <Setter Property="Background" Value="{DynamicResource C_FF07070B}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFFFFFFF}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_889090A0}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="Padding" Value="14,10"/>
@@ -80,36 +77,36 @@
                 <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                            <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="#FF262632">
+                            <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}">
                                 <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}"
                                            FontSize="15" FontWeight="700"
-                                           Foreground="#FFFFFFFF"
+                                           Foreground="{DynamicResource C_FFFFFFFF}"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <TextBlock Text="AIRadio" FontSize="24" FontWeight="700"
                                        FontFamily="Consolas, Microsoft YaHei UI"
-                                       Foreground="#FFEDEDF5" VerticalAlignment="Center"/>
+                                       Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Width="32" Height="30" Padding="0" Background="#10000000"
+                            <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding ToggleCharacterPickerCommand}" ToolTip.Tip="DJ">
-                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
                             </Button>
-                            <Button Width="32" Height="30" Padding="0" Background="#10000000"
+                            <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search">
-                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
                             </Button>
-                            <Button Width="32" Height="30" Padding="0" Background="#10000000"
+                            <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Settings">
-                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M4,21 L4,14 M4,10 L4,3 M12,21 L12,12 M12,8 L12,3 M20,21 L20,16 M20,12 L20,3 M2,14 L6,14 M10,8 L14,8 M18,16 L22,16"/>
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,21 L4,14 M4,10 L4,3 M12,21 L12,12 M12,8 L12,3 M20,21 L20,16 M20,12 L20,3 M2,14 L6,14 M10,8 L14,8 M18,16 L22,16"/>
                             </Button>
                             <Button x:Name="ThemeButton" Padding="10,5"
-                                    Background="#10000000"
+                                    Background="{DynamicResource C_10000000}"
                                     Command="{Binding ToggleThemeCommand}" ToolTip.Tip="Theme">
                                 <Grid>
-                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" IsVisible="{Binding IsDarkMode}"
+                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" IsVisible="{Binding IsDarkMode}"
                                           Data="M21,12.8 C20.1,16.9 16.4,20 12,20 C7,20 3,16 3,11 C3,6.6 6.1,2.9 10.2,2 C9.4,3.2 9,4.6 9,6 C9,11 13,15 18,15 C19.1,15 20.1,14.8 21,14.4"/>
-                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="#FF111118" StrokeThickness="2" IsVisible="{Binding IsDarkMode, Converter={StaticResource InverseBoolConverter}}"
+                                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FF111118}" StrokeThickness="2" IsVisible="{Binding IsDarkMode, Converter={StaticResource InverseBoolConverter}}"
                                           Data="M12,4 L12,2 M12,22 L12,20 M4.9,4.9 L3.5,3.5 M20.5,20.5 L19.1,19.1 M4,12 L2,12 M22,12 L20,12 M4.9,19.1 L3.5,20.5 M20.5,3.5 L19.1,4.9 M12,17 C14.8,17 17,14.8 17,12 C17,9.2 14.8,7 12,7 C9.2,7 7,9.2 7,12 C7,14.8 9.2,17 12,17"/>
                                 </Grid>
                             </Button>
@@ -127,27 +124,27 @@
                 <local:StatusBar Grid.Row="6" DataContext="{Binding}"/>
             </Grid>
 
-            <Border IsVisible="{Binding IsLibraryOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
-            <Border IsVisible="{Binding IsSettingsOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
-            <Border IsVisible="{Binding IsCharacterPickerOpen}" Background="#01000000" PointerPressed="OnDismissOverlayPressed"/>
+            <Border IsVisible="{Binding IsLibraryOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
+            <Border IsVisible="{Binding IsSettingsOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
+            <Border IsVisible="{Binding IsCharacterPickerOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
 
             <local:PlaylistDrawer DataContext="{Binding}"/>
 
             <!-- Settings overlay -->
             <Border IsVisible="{Binding IsSettingsOpen}"
                     Margin="56"
-                    Background="#FC0E0E15"
-                    BorderBrush="#667B7898"
+                    Background="{DynamicResource C_FC0E0E15}"
+                    BorderBrush="{DynamicResource C_667B7898}"
                     BorderThickness="1"
                     CornerRadius="12"
                     Padding="18">
                 <Grid RowDefinitions="Auto,*" RowSpacing="12">
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBlock Text="SETTINGS" FontSize="18" FontWeight="700"
-                                   FontFamily="Consolas" Foreground="#FFFFFFFF"/>
+                                   FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"/>
                         <Button Grid.Column="1" Width="32" Height="28" Padding="0"
                                 Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Close settings">
-                            <Path Width="14" Height="14" Stretch="Uniform" Stroke="#FFEDEDF5" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
+                            <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
                         </Button>
                     </Grid>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">

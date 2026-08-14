@@ -43,7 +43,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public bool HasSearchStatus { get; set; }
     [Reactive] public string SearchStatusMessage { get; set; } = string.Empty;
     [Reactive] public string SearchButtonText { get; set; } = "搜索";
-    [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索
+    [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearPlaylistCommand { get; }
