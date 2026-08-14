@@ -5,7 +5,7 @@
              x:Class="AIRadio.Desktop.Views.StatusBar"
              x:DataType="vm:MainWindowViewModel">
 
-    <Border Background="#F0222234" Padding="22,0">
+    <Border Background="{DynamicResource SurfaceFooter}" Padding="22,0">
         <Grid ColumnDefinitions="*,Auto">
             <!-- TestToken 作 Theme 机制验证锚点（Task 15 删，改正式 token） -->
             <TextBlock Text="AIRADIO FM" FontSize="11" FontFamily="Consolas"
