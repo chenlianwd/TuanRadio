@@ -85,29 +85,6 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter && DataContext is ViewModels.MainWindowViewModel vm)
-        {
-            vm.PlaylistVM.SearchCommand.Execute().Subscribe();
-        }
-    }
-
-    private async void OnImportFiles(object? sender, RoutedEventArgs e)
-    {
-        if (DataContext is not ViewModels.MainWindowViewModel vm) return;
-
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel == null) return;
-
-        var paths = await FilePickerHelper.PickAudioFilesAsync(topLevel);
-        if (paths.Length == 0) return;
-
-        vm.PlaylistVM.AddFiles(paths);
-        vm.PlaylistVM.TabIndex = 0;
-        vm.IsLibraryOpen = true;
-    }
-
     private async void OnDjVisualCue(string expression, string motion)
     {
         if (_avatarBorder is Border border)
