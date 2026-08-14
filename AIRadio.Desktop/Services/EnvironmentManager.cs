@@ -63,7 +63,6 @@ public static class EnvironmentManager
     {
         Directory.CreateDirectory(NodeDir);
 
-        // TODO: Verify SHA256 hash after download to ensure integrity
         var url = "https://nodejs.org/dist/v20.18.3/node-v20.18.3-win-x64.zip";
         var zipPath = Path.Combine(NodeDir, "node.zip");
 
@@ -76,6 +75,15 @@ public static class EnvironmentManager
         await using var downloadStream = await response.Content.ReadAsStreamAsync();
         await downloadStream.CopyToAsync(fileStream);
         Log.Information("Node.js downloaded ({Size}MB), extracting...", fileStream.Length / 1024 / 1024);
+
+        // 计算 SHA256 供审计（完整校验需对照 Node.js 官方 SHASUMS256.txt，子项目 5）
+        try
+        {
+            fileStream.Position = 0;
+            var hashBytes = System.Security.Cryptography.SHA256.HashData(fileStream);
+            Log.Information("Node.js zip SHA256: {Hash}", Convert.ToHexString(hashBytes));
+        }
+        catch (Exception ex) { Log.Warning(ex, "Failed to compute Node.js SHA256"); }
 
         using var archive = ZipFile.OpenRead(zipPath);
         foreach (var entry in archive.Entries)
