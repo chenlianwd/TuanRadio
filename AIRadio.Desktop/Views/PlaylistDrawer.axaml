@@ -9,8 +9,8 @@
              x:DataType="vm:MainWindowViewModel">
     <UserControl.Resources>
         <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
-        <local:TabVisibleConverter x:Key="TabVisibleConverter"/>
-        <local:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
+        <conv:TabVisibleConverter x:Key="TabVisibleConverter"/>
+        <conv:FavoriteIconConverter x:Key="FavoriteIconConverter"/>
     </UserControl.Resources>
 
     <Border IsVisible="{Binding IsLibraryOpen}"
@@ -160,8 +160,6 @@
                                                 <TextBlock Grid.Column="1" Text="{Binding Source}" FontSize="9"
                                                            FontFamily="Consolas" Foreground="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
                                             </Grid>
-                                            <TextBlock Text="{Binding Reason}" FontSize="10" TextWrapping="Wrap"
-                                                       FontFamily="Microsoft YaHei UI" Foreground="{DynamicResource C_FFD8D8EA}"/>
                                             <ItemsControl ItemsSource="{Binding Tags}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
@@ -170,7 +168,7 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Border Background="{DynamicResource C_2221ED76}0" CornerRadius="3" Padding="6,1" Margin="0,0,4,0">
+                                                        <Border Background="{DynamicResource C_2221ED76}" CornerRadius="3" Padding="6,1" Margin="0,0,4,0">
                                                             <TextBlock Text="{Binding}" FontSize="9" Foreground="{DynamicResource C_FFB9FFE8}"/>
                                                         </Border>
                                                     </DataTemplate>

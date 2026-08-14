@@ -62,8 +62,8 @@ public partial class ChatArea : UserControl
             _micButton = sender as Button;
             if (_micButton != null)
             {
-                _micButton.Background = new SolidColorBrush(Color.Parse("#FF56F5C4"));
-                _micButton.Foreground = new SolidColorBrush(Color.Parse("#FF050507"));
+                _micButton.Background = (IBrush)_micButton.FindResource("C_FF56F5C4")!;
+                _micButton.Foreground = (IBrush)_micButton.FindResource("C_FF050507")!;
             }
             (sender as Control)?.Focus();
             e.Pointer.Capture(sender as IInputElement);
@@ -93,7 +93,7 @@ public partial class ChatArea : UserControl
     private void ResetMicButton()
     {
         if (_micButton == null) return;
-        _micButton.Background = new SolidColorBrush(Color.Parse("#33262835"));
-        _micButton.Foreground = new SolidColorBrush(Color.Parse("#FFEDEDF5"));
+        _micButton.Background = (IBrush)_micButton.FindResource("C_33262835")!;
+        _micButton.Foreground = (IBrush)_micButton.FindResource("C_FFEDEDF5")!;
     }
 }
