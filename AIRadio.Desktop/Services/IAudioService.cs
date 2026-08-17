@@ -29,7 +29,6 @@ public interface IAudioService
     void Seek(TimeSpan position);
     void Next();
     void SetNextCallback(Func<Task<Track?>>? callback);
-    void SetPreviousCallback(Func<Task<Track?>>? callback);
     void Previous();
     void Shuffle();
     void SetRepeatMode(string mode);

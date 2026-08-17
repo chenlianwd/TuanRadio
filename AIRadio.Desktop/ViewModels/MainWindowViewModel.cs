@@ -107,7 +107,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlayerVM = new PlayerViewModel(_audioService);
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
-            track => PlaylistVM.AddExternalTrack(track));
+            track => PlaylistVM.AddExternalTrack(track), _recommendationService);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
@@ -116,16 +116,6 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         {
             audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
             audioSvc.SetNextCallback(async () =>
-            {
-                _audioService.StopTts(); // Cancel TTS when user skips
-                var current = _audioService.CurrentTrack;
-                AttachRecommendationContext(current);
-                var recommended = await GetRecommendedTrackAsync(current);
-                if (recommended != null && !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
-                    PlaylistVM.AddExternalTrack(recommended);
-                return recommended;
-            });
-            audioSvc.SetPreviousCallback(async () =>
             {
                 _audioService.StopTts(); // Cancel TTS when user skips
                 var current = _audioService.CurrentTrack;
@@ -255,6 +245,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (story.Lines.Count == 0) return;
         var joined = string.Join(" ", story.Lines.Select(l => l.Text));
         ChatVM.AddAssistantMessage(joined);
+        await SpeakDjTextAsync(joined);
     }
 
     private void RecordCurrentTrackFeedback(MusicFeedbackAction action)
@@ -271,6 +262,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             TrackId = trackId,
             Action = action
         });
+
+        // CALM/FIRE 同步切换会话级氛围偏好，让按钮立即影响后续推荐
+        if (action == MusicFeedbackAction.Calmer)
+            _recommendationService.SetMoodBias("calm");
+        else if (action == MusicFeedbackAction.Energetic)
+            _recommendationService.SetMoodBias("energetic");
 
         if (action == MusicFeedbackAction.Dislike)
             ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en" ? "Got it. I will avoid this track in the current session." : "收到，这首本轮先避开。");

@@ -113,4 +113,68 @@ public class RecommendationServiceTests
 
         Assert.Empty(program.Tracks);
     }
+
+    [Fact]
+    public async Task SetMoodBias_NormalizesSynonym_OverridesDetectedMood_AndInjectsPromptHint()
+    {
+        var minimax = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(minimax.Object, search.Object);
+
+        var prompts = new List<string>();
+        minimax.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("钢琴曲");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        service.SetMoodBias("calmer"); // 电台指令常用 "calmer"，应归一化为 "calm"
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "随便来点" });
+
+        Assert.Equal("calm", program.Context.Mood); // 覆盖正则检测（"随便来点" 本应检出 neutral）
+        Assert.Contains(prompts, p => p.Contains("氛围偏好：calm"));
+    }
+
+    [Fact]
+    public async Task SetMoodBias_FreeTextHint_DoesNotOverrideStructuredMood()
+    {
+        var minimax = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(minimax.Object, search.Object);
+
+        var prompts = new List<string>();
+        minimax.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("爵士");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        service.SetMoodBias("爵士咖啡馆"); // 自由词：只进搜索提示，不占结构化 mood
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "随便听听" });
+
+        Assert.Equal("neutral", program.Context.Mood);
+        Assert.Contains(prompts, p => p.Contains("氛围偏好：爵士咖啡馆"));
+    }
+
+    [Fact]
+    public async Task SetMoodBias_Null_ClearsBias()
+    {
+        var minimax = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(minimax.Object, search.Object);
+
+        var prompts = new List<string>();
+        minimax.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("摇滚");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        service.SetMoodBias("energetic");
+        service.SetMoodBias(null);
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "随便听听" });
+
+        Assert.Equal("neutral", program.Context.Mood); // 回退正则检测
+        Assert.DoesNotContain(prompts, p => p.Contains("氛围偏好"));
+    }
 }
