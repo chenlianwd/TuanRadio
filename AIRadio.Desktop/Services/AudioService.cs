@@ -55,7 +55,6 @@ public class AudioService : IAudioService, IDisposable
     private bool _isFading;
     private readonly System.Threading.Timer _fadeTimer;
     private Func<Task<Track?>>? _nextCallback;
-    private Func<Task<Track?>>? _previousCallback;
 
     public bool IsPlaying => _player.IsPlaying;
     public TimeSpan CurrentPosition => TimeSpan.FromMilliseconds(_player.Time);
@@ -300,7 +299,6 @@ public class AudioService : IAudioService, IDisposable
     public void SetRepeatMode(string mode) => _repeatMode = mode;
 
     public void SetNextCallback(Func<Task<Track?>>? callback) => _nextCallback = callback;
-    public void SetPreviousCallback(Func<Task<Track?>>? callback) => _previousCallback = callback;
 
     public async void Next()
     {
@@ -345,26 +343,10 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    public async void Previous()
+    public void Previous()
     {
         try
         {
-            if (_repeatMode == "radio" && _previousCallback != null)
-            {
-                var track = await _previousCallback();
-                if (track != null)
-                {
-                    var index = FindTrackIndex(track);
-                    if (index < 0)
-                    {
-                        AddTracks(new[] { track });
-                        index = _playlist.Count - 1;
-                    }
-                    PlayAtIndex(index);
-                    return;
-                }
-            }
-
             if (_playlist.Count == 0) return;
 
             if (_player.Time > 3000)

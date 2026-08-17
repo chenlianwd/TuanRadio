@@ -24,6 +24,7 @@ AIRadio 是一个 Windows 桌面 AI 电台播放器。
 - 节目单视图（库抽屉第 4 个 tab）显示推荐标签，推荐理由经 DjOpening 走 DJ 气泡。
 - 搜索状态逐源透传（成功/超时/失败），设置页带连接诊断。
 - 升级 .NET 10，Tmds.DBus.Protocol 固定 0.21.3 修复漏洞通告。
+- 业务断点修复 A 包：上一首恢复标准语义（>3s 回开头/列表上一首）；change_mood 指令与 CALM/FIRE 按钮接通会话级氛围偏好；SongStory 补 TTS 播报。
 
 ## Architecture Notes
 

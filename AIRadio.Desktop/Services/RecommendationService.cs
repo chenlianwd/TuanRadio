@@ -13,6 +13,7 @@ public class RecommendationService : IRecommendationService
     private readonly ILLMService _llm;
     private readonly IMusicSearchService _musicSearch;
     private readonly List<UserMusicFeedback> _feedback = new();
+    private string? _moodBias;
 
     public RecommendationService(ILLMService llm, IMusicSearchService musicSearch)
     {
@@ -25,7 +26,7 @@ public class RecommendationService : IRecommendationService
 
     public async Task<RadioProgram> CreateProgramAsync(RecommendationRequest request)
     {
-        var context = BuildContext(request);
+        var context = BuildContext(_moodBias, request);
         var queries = await GenerateQueriesAsync(request, context);
         var excluded = BuildExcludedTracks(request);
 
@@ -120,6 +121,20 @@ public class RecommendationService : IRecommendationService
             _feedback.RemoveRange(0, _feedback.Count - maxFeedback);
     }
 
+    /// <summary>会话级氛围偏好：覆盖意图正则检测出的 mood，并注入搜索词生成提示。传 null/空白清除。</summary>
+    public void SetMoodBias(string? mood) => _moodBias = NormalizeMood(mood);
+
+    private static string? NormalizeMood(string? mood)
+    {
+        if (string.IsNullOrWhiteSpace(mood)) return null;
+        var value = mood.Trim().ToLowerInvariant();
+        if (value.Contains("calm") || value.Contains("安静") || value.Contains("放松") || value.Contains("温柔")) return "calm";
+        if (value.Contains("energy") || value.Contains("energetic") || value.Contains("燃") || value.Contains("热血") || value.Contains("兴奋")) return "energetic";
+        if (value.Contains("sad") || value.Contains("emo") || value.Contains("难过")) return "sad";
+        // 其它短词当作自由氛围提示进搜索词生成，不覆盖结构化 mood
+        return value.Length <= 12 ? value : null;
+    }
+
     private List<Track> BuildExcludedTracks(RecommendationRequest request)
     {
         return request.ExcludedTracks
@@ -135,11 +150,12 @@ public class RecommendationService : IRecommendationService
         var fallback = BuildFallbackQueries(request, context);
         try
         {
+            var moodHint = string.IsNullOrWhiteSpace(_moodBias) ? "" : $"\n氛围偏好：{_moodBias}";
             var prompt = $"""
                 根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
                 用户意图：{request.UserIntent}
                 当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
-                收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}
+                收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
                 """;
             var response = await _llm.ChatAsync(prompt, new List<ChatMessage>());
             var queries = response
@@ -158,13 +174,15 @@ public class RecommendationService : IRecommendationService
         }
     }
 
-    private static ListeningContext BuildContext(RecommendationRequest request)
+    private static ListeningContext BuildContext(string? moodBias, RecommendationRequest request)
     {
         var text = request.UserIntent ?? string.Empty;
+        // 结构化氛围（calm/energetic/sad）优先用会话级 bias；自由词 bias 只进搜索提示，不占结构化 mood
+        var mood = moodBias is "calm" or "energetic" or "sad" ? moodBias : DetectMood(text);
         return new ListeningContext
         {
             UserIntent = text,
-            Mood = DetectMood(text),
+            Mood = mood,
             Scene = DetectScene(text),
             TimeOfDay = DateTime.Now.Hour switch
             {
