@@ -23,6 +23,8 @@
                     IsEnabled="{Binding !IsTesting}"
                     HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
                     Foreground="{DynamicResource C_FF000000}"/>
+            <TextBlock Text="连接测试成功后会自动保存服务、模型、地址和 API Key"
+                       Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
             <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource C_FFFFC86B}"
                        TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0"/>
         </StackPanel>

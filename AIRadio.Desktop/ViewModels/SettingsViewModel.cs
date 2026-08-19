@@ -244,7 +244,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             NormalizeLlmInputs();
             ConfigureLlm(ApiKey);
             var result = await _llmService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
-            StatusMessage = $"连接成功：{result[..Math.Min(50, result.Length)]}...";
+            var successMessage = $"连接成功并已保存：{result[..Math.Min(50, result.Length)]}...";
+            await SaveAsync();
+            if (StatusMessage == "设置已保存")
+                StatusMessage = successMessage;
         }
         catch (Exception ex)
         {

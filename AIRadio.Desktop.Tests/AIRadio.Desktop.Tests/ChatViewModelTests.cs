@@ -145,6 +145,73 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public async Task SendMessage_ArtistSongRequest_SearchesByArtist()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        var unrelatedResult = new OnlineTrack
+        {
+            Id = "netease:unrelated",
+            Title = "李白",
+            Artist = "李荣"
+        };
+        var artistResult = new OnlineTrack
+        {
+            Id = "netease:li-ronghao",
+            Title = "模特",
+            Artist = "李荣浩"
+        };
+        searchMock.Setup(x => x.SearchAsync("李荣浩", 5))
+            .ReturnsAsync(new List<OnlineTrack> { unrelatedResult, artistResult });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:li-ronghao"))
+            .ReturnsAsync("http://example.com/model.mp3");
+
+        vm.InputText = "播放李荣浩的歌";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        searchMock.Verify(x => x.SearchAsync("李荣浩", 5), Times.Once);
+        searchMock.Verify(x => x.SearchAsync("李荣浩的歌", 5), Times.Never);
+        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
+            tracks.Any(t => t.Title == "模特" && t.Artist == "李荣浩"))), Times.Once);
+        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+        Assert.Contains(vm.Messages, message => message.Content == "好，我来找李荣浩的歌。");
+    }
+
+    [Fact]
+    public async Task SendMessage_BareSongTitleMatchingArtistName_KeepsTitleMatch()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        var titleResult = new OnlineTrack
+        {
+            Id = "netease:title-match",
+            Title = "王菲",
+            Artist = "演唱者"
+        };
+        var artistResult = new OnlineTrack
+        {
+            Id = "netease:artist-match",
+            Title = "红豆",
+            Artist = "王菲"
+        };
+        searchMock.Setup(x => x.SearchAsync("王菲", 3))
+            .ReturnsAsync(new List<OnlineTrack> { titleResult, artistResult });
+        searchMock.Setup(x => x.SearchAsync("王菲", 5))
+            .ReturnsAsync(new List<OnlineTrack> { titleResult, artistResult });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:title-match"))
+            .ReturnsAsync("http://example.com/title-match.mp3");
+
+        vm.InputText = "王菲";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        searchMock.Verify(x => x.GetPlayUrlAsync("netease:title-match"), Times.Once);
+        searchMock.Verify(x => x.GetPlayUrlAsync("netease:artist-match"), Times.Never);
+        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
+            tracks.Any(t => t.Title == "王菲" && t.Artist == "演唱者"))), Times.Once);
+        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+    }
+
+    [Fact]
     public async Task SendMessage_ShortChatWithoutConfidentSongMatch_UsesDjChat()
     {
         var (vm, djMock, audioMock, searchMock) = CreateVm();

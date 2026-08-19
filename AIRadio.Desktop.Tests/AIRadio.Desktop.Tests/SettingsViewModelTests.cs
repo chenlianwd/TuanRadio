@@ -162,22 +162,31 @@ public class SettingsViewModelTests
         _mockLlm.Setup(x => x.Configure(It.IsAny<LLMConfig>()))
             .Callback<LLMConfig>(config => captured = config);
 
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object)
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        try
         {
-            SelectedProvider = "local",
-            ApiKey = string.Empty,
-            BaseUrl = "http://localhost:11434/v1",
-            Model = "llama3"
-        };
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                SelectedProvider = "local",
+                ApiKey = string.Empty,
+                BaseUrl = "http://localhost:11434/v1",
+                Model = "llama3"
+            };
 
-        await vm.TestConnectionCommand.Execute();
+            await vm.TestConnectionCommand.Execute();
 
-        _mockLlm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
-        _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", It.IsAny<string>()), Times.Never);
-        Assert.NotNull(captured);
-        Assert.Equal("local", captured!.Provider);
-        Assert.Equal(string.Empty, captured.ApiKey);
-        Assert.Contains("连接成功", vm.StatusMessage);
+            _mockLlm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", It.IsAny<string>()), Times.Never);
+            Assert.NotNull(captured);
+            Assert.Equal("local", captured!.Provider);
+            Assert.Equal(string.Empty, captured.ApiKey);
+            Assert.Contains("连接成功并已保存", vm.StatusMessage);
+            Assert.True(File.Exists(settingsFile));
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
     }
 
     [Fact]
@@ -203,20 +212,67 @@ public class SettingsViewModelTests
     }
 
     [Fact]
-    public async Task TestConnectionCommand_WithRemoteKey_DoesNotPersistConfiguration()
+    public async Task TestConnectionCommand_WithRemoteKey_PersistsConfiguration()
     {
         _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("连接正常");
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object)
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        try
         {
-            ApiKey = "test-key",
-            Model = "gpt-4o-mini"
-        };
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                SelectedProvider = "anthropic",
+                ApiKey = "test-key",
+                BaseUrl = "https://proxy.example/v1",
+                Model = "claude-test"
+            };
 
-        await vm.TestConnectionCommand.Execute();
+            await vm.TestConnectionCommand.Execute();
 
-        _mockStorage.Verify(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
-        Assert.Contains("连接成功", vm.StatusMessage);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", "test-key"), Times.Once);
+            Assert.Contains("连接成功并已保存", vm.StatusMessage);
+
+            var json = await File.ReadAllTextAsync(settingsFile);
+            Assert.Contains("\"llm_provider\": \"anthropic\"", json);
+            Assert.Contains("\"llm_model\": \"claude-test\"", json);
+            Assert.Contains("\"llm_base_url\": \"https://proxy.example/v1\"", json);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task SuccessfulConnection_RoundTripsProviderModelBaseUrlAndApiKey()
+    {
+        _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("连接正常");
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync("roundtrip-key");
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            var savingVm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                SelectedProvider = "anthropic",
+                ApiKey = "roundtrip-key",
+                BaseUrl = "https://proxy.example/v1",
+                Model = "claude-roundtrip"
+            };
+            await savingVm.TestConnectionCommand.Execute();
+
+            var loadedVm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await loadedVm.LoadAsync();
+
+            Assert.Equal("anthropic", loadedVm.SelectedProvider);
+            Assert.Equal("roundtrip-key", loadedVm.ApiKey);
+            Assert.Equal("https://proxy.example/v1", loadedVm.BaseUrl);
+            Assert.Equal("claude-roundtrip", loadedVm.Model);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
     }
 
     [Fact]

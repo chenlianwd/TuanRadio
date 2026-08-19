@@ -585,7 +585,7 @@ _ttsSub = _audioService.TtsStateChanged
 - **H8-H19（VM/Views HIGH）**：H8/H9（异常观察 + IDisposable）、H10（TrackComparer 提取）、H11（async lambda）、H13-H19（Converter 合并到 `Converters/`、MainWindow 拆 7 UserControl、x:Name→VM 绑定）已落地。
 - **H20-H22（API 安全）**：H20（Kuwo HTTPS）、H21（URL 验证部分）、H22（EscapeDataString）。
 - **H23-H31（测试）**：Converter 等价性、RadioState 派生、HasFailure 等已补。
-- **M20（Theme token）**：ThemeDictionaries 与全量颜色 token 已落地；Light 字典当前仍与 Dark 同值占位。
+- **M20（Theme token）**：ThemeDictionaries 与全量颜色 token 已落地；Light/Dark 字典已使用独立配色。
 - **L18（Node SHA256）**：已加下载哈希审计日志。
 
-**已知残留**：MainWindow.Theme.cs 已随全量 token 化退场（文件已删除）；Light 模式 token 已占位就位（与 Dark 同值，后续可按需微调）；音源 fallback UI 与连接诊断（子项目 5）已落地——`BuildSearchStatusMessage` 透传各源成功/超时/失败、`SettingsViewModel.TestConnectionAsync` 完整覆盖空 Key/模型名/成功响应预览/失败 RecoveryHint。
+**已知残留**：MainWindow.Theme.cs 已随全量 token 化退场（文件已删除）；Light/Dark 模式均已配置完整 token，后续按视觉验收继续微调；音源 fallback UI 与连接诊断（子项目 5）已落地——`BuildSearchStatusMessage` 透传各源成功/超时/失败、`SettingsViewModel.TestConnectionAsync` 完整覆盖空 Key/模型名/成功响应预览/失败 RecoveryHint，并在连接成功后自动持久化配置。

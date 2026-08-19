@@ -69,7 +69,7 @@
                 </Button>
                 <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF8A8A96}" VerticalAlignment="Center"/>
-                <Slider Width="90" MinWidth="0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
+                <Slider Width="90" MinWidth="0" Margin="0,0,12,0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
                         PointerReleased="OnVolumeSliderReleased"/>
             </StackPanel>
 

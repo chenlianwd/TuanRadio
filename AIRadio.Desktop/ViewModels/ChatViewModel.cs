@@ -4,6 +4,7 @@ using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using Serilog;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
@@ -424,10 +425,16 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            if (TryParseSongRequest(text, out var songQuery, out var requiresConfidentMatch) &&
+            if (TryParseSongRequest(text, out var songQuery, out var requiresConfidentMatch, out var isArtistRequest) &&
                 (!requiresConfidentMatch || await HasConfidentSongMatchAsync(songQuery)))
             {
-                await RespondWithCommandAsync($"好，我来找《{songQuery}》。", $"play:{songQuery}", "happy");
+                var displayText = isArtistRequest
+                    ? $"好，我来找{songQuery}的歌。"
+                    : $"好，我来找《{songQuery}》。";
+                var playCommand = isArtistRequest
+                    ? $"play_artist:{songQuery}"
+                    : $"play:{songQuery}";
+                await RespondWithCommandAsync(displayText, playCommand, "happy");
                 return;
             }
 
@@ -820,10 +827,15 @@ public class ChatViewModel : ViewModelBase, IDisposable
             RegexOptions.IgnoreCase);
     }
 
-    private static bool TryParseSongRequest(string text, out string query, out bool requiresConfidentMatch)
+    private static bool TryParseSongRequest(
+        string text,
+        out string query,
+        out bool requiresConfidentMatch,
+        out bool isArtistRequest)
     {
         query = string.Empty;
         requiresConfidentMatch = false;
+        isArtistRequest = false;
         var normalized = NormalizeSongQuery(text);
         if (string.IsNullOrWhiteSpace(normalized))
             return false;
@@ -834,7 +846,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             RegexOptions.IgnoreCase);
         if (explicitMatch.Success)
         {
-            query = NormalizeSongQuery(explicitMatch.Groups["query"].Value);
+            query = NormalizeMusicSearchQuery(explicitMatch.Groups["query"].Value, out isArtistRequest);
             return !string.IsNullOrWhiteSpace(query) && !IsGenericMusicRequest(query);
         }
 
@@ -844,6 +856,26 @@ public class ChatViewModel : ViewModelBase, IDisposable
         query = normalized;
         requiresConfidentMatch = true;
         return true;
+    }
+
+    private static string NormalizeMusicSearchQuery(string query, out bool isArtistRequest)
+    {
+        isArtistRequest = false;
+        var normalized = NormalizeSongQuery(query);
+        var artistMatch = Regex.Match(
+            normalized,
+            @"^(?<artist>.+?)\s*的\s*(?:歌|歌曲|音乐)$",
+            RegexOptions.IgnoreCase);
+
+        if (!artistMatch.Success)
+            return normalized;
+
+        var artist = NormalizeSongQuery(artistMatch.Groups["artist"].Value);
+        if (string.IsNullOrWhiteSpace(artist) || IsGenericMusicRequest(artist))
+            return normalized;
+
+        isArtistRequest = true;
+        return artist;
     }
 
     private static string NormalizeSongQuery(string text)
@@ -928,7 +960,12 @@ public class ChatViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            if (command.StartsWith("play:"))
+            if (command.StartsWith("play_artist:", StringComparison.OrdinalIgnoreCase))
+            {
+                var query = command["play_artist:".Length..].Trim();
+                await PlaySongAsync(query, preferArtistMatch: true);
+            }
+            else if (command.StartsWith("play:"))
             {
                 var query = command["play:".Length..].Trim();
                 await PlaySongAsync(query);
@@ -969,15 +1006,17 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task PlaySongAsync(string query)
+    private async Task PlaySongAsync(string query, bool preferArtistMatch = false)
     {
         if (_isPlayingSong) return;
         _isPlayingSong = true;
         try
         {
-            Log.Information("DJ play request: {Query}", query);
+            var searchQuery = NormalizeMusicSearchQuery(query, out var normalizedArtistRequest);
+            preferArtistMatch |= normalizedArtistRequest;
+            Log.Information("DJ play request: {Query}", searchQuery);
 
-            var results = await SearchMusicAsync(query, 5, _lifetimeCts.Token);
+            var results = await SearchMusicAsync(searchQuery, 5, _lifetimeCts.Token);
             Log.Debug("DJ search returned {Count} results", results.Count);
             if (results.Count == 0)
             {
@@ -989,7 +1028,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var track = results[0];
+            var track = SelectBestTrack(searchQuery, results, preferArtistMatch);
             Log.Debug("DJ got track: {Track}, fetching URL...", track.Title);
             var url = await ResolvePlayUrlAsync(track, _lifetimeCts.Token);
             Log.Debug("DJ got URL: {Url}", url != null ? "present" : "null");
@@ -1039,6 +1078,38 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             _isPlayingSong = false;
         }
+    }
+
+    private static OnlineTrack SelectBestTrack(
+        string query,
+        IReadOnlyList<OnlineTrack> results,
+        bool preferArtistMatch)
+    {
+        if (!preferArtistMatch)
+            return results[0];
+
+        var normalizedQuery = NormalizeForMusicCompare(query);
+        if (normalizedQuery.Length >= 2)
+        {
+            var artists = results
+                .Select(track => (Track: track, Artist: NormalizeForMusicCompare(track.Artist)))
+                .Where(candidate => candidate.Artist.Length > 0)
+                .ToList();
+            var artistMatch = artists
+                .FirstOrDefault(candidate => candidate.Artist.Equals(normalizedQuery, StringComparison.OrdinalIgnoreCase))
+                .Track
+                ?? artists
+                    .FirstOrDefault(candidate => candidate.Artist.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase))
+                    .Track
+                ?? artists
+                    .FirstOrDefault(candidate => normalizedQuery.Contains(candidate.Artist, StringComparison.OrdinalIgnoreCase))
+                    .Track;
+
+            if (artistMatch != null)
+                return artistMatch;
+        }
+
+        return results[0];
     }
 
     private Task<System.Collections.Generic.List<OnlineTrack>> SearchMusicAsync(
