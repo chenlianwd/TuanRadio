@@ -11,6 +11,7 @@ public partial class ClockStage : UserControl
 {
     private IDisposable? _starfieldVisSub;
     private Action<float[]>? _spectrumHandler;
+    private SpectrumViewModel? _spectrumSource;
 
     public ClockStage()
     {
@@ -29,12 +30,17 @@ public partial class ClockStage : UserControl
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
         _starfieldVisSub?.Dispose();
+        if (_spectrumSource != null && _spectrumHandler != null)
+            _spectrumSource.SpectrumReceived -= _spectrumHandler;
+
+        _spectrumSource = null;
+        _spectrumHandler = null;
+
         if (DataContext is MainWindowViewModel vm)
         {
-            if (_spectrumHandler != null)
-                vm.SpectrumVM.SpectrumReceived -= _spectrumHandler;
             _spectrumHandler = data => Starfield?.PushSpectrum(data);
-            vm.SpectrumVM.SpectrumReceived += _spectrumHandler;
+            _spectrumSource = vm.SpectrumVM;
+            _spectrumSource.SpectrumReceived += _spectrumHandler;
 
             _starfieldVisSub = vm.SettingsVM.WhenAnyValue(x => x.EnableStarfield)
                 .Subscribe(v => { if (Starfield != null) Starfield.IsVisible = v; });

@@ -80,8 +80,13 @@ public class NeteaseMusicService : IMusicSearchService
         try
         {
             var url = $"{_baseUrl}/song/url/v1?id={Uri.EscapeDataString(trackId)}&level=exhigh";
-            var response = await _httpClient.GetStringAsync(url);
-            using var doc = JsonDocument.Parse(response);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // 播放地址是带签名的临时 CDN 链接，重试时不能复用本地 API 的 2 分钟缓存。
+            request.Headers.TryAddWithoutValidation("x-apicache-bypass", "true");
+            using var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            var responseText = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseText);
             var root = doc.RootElement;
 
             if (!root.TryGetProperty("code", out var codeEl) || codeEl.GetInt32() != 200)

@@ -29,9 +29,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _darkModePersistSub;
     private readonly IDisposable _languageTtsSub;
     private readonly IDisposable _speechMixSub;
+    private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
     private int _autoRadioAdvancing;
+    private int _disposed;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
+    private readonly CancellationTokenSource _lifetimeCts = new();
 
     public PlayerViewModel PlayerVM { get; }
     public PlaylistViewModel PlaylistVM { get; }
@@ -42,6 +45,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
 
     public event Action<string, string>? DjVisualCue; // expression, motion
+
+    private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     [Reactive] public bool IsSettingsOpen { get; set; }
     [Reactive] public bool IsLibraryOpen { get; set; }
@@ -176,7 +181,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(character =>
         {
             SwitchCharacter(character);
-            _ = AnnounceCharacterGreetingAsync();
+            _ = AnnounceCharacterGreetingAsync(_lifetimeCts.Token);
         });
 
         // Re-apply character when settings are saved
@@ -192,7 +197,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_sttService is WhisperSttService whisper)
         {
             whisper.Language = SettingsVM.SelectedLanguage == "en" ? "en" : "zh";
-            SettingsVM.WhenAnyValue(x => x.SelectedLanguage)
+            _sttLanguageSub = SettingsVM.WhenAnyValue(x => x.SelectedLanguage)
                 .Subscribe(lang => whisper.Language = lang == "en" ? "en" : "zh");
         }
 
@@ -239,9 +244,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private async Task TellSongStoryAsync()
     {
+        if (IsDisposed)
+            return;
+
         var current = _audioService.CurrentTrack;
         if (current == null) return;
         var story = await _djService.GenerateSongStoryAsync(current);
+        if (IsDisposed)
+            return;
+
         if (story.Lines.Count == 0) return;
         var joined = string.Join(" ", story.Lines.Select(l => l.Text));
         ChatVM.AddAssistantMessage(joined);
@@ -301,7 +312,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            if (IsDisposed)
+                return;
+
             var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+            if (IsDisposed)
+                return;
+
             ChatVM.AddAssistantMessage(script.Text);
             Log.Information("DJ: {Text}", script.Text);
             DjVisualCue?.Invoke(script.Expression, script.Motion);
@@ -309,7 +326,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
             {
                 var speechData = await _djService.GenerateSpeechAsync(script.Text);
-                if (speechData is { Length: > 0 })
+                if (speechData is { Length: > 0 } && !IsDisposed)
                     _audioService.PlayTtsAudio(speechData);
             }
         }
@@ -330,19 +347,34 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
     }
 
-    public async System.Threading.Tasks.Task InitializeAsync()
+    public async System.Threading.Tasks.Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsDisposed)
+            return;
+
         await SettingsVM.LoadAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsDisposed)
+            return;
+
         await PlaylistVM.LoadAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsDisposed)
+            return;
+
         IsDarkMode = SettingsVM.IsDarkMode;
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
 
-        await AnnounceWelcomeAsync();
+        await AnnounceWelcomeAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsDisposed)
+            return;
 
         // AI startup recommendation: analyze playlist and recommend a song
-        _ = AnnounceStartupFollowupAsync();
+        _ = AnnounceStartupFollowupAsync(_lifetimeCts.Token);
     }
 
     public void CloseOverlays()
@@ -352,15 +384,22 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IsCharacterPickerOpen = false;
     }
 
-    private async System.Threading.Tasks.Task AnnounceStartupFollowupAsync()
+    private async System.Threading.Tasks.Task AnnounceStartupFollowupAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await System.Threading.Tasks.Task.Delay(1400);
+            await System.Threading.Tasks.Task.Delay(1400, cancellationToken);
+            if (IsDisposed)
+                return;
+
             if (PlaylistVM.Tracks.Count == 0)
-                await AnnounceEmptyLibraryAsync();
+                await AnnounceEmptyLibraryAsync(cancellationToken);
             else
-                await AnnounceStartupRecommendationAsync();
+                await AnnounceStartupRecommendationAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || IsDisposed)
+        {
+            // 应用关闭时取消启动串场，不再访问已释放的 ViewModel。
         }
         catch (Exception ex)
         {
@@ -368,48 +407,66 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync()
+    private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync(CancellationToken cancellationToken)
     {
+        if (IsDisposed || cancellationToken.IsCancellationRequested)
+            return;
+
         var text = SettingsVM.SelectedLanguage == "en"
             ? "No tracks yet. Tell me a mood or search a song, and I'll build today's station."
             : "歌单还是空的。告诉我今天的心情，或者搜一首歌，我来帮你开台。";
 
         ChatVM.AddAssistantMessage(text);
 
-        await SpeakDjTextAsync(text);
-        if (PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
+        await SpeakDjTextAsync(text, cancellationToken);
+        if (!IsDisposed && !cancellationToken.IsCancellationRequested &&
+            PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
             _audioService.Play();
     }
 
-    private async System.Threading.Tasks.Task AnnounceWelcomeAsync()
+    private async System.Threading.Tasks.Task AnnounceWelcomeAsync(CancellationToken cancellationToken)
     {
+        if (IsDisposed || cancellationToken.IsCancellationRequested)
+            return;
+
         var text = SettingsVM.SelectedLanguage == "en"
             ? $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood."
             : $"这里是 {SelectedCharacter.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。";
 
         ChatVM.AddAssistantMessage(text);
         DjVisualCue?.Invoke("smile", "wave");
-        await SpeakDjTextAsync(text);
-        if (PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
+        await SpeakDjTextAsync(text, cancellationToken);
+        if (!IsDisposed && !cancellationToken.IsCancellationRequested &&
+            PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
             _audioService.Play();
     }
 
-    private async System.Threading.Tasks.Task AnnounceCharacterGreetingAsync()
+    private async System.Threading.Tasks.Task AnnounceCharacterGreetingAsync(CancellationToken cancellationToken)
     {
         try
         {
+            if (IsDisposed || cancellationToken.IsCancellationRequested)
+                return;
+
             var prompt = SettingsVM.SelectedLanguage == "en"
                 ? "You have just taken over this radio station. Greet me in your own DJ personality and voice style. Do not mention settings."
                 : "你刚刚接管这个电台。请用你的主播人设和语气，主动向我打个招呼，不要提到设置。";
 
             var response = await _djService.GenerateChatResponseAsync(prompt);
+            if (IsDisposed || cancellationToken.IsCancellationRequested)
+                return;
+
             var text = StripDjControlTags(response);
             if (string.IsNullOrWhiteSpace(text)) return;
 
             ChatVM.AddAssistantMessage(text);
             DjVisualCue?.Invoke("smile", "wave");
 
-            await SpeakDjTextAsync(text);
+            await SpeakDjTextAsync(text, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || IsDisposed)
+        {
+            // 应用关闭时取消角色欢迎词。
         }
         catch (Exception ex)
         {
@@ -417,10 +474,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async System.Threading.Tasks.Task AnnounceStartupRecommendationAsync()
+    private async System.Threading.Tasks.Task AnnounceStartupRecommendationAsync(CancellationToken cancellationToken)
     {
         try
         {
+            if (IsDisposed || cancellationToken.IsCancellationRequested)
+                return;
+
             var current = _audioService.CurrentTrack;
             var originalTrack = current;
             var originalCount = PlaylistVM.Tracks.Count;
@@ -450,6 +510,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 current ?? new Track { Title = "无", Artist = "未知" },
                 recommended);
 
+            if (IsDisposed || cancellationToken.IsCancellationRequested)
+                return;
+
             if (_audioService.IsPlaying ||
                 !IsSameTrack(_audioService.CurrentTrack, originalTrack) ||
                 PlaylistVM.Tracks.Count != originalCount)
@@ -467,7 +530,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            await SpeakDjTextAsync(script.Text);
+            await SpeakDjTextAsync(script.Text, cancellationToken);
 
             Log.Information("AI recommended: {Track}", recommended.Title);
         }
@@ -479,6 +542,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private async System.Threading.Tasks.Task HandleAutoRadioTrackEndedAsync(Track current)
     {
+        if (IsDisposed)
+            return;
+
         if (Interlocked.Exchange(ref _autoRadioAdvancing, 1) == 1) return;
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
         _audioService.StopTts(); // Cancel any ongoing TTS before advancing
@@ -487,10 +553,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (ShouldUseFreshRadioRecommendations())
             {
                 var success = await PlayWithFreshRecommendation(current);
-                if (!success)
+                if (!success && !IsDisposed)
                     await PlayWithPlaylistRotation(current);
             }
-            else
+            else if (!IsDisposed)
             {
                 await PlayWithPlaylistRotation(current);
             }
@@ -507,8 +573,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private async System.Threading.Tasks.Task<bool> PlayWithFreshRecommendation(Track current)
     {
+        if (IsDisposed)
+            return false;
+
         var recommended = await GetRecommendedTrackAsync(current);
-        if (recommended == null)
+        if (IsDisposed || recommended == null)
         {
             Log.Information("Fresh recommendation returned null, falling back to playlist rotation");
             return false;
@@ -517,15 +586,22 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (current != null && IsSameTrackIdentity(recommended, current))
         {
             var retry = await GetRecommendedTrackAsync(current);
+            if (IsDisposed)
+                return false;
+
             if (retry != null && !IsSameTrackIdentity(retry, current))
                 recommended = retry;
         }
 
         if (!PlaylistVM.Tracks.Any(t => IsSameTrackIdentity(t, recommended)))
+        {
+            if (IsDisposed)
+                return false;
             PlaylistVM.AddExternalTrack(recommended);
+        }
 
         var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
-        if (!IsSameTrack(_audioService.CurrentTrack, current)) return true;
+        if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return true;
 
         ChatVM.AddAssistantMessage(script.Text);
         DjVisualCue?.Invoke(script.Expression, script.Motion);
@@ -539,11 +615,17 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private async System.Threading.Tasks.Task PlayWithPlaylistRotation(Track current)
     {
+        if (IsDisposed)
+            return;
+
         var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
         if (pool.Count == 0) return;
 
         var next = PickDiversifiedTrack(pool, current);
         if (next == null) return;
+
+        if (IsDisposed)
+            return;
 
         if (!PlaylistVM.Tracks.Contains(next))
             PlaylistVM.AddExternalTrack(next);
@@ -552,12 +634,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (index < 0) return;
 
         var script = await _djService.GenerateTrackIntroductionAsync(current, next);
-        if (!IsSameTrack(_audioService.CurrentTrack, current)) return;
+        if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return;
 
         ChatVM.AddAssistantMessage(script.Text);
         DjVisualCue?.Invoke(script.Expression, script.Motion);
         await SpeakDjTextAsync(script.Text);
-        if (IsSameTrack(_audioService.CurrentTrack, current))
+        if (!IsDisposed && IsSameTrack(_audioService.CurrentTrack, current))
             _audioService.PlayAtIndex(index);
     }
 
@@ -602,6 +684,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             var recommended = await _recommendationService.GetNextTrackAsync(request);
+            if (IsDisposed)
+                return null;
+
             var prevOpening = CurrentRadioProgram?.DjOpening;
             CurrentRadioProgram = _recommendationService.CurrentProgram;
             // 新节目单的开场白作为 DJ 气泡推荐理由（去重，避免续播每首刷屏）
@@ -618,7 +703,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             Log.Warning(ex, "Program recommendation failed, falling back to DJ single-track recommendation");
         }
 
-        return await _djService.RecommendNextTrackAsync(current);
+        var fallback = await _djService.RecommendNextTrackAsync(current);
+        return IsDisposed ? null : fallback;
     }
 
     private static bool IsSameTrack(Track? left, Track? right) => TrackComparer.IsSameTrack(left, right);
@@ -633,19 +719,27 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         return cleaned.Trim();
     }
 
-    private async System.Threading.Tasks.Task SpeakDjTextAsync(string text)
+    private async System.Threading.Tasks.Task SpeakDjTextAsync(string text, CancellationToken cancellationToken = default)
     {
-        if (!_djService.TtsEnabled || string.IsNullOrWhiteSpace(text)) return;
+        if (IsDisposed || !_djService.TtsEnabled || string.IsNullOrWhiteSpace(text)) return;
+
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetimeCts.Token,
+            cancellationToken);
+        var token = linkedCts.Token;
 
         try
         {
-            await _ttsLock.WaitAsync();
+            await _ttsLock.WaitAsync(token);
+            token.ThrowIfCancellationRequested();
+
             try
             {
                 var speechData = await _djService.GenerateSpeechAsync(text);
-                if (speechData is { Length: > 0 })
+                if (speechData is { Length: > 0 } && !IsDisposed && !token.IsCancellationRequested)
                 {
-                    var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(
+                        System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
                     var sub = _audioService.TtsStateChanged.Subscribe(playing =>
                     {
                         if (!playing) tcs.TrySetResult(true);
@@ -653,7 +747,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                     _audioService.PlayTtsAudio(speechData);
                     try
                     {
-                        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(60));
+                        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(60), token);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested || IsDisposed)
+                    {
+                        // 应用关闭时停止等待 TTS 播放完成。
                     }
                     catch (TimeoutException)
                     {
@@ -670,6 +768,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 _ttsLock.Release();
             }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested || IsDisposed)
+        {
+            // 应用关闭时取消尚未开始的串场任务。
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to speak DJ text");
@@ -678,11 +780,17 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        _lifetimeCts.Cancel();
+        try { _audioService.StopTts(); } catch { }
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
         _darkModePersistSub?.Dispose();
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();
+        _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();
@@ -690,6 +798,5 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SpectrumVM?.Dispose();
         PlaylistVM?.Dispose();
         SettingsVM?.Dispose();
-        _ttsLock.Dispose();
     }
 }

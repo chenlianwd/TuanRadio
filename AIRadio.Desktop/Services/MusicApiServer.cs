@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -14,9 +15,21 @@ public class MusicApiServer : IDisposable
     private const int DefaultPort = 37250;
     private const int MaxStartupRetries = 30;
     private readonly string _serverDir;
+    private readonly object _processGate = new();
+    private int _disposed;
 
     public int Port => _port;
-    public bool IsRunning => _process is { HasExited: false };
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_processGate)
+            {
+                try { return _process is { HasExited: false }; }
+                catch { return false; }
+            }
+        }
+    }
 
     public MusicApiServer(int port = DefaultPort)
     {
@@ -24,8 +37,12 @@ public class MusicApiServer : IDisposable
         _serverDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server");
     }
 
-    public async Task StartAsync()
+    public async Task StartAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
         if (!Directory.Exists(_serverDir))
         {
             Log.Warning("Music server directory not found: {Dir}", _serverDir);
@@ -46,38 +63,48 @@ public class MusicApiServer : IDisposable
         {
             // 确保 Node.js 可用（自动下载便携版）
             var nodePath = await EnvironmentManager.EnsureNodeJsAsync();
+            cancellationToken.ThrowIfCancellationRequested();
             Log.Information("Using Node.js at: {Path}", nodePath);
 
-            _process = new Process
+            Process process;
+            lock (_processGate)
             {
-                StartInfo = new ProcessStartInfo
+                if (Volatile.Read(ref _disposed) != 0 || cancellationToken.IsCancellationRequested)
+                    return;
+
+                process = new Process
                 {
-                    FileName = nodePath,
-                    Arguments = $"\"{startScript}\"",
-                    WorkingDirectory = _serverDir,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                },
-                EnableRaisingEvents = true
-            };
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = nodePath,
+                        Arguments = $"\"{startScript}\"",
+                        WorkingDirectory = _serverDir,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    },
+                    EnableRaisingEvents = true
+                };
 
-            _process.OutputDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
-                    Log.Debug("MusicApi: {Line}", e.Data);
-            };
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                        Log.Debug("MusicApi: {Line}", e.Data);
+                };
 
-            _process.ErrorDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
-                    Log.Warning("MusicApi ERR: {Line}", e.Data);
-            };
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                        Log.Warning("MusicApi ERR: {Line}", e.Data);
+                };
 
-            _process.Start();
-            _process.BeginOutputReadLine();
-            _process.BeginErrorReadLine();
+                cancellationToken.ThrowIfCancellationRequested();
+                _process = process;
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+            }
 
             // Short-lived HttpClient for startup health check only (called once)
             using var http = new HttpClient();
@@ -85,7 +112,9 @@ public class MusicApiServer : IDisposable
             {
                 try
                 {
-                    var resp = await http.GetAsync($"http://127.0.0.1:{_port}/search?keywords=test&limit=1");
+                    using var resp = await http.GetAsync(
+                        $"http://127.0.0.1:{_port}/search?keywords=test&limit=1",
+                        cancellationToken);
                     if (resp.IsSuccessStatusCode)
                     {
                         Log.Information("Music API server ready on port {Port}", _port);
@@ -94,39 +123,65 @@ public class MusicApiServer : IDisposable
                 }
                 catch
                 {
-                    await Task.Delay(500);
+                    await Task.Delay(500, cancellationToken);
                 }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _disposed) != 0)
+                    return;
             }
 
             Log.Warning("Music API server did not become ready within 15 seconds");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Stop();
+        }
         catch (Exception ex)
         {
+            Stop();
             Log.Error(ex, "Failed to start music API server");
         }
     }
 
     public void Stop()
     {
-        if (_process is { HasExited: false })
+        Process? process;
+        lock (_processGate)
         {
-            try
+            process = _process;
+            _process = null;
+        }
+
+        if (process == null)
+            return;
+
+        try
+        {
+            if (!process.HasExited)
             {
-                _process.Kill(entireProcessTree: true);
-                _process.WaitForExit(3000);
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(3000);
                 Log.Information("Music API server stopped");
             }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Error stopping music API server");
-            }
+        }
+        catch (Exception ex)
+        {
+            // Shutdown can race with StartAsync cancellation and Process.Dispose.
+            Log.Debug(ex, "Error stopping music API server");
+        }
+        finally
+        {
+            process.Dispose();
         }
     }
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         Stop();
-        _process?.Dispose();
     }
 
     private void KillProcessOnPort()

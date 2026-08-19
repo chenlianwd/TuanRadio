@@ -5,6 +5,7 @@ using Avalonia.ReactiveUI;
 using Avalonia.Threading;
 using System;
 using System.IO;
+using System.Threading;
 
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.ViewModels;
@@ -19,6 +20,7 @@ public partial class App : Application
     private IServiceProvider? _serviceProvider;
     private MusicApiServer? _musicApiServer;
     private MainWindowViewModel? _mainVm;
+    private readonly CancellationTokenSource _lifetimeCts = new();
 
     public override void Initialize()
     {
@@ -66,7 +68,7 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
                 _musicApiServer = new MusicApiServer();
-                _ = StartMusicAndInitializeAsync();
+                _ = StartMusicAndInitializeAsync(_lifetimeCts.Token);
 
                 Log.Information("AI Radio shell started successfully");
             }
@@ -80,17 +82,23 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    private async System.Threading.Tasks.Task StartMusicAndInitializeAsync()
+    private async System.Threading.Tasks.Task StartMusicAndInitializeAsync(CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_musicApiServer != null)
-                await _musicApiServer.StartAsync();
+                await _musicApiServer.StartAsync(cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (_mainVm != null)
-                await _mainVm.InitializeAsync();
+                await _mainVm.InitializeAsync(cancellationToken);
 
             Log.Information("AI Radio initialized successfully");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Log.Debug("AI Radio initialization cancelled during shutdown");
         }
         catch (Exception ex)
         {
@@ -128,6 +136,7 @@ public partial class App : Application
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
     {
         Log.Information("AI Radio shutting down...");
+        _lifetimeCts.Cancel();
         _mainVm?.Dispose();
         _musicApiServer?.Dispose();
         (_serviceProvider as IDisposable)?.Dispose();

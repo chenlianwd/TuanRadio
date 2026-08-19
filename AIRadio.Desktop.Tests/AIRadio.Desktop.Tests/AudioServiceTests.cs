@@ -21,6 +21,39 @@ public class AudioServiceTests
     }
 
     [Fact]
+    public void Dispose_IsIdempotent()
+    {
+        var svc = new AudioService();
+
+        svc.Dispose();
+
+        var exception = Record.Exception(svc.Dispose);
+
+        Assert.Null(exception);
+        Assert.False(svc.IsPlaying);
+        Assert.Equal(TimeSpan.Zero, svc.CurrentPosition);
+        Assert.Equal(TimeSpan.Zero, svc.Duration);
+    }
+
+    [Fact]
+    public void Dispose_AfterTtsPlaybackAttempt_IsSafe()
+    {
+        var svc = new AudioService();
+        try
+        {
+            svc.PlayTtsAudio(Array.Empty<byte>());
+
+            var exception = Record.Exception(svc.Dispose);
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
     public void LoadTracks_SetsCurrentTrackToFirst()
     {
         var svc = new AudioService();
@@ -200,6 +233,41 @@ public class AudioServiceTests
         Assert.Equal(2, svc.Playlist.Count);
         Assert.Single(svc.Playlist.Where(t => t.SourceId == "test:recommended"));
         svc.Dispose();
+    }
+
+    [Fact]
+    public async Task Next_RadioMode_FallsBackToPlaylistWhenRecommendationIsUnavailable()
+    {
+        var svc = new AudioService();
+        try
+        {
+            svc.LoadTracks(new[]
+            {
+                new Track
+                {
+                    Title = "Current",
+                    SourceId = "test:current",
+                    FilePath = "http://example.com/current.mp3"
+                },
+                new Track
+                {
+                    Title = "Fallback",
+                    SourceId = "test:fallback",
+                    FilePath = "http://example.com/fallback.mp3"
+                }
+            });
+            svc.SetRepeatMode("radio");
+            svc.SetNextCallback(() => Task.FromResult<Track?>(null));
+
+            svc.Next();
+            await Task.Delay(100);
+
+            Assert.Equal("Fallback", svc.CurrentTrack?.Title);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
     }
 
     [Fact]
