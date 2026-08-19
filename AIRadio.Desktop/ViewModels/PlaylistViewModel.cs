@@ -24,6 +24,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly string _playlistDir;
     private readonly string _playlistFile;
     private readonly Func<string, string, Task> _writeAllTextAsync;
+    private readonly bool _customWriter;
+    private readonly CancellationTokenSource _lifetimeCts = new();
+    private int _disposed;
     private bool _isPlayingOnline;
     private bool _isLoading;
     private readonly IDisposable _selectedTrackSub;
@@ -66,6 +69,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         _musicSearchService = musicSearchService;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
+        _customWriter = writeAllTextAsync != null;
         _writeAllTextAsync = writeAllTextAsync ?? ((path, contents) => File.WriteAllTextAsync(path, contents));
 
         RemoveTrackCommand = ReactiveCommand.Create<Track>(track =>
@@ -104,7 +108,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         AddOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(async track =>
         {
             SetSearchStatus($"正在添加《{track.Title}》...");
-            var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
+            var url = await ResolvePlayUrlAsync(track);
             if (url == null)
             {
                 SetSearchStatus("这首歌暂时无法获取播放地址，换一个结果试试。");
@@ -173,20 +177,30 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
     private void OnTracksChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        if (!_isLoading) _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+        if (Volatile.Read(ref _disposed) == 0 && !_isLoading)
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
 
-    public async Task LoadAsync()
+    public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
         _isLoading = true;
+        var loadCompleted = false;
         Tracks.CollectionChanged -= OnTracksChanged;
         try
         {
-            if (!File.Exists(_playlistFile)) return;
+            if (!File.Exists(_playlistFile))
+            {
+                loadCompleted = true;
+                return;
+            }
 
-            var json = await File.ReadAllTextAsync(_playlistFile);
+            var json = await File.ReadAllTextAsync(_playlistFile, cancellationToken);
             var data = JsonSerializer.Deserialize<PlaylistData>(json);
-            if (data == null || data.Tracks == null) return;
+            if (data == null || data.Tracks == null)
+                return;
 
             _favoriteIds.Clear();
             if (data.FavoriteIds != null && data.FavoriteIds.Count > 0)
@@ -248,20 +262,30 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             // Refresh online URLs in parallel
             if (onlineItems.Count > 0)
             {
+                using var refreshGate = new SemaphoreSlim(4, 4);
                 var tasks = onlineItems.Select(async x =>
                 {
+                    await refreshGate.WaitAsync(cancellationToken);
                     try
                     {
                         if (string.IsNullOrWhiteSpace(x.Item.SourceId))
                             return;
 
-                        var url = await _musicSearchService.GetPlayUrlAsync(x.Item.SourceId);
+                        var url = await ResolvePlayUrlAsync(x.Item.SourceId, cancellationToken);
                         if (!string.IsNullOrEmpty(url))
                             x.Track.FilePath = url;
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
                         Log.Warning(ex, "Failed to refresh URL for {SourceId}", x.Item.SourceId);
+                    }
+                    finally
+                    {
+                        refreshGate.Release();
                     }
                 });
                 await Task.WhenAll(tasks);
@@ -272,6 +296,11 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 _audioService.LoadTracks(Tracks);
                 Log.Information("Loaded {Count} tracks from playlist", Tracks.Count);
             }
+            loadCompleted = true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -281,35 +310,59 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         {
             _isLoading = false;
             Tracks.CollectionChanged += OnTracksChanged;
-            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted); // save once after load completes
+            if (loadCompleted && Volatile.Read(ref _disposed) == 0)
+                _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted); // save once after load completes
         }
     }
 
     internal async Task SaveAsync()
     {
-        await _saveGate.WaitAsync();
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        var data = new PlaylistData
+        {
+            Tracks = Tracks.Select(t => new PlaylistTrack
+            {
+                Id = t.Id,
+                Title = t.Title,
+                Artist = t.Artist,
+                Album = t.Album,
+                DurationMs = (long)t.Duration.TotalMilliseconds,
+                FilePath = t.FilePath,
+                SourceId = t.SourceId,
+                IsOnline = !string.IsNullOrWhiteSpace(t.SourceId),
+                IsFavorite = _favoriteIds.Contains(t.Id)
+            }).ToList(),
+            FavoriteIds = _favoriteIds.ToList()
+        };
+        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+        var gateHeld = false;
         try
         {
+            await _saveGate.WaitAsync(_lifetimeCts.Token);
+            gateHeld = true;
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+
             Directory.CreateDirectory(_playlistDir);
-            var data = new PlaylistData
+            if (_customWriter)
             {
-                Tracks = Tracks.Select(t => new PlaylistTrack
-                {
-                    Id = t.Id,
-                    Title = t.Title,
-                    Artist = t.Artist,
-                    Album = t.Album,
-                    DurationMs = (long)t.Duration.TotalMilliseconds,
-                    FilePath = t.FilePath,
-                    SourceId = t.SourceId,
-                    IsOnline = t.SourceId != null,
-                    IsFavorite = _favoriteIds.Contains(t.Id)
-                }).ToList(),
-                FavoriteIds = _favoriteIds.ToList()
-            };
-            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            await _writeAllTextAsync(_playlistFile, json);
-            Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", Tracks.Count, _favoriteIds.Count);
+                await _writeAllTextAsync(_playlistFile, json);
+            }
+            else
+            {
+                // 先写同目录临时文件，再替换正式文件，避免应用退出/磁盘异常时留下半份 JSON。
+                var tempPath = _playlistFile + ".tmp";
+                await File.WriteAllTextAsync(tempPath, json, _lifetimeCts.Token);
+                File.Move(tempPath, _playlistFile, overwrite: true);
+            }
+
+            Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", data.Tracks.Count, data.FavoriteIds.Count);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // 关闭时取消排队保存，避免 Dispose 后继续写盘。
         }
         catch (Exception ex)
         {
@@ -317,7 +370,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            _saveGate.Release();
+            if (gateHeld)
+                _saveGate.Release();
         }
     }
 
@@ -328,7 +382,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         try
         {
             SetSearchStatus($"正在播放《{track.Title}》...");
-            var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
+            var url = await ResolvePlayUrlAsync(track);
             if (url == null)
             {
                 Log.Warning("No play URL for track {Id}", track.Id);
@@ -366,6 +420,25 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private Task<List<OnlineTrack>> SearchMusicAsync(string keyword, int limit)
+        => _musicSearchService is Services.MultiSourceMusicService multi
+            ? multi.SearchAsync(keyword, limit, _lifetimeCts.Token)
+            : _musicSearchService.SearchAsync(keyword, limit);
+
+    private Task<string?> ResolvePlayUrlAsync(string trackId, CancellationToken? cancellationToken = null)
+    {
+        if (_musicSearchService is Services.MultiSourceMusicService multi)
+            return multi.GetPlayUrlAsync(trackId, cancellationToken ?? _lifetimeCts.Token);
+
+        // 兼容外部/测试音源实现：它们只实现旧签名时仍按原契约调用。
+        return _musicSearchService.GetPlayUrlAsync(trackId);
+    }
+
+    private Task<string?> ResolvePlayUrlAsync(OnlineTrack track)
+        => _musicSearchService is Services.MultiSourceMusicService multi
+            ? multi.GetPlayUrlAsync(track, _lifetimeCts.Token)
+            : _musicSearchService.GetPlayUrlAsync(track.Id);
+
     private async Task SearchAsync()
     {
         if (string.IsNullOrWhiteSpace(SearchText)) return;
@@ -375,7 +448,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         SetSearchStatus($"正在搜索“{SearchText}”...");
         try
         {
-            var results = await _musicSearchService.SearchAsync(SearchText);
+            var results = await SearchMusicAsync(SearchText, 20);
             SearchResults.Clear();
             foreach (var track in results)
             {
@@ -474,6 +547,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        _lifetimeCts.Cancel();
         _selectedTrackSub.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
     }

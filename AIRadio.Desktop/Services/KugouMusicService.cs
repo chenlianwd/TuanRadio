@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -20,16 +21,22 @@ public class KugouMusicService : IMusicSearchService
         _httpClient = httpClient;
     }
 
-    public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+    public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+        => SearchAsync(keyword, limit, CancellationToken.None);
+
+    public async Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        CancellationToken cancellationToken)
     {
         try
         {
             var url = $"https://complexsearch.kugou.com/v2/search/song?callback=callback&keyword={Uri.EscapeDataString(keyword)}&page=1&pagesize={limit}&bitrate=0&isfuzzy=0&inputtype=0&platform=WebFilter&userid=0&clientver=20000&iscorrection=1&privilege_filter=0&token=";
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://www.kugou.com/");
 
-            var response = await _httpClient.SendAsync(request);
-            var text = await response.Content.ReadAsStringAsync();
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var text = await response.Content.ReadAsStringAsync(cancellationToken);
 
             // Kugou returns JSONP, strip callback wrapper
             var json = text;
@@ -72,6 +79,10 @@ public class KugouMusicService : IMusicSearchService
 
             return tracks;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Kugou search failed");
@@ -79,18 +90,21 @@ public class KugouMusicService : IMusicSearchService
         }
     }
 
-    public async Task<string?> GetPlayUrlAsync(string trackId)
+    public Task<string?> GetPlayUrlAsync(string trackId)
+        => GetPlayUrlAsync(trackId, CancellationToken.None);
+
+    public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
     {
         var hash = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
         try
         {
             // appid=1014, platid=4 are Kugou's public web client identifiers
             var url = $"https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash={hash}&appid=1014&mid=&platid=4&album_id=";
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://www.kugou.com/");
 
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -99,6 +113,10 @@ public class KugouMusicService : IMusicSearchService
             {
                 return playUrl.GetString();
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

@@ -1,4 +1,8 @@
 using System;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
 using Xunit;
 
@@ -65,5 +69,42 @@ public class EdgeTtsServiceTests
         Assert.Contains("Path:speech.config", message);
         Assert.Contains("\"context\":{\"synthesis\":{\"audio\"", message);
         Assert.Contains("audio-24khz-48kbitrate-mono-mp3", message);
+    }
+
+    [Fact]
+    public async Task Dispose_CancelsConcurrentVoiceLoadsWithoutOverReleasingGate()
+    {
+        var requestStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = new HttpClient(new BlockingHandler(requestStarted));
+        using var service = new EdgeTtsService(client);
+
+        var first = service.GetVoicesAsync();
+        await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = service.GetVoicesAsync();
+
+        service.Dispose();
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.All(results, Assert.Empty);
+    }
+
+    private sealed class BlockingHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource<bool> _requestStarted;
+
+        public BlockingHandler(TaskCompletionSource<bool> requestStarted)
+        {
+            _requestStarted = requestStarted;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _requestStarted.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
     }
 }

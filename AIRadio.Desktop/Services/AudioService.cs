@@ -17,6 +17,7 @@ namespace AIRadio.Desktop.Services;
 
 public class AudioService : IAudioService, IDisposable
 {
+    private static readonly object LibVlcLifecycleGate = new();
     private readonly LibVLC _libVLC;
     private readonly MediaPlayer _player;
     private WaveOutEvent? _ttsOutput;
@@ -39,6 +40,8 @@ public class AudioService : IAudioService, IDisposable
     private readonly System.Threading.Timer _positionTimer;
     private readonly SpectrumAnalyzer _spectrumAnalyzer;
     private long _lastPositionMs;
+    private int _positionCallbackActive;
+    private int _positionOverlapWarningLogged;
     private long _trackStartedAtMs;
     private int _earlyEndRetryCount;
     private int _playbackErrorRetryCount;
@@ -51,10 +54,17 @@ public class AudioService : IAudioService, IDisposable
     private readonly IDisposable _ttsPauseSub;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly object _nativeCallbackGate = new();
+    private readonly object _playerOperationGate = new();
+    private readonly SemaphoreSlim _nextGate = new(1, 1);
+    private readonly object _ttsOperationGate = new();
     private readonly ManualResetEventSlim _nativeCallbacksDrained = new(initialState: true);
     private int _activeNativeCallbacks;
     private int _nativeCleanupStarted;
     private int _managedCleanupCompleted;
+    private readonly object _volumeGate = new();
+    private int _pendingPlayerVolume = -1;
+    private bool _volumeDrainRunning;
+    private Task? _shutdownTtsCleanupTask;
 
     // Crossfade
     private float _userVolume = 0.8f;
@@ -67,9 +77,11 @@ public class AudioService : IAudioService, IDisposable
     private Func<Task<Track?>>? _nextCallback;
     private EventHandler<StoppedEventArgs>? _ttsPlaybackStoppedHandler;
 
-    public bool IsPlaying => !IsDisposed && _player.IsPlaying;
-    public TimeSpan CurrentPosition => IsDisposed ? TimeSpan.Zero : TimeSpan.FromMilliseconds(_player.Time);
-    public TimeSpan Duration => IsDisposed ? TimeSpan.Zero : TimeSpan.FromMilliseconds(_player.Length);
+    public bool IsPlaying => !IsDisposed && _currentState == PlaybackState.Playing;
+    public TimeSpan CurrentPosition => IsDisposed
+        ? TimeSpan.Zero
+        : TimeSpan.FromMilliseconds(GetLastKnownPositionMs());
+    public TimeSpan Duration => IsDisposed ? TimeSpan.Zero : CurrentTrack?.Duration ?? TimeSpan.Zero;
     public float Volume
     {
         get => _userVolume;
@@ -80,7 +92,7 @@ public class AudioService : IAudioService, IDisposable
                 return;
 
             if (!_isFading)
-                _player.Volume = (int)(_userVolume * 100);
+                QueuePlayerVolume((int)(_userVolume * 100));
         }
     }
 
@@ -111,9 +123,15 @@ public class AudioService : IAudioService, IDisposable
 
     public AudioService()
     {
-        Core.Initialize();
-        _libVLC = new LibVLC();
-        _player = new MediaPlayer(_libVLC);
+        // LibVLC 的全局 native 初始化/销毁不是并发安全的；测试、重启窗口或
+        // 多个宿主同时创建 AudioService 时必须串行化，否则会在 LibVLCNew 处直接
+        // 触发 0xC0000005，而不是一个可捕获的托管异常。
+        lock (LibVlcLifecycleGate)
+        {
+            Core.Initialize();
+            _libVLC = new LibVLC();
+            _player = new MediaPlayer(_libVLC);
+        }
 
         _player.Playing += OnPlayerPlaying;
         _player.Paused += OnPlayerPaused;
@@ -135,15 +153,15 @@ public class AudioService : IAudioService, IDisposable
 
             if (ttsPlaying)
             {
-                if (_speechMixMode == "pause" && _player.IsPlaying)
+                if (_speechMixMode == "pause" && _currentState == PlaybackState.Playing)
                 {
                     _resumeAfterTts = true;
-                    _player.Pause();
+                    TryPlayerOperation(() => _player.Pause());
                 }
                 else
                 {
                     _resumeAfterTts = false;
-                    _player.Volume = (int)(_userVolume * 35);
+                    QueuePlayerVolume((int)(_userVolume * 35));
                 }
             }
             else
@@ -151,11 +169,11 @@ public class AudioService : IAudioService, IDisposable
                 if (_speechMixMode == "pause" && _resumeAfterTts)
                 {
                     _resumeAfterTts = false;
-                    _player.Play();
+                    TryPlayerOperation(() => _player.Play());
                 }
 
                 if (!_isFading)
-                    _player.Volume = (int)(_userVolume * 100);
+                    QueuePlayerVolume((int)(_userVolume * 100));
             }
         });
 
@@ -170,25 +188,110 @@ public class AudioService : IAudioService, IDisposable
 
             if (state == PlaybackState.Paused)
             {
-                if (_ttsOutput?.PlaybackState == NAudio.Wave.PlaybackState.Playing)
+                WaveOutEvent? output;
+                lock (_ttsStateGate)
                 {
-                    _ttsWasPlayingWhenMusicPaused = true;
-                    _ttsOutput.Pause();
+                    output = _ttsOutput;
+                    _ttsWasPlayingWhenMusicPaused = output?.PlaybackState == NAudio.Wave.PlaybackState.Playing;
                 }
-                else
+
+                if (_ttsWasPlayingWhenMusicPaused)
                 {
-                    _ttsWasPlayingWhenMusicPaused = false;
+                    try { output?.Pause(); } catch (Exception ex) { Log.Debug(ex, "TTS pause failed"); }
                 }
             }
-            else if (state == PlaybackState.Playing && _ttsWasPlayingWhenMusicPaused)
+            else if (state == PlaybackState.Playing)
             {
-                _ttsWasPlayingWhenMusicPaused = false;
-                _ttsOutput?.Play();
+                WaveOutEvent? output = null;
+                lock (_ttsStateGate)
+                {
+                    if (_ttsWasPlayingWhenMusicPaused)
+                    {
+                        _ttsWasPlayingWhenMusicPaused = false;
+                        output = _ttsOutput;
+                    }
+                }
+
+                try { output?.Play(); } catch (Exception ex) { Log.Debug(ex, "TTS resume failed"); }
             }
         });
     }
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    private long GetLastKnownPositionMs() => Math.Max(0, Interlocked.Read(ref _lastPositionMs));
+
+    private void QueuePlayerVolume(int volume)
+    {
+        if (IsDisposed)
+            return;
+
+        var shouldStartDrain = false;
+        lock (_volumeGate)
+        {
+            if (IsDisposed)
+                return;
+
+            _pendingPlayerVolume = Math.Clamp(volume, 0, 100);
+            if (!_volumeDrainRunning)
+            {
+                _volumeDrainRunning = true;
+                shouldStartDrain = true;
+            }
+        }
+
+        if (shouldStartDrain)
+        {
+            _ = Task.Factory.StartNew(
+                DrainPlayerVolume,
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
+    }
+
+    private void DrainPlayerVolume()
+    {
+        while (true)
+        {
+            int volume;
+            lock (_volumeGate)
+            {
+                if (IsDisposed || _pendingPlayerVolume < 0)
+                {
+                    _pendingPlayerVolume = -1;
+                    _volumeDrainRunning = false;
+                    return;
+                }
+
+                volume = _pendingPlayerVolume;
+                _pendingPlayerVolume = -1;
+            }
+
+            if (!TryEnterNativeCallback())
+                continue;
+
+            try
+            {
+                // 音量请求在专用后台线程串行执行；即使 LibVLC 原生调用异常或变慢，
+                // 也不会把 Avalonia UI 线程和定时器线程一起拖住。
+                lock (_playerOperationGate)
+                {
+                    if (!IsDisposed)
+                        _player.Volume = volume;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!IsDisposed)
+                    Log.Debug(ex, "LibVLC volume update failed");
+            }
+            finally
+            {
+                ExitNativeCallback();
+            }
+        }
+    }
 
     private bool TryEnterNativeCallback()
     {
@@ -214,6 +317,28 @@ public class AudioService : IAudioService, IDisposable
             _activeNativeCallbacks--;
             if (_activeNativeCallbacks == 0)
                 _nativeCallbacksDrained.Set();
+        }
+    }
+
+    private bool TryPlayerOperation(Action operation)
+    {
+        if (!TryEnterNativeCallback())
+            return false;
+
+        try
+        {
+            lock (_playerOperationGate)
+            {
+                if (IsDisposed)
+                    return false;
+
+                operation();
+                return true;
+            }
+        }
+        finally
+        {
+            ExitNativeCallback();
         }
     }
 
@@ -406,11 +531,11 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         if (CurrentTrack == null) return;
-        if (_player.IsPlaying) return;
+        if (_currentState == PlaybackState.Playing) return;
 
-        if (_player.State == VLCState.Paused)
+        if (_currentState == PlaybackState.Paused)
         {
-            _player.Play();
+            TryPlayerOperation(() => _player.Play());
         }
         else
         {
@@ -421,7 +546,7 @@ public class AudioService : IAudioService, IDisposable
     public void Pause()
     {
         if (!IsDisposed)
-            _player.Pause();
+            TryPlayerOperation(() => _player.Pause());
     }
 
     public void Stop()
@@ -430,7 +555,7 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         CancelPendingPlayback();
-        _player.Stop();
+        TryPlayerOperation(() => _player.Stop());
         SetState(PlaybackState.Stopped);
     }
 
@@ -439,9 +564,11 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
-        if (_player.IsPlaying || _player.State == VLCState.Paused)
+        if (_currentState == PlaybackState.Playing || _currentState == PlaybackState.Paused)
         {
-            _player.Time = (long)position.TotalMilliseconds;
+            var positionMs = Math.Max(0, (long)position.TotalMilliseconds);
+            if (TryPlayerOperation(() => _player.Time = positionMs))
+                Interlocked.Exchange(ref _lastPositionMs, positionMs);
         }
     }
 
@@ -463,9 +590,17 @@ public class AudioService : IAudioService, IDisposable
             _nextCallback = callback;
     }
 
-    public async void Next()
+    public void Next()
     {
         if (IsDisposed)
+            return;
+
+        _ = NextAsync();
+    }
+
+    private async Task NextAsync()
+    {
+        if (IsDisposed || !await _nextGate.WaitAsync(0).ConfigureAwait(false))
             return;
 
         try
@@ -502,24 +637,26 @@ public class AudioService : IAudioService, IDisposable
                 {
                     // 推荐服务暂时不可用时，仍保持在线电台连续播放，
                     // 回退到当前歌单中的下一首，而不是静默停在 Stopped。
-                    _currentIndex = (_currentIndex + 1) % _playlist.Count;
-                    PlayTrack(_currentIndex);
+                    var fallbackIndex = (_currentIndex + 1) % _playlist.Count;
+                    PlayTrack(fallbackIndex);
                 }
                 return;
             }
 
             if (_playlist.Count == 0) return;
 
-            if (_shuffle)
-                _currentIndex = _rng.Next(_playlist.Count);
-            else
-                _currentIndex = (_currentIndex + 1) % _playlist.Count;
-
-            PlayTrack(_currentIndex);
+            var nextIndex = _shuffle
+                ? _rng.Next(_playlist.Count)
+                : (_currentIndex + 1) % _playlist.Count;
+            PlayTrack(nextIndex);
         }
         catch (Exception ex)
         {
             Serilog.Log.Warning(ex, "Next failed");
+        }
+        finally
+        {
+            _nextGate.Release();
         }
     }
 
@@ -532,14 +669,14 @@ public class AudioService : IAudioService, IDisposable
         {
             if (_playlist.Count == 0) return;
 
-            if (_player.Time > 3000)
+            if (GetLastKnownPositionMs() > 3000)
             {
                 Seek(TimeSpan.Zero);
                 return;
             }
 
-            _currentIndex = (_currentIndex - 1 + _playlist.Count) % _playlist.Count;
-            PlayTrack(_currentIndex);
+            var previousIndex = (_currentIndex - 1 + _playlist.Count) % _playlist.Count;
+            PlayTrack(previousIndex);
         }
         catch (Exception ex)
         {
@@ -569,11 +706,20 @@ public class AudioService : IAudioService, IDisposable
 
     private void PlayTrack(int index, bool isRetry = false)
     {
+        lock (_playerOperationGate)
+        {
+            PlayTrackCore(index, isRetry);
+        }
+    }
+
+    private void PlayTrackCore(int index, bool isRetry = false)
+    {
         if (IsDisposed || index < 0 || index >= _playlist.Count) return;
 
         var requestId = Interlocked.Increment(ref _playRequestId);
         Interlocked.Exchange(ref _recoveryScheduled, 0);
         _currentIndex = index; // 确保 CurrentTrack 在 NotifyTrackChanged 时正确
+        Interlocked.Exchange(ref _lastPositionMs, 0);
         _trackStartedAtMs = Environment.TickCount64;
         if (!isRetry)
         {
@@ -581,20 +727,18 @@ public class AudioService : IAudioService, IDisposable
             _playbackErrorRetryCount = 0;
         }
         var track = _playlist[index];
+        Media? newMedia = null;
+        var mediaAssigned = false;
         try
         {
             // Delayed dispose of old media — LibVLC may still reference it during cleanup
-            var oldMedia = _player.Media;
-            _player.Stop();
-            if (oldMedia != null)
-                _ = DisposeMediaAfterDelayAsync(oldMedia, _lifetimeCts.Token);
-
             string filePath = track.FilePath;
 
             // Online tracks may have stale URLs — always refresh before playing to avoid 403.
             // Fire-and-forget refresh only applies when we're in a retry path; normal
             // playback must await the fresh URL so we don't play with an expired link.
-            if (!string.IsNullOrEmpty(track.SourceId) && _urlResolver != null)
+            if (!string.IsNullOrEmpty(track.SourceId) &&
+                (_urlResolver != null || _trackUrlResolver != null))
             {
                 var isOnlineUrl = filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                                   filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
@@ -626,21 +770,41 @@ public class AudioService : IAudioService, IDisposable
                 return;
             }
 
-            var media = new Media(_libVLC, filePath, isUrl ? FromType.FromLocation : FromType.FromPath);
-            if (isUrl)
+            Media? oldMedia = null;
+            if (!TryPlayerOperation(() =>
             {
-                media.AddOption(":network-caching=5000");
-                media.AddOption(":http-reconnect");
+                oldMedia = _player.Media;
+                _player.Stop();
+                newMedia = new Media(_libVLC, filePath, isUrl ? FromType.FromLocation : FromType.FromPath);
+                if (isUrl)
+                {
+                    newMedia.AddOption(":network-caching=5000");
+                    newMedia.AddOption(":http-reconnect");
+                }
+
+                _player.Media = newMedia;
+                mediaAssigned = true;
+                _player.Play();
+            }))
+            {
+                newMedia?.Dispose();
+                return;
             }
-            _player.Media = media;
-            _player.Volume = 0;
-            _player.Play();
+
+            if (oldMedia != null)
+                _ = DisposeMediaAfterDelayAsync(oldMedia, _lifetimeCts.Token);
+
+            QueuePlayerVolume(0);
             NotifyTrackChanged();
             StartFadeIn();
             Log.Information("Playing: {Track}", track);
         }
         catch (Exception ex)
         {
+            if (!mediaAssigned)
+            {
+                try { newMedia?.Dispose(); } catch { }
+            }
             Log.Error(ex, "Failed to play track: {Track}", track);
             Next();
         }
@@ -661,7 +825,7 @@ public class AudioService : IAudioService, IDisposable
             Log.Warning(
                 "Ignoring early end for {Track} at {Position}/{Duration}; retrying current track",
                 track.Title,
-                TimeSpan.FromMilliseconds(Math.Max(0, _player.Time)),
+                TimeSpan.FromMilliseconds(GetLastKnownPositionMs()),
                 track.Duration);
             SchedulePlaybackRetry(
                 _currentIndex,
@@ -673,7 +837,7 @@ public class AudioService : IAudioService, IDisposable
             Log.Warning(
                 "Ignoring repeated early end for {Track} at {Position}/{Duration}; advancing to next track",
                 track.Title,
-                TimeSpan.FromMilliseconds(Math.Max(0, _player.Time)),
+                TimeSpan.FromMilliseconds(GetLastKnownPositionMs()),
                 track.Duration);
             ScheduleNextTrack(
                 Volatile.Read(ref _playRequestId),
@@ -689,7 +853,7 @@ public class AudioService : IAudioService, IDisposable
         if (durationMs < 90_000)
             return false;
 
-        var positionMs = Math.Max(0, _player.Time);
+        var positionMs = GetLastKnownPositionMs();
         if (positionMs > 0 && durationMs - positionMs > 15_000)
             return true;
 
@@ -703,7 +867,7 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
-            var newUrl = await ResolveUrlWithTimeoutAsync(track.SourceId!);
+            var newUrl = await ResolveUrlWithTimeoutAsync(track);
             if (!string.IsNullOrEmpty(newUrl) &&
                 requestId == Volatile.Read(ref _playRequestId) &&
                 _currentIndex >= 0 &&
@@ -729,7 +893,7 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
-            var newUrl = await ResolveUrlWithTimeoutAsync(track.SourceId!);
+            var newUrl = await ResolveUrlWithTimeoutAsync(track);
             if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
             {
                 track.FilePath = newUrl;
@@ -759,12 +923,15 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    private async Task<string?> ResolveUrlWithTimeoutAsync(string sourceId)
+    private async Task<string?> ResolveUrlWithTimeoutAsync(Track track)
     {
         try
         {
             var cancellationToken = _lifetimeCts.Token;
-            return await _urlResolver!(sourceId)
+            var resolver = _trackUrlResolver != null
+                ? _trackUrlResolver(track)
+                : _urlResolver!(track.SourceId!);
+            return await resolver
                 .WaitAsync(UrlRefreshTimeout, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -777,7 +944,7 @@ public class AudioService : IAudioService, IDisposable
             Log.Warning(
                 "Refreshing play URL timed out after {Seconds}s for {SourceId}",
                 UrlRefreshTimeout.TotalSeconds,
-                sourceId);
+                track.SourceId);
             return null;
         }
     }
@@ -901,6 +1068,13 @@ public class AudioService : IAudioService, IDisposable
     private int _fadeDirection = 1;
     private long _lastAdvanceMs;
     private Func<string, Task<string?>>? _urlResolver;
+    private Func<Track, Task<string?>>? _trackUrlResolver;
+
+    public void SetTrackUrlResolver(Func<Track, Task<string?>> resolver)
+    {
+        if (!IsDisposed)
+            _trackUrlResolver = resolver;
+    }
 
     private void DoFadeStep()
     {
@@ -914,17 +1088,17 @@ public class AudioService : IAudioService, IDisposable
 
             if (_fadeDirection == 1)
             {
-                _player.Volume = (int)(_userVolume * progress * 100);
+                QueuePlayerVolume((int)(_userVolume * progress * 100));
                 if (progress >= 1.0)
                 {
                     _isFading = false;
-                    _player.Volume = (int)(_userVolume * 100);
+                    QueuePlayerVolume((int)(_userVolume * 100));
                     _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
                 }
             }
             else
             {
-                _player.Volume = (int)(_userVolume * (1.0 - progress) * 100);
+                QueuePlayerVolume((int)(_userVolume * (1.0 - progress) * 100));
                 if (progress >= 1.0)
                 {
                     _isFading = false;
@@ -952,19 +1126,37 @@ public class AudioService : IAudioService, IDisposable
 
     private void EmitPosition()
     {
-        if (!TryEnterNativeCallback())
+        if (Interlocked.Exchange(ref _positionCallbackActive, 1) != 0)
+        {
+            if (Interlocked.Exchange(ref _positionOverlapWarningLogged, 1) == 0)
+                Log.Warning("Skipping overlapping position callback; LibVLC position query is still running");
             return;
+        }
+
+        if (!TryEnterNativeCallback())
+        {
+            Volatile.Write(ref _positionCallbackActive, 0);
+            return;
+        }
 
         try
         {
-            if (_currentState != PlaybackState.Playing && _currentState != PlaybackState.Paused)
+            // 暂停时保留上次成功查询的位置，不再额外进入 LibVLC 原生调用。
+            if (_currentState != PlaybackState.Playing)
                 return;
 
-            var pos = _player.Time;
-
-            if (pos != _lastPositionMs)
+            long pos;
+            lock (_playerOperationGate)
             {
-                _lastPositionMs = pos;
+                if (IsDisposed)
+                    return;
+
+                pos = Math.Max(0, _player.Time);
+            }
+
+            if (pos != Interlocked.Read(ref _lastPositionMs))
+            {
+                Interlocked.Exchange(ref _lastPositionMs, pos);
                 _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(pos));
             }
 
@@ -978,6 +1170,8 @@ public class AudioService : IAudioService, IDisposable
         finally
         {
             ExitNativeCallback();
+            Volatile.Write(ref _positionCallbackActive, 0);
+            Volatile.Write(ref _positionOverlapWarningLogged, 0);
         }
     }
 
@@ -992,6 +1186,7 @@ public class AudioService : IAudioService, IDisposable
         _lifetimeCts.Cancel();
         _nextCallback = null;
         _urlResolver = null;
+        _trackUrlResolver = null;
         _currentState = PlaybackState.Stopped;
         _isFading = false;
 
@@ -1000,7 +1195,15 @@ public class AudioService : IAudioService, IDisposable
 
         _ttsDuckSub.Dispose();
         _ttsPauseSub.Dispose();
-        StopTtsInternal(notifyState: false);
+
+        // NAudio 的 Stop/Dispose 也可能等待设备线程，不能再从 Avalonia 关闭线程
+        // 同步调用。后台任务会被原生清理流程统一等待；即使超过 UI 的等待上限，
+        // 资源稍后恢复时仍会继续完成清理。
+        _shutdownTtsCleanupTask = Task.Factory.StartNew(
+            () => StopTtsInternal(notifyState: false),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
         _player.Playing -= OnPlayerPlaying;
         _player.Paused -= OnPlayerPaused;
@@ -1023,11 +1226,20 @@ public class AudioService : IAudioService, IDisposable
 
     private void DisposeNativeResourcesAndComplete()
     {
+        // 有原生调用卡住时，绝不能为了清理而并发 Dispose LibVLC；这会把卡死升级为
+        // 原生崩溃。UI 只等待有限时间，但后台清理会继续等待回调真正退出，避免回调
+        // 在 2 秒后恢复时永久错过释放机会。
+        if (!_nativeCallbacksDrained.Wait(NativeCleanupTimeout))
+        {
+            Log.Warning(
+                "Audio native callback did not drain within {Seconds}s; cleanup will continue in background",
+                NativeCleanupTimeout.TotalSeconds);
+            _nativeCallbacksDrained.Wait();
+            Log.Information("Audio native callbacks drained; resuming deferred cleanup");
+        }
+
         try
         {
-            // Timer.Dispose() 只阻止新回调，不等待已经进入的回调；先等它们
-            // 退出，确保下面的 LibVLC Dispose 不会与 get_Time/Volume 并发。
-            _nativeCallbacksDrained.Wait();
             DisposeNativeResources();
         }
         catch (Exception ex)
@@ -1052,10 +1264,14 @@ public class AudioService : IAudioService, IDisposable
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
+        var ttsCleanup = _shutdownTtsCleanupTask;
+        Task[] cleanupTasks = ttsCleanup == null
+            ? new[] { playerCleanup, spectrumCleanup }
+            : new[] { playerCleanup, spectrumCleanup, ttsCleanup };
 
         try
         {
-            Task.WaitAll(playerCleanup, spectrumCleanup);
+            Task.WaitAll(cleanupTasks);
         }
         catch (Exception ex)
         {
@@ -1065,40 +1281,44 @@ public class AudioService : IAudioService, IDisposable
 
     private void DisposePlayerResources()
     {
-        try
+        lock (LibVlcLifecycleGate)
+        lock (_playerOperationGate)
         {
-            _player.Stop();
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "LibVLC player stop failed during shutdown");
-        }
+            try
+            {
+                _player.Stop();
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "LibVLC player stop failed during shutdown");
+            }
 
-        try
-        {
-            _player.Media?.Dispose();
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "LibVLC current media dispose failed during shutdown");
-        }
+            try
+            {
+                _player.Media?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "LibVLC current media dispose failed during shutdown");
+            }
 
-        try
-        {
-            _player.Dispose();
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "LibVLC player dispose failed during shutdown");
-        }
+            try
+            {
+                _player.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "LibVLC player dispose failed during shutdown");
+            }
 
-        try
-        {
-            _libVLC.Dispose();
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "LibVLC instance dispose failed during shutdown");
+            try
+            {
+                _libVLC.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "LibVLC instance dispose failed during shutdown");
+            }
         }
     }
 
@@ -1119,22 +1339,34 @@ public class AudioService : IAudioService, IDisposable
 
     public void PlayTtsAudio(byte[] audioData)
     {
+        lock (_ttsOperationGate)
+        {
+            PlayTtsAudioCore(audioData);
+        }
+    }
+
+    private void PlayTtsAudioCore(byte[] audioData)
+    {
         if (IsDisposed)
             return;
 
         var tempPath = string.Empty;
         try
         {
-            StopTtsInternal(notifyState: false);
+            StopTtsInternalCore(notifyState: false);
             tempPath = WriteTtsTempFile(audioData);
-            _currentTtsFile = tempPath;
             var sessionId = Interlocked.Increment(ref _ttsSessionId);
+
+            lock (_ttsStateGate)
+            {
+                _currentTtsFile = tempPath;
+            }
 
             InitTtsPlayback(tempPath, sessionId, tempPath);
             var signature = BitConverter.ToString(audioData.Take(Math.Min(8, audioData.Length)).ToArray());
             if (IsDisposed)
             {
-                StopTtsInternal(notifyState: false);
+                StopTtsInternalCore(notifyState: false);
                 return;
             }
 
@@ -1144,7 +1376,7 @@ public class AudioService : IAudioService, IDisposable
         }
         catch (Exception ex)
         {
-            StopTtsInternal(notifyState: false);
+            StopTtsInternalCore(notifyState: false);
             CleanupTtsFile(tempPath);
             if (!IsDisposed)
             {
@@ -1164,12 +1396,30 @@ public class AudioService : IAudioService, IDisposable
 
     private void InitTtsPlayback(string filePath, int sessionId, string tempPath)
     {
-        _ttsReader = new MediaFoundationReader(filePath);
-        _ttsOutput = new WaveOutEvent { DesiredLatency = 120 };
-        _ttsOutput.Init(_ttsReader);
-        TrySetTtsVolume(_ttsOutput, 1.0f);
-        _ttsPlaybackStoppedHandler = (_, e) => OnTtsPlaybackStopped(e, sessionId, tempPath);
-        _ttsOutput.PlaybackStopped += _ttsPlaybackStoppedHandler;
+        MediaFoundationReader? reader = null;
+        WaveOutEvent? output = null;
+        try
+        {
+            reader = new MediaFoundationReader(filePath);
+            output = new WaveOutEvent { DesiredLatency = 120 };
+            output.Init(reader);
+            TrySetTtsVolume(output, 1.0f);
+            EventHandler<StoppedEventArgs> stoppedHandler = (_, e) => OnTtsPlaybackStopped(e, sessionId, tempPath);
+            output.PlaybackStopped += stoppedHandler;
+
+            lock (_ttsStateGate)
+            {
+                _ttsReader = reader;
+                _ttsOutput = output;
+                _ttsPlaybackStoppedHandler = stoppedHandler;
+            }
+        }
+        catch
+        {
+            try { output?.Dispose(); } catch { }
+            try { reader?.Dispose(); } catch { }
+            throw;
+        }
     }
 
     private void OnTtsPlaybackStopped(StoppedEventArgs e, int sessionId, string tempPath)
@@ -1243,6 +1493,14 @@ public class AudioService : IAudioService, IDisposable
     }
 
     private void StopTtsInternal(bool notifyState)
+    {
+        lock (_ttsOperationGate)
+        {
+            StopTtsInternalCore(notifyState);
+        }
+    }
+
+    private void StopTtsInternalCore(bool notifyState)
     {
         WaveOutEvent? output;
         MediaFoundationReader? reader;

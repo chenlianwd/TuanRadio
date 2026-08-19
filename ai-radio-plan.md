@@ -27,6 +27,10 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - Theme 全量 token 化（Light/Dark 双套，`Themes/Colors.axaml`）。
 - 真实 FFT 频谱：WasapiLoopbackCapture + FFT 替换模拟视觉数据。
 - SongStory v1：STORY 按钮触发现曲 3-5 句 LLM 讲述 + TTS。
+- 播放稳定性加固：在线 URL 过期刷新、异常结束重试、重复恢复抑制、LibVLC 操作串行化。
+- 音源韧性加固：内置音源取消传播、逐源硬超时、首选源可播性检查、按歌曲元数据跨源 URL 回退。
+- 退出与资源治理：应用级取消链路覆盖推荐/LLM/TTS/STT/搜索，LibVLC/WASAPI/NAudio 后台续清理。
+- 频谱稳定性加固：真实 FFT 幅度改为 dB 映射、无回环数据视觉兜底、复用 FFT 工作缓冲区。
 
 ## 当前流程
 
@@ -42,7 +46,7 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 
 1. `ChatViewModel` 识别明确点歌输入或 JSON 控制块。
 2. `MultiSourceMusicService` 搜索在线音源。
-3. 获取播放 URL。
+3. 获取首选源播放 URL；失效时按歌名/歌手到其他源重新匹配。
 4. 加入 `PlaylistViewModel` 和 `AudioService`。
 5. 播放目标曲目，并避免重复加入同一首歌。
 
@@ -53,6 +57,13 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 3. 优先通过 `RecommendationService` 获取当前节目单的下一首或生成新节目单。
 4. 如果节目单推荐失败，退回 `DJService.RecommendNextTrackAsync` 单首推荐。
 5. DJ 生成串场文本，TTS 播报后切到下一首。
+
+### 关闭流程
+
+1. `App` 取消应用生命周期令牌，停止初始化、推荐、LLM、TTS、STT、搜索和 yt-dlp 请求。
+2. `MainWindowViewModel` 只释放自身订阅和子 ViewModel，不在 UI 线程同步停止原生音频设备。
+3. DI 容器统一释放 `AudioService`、`EdgeTtsService` 和 `WhisperSttService`。
+4. 原生回调在限定时间内未退出时，窗口继续关闭，清理任务在后台等待回调恢复后完成释放。
 
 ## 当前开发阶段
 
@@ -71,6 +82,15 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - Radio Mode 优先消耗当前节目单，节目单耗尽后再生成新节目单。
 
 ### P2 产品化：进行中
+
+**已完成（播放、音源和生命周期稳定性，2026-08-19）：**
+- 播放恢复统一以请求代次去重，提前结束先重试一次，再进入自动续播。
+- LibVLC 播放器操作、音量更新和原生回调释放建立串行边界，避免 UI 卡死及并发 Dispose。
+- 多音源加入 3-5 秒分级硬超时、调用方取消和首选源可播性验证。
+- 播放 URL 失效时使用歌曲元数据跨源匹配，推荐、聊天点歌和歌单刷新复用同一策略。
+- Edge TTS、Whisper、MusicApiServer、yt-dlp 和 ViewModel 后台任务纳入关闭取消链路。
+- 频谱改用 dB 幅度映射并复用 FFT 缓冲区，修复频谱顶满、停滞和高频分配。
+- PlayerDeck 限制边界并调整右侧自适应列，修复音量滑块溢出。
 
 **已完成（视图重构 + 状态机，2026-08）：**
 - 统一状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error）派生 `MainWindowViewModel.CurrentState`，StatusBar 绑定显示。
@@ -96,7 +116,9 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像和跨会话推荐偏好。
-- 各音源失败重试策略与更细的 fallback 体验。
+- 外部音源失败原因的用户可读分类，以及同一歌曲多候选的质量评分。
+- Node.js/yt-dlp 下载文件的官方校验和验证与版本固定策略。
+- 连续播放、TTS 插播、快速切歌、睡眠唤醒和关闭窗口的自动化耐久测试。
 - Light 模式浅色配色按视觉稿微调（token 结构已就位，当前与 Dark 同值）。
 - 天气、日历、歌词暂不进入第一轮开发。
 

@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using System;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.ViewModels;
@@ -20,6 +21,7 @@ public partial class App : Application
     private IServiceProvider? _serviceProvider;
     private MusicApiServer? _musicApiServer;
     private MainWindowViewModel? _mainVm;
+    private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
 
     public override void Initialize()
@@ -68,7 +70,7 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
                 _musicApiServer = new MusicApiServer();
-                _ = StartMusicAndInitializeAsync(_lifetimeCts.Token);
+                _initializationTask = StartMusicAndInitializeAsync(_lifetimeCts.Token);
 
                 Log.Information("AI Radio shell started successfully");
             }

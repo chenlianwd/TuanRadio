@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -20,12 +21,18 @@ public class NeteaseMusicService : IMusicSearchService
         _baseUrl = baseUrl.TrimEnd('/');
     }
 
-    public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+    public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+        => SearchAsync(keyword, limit, CancellationToken.None);
+
+    public async Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        CancellationToken cancellationToken)
     {
         try
         {
             var url = $"{_baseUrl}/search?keywords={Uri.EscapeDataString(keyword)}&limit={limit}";
-            var response = await _httpClient.GetStringAsync(url);
+            var response = await _httpClient.GetStringAsync(url, cancellationToken);
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
 
@@ -68,6 +75,10 @@ public class NeteaseMusicService : IMusicSearchService
 
             return tracks;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Netease search failed");
@@ -75,7 +86,10 @@ public class NeteaseMusicService : IMusicSearchService
         }
     }
 
-    public async Task<string?> GetPlayUrlAsync(string trackId)
+    public Task<string?> GetPlayUrlAsync(string trackId)
+        => GetPlayUrlAsync(trackId, CancellationToken.None);
+
+    public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
     {
         try
         {
@@ -83,9 +97,9 @@ public class NeteaseMusicService : IMusicSearchService
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             // 播放地址是带签名的临时 CDN 链接，重试时不能复用本地 API 的 2 分钟缓存。
             request.Headers.TryAddWithoutValidation("x-apicache-bypass", "true");
-            using var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
-            var responseText = await response.Content.ReadAsStringAsync();
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(responseText);
             var root = doc.RootElement;
 
@@ -103,6 +117,10 @@ public class NeteaseMusicService : IMusicSearchService
             }
 
             return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

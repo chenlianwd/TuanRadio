@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -11,20 +12,31 @@ public static class RetryPolicy
         Func<Task<T>> action,
         int maxRetries = 3,
         int baseDelayMs = 1000)
+        => await ExecuteAsync(
+            _ => action(),
+            CancellationToken.None,
+            maxRetries,
+            baseDelayMs);
+
+    public static async Task<T> ExecuteAsync<T>(
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken cancellationToken,
+        int maxRetries = 3,
+        int baseDelayMs = 1000)
     {
         int attempt = 0;
         while (true)
         {
             try
             {
-                return await action();
+                return await action(cancellationToken);
             }
             catch (HttpRequestException ex) when (attempt < maxRetries)
             {
                 attempt++;
                 var delay = baseDelayMs * Math.Pow(2, attempt - 1);
                 Log.Warning(ex, "Retry {Attempt}/{Max} after {Delay}ms", attempt, maxRetries, delay);
-                await Task.Delay(TimeSpan.FromMilliseconds(delay));
+                await Task.Delay(TimeSpan.FromMilliseconds(delay), cancellationToken);
             }
         }
     }

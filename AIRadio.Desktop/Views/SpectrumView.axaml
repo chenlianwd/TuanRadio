@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AIRadio.Desktop.ViewModels"
              x:Class="AIRadio.Desktop.Views.SpectrumView"
+             ClipToBounds="True"
              x:DataType="vm:SpectrumViewModel">
 
     <UserControl.Resources>
@@ -14,12 +15,12 @@
     <ItemsControl ItemsSource="{Binding Bands}">
         <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
-                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Bottom"/>
+                <StackPanel Orientation="Horizontal" Spacing="1" VerticalAlignment="Bottom"/>
             </ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="x:Single">
-                <Border Width="7" CornerRadius="2,2,0,0"
+                <Border Width="5" CornerRadius="2,2,0,0"
                         Height="{Binding Converter={StaticResource SpectrumBarConverter}}"
                         Background="{StaticResource SpotifyBar}"/>
             </DataTemplate>
