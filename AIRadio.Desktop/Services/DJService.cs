@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using Serilog;
@@ -80,11 +81,20 @@ Response rules:
         _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
     }
 
-    public async Task<DJScript> GenerateTrackIntroductionAsync(Track current, Track next)
+    public Task<DJScript> GenerateTrackIntroductionAsync(Track current, Track next)
+        => GenerateTrackIntroductionAsync(current, next, CancellationToken.None);
+
+    public async Task<DJScript> GenerateTrackIntroductionAsync(
+        Track current,
+        Track next,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var text = await _llm.GenerateTrackIntroductionAsync(current, next);
+            var text = _llm is LLMService llm
+                ? await llm.GenerateTrackIntroductionAsync(current, next, cancellationToken)
+                : await _llm.GenerateTrackIntroductionAsync(current, next)
+                    .WaitAsync(cancellationToken);
             var emotion = DetectEmotion(text);
 
             return new DJScript
@@ -94,6 +104,10 @@ Response rules:
                 Expression = MapExpression(emotion),
                 Motion = MapMotion(emotion)
             };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -155,14 +169,31 @@ Response rules:
         }
     }
 
-    public async Task<byte[]?> GenerateSpeechAsync(string text)
+    public Task<byte[]?> GenerateSpeechAsync(string text)
+        => GenerateSpeechAsync(text, CancellationToken.None);
+
+    public async Task<byte[]?> GenerateSpeechAsync(
+        string text,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         LastFailure = null;
         try
         {
             if (_tts == null) return Array.Empty<byte>();
-            return await _tts.SynthesizeAsync(StripControlTags(text), _profile.VoiceId, _currentEmotion);
+            var speechText = StripControlTags(text);
+            return _tts is EdgeTtsService edgeTts
+                ? await edgeTts.SynthesizeAsync(
+                    speechText,
+                    _profile.VoiceId,
+                    _currentEmotion,
+                    cancellationToken)
+                : await _tts.SynthesizeAsync(speechText, _profile.VoiceId, _currentEmotion)
+                    .WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -172,7 +203,12 @@ Response rules:
         }
     }
 
-    public async Task<Track?> RecommendNextTrackAsync(Track? current)
+    public Task<Track?> RecommendNextTrackAsync(Track? current)
+        => RecommendNextTrackAsync(current, CancellationToken.None);
+
+    public async Task<Track?> RecommendNextTrackAsync(
+        Track? current,
+        CancellationToken cancellationToken)
     {
         if (_musicSearch == null) return null;
 
@@ -183,12 +219,19 @@ Response rules:
                 excludedTracks.Add(current);
 
             var prompt = BuildRecommendationPrompt(current);
-            var response = await _llm.ChatAsync(prompt, new List<ChatMessage>());
+            var response = _llm is LLMService llm
+                ? await llm.ChatAsync(prompt, new List<ChatMessage>(), cancellationToken)
+                : await _llm.ChatAsync(prompt, new List<ChatMessage>())
+                    .WaitAsync(cancellationToken);
             var cleaned = CleanRecommendationText(response);
             var (title, artist) = ParseRecommendedSong(cleaned);
             if (string.IsNullOrWhiteSpace(title)) return null;
 
-            return await SearchRecommendedTrack(title, artist, excludedTracks);
+            return await SearchRecommendedTrack(title, artist, excludedTracks, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -212,19 +255,30 @@ Response rules:
             : "Recommend one NEW popular song for an AI radio station. Reply with ONLY the song name and artist if known.";
     }
 
-    private async Task<Track?> SearchRecommendedTrack(string title, string? artist, List<Track> excludedTracks)
+    private async Task<Track?> SearchRecommendedTrack(
+        string title,
+        string? artist,
+        List<Track> excludedTracks,
+        CancellationToken cancellationToken)
     {
         var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
-        var results = await _musicSearch!.SearchAsync(searchQuery, 10);
+        var results = _musicSearch is MultiSourceMusicService multiSearch
+            ? await multiSearch.SearchAsync(searchQuery, 10, cancellationToken)
+            : await _musicSearch!.SearchAsync(searchQuery, 10)
+                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
         foreach (var item in results)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (IsExcluded(item, excludedTracks))
             {
                 Log.Debug("Skipped already-known DJ recommendation: {Title} by {Artist}", item.Title, item.Artist);
                 continue;
             }
 
-            var url = await _musicSearch.GetPlayUrlAsync(item.Id);
+            var url = _musicSearch is MultiSourceMusicService multi
+                ? await multi.GetPlayUrlAsync(item, cancellationToken)
+                : await _musicSearch.GetPlayUrlAsync(item.Id)
+                    .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             if (!string.IsNullOrEmpty(url))
             {
                 Log.Information("DJ recommended: {Title} by {Artist}", item.Title, item.Artist);

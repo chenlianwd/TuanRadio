@@ -213,4 +213,34 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void Dispose_DoesNotSynchronouslyStopContainerOwnedAudioService()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => null);
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            new Mock<IDJService>().Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            CreateTempPlaylistFile());
+
+        try
+        {
+            vm.Dispose();
+
+            audio.Verify(x => x.StopTts(), Times.Never);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 
@@ -20,17 +21,23 @@ public class MiguMusicService : IMusicSearchService
         _httpClient = httpClient;
     }
 
-    public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+    public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+        => SearchAsync(keyword, limit, CancellationToken.None);
+
+    public async Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        CancellationToken cancellationToken)
     {
         try
         {
             var url = $"https://m.music.migu.cn/migu/remoting/scr_search_tag?keyword={Uri.EscapeDataString(keyword)}&pgc=1&rows={limit}&type=2";
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://m.music.migu.cn/");
             request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(json) || json[0] == '<')
                 return new List<OnlineTrack>();
 
@@ -67,6 +74,10 @@ public class MiguMusicService : IMusicSearchService
 
             return tracks;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Migu search failed");
@@ -74,17 +85,20 @@ public class MiguMusicService : IMusicSearchService
         }
     }
 
-    public async Task<string?> GetPlayUrlAsync(string trackId)
+    public Task<string?> GetPlayUrlAsync(string trackId)
+        => GetPlayUrlAsync(trackId, CancellationToken.None);
+
+    public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
     {
         var id = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
         try
         {
             var url = $"https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/queryListenSongInfo.do?copyrightId={id}&toneType=SQ&netType=01";
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36");
 
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -96,11 +110,11 @@ public class MiguMusicService : IMusicSearchService
 
             // Try alternative endpoint
             var url2 = $"https://music.migu.cn/v3/api/music/audioPlayer/getSongInfo?copyrightId={id}";
-            var request2 = new HttpRequestMessage(HttpMethod.Get, url2);
+            using var request2 = new HttpRequestMessage(HttpMethod.Get, url2);
             request2.Headers.Add("Referer", "https://music.migu.cn/");
 
-            var response2 = await _httpClient.SendAsync(request2);
-            var json2 = await response2.Content.ReadAsStringAsync();
+            using var response2 = await _httpClient.SendAsync(request2, cancellationToken);
+            var json2 = await response2.Content.ReadAsStringAsync(cancellationToken);
             using var doc2 = JsonDocument.Parse(json2);
 
             if (doc2.RootElement.TryGetProperty("data", out var data2) &&
@@ -108,6 +122,10 @@ public class MiguMusicService : IMusicSearchService
             {
                 return playUrl.GetString();
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

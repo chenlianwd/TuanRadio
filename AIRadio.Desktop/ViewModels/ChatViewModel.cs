@@ -12,6 +12,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
@@ -37,6 +38,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private string? _tempWavPath;
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
+    private readonly CancellationTokenSource _lifetimeCts = new();
+    private int _disposed;
     [Reactive] public bool HasFailure { get; set; }
     private bool _isStatusNoticeDismissed;
     private string _failureStatusText = "AI ERROR";
@@ -199,33 +202,62 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void StartListening()
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        WaveInEvent? waveIn = null;
+        WaveFileWriter? writer = null;
+        string? wavPath = null;
+        EventHandler<WaveInEventArgs>? dataHandler = null;
+        EventHandler<StoppedEventArgs>? stoppedHandler = null;
         try
         {
-            _tempWavPath = Path.Combine(Path.GetTempPath(), $"stt_{Guid.NewGuid():N}.wav");
+            wavPath = Path.Combine(Path.GetTempPath(), $"stt_{Guid.NewGuid():N}.wav");
 
-            _waveIn = new WaveInEvent
+            waveIn = new WaveInEvent
             {
                 WaveFormat = new WaveFormat(16000, 16, 1)
             };
-            _waveWriter = new WaveFileWriter(_tempWavPath, _waveIn.WaveFormat);
+            writer = new WaveFileWriter(wavPath, waveIn.WaveFormat);
+            _tempWavPath = wavPath;
+            _waveIn = waveIn;
+            _waveWriter = writer;
 
-            _waveIn.DataAvailable += (_, e) =>
+            dataHandler = (_, e) =>
             {
-                _waveWriter?.Write(e.Buffer, 0, e.BytesRecorded);
+                try { writer.Write(e.Buffer, 0, e.BytesRecorded); }
+                catch (ObjectDisposedException) { }
             };
 
-            _waveIn.RecordingStopped += (_, _) =>
+            stoppedHandler = (_, _) =>
             {
-                _waveWriter?.Dispose();
-                _waveWriter = null;
-                _waveIn?.Dispose();
-                _waveIn = null;
-                _ = RecognizeFromWavAsync(_tempWavPath).ContinueWith(
-                    t => Log.Warning(t.Exception, "RecognizeFromWav failed"),
-                    TaskContinuationOptions.OnlyOnFaulted);
+                waveIn.DataAvailable -= dataHandler;
+                waveIn.RecordingStopped -= stoppedHandler;
+                try { writer.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to close WAV writer"); }
+                try { waveIn.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to close recording device"); }
+
+                if (ReferenceEquals(_waveIn, waveIn))
+                {
+                    _waveIn = null;
+                    _waveWriter = null;
+                    _tempWavPath = null;
+                }
+
+                if (Volatile.Read(ref _disposed) == 0)
+                {
+                    _ = RecognizeFromWavAsync(wavPath, _lifetimeCts.Token).ContinueWith(
+                        t => Log.Warning(t.Exception, "RecognizeFromWav failed"),
+                        TaskContinuationOptions.OnlyOnFaulted);
+                }
+                else
+                {
+                    try { File.Delete(wavPath); } catch { }
+                }
             };
 
-            _waveIn.StartRecording();
+            waveIn.DataAvailable += dataHandler;
+            waveIn.RecordingStopped += stoppedHandler;
+            waveIn.StartRecording();
             IsListening = true;
             IsRecognizing = false;
             MicButtonText = "HOLD";
@@ -235,6 +267,25 @@ public class ChatViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to start mic recording");
+            if (waveIn != null)
+            {
+                if (dataHandler != null)
+                    waveIn.DataAvailable -= dataHandler;
+                if (stoppedHandler != null)
+                    waveIn.RecordingStopped -= stoppedHandler;
+            }
+            try { writer?.Dispose(); } catch { }
+            try { waveIn?.Dispose(); } catch { }
+            if (!string.IsNullOrWhiteSpace(wavPath))
+            {
+                try { File.Delete(wavPath); } catch { }
+            }
+            if (ReferenceEquals(_waveIn, waveIn))
+            {
+                _waveIn = null;
+                _waveWriter = null;
+                _tempWavPath = null;
+            }
             IsListening = false;
             IsRecognizing = false;
             MicButtonText = "HOLD";
@@ -244,6 +295,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void StopListening()
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
         try
         {
             _waveIn?.StopRecording();
@@ -263,48 +317,83 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task RecognizeFromWavAsync(string wavPath)
+    private async Task RecognizeFromWavAsync(string wavPath, CancellationToken cancellationToken)
     {
         try
         {
-            var text = await _sttService.TranscribeAsync(wavPath);
+            var text = await _sttService.TranscribeAsync(wavPath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (!string.IsNullOrWhiteSpace(text))
             {
-                Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
+                var sendAfterRecognition = false;
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 {
+                    if (Volatile.Read(ref _disposed) != 0)
+                        return;
+
                     InputText = text;
+                    sendAfterRecognition = IsConversationMode || _sendAfterHoldToTalk;
                 });
                 Log.Information("Speech recognized: {Text}", text);
 
                 // Hold-to-talk should feel like talking to the DJ directly.
-                if (IsConversationMode || _sendAfterHoldToTalk)
+                if (sendAfterRecognition)
                 {
-                    await SendMessageAsync();
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (Volatile.Read(ref _disposed) == 0)
+                        {
+                            SendMessageCommand.Execute().Subscribe(
+                                _ => { },
+                                error => Log.Warning(error, "Voice message send failed"));
+                        }
+                    });
                 }
             }
             else
             {
                 Log.Warning("No speech recognized");
-                Avalonia.Threading.Dispatcher.UIThread.Invoke(() => StatusText = "NO SPEECH");
-                if (IsConversationMode)
-                    StartListening();
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (Volatile.Read(ref _disposed) == 0)
+                    {
+                        StatusText = "NO SPEECH";
+                        if (IsConversationMode)
+                            StartListening();
+                    }
+                });
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Log.Debug("Speech recognition cancelled");
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Speech recognition failed");
-            Avalonia.Threading.Dispatcher.UIThread.Invoke(() => StatusText = "STT ERROR");
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (Volatile.Read(ref _disposed) == 0)
+                    StatusText = "STT ERROR";
+            });
         }
         finally
         {
-            Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
+            try
             {
-                IsRecognizing = false;
-                MicButtonText = "HOLD";
-                RefreshStatus();
-            });
-            _sendAfterHoldToTalk = false;
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (Volatile.Read(ref _disposed) == 0)
+                    {
+                        IsRecognizing = false;
+                        MicButtonText = "HOLD";
+                        RefreshStatus();
+                        _sendAfterHoldToTalk = false;
+                    }
+                });
+            }
+            catch (Exception ex) { Log.Debug(ex, "Failed to update STT state during shutdown"); }
             try { File.Delete(wavPath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete temp file"); }
         }
     }
@@ -325,10 +414,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
         RefreshStatus();
         SetWorkingNotice("AI 正在回复", "正在请求 AI 服务，最多等待 30 秒。");
         _pendingCommand = null;
-        _audioService.StopTts();
 
         try
         {
+            await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
             if (IsFreshRecommendationRequest(text))
             {
                 await RecommendFreshTrackAsync();
@@ -369,6 +458,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
             var parsed = ParseDjResponse(response);
             await RespondWithCommandAsync(parsed.DisplayText, parsed.Command, parsed.Emotion);
         }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            Log.Debug("Chat request cancelled during shutdown");
+        }
         catch (Exception ex)
         {
             var failure = ApiFailureInfo.FromException(ex);
@@ -381,8 +474,11 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsProcessing = false;
-            RefreshStatus();
+            if (Volatile.Read(ref _disposed) == 0)
+            {
+                IsProcessing = false;
+                RefreshStatus();
+            }
         }
     }
 
@@ -406,7 +502,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             StatusText = "VOICE...";
             SetWorkingNotice("正在生成语音", "AI 文字已返回，正在调用语音服务。");
-            var speechData = await _djService.GenerateSpeechAsync(ttsText);
+            var speechData = await GenerateSpeechAsync(ttsText, _lifetimeCts.Token);
             if (speechData is { Length: > 0 })
             {
                 _audioService.PlayTtsAudio(speechData);
@@ -445,7 +541,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         StatusText = "VOICE...";
         SetWorkingNotice("正在生成语音", "正在调用语音服务。");
-        var speechData = await _djService.GenerateSpeechAsync(ttsText);
+        var speechData = await GenerateSpeechAsync(ttsText, _lifetimeCts.Token);
         if (speechData is { Length: > 0 })
         {
             _audioService.PlayTtsAudio(speechData);
@@ -629,8 +725,12 @@ public class ChatViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var results = await _musicSearchService.SearchAsync(query, 3);
+            var results = await SearchMusicAsync(query, 3, _lifetimeCts.Token);
             return results.Count > 0 && IsConfidentMusicMatch(query, results[0]);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -651,7 +751,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             };
         }
 
-        var recommended = await _djService.RecommendNextTrackAsync(current);
+        var recommended = await RequestDjRecommendationAsync(current, _lifetimeCts.Token);
         if (recommended == null)
         {
             Messages.Add(new ChatMessage
@@ -675,6 +775,35 @@ public class ChatViewModel : ViewModelBase, IDisposable
         await RespondWithCommandAsync(displayText, null, "happy");
         if (index >= 0)
             _audioService.PlayAtIndex(index);
+    }
+
+    private Task<Track?> RequestDjRecommendationAsync(
+        Track? current,
+        CancellationToken cancellationToken)
+        => _djService is DJService djService
+            ? djService.RecommendNextTrackAsync(current, cancellationToken)
+            : _djService.RecommendNextTrackAsync(current).WaitAsync(cancellationToken);
+
+    private Task<byte[]?> GenerateSpeechAsync(string text, CancellationToken cancellationToken)
+        => _djService is DJService djService
+            ? djService.GenerateSpeechAsync(text, cancellationToken)
+            : _djService.GenerateSpeechAsync(text).WaitAsync(cancellationToken);
+
+    private async Task StopTtsWithoutBlockingUiAsync(CancellationToken cancellationToken)
+    {
+        var stopTask = Task.Factory.StartNew(
+            _audioService.StopTts,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            Log.Warning("TTS stop did not complete within 2 seconds; continuing without blocking UI");
+        }
     }
 
     private static bool IsFreshRecommendationRequest(string text)
@@ -848,7 +977,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             Log.Information("DJ play request: {Query}", query);
 
-            var results = await _musicSearchService.SearchAsync(query, 5);
+            var results = await SearchMusicAsync(query, 5, _lifetimeCts.Token);
             Log.Debug("DJ search returned {Count} results", results.Count);
             if (results.Count == 0)
             {
@@ -862,7 +991,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
             var track = results[0];
             Log.Debug("DJ got track: {Track}, fetching URL...", track.Title);
-            var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
+            var url = await ResolvePlayUrlAsync(track, _lifetimeCts.Token);
             Log.Debug("DJ got URL: {Url}", url != null ? "present" : "null");
             if (url == null)
             {
@@ -898,6 +1027,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
             _audioService.PlayAtIndex(index);
             Log.Information("DJ track play initiated: {Track}", t);
         }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            Log.Debug("DJ play request cancelled during shutdown");
+        }
         catch (Exception ex)
         {
             Log.Error(ex, "PlaySongAsync failed for query: {Query}", query);
@@ -906,6 +1039,29 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             _isPlayingSong = false;
         }
+    }
+
+    private Task<System.Collections.Generic.List<OnlineTrack>> SearchMusicAsync(
+        string query,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (_musicSearchService is MultiSourceMusicService multi)
+            return multi.SearchAsync(query, limit, cancellationToken);
+
+        return _musicSearchService.SearchAsync(query, limit)
+            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+    }
+
+    private Task<string?> ResolvePlayUrlAsync(
+        OnlineTrack track,
+        CancellationToken cancellationToken)
+    {
+        if (_musicSearchService is MultiSourceMusicService multi)
+            return multi.GetPlayUrlAsync(track, cancellationToken);
+
+        return _musicSearchService.GetPlayUrlAsync(track.Id)
+            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
     }
 
     private int FindAudioTrackIndex(string sourceId, string filePath)
@@ -954,17 +1110,26 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        _lifetimeCts.Cancel();
         _ttsSub.Dispose();
         _ttsCommandSub.Dispose();
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
         _statusAutoDismissSub?.Dispose();
-        _waveWriter?.Dispose();
-        _waveIn?.Dispose();
+
+        try { _waveIn?.StopRecording(); } catch (Exception ex) { Log.Debug(ex, "Failed to stop recording during shutdown"); }
+        try { _waveWriter?.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to dispose WAV writer during shutdown"); }
+        try { _waveIn?.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to dispose recording device during shutdown"); }
+        _waveWriter = null;
+        _waveIn = null;
         if (!string.IsNullOrWhiteSpace(_tempWavPath))
         {
             try { File.Delete(_tempWavPath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete temp file"); }
         }
+        _tempWavPath = null;
     }
 }
 

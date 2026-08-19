@@ -33,7 +33,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
     private readonly IDisposable _providerSub;
+    private readonly CancellationTokenSource _lifetimeCts = new();
     private bool _isLoadingSettings;
+    private int _disposed;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
@@ -140,11 +142,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public async Task LoadAsync()
+    public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
         _isLoadingSettings = true;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var key = await _secureStorage.GetApiKeyAsync(LlmCredentialService);
             if (!string.IsNullOrEmpty(key))
             {
@@ -153,7 +159,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             if (File.Exists(_settingsFile))
             {
-                var json = await File.ReadAllTextAsync(_settingsFile);
+                var json = await File.ReadAllTextAsync(_settingsFile, cancellationToken);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
@@ -197,6 +203,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 LoadCharacterOverrides(SelectedCharacter);
 
             ConfigureLlm();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -251,9 +261,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
     private async Task SaveAsync()
     {
-        await _saveGate.WaitAsync();
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        var gateHeld = false;
         try
         {
+            await _saveGate.WaitAsync(_lifetimeCts.Token);
+            gateHeld = true;
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+
             NormalizeLlmInputs();
 
             // Save current character overrides
@@ -295,11 +313,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             };
             // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(_settingsFile, json);
+            var tempPath = _settingsFile + ".tmp";
+            await File.WriteAllTextAsync(tempPath, json, _lifetimeCts.Token);
+            File.Move(tempPath, _settingsFile, overwrite: true);
 
             CharacterSettingsChanged?.Invoke();
             StatusMessage = "设置已保存";
             Log.Information("Settings saved to {Path}", _settingsFile);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // 关闭时取消排队保存，避免 Dispose 后继续写盘。
         }
         catch (Exception ex)
         {
@@ -308,15 +332,19 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            _saveGate.Release();
+            if (gateHeld)
+                _saveGate.Release();
         }
     }
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        _lifetimeCts.Cancel();
         _selectedCharacterSub.Dispose();
         _providerSub.Dispose();
-        _saveGate.Dispose();
     }
 
     private void ConfigureLlm(string? apiKeyOverride = null)

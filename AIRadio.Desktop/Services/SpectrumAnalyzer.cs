@@ -21,6 +21,8 @@ public sealed class SpectrumAnalyzer : IDisposable
     private readonly Timer _fallbackTimer;
     private readonly object _publishGate = new();
     private readonly float[] _buffer = new float[FftSize];
+    private readonly double[] _real = new double[FftSize];
+    private readonly double[] _imaginary = new double[FftSize];
     private int _bufferCount;
     private long _lastRealSpectrumAtMs;
     private int _fallbackWarningLogged;
@@ -119,8 +121,9 @@ public sealed class SpectrumAnalyzer : IDisposable
 
     private void ProcessFft()
     {
-        var re = new double[FftSize];
-        var im = new double[FftSize];
+        var re = _real;
+        var im = _imaginary;
+        Array.Clear(im);
         for (int i = 0; i < FftSize; i++)
         {
             var w = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / (FftSize - 1)); // Hann 窗

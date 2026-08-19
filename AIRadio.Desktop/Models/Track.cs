@@ -8,6 +8,7 @@ namespace AIRadio.Desktop.Models;
 // or immutable type would require significant refactoring of PlaylistViewModel and AudioService.
 public class Track
 {
+    private const int MaxCoverArtBytes = 4 * 1024 * 1024;
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
@@ -24,7 +25,7 @@ public class Track
         var track = new Track { FilePath = filePath };
         try
         {
-            var file = TagLib.File.Create(filePath);
+            using var file = TagLib.File.Create(filePath);
             track.Title = string.IsNullOrWhiteSpace(file.Tag.Title)
                 ? System.IO.Path.GetFileNameWithoutExtension(filePath)
                 : file.Tag.Title;
@@ -33,7 +34,11 @@ public class Track
             track.Duration = file.Properties.Duration;
 
             if (file.Tag.Pictures?.Length > 0)
-                track.CoverArt = file.Tag.Pictures[0].Data.Data;
+            {
+                var coverArt = file.Tag.Pictures[0].Data.Data;
+                if (coverArt.Length <= MaxCoverArtBytes)
+                    track.CoverArt = coverArt;
+            }
         }
         catch
         {
@@ -229,4 +234,3 @@ public class CharacterProfile
         },
     };
 }
-

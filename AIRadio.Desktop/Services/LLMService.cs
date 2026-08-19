@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using Serilog;
@@ -52,7 +53,13 @@ public class LLMService : ILLMService
         _model = model;
     }
 
-    public async Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
+    public Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
+        => ChatAsync(userMessage, history, CancellationToken.None);
+
+    public async Task<string> ChatAsync(
+        string userMessage,
+        List<ChatMessage> history,
+        CancellationToken cancellationToken)
     {
         if (!IsConfigured())
             return "请先在设置中配置 AI 服务。";
@@ -60,7 +67,11 @@ public class LLMService : ILLMService
         try
         {
             var messages = BuildMessages(history, userMessage);
-            return await CallChatCompletionAsync(messages);
+            return await CallChatCompletionAsync(messages, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -69,7 +80,13 @@ public class LLMService : ILLMService
         }
     }
 
-    public async Task<string> GenerateTrackIntroductionAsync(Track current, Track next)
+    public Task<string> GenerateTrackIntroductionAsync(Track current, Track next)
+        => GenerateTrackIntroductionAsync(current, next, CancellationToken.None);
+
+    public async Task<string> GenerateTrackIntroductionAsync(
+        Track current,
+        Track next,
+        CancellationToken cancellationToken)
     {
         if (!IsConfigured())
             return $"接下来播放 {next.Title}。";
@@ -87,7 +104,11 @@ public class LLMService : ILLMService
                 new { role = "user", content = prompt }
             };
 
-            return await CallChatCompletionAsync(messages);
+            return await CallChatCompletionAsync(messages, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -119,16 +140,21 @@ public class LLMService : ILLMService
         return messages;
     }
 
-    private async Task<string> CallChatCompletionAsync(List<object> messages)
+    private async Task<string> CallChatCompletionAsync(
+        List<object> messages,
+        CancellationToken cancellationToken)
     {
-        if (_config.Provider == "anthropic")
-            return await CallAnthropicApiAsync(messages);
+        var config = _config;
+        if (config.Provider == "anthropic")
+            return await CallAnthropicApiAsync(messages, cancellationToken);
 
         var baseUrl = _baseUrl;
         var model = _model;
-        var apiKey = _config.ApiKey;
+        var apiKey = config.ApiKey;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
 
-        return await RetryPolicy.ExecuteAsync(async () =>
+        return await RetryPolicy.ExecuteAsync(async cancellationToken =>
         {
             var requestBody = new
             {
@@ -139,17 +165,20 @@ public class LLMService : ILLMService
             };
 
             var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
             {
                 Content = content
             };
             if (!string.IsNullOrWhiteSpace(apiKey))
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var response = await _httpClient.SendAsync(request);
-            var responseJson = await response.Content.ReadAsStringAsync();
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -170,10 +199,12 @@ public class LLMService : ILLMService
 
             Log.Warning("Unrecognized LLM response format: {Response}", responseJson[..Math.Min(200, responseJson.Length)]);
             return "";
-        });
+        }, timeoutCts.Token, maxRetries: 2);
     }
 
-    private async Task<string> CallAnthropicApiAsync(List<object> messages)
+    private async Task<string> CallAnthropicApiAsync(
+        List<object> messages,
+        CancellationToken cancellationToken)
     {
         // Extract system message and convert to Claude format
         string systemPrompt = "";
@@ -190,7 +221,9 @@ public class LLMService : ILLMService
                 claudeMessages.Add(new { role, content = msgContent });
         }
 
+        var config = _config;
         var model = _model;
+        var baseUrl = _baseUrl;
         var requestBody = new
         {
             model,
@@ -200,17 +233,22 @@ public class LLMService : ILLMService
         };
 
         var json = JsonSerializer.Serialize(requestBody);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, BuildAnthropicMessagesEndpoint(_baseUrl))
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+        using var request = new HttpRequestMessage(HttpMethod.Post, BuildAnthropicMessagesEndpoint(baseUrl))
         {
             Content = content
         };
-        request.Headers.Add("x-api-key", _config.ApiKey);
+        request.Headers.Add("x-api-key", config.ApiKey);
         request.Headers.Add("anthropic-version", "2023-06-01");
 
-        var response = await _httpClient.SendAsync(request);
-        var responseJson = await response.Content.ReadAsStringAsync();
+        using var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            timeoutCts.Token);
+        var responseJson = await response.Content.ReadAsStringAsync(timeoutCts.Token);
 
         if (!response.IsSuccessStatusCode)
         {

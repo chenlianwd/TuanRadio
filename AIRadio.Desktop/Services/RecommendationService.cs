@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using Serilog;
@@ -24,10 +25,15 @@ public class RecommendationService : IRecommendationService
     public RadioProgram? CurrentProgram { get; private set; }
     public IReadOnlyCollection<UserMusicFeedback> FeedbackHistory => _feedback.AsReadOnly();
 
-    public async Task<RadioProgram> CreateProgramAsync(RecommendationRequest request)
+    public Task<RadioProgram> CreateProgramAsync(RecommendationRequest request)
+        => CreateProgramAsync(request, CancellationToken.None);
+
+    public async Task<RadioProgram> CreateProgramAsync(
+        RecommendationRequest request,
+        CancellationToken cancellationToken)
     {
         var context = BuildContext(_moodBias, request);
-        var queries = await GenerateQueriesAsync(request, context);
+        var queries = await GenerateQueriesAsync(request, context, cancellationToken);
         var excluded = BuildExcludedTracks(request);
 
         var tracks = new List<RecommendedTrack>();
@@ -36,14 +42,15 @@ public class RecommendationService : IRecommendationService
         {
             if (playableCount >= 5) break;
 
-            var results = await _musicSearch.SearchAsync(query, 8);
+            cancellationToken.ThrowIfCancellationRequested();
+            var results = await SearchMusicAsync(query, 8, cancellationToken);
             foreach (var result in results)
             {
                 if (playableCount >= 5) break;
                 if (IsExcluded(result, excluded) || tracks.Any(x => IsSameOnlineTrack(x.Track, result)))
                     continue;
 
-                var url = await _musicSearch.GetPlayUrlAsync(result.Id);
+                var url = await ResolvePlayUrlAsync(result, cancellationToken);
                 if (string.IsNullOrWhiteSpace(url))
                 {
                     if (tracks.Count(x => !x.IsPlayable) >= 5)
@@ -95,7 +102,12 @@ public class RecommendationService : IRecommendationService
         return program;
     }
 
-    public async Task<Track?> GetNextTrackAsync(RecommendationRequest request)
+    public Task<Track?> GetNextTrackAsync(RecommendationRequest request)
+        => GetNextTrackAsync(request, CancellationToken.None);
+
+    public async Task<Track?> GetNextTrackAsync(
+        RecommendationRequest request,
+        CancellationToken cancellationToken)
     {
         var excluded = BuildExcludedTracks(request);
         var next = CurrentProgram?.Tracks.FirstOrDefault(x =>
@@ -106,7 +118,7 @@ public class RecommendationService : IRecommendationService
         if (next != null)
             return next.Track;
 
-        var program = await CreateProgramAsync(request);
+        var program = await CreateProgramAsync(request, cancellationToken);
         return program.Tracks.FirstOrDefault(x => x.IsPlayable)?.Track;
     }
 
@@ -145,7 +157,10 @@ public class RecommendationService : IRecommendationService
             .ToList();
     }
 
-    private async Task<List<string>> GenerateQueriesAsync(RecommendationRequest request, ListeningContext context)
+    private async Task<List<string>> GenerateQueriesAsync(
+        RecommendationRequest request,
+        ListeningContext context,
+        CancellationToken cancellationToken)
     {
         var fallback = BuildFallbackQueries(request, context);
         try
@@ -157,7 +172,7 @@ public class RecommendationService : IRecommendationService
                 当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
                 收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
                 """;
-            var response = await _llm.ChatAsync(prompt, new List<ChatMessage>());
+            var response = await ChatAsync(prompt, cancellationToken);
             var queries = response
                 .Split(new[] { '\r', '\n', ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(CleanQuery)
@@ -166,6 +181,10 @@ public class RecommendationService : IRecommendationService
                 .Take(5)
                 .ToList();
             return queries.Count > 0 ? queries : fallback;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -276,5 +295,28 @@ public class RecommendationService : IRecommendationService
 
     private static bool IsSameMusicIdentity(string titleA, string artistA, string titleB, string artistB)
         => MusicIdentity.IsSameMusicIdentity(titleA, artistA, titleB, artistB);
+
+    private Task<List<OnlineTrack>> SearchMusicAsync(
+        string query,
+        int limit,
+        CancellationToken cancellationToken)
+        => _musicSearch is MultiSourceMusicService multi
+            ? multi.SearchAsync(query, limit, cancellationToken)
+            : _musicSearch.SearchAsync(query, limit)
+                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+
+    private Task<string?> ResolvePlayUrlAsync(
+        OnlineTrack track,
+        CancellationToken cancellationToken)
+        => _musicSearch is MultiSourceMusicService multi
+            ? multi.GetPlayUrlAsync(track, cancellationToken)
+            : _musicSearch.GetPlayUrlAsync(track.Id)
+                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+
+    private Task<string> ChatAsync(string prompt, CancellationToken cancellationToken)
+        => _llm is LLMService llm
+            ? llm.ChatAsync(prompt, new List<ChatMessage>(), cancellationToken)
+            : _llm.ChatAsync(prompt, new List<ChatMessage>())
+                .WaitAsync(cancellationToken);
 
 }

@@ -42,6 +42,8 @@ public class EdgeTtsService : ITtsService, IDisposable
     private readonly HttpClient _httpClient;
     private IReadOnlyList<VoiceOption>? _voiceCache;
     private readonly SemaphoreSlim _voiceCacheLock = new(1, 1);
+    private readonly CancellationTokenSource _lifetimeCts = new();
+    private int _disposed;
 
     // Persistent WebSocket connection for TTS synthesis
     private ClientWebSocket? _ws;
@@ -54,16 +56,30 @@ public class EdgeTtsService : ITtsService, IDisposable
         _httpClient = httpClient;
     }
 
-    public async Task<byte[]> SynthesizeAsync(string text, string voiceId, string emotion = "neutral")
+    public Task<byte[]> SynthesizeAsync(string text, string voiceId, string emotion = "neutral")
+        => SynthesizeAsync(text, voiceId, emotion, CancellationToken.None);
+
+    public async Task<byte[]> SynthesizeAsync(
+        string text,
+        string voiceId,
+        string emotion,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        if (string.IsNullOrWhiteSpace(text) || Volatile.Read(ref _disposed) != 0)
             return Array.Empty<byte>();
 
         var voice = ResolveVoice(voiceId);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetimeCts.Token,
+            cancellationToken);
 
         try
         {
-            return await SynthesizeViaWebSocketAsync(text, voice, emotion);
+            return await SynthesizeViaWebSocketAsync(text, voice, emotion, linkedCts.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -74,16 +90,21 @@ public class EdgeTtsService : ITtsService, IDisposable
 
     public async Task<IReadOnlyList<VoiceOption>> GetVoicesAsync()
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return Array.Empty<VoiceOption>();
+
         if (_voiceCache != null)
             return _voiceCache;
 
-        await _voiceCacheLock.WaitAsync();
+        var lockHeld = false;
         try
         {
+            await _voiceCacheLock.WaitAsync(_lifetimeCts.Token);
+            lockHeld = true;
             if (_voiceCache != null)
                 return _voiceCache;
 
-            var response = await _httpClient.GetStringAsync(VoiceListUrl);
+            var response = await _httpClient.GetStringAsync(VoiceListUrl, _lifetimeCts.Token);
             var voices = JsonSerializer.Deserialize<List<EdgeVoice>>(response) ?? new();
 
             _voiceCache = voices
@@ -98,6 +119,10 @@ public class EdgeTtsService : ITtsService, IDisposable
 
             return _voiceCache;
         }
+        catch (OperationCanceledException) when (Volatile.Read(ref _disposed) != 0)
+        {
+            return Array.Empty<VoiceOption>();
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to fetch Edge TTS voice list");
@@ -110,7 +135,8 @@ public class EdgeTtsService : ITtsService, IDisposable
         }
         finally
         {
-            _voiceCacheLock.Release();
+            if (lockHeld)
+                _voiceCacheLock.Release();
         }
     }
 
@@ -140,22 +166,27 @@ public class EdgeTtsService : ITtsService, IDisposable
         return ws;
     }
 
-    private async Task<byte[]> SynthesizeViaWebSocketAsync(string text, string voice, string emotion)
+    private async Task<byte[]> SynthesizeViaWebSocketAsync(
+        string text,
+        string voice,
+        string emotion,
+        CancellationToken cancellationToken)
     {
-        await _wsLock.WaitAsync();
+        await _wsLock.WaitAsync(cancellationToken);
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            var ws = await GetOrCreateWebSocketAsync(cts.Token);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
+            var ws = await GetOrCreateWebSocketAsync(timeoutCts.Token);
 
             // Send speech config
             var configMsg = BuildConfigMessage();
-            await SendWebSocketMessageAsync(ws, configMsg, cts.Token);
+            await SendWebSocketMessageAsync(ws, configMsg, timeoutCts.Token);
 
             // Send SSML
             var ssml = BuildSsml(text, voice, emotion);
             var ssmlMsg = BuildSsmlMessage(ssml);
-            await SendWebSocketMessageAsync(ws, ssmlMsg, cts.Token);
+            await SendWebSocketMessageAsync(ws, ssmlMsg, timeoutCts.Token);
 
             // Read audio data
             using var audioStream = new MemoryStream();
@@ -167,7 +198,7 @@ public class EdgeTtsService : ITtsService, IDisposable
                 WebSocketReceiveResult result;
                 do
                 {
-                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), timeoutCts.Token);
 
                     if (result.MessageType == WebSocketMessageType.Close)
                         goto done;
@@ -291,9 +322,15 @@ public class EdgeTtsService : ITtsService, IDisposable
 
     public void Dispose()
     {
-        _ws?.Dispose();
-        _wsLock.Dispose();
-        _voiceCacheLock.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        _lifetimeCts.Cancel();
+        // Cancel current Receive/Send first. Do not dispose the semaphores while an
+        // in-flight synthesis may still execute its finally/Release.
+        try { _ws?.Abort(); } catch { }
+        try { _ws?.Dispose(); } catch { }
+        _ws = null;
     }
 
     private class EdgeVoice

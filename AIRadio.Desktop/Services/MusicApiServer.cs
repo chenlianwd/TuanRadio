@@ -56,13 +56,18 @@ public class MusicApiServer : IDisposable
             return;
         }
 
-        // Kill any leftover Node.js process on the same port
-        KillProcessOnPort();
+        // 复用已经在运行的自有 API 实例；绝不按端口盲杀进程，避免误杀用户的
+        // 其他 Node/开发服务。
+        if (await IsServerReadyAsync(cancellationToken))
+        {
+            Log.Information("Music API server is already available on port {Port}", _port);
+            return;
+        }
 
         try
         {
             // 确保 Node.js 可用（自动下载便携版）
-            var nodePath = await EnvironmentManager.EnsureNodeJsAsync();
+            var nodePath = await EnvironmentManager.EnsureNodeJsAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             Log.Information("Using Node.js at: {Path}", nodePath);
 
@@ -184,47 +189,24 @@ public class MusicApiServer : IDisposable
         Stop();
     }
 
-    private void KillProcessOnPort()
+    private async Task<bool> IsServerReadyAsync(CancellationToken cancellationToken)
     {
+        using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(800) };
         try
         {
-            // Use netstat to find PID using the port
-            var psi = new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/c netstat -ano | findstr :{_port}",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc == null) return;
-
-            var output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit();
-
-            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length >= 5 && parts[0].Contains("TCP") && parts[1].Contains($":{_port}"))
-                {
-                    var pidStr = parts[^1];
-                    if (int.TryParse(pidStr, out var pid) && pid > 0)
-                    {
-                        try
-                        {
-                            var p = Process.GetProcessById(pid);
-                            p.Kill(entireProcessTree: true);
-                            Log.Information("Killed leftover process PID {Pid} on port {Port}", pid, _port);
-                        }
-                        catch (Exception ex) { Log.Debug(ex, "Failed to kill process PID {Pid}", pid); }
-                    }
-                }
-            }
+            using var response = await http.GetAsync(
+                $"http://127.0.0.1:{_port}/search?keywords=test&limit=1",
+                cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Could not check for processes on port {Port}", _port);
+            Log.Debug(ex, "Music API readiness probe failed on port {Port}", _port);
+            return false;
         }
     }
 }

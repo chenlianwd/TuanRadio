@@ -120,16 +120,24 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService is Services.AudioService audioSvc)
         {
             audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
-            audioSvc.SetNextCallback(async () =>
+            audioSvc.SetTrackUrlResolver(async track =>
             {
-                _audioService.StopTts(); // Cancel TTS when user skips
-                var current = _audioService.CurrentTrack;
-                AttachRecommendationContext(current);
-                var recommended = await GetRecommendedTrackAsync(current);
-                if (recommended != null && !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
-                    PlaylistVM.AddExternalTrack(recommended);
-                return recommended;
+                var sourceId = track.SourceId ?? track.Id;
+                var onlineTrack = new OnlineTrack
+                {
+                    Id = sourceId,
+                    Title = track.Title,
+                    Artist = track.Artist,
+                    Album = track.Album,
+                    DurationMs = (long)track.Duration.TotalMilliseconds
+                };
+
+                if (musicSearchService is MultiSourceMusicService multi)
+                    return await multi.GetPlayUrlAsync(onlineTrack, _lifetimeCts.Token);
+
+                return await musicSearchService.GetPlayUrlAsync(sourceId);
             });
+            audioSvc.SetNextCallback(GetNextTrackForAudioServiceAsync);
         }
 
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
@@ -315,7 +323,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (IsDisposed)
                 return;
 
-            var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+            var script = await GenerateTrackIntroductionAsync(current, next, _lifetimeCts.Token);
             if (IsDisposed)
                 return;
 
@@ -325,7 +333,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
             if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
             {
-                var speechData = await _djService.GenerateSpeechAsync(script.Text);
+                var speechData = await GenerateSpeechAsync(script.Text, _lifetimeCts.Token);
                 if (speechData is { Length: > 0 } && !IsDisposed)
                     _audioService.PlayTtsAudio(speechData);
             }
@@ -353,12 +361,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed)
             return;
 
-        await SettingsVM.LoadAsync();
+        await SettingsVM.LoadAsync(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
             return;
 
-        await PlaylistVM.LoadAsync();
+        await PlaylistVM.LoadAsync(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
             return;
@@ -506,9 +514,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
             if (recommended == null) return;
 
-            var script = await _djService.GenerateTrackIntroductionAsync(
+            var script = await GenerateTrackIntroductionAsync(
                 current ?? new Track { Title = "无", Artist = "未知" },
-                recommended);
+                recommended,
+                cancellationToken);
 
             if (IsDisposed || cancellationToken.IsCancellationRequested)
                 return;
@@ -547,9 +556,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         if (Interlocked.Exchange(ref _autoRadioAdvancing, 1) == 1) return;
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
-        _audioService.StopTts(); // Cancel any ongoing TTS before advancing
         try
         {
+            await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
             if (ShouldUseFreshRadioRecommendations())
             {
                 var success = await PlayWithFreshRecommendation(current);
@@ -560,6 +569,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 await PlayWithPlaylistRotation(current);
             }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
+        {
+            // 关闭时取消尚未完成的推荐、串场和播放切换。
         }
         catch (Exception ex)
         {
@@ -600,7 +613,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.AddExternalTrack(recommended);
         }
 
-        var script = await _djService.GenerateTrackIntroductionAsync(current!, recommended);
+        var script = await GenerateTrackIntroductionAsync(current!, recommended, _lifetimeCts.Token);
         if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return true;
 
         ChatVM.AddAssistantMessage(script.Text);
@@ -633,7 +646,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var index = PlaylistVM.Tracks.IndexOf(next);
         if (index < 0) return;
 
-        var script = await _djService.GenerateTrackIntroductionAsync(current, next);
+        var script = await GenerateTrackIntroductionAsync(current, next, _lifetimeCts.Token);
         if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return;
 
         ChatVM.AddAssistantMessage(script.Text);
@@ -683,7 +696,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         try
         {
-            var recommended = await _recommendationService.GetNextTrackAsync(request);
+            var recommended = await RequestRecommendedTrackAsync(request, _lifetimeCts.Token);
             if (IsDisposed)
                 return null;
 
@@ -698,13 +711,121 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (recommended != null)
                 return recommended;
         }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
+        {
+            return null;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Program recommendation failed, falling back to DJ single-track recommendation");
         }
 
-        var fallback = await _djService.RecommendNextTrackAsync(current);
-        return IsDisposed ? null : fallback;
+        try
+        {
+            var fallback = await RequestDjRecommendationAsync(current, _lifetimeCts.Token);
+            return IsDisposed ? null : fallback;
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
+        {
+            return null;
+        }
+    }
+
+    private Task<Track?> GetNextTrackForAudioServiceAsync()
+    {
+        if (IsDisposed)
+            return Task.FromResult<Track?>(null);
+
+        if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+            return GetNextTrackForAudioServiceCoreAsync();
+
+        var completion = new TaskCompletionSource<Track?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationRegistration = _lifetimeCts.Token.Register(
+            () => completion.TrySetResult(null));
+        Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                completion.TrySetResult(await GetNextTrackForAudioServiceCoreAsync());
+            }
+            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
+            {
+                completion.TrySetResult(null);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Audio next-track callback failed");
+                completion.TrySetResult(null);
+            }
+            finally
+            {
+                cancellationRegistration.Dispose();
+            }
+        });
+        return completion.Task;
+    }
+
+    private async Task<Track?> GetNextTrackForAudioServiceCoreAsync()
+    {
+        if (IsDisposed)
+            return null;
+
+        await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
+        var current = _audioService.CurrentTrack;
+        AttachRecommendationContext(current);
+        var recommended = await GetRecommendedTrackAsync(current);
+        if (!IsDisposed && recommended != null &&
+            !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
+        {
+            PlaylistVM.AddExternalTrack(recommended);
+        }
+
+        return IsDisposed ? null : recommended;
+    }
+
+    private Task<Track?> RequestRecommendedTrackAsync(
+        RecommendationRequest request,
+        CancellationToken cancellationToken)
+        => _recommendationService is RecommendationService recommendationService
+            ? recommendationService.GetNextTrackAsync(request, cancellationToken)
+            : _recommendationService.GetNextTrackAsync(request).WaitAsync(cancellationToken);
+
+    private Task<Track?> RequestDjRecommendationAsync(
+        Track? current,
+        CancellationToken cancellationToken)
+        => _djService is DJService djService
+            ? djService.RecommendNextTrackAsync(current, cancellationToken)
+            : _djService.RecommendNextTrackAsync(current).WaitAsync(cancellationToken);
+
+    private Task<DJScript> GenerateTrackIntroductionAsync(
+        Track current,
+        Track next,
+        CancellationToken cancellationToken)
+        => _djService is DJService djService
+            ? djService.GenerateTrackIntroductionAsync(current, next, cancellationToken)
+            : _djService.GenerateTrackIntroductionAsync(current, next).WaitAsync(cancellationToken);
+
+    private Task<byte[]?> GenerateSpeechAsync(string text, CancellationToken cancellationToken)
+        => _djService is DJService djService
+            ? djService.GenerateSpeechAsync(text, cancellationToken)
+            : _djService.GenerateSpeechAsync(text).WaitAsync(cancellationToken);
+
+    private async Task StopTtsWithoutBlockingUiAsync(CancellationToken cancellationToken)
+    {
+        var stopTask = Task.Factory.StartNew(
+            _audioService.StopTts,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            Log.Warning("TTS stop did not complete within 2 seconds; continuing without blocking UI");
+        }
     }
 
     private static bool IsSameTrack(Track? left, Track? right) => TrackComparer.IsSameTrack(left, right);
@@ -735,7 +856,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
             try
             {
-                var speechData = await _djService.GenerateSpeechAsync(text);
+                var speechData = await GenerateSpeechAsync(text, token);
                 if (speechData is { Length: > 0 } && !IsDisposed && !token.IsCancellationRequested)
                 {
                     var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(
@@ -784,7 +905,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             return;
 
         _lifetimeCts.Cancel();
-        try { _audioService.StopTts(); } catch { }
+        // AudioService 由 DI 容器持有并在随后统一释放。这里不能在 Avalonia
+        // 关闭线程同步 Stop NAudio，否则设备线程异常时会再次把窗口关闭卡住。
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
         _darkModePersistSub?.Dispose();

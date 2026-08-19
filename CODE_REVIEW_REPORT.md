@@ -1,6 +1,43 @@
 # AIRadio.Desktop 全量代码审查报告
 
-> 历史文档：本文记录 2026-06 当时的审查结论，其中部分问题已修复或已随架构迁移失效；当前状态以 `README.md` 和 `ai-radio-plan.md` 为准。
+## 2026-08-19 当前复审结论
+
+> 本节是当前结论；其后的 CRITICAL/HIGH/MEDIUM/LOW 清单保留为 2026-06 历史基线，不再代表当前提交判定。
+
+**判定：自动化门禁通过，可进入人工耐久验证。**
+
+本轮复审覆盖当前全部工作区差异，重点检查 `AudioService` 原生生命周期、自动续播、在线 URL 刷新、多源 fallback、LLM/TTS/STT 取消传播、频谱刷新、ViewModel Dispose 和持久化。
+
+### 本轮发现并修复
+
+- **HIGH：关闭线程仍同步停止 TTS。** `MainWindowViewModel.Dispose()` 曾直接调用 `IAudioService.StopTts()`，在 NAudio 设备线程异常时仍可能卡住 Avalonia 关闭线程。现已移除该越权清理，由 DI 容器随后调用 `AudioService.Dispose()`，通过有界等待和后台续清理统一释放。
+- **HIGH：运行时入口仍同步停止 TTS。** 自动续播、下一首回调和聊天发送曾在 UI 线程直接调用 `StopTts()`；现统一改为 2 秒有界后台等待，超时只记录警告并继续，不再阻塞界面。
+- 增加 `Dispose_DoesNotSynchronouslyStopContainerOwnedAudioService` 回归测试，防止关闭路径再次引入同步 NAudio Stop。
+
+### 已确认的稳定性边界
+
+- LibVLC 播放、音量和回调清理有串行边界；原生回调未退出时不会并发 Dispose。
+- 在线搜索和 URL 获取同时具备调用方取消、源内取消及硬超时；内置音源均实现取消传播。
+- 首选播放 URL 失效后按歌曲元数据跨源重新搜索，不复用不兼容的平台 ID。
+- LLM、推荐、Edge TTS、Whisper、yt-dlp 和启动任务可随应用关闭取消。
+- 频谱使用 dB 映射、幅度上限和 FFT 缓冲区复用；无有效回环数据时才启用视觉兜底。
+- 播放列表及设置写入串行化，并使用同目录临时文件替换正式 JSON。
+
+### 自动化验证
+
+- `dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal`：0 警告、0 错误。
+- `dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"`：174/174 通过。
+- `git diff --check`：通过；仅存在 Git 的 LF/CRLF 工作区提示。
+
+### 发布前仍需人工验证
+
+- 连续播放多首在线歌曲，覆盖 URL 过期、提前结束、自动续播和跨源 fallback。
+- 播放中执行 TTS 插播、快速切歌、暂停/恢复，再关闭窗口，确认任务管理器中进程及时退出且内存不持续增长。
+- 在无默认输出设备、设备切换或睡眠唤醒后验证 LibVLC、WASAPI 和 NAudio 行为。
+
+---
+
+> 历史文档：以下内容记录 2026-06 当时的审查结论，其中大量问题已经修复或随架构迁移失效。
 
 > 审查日期：2026-06-20
 > 审查范围：全部 53 个 C# 文件 + 8 个 AXAML 视图文件 + 12 个测试文件
@@ -19,7 +56,7 @@
 | 测试覆盖率 | 0 | 9 | 14 | 6 |
 | **合计** | **4** | **31** | **45** | **25** |
 
-**判定：BLOCK** — 4 个 CRITICAL 必须修复后才能提交。
+**历史判定（2026-06）：BLOCK** — 当时的 4 个 CRITICAL 必须修复后才能提交；当前判定见文首。
 
 ---
 
@@ -548,7 +585,7 @@ _ttsSub = _audioService.TtsStateChanged
 - **H8-H19（VM/Views HIGH）**：H8/H9（异常观察 + IDisposable）、H10（TrackComparer 提取）、H11（async lambda）、H13-H19（Converter 合并到 `Converters/`、MainWindow 拆 7 UserControl、x:Name→VM 绑定）已落地。
 - **H20-H22（API 安全）**：H20（Kuwo HTTPS）、H21（URL 验证部分）、H22（EscapeDataString）。
 - **H23-H31（测试）**：Converter 等价性、RadioState 派生、HasFailure 等已补。
-- **M20（Theme token）**：ThemeDictionaries PoC 落地，全量 token 待随 Light 模式统一。
+- **M20（Theme token）**：ThemeDictionaries 与全量颜色 token 已落地；Light 字典当前仍与 Dark 同值占位。
 - **L18（Node SHA256）**：已加下载哈希审计日志。
 
 **已知残留**：MainWindow.Theme.cs 已随全量 token 化退场（文件已删除）；Light 模式 token 已占位就位（与 Dark 同值，后续可按需微调）；音源 fallback UI 与连接诊断（子项目 5）已落地——`BuildSearchStatusMessage` 透传各源成功/超时/失败、`SettingsViewModel.TestConnectionAsync` 完整覆盖空 Key/模型名/成功响应预览/失败 RecoveryHint。

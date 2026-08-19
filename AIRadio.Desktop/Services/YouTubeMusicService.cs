@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -25,18 +26,28 @@ public class YouTubeMusicService : IMusicSearchService
         _ytdlpPath = ytdlpPath;
     }
 
-    public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+    public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+        => SearchAsync(keyword, limit, CancellationToken.None);
+
+    public async Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        CancellationToken cancellationToken)
     {
         try
         {
             // Use --dump-json for structured output (one JSON object per line)
             var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings";
-            var output = await RunYtdlpAsync(args);
+            var output = await RunYtdlpAsync(args, cancellationToken);
 
             if (string.IsNullOrWhiteSpace(output))
                 return new List<OnlineTrack>();
 
             return ParseSearchResultsJson(output);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -45,7 +56,10 @@ public class YouTubeMusicService : IMusicSearchService
         }
     }
 
-    public async Task<string?> GetPlayUrlAsync(string trackId)
+    public Task<string?> GetPlayUrlAsync(string trackId)
+        => GetPlayUrlAsync(trackId, CancellationToken.None);
+
+    public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
     {
         try
         {
@@ -63,7 +77,7 @@ public class YouTubeMusicService : IMusicSearchService
             var url = $"https://www.youtube.com/watch?v={videoId}";
 
             var args = $"-f ba --get-url --no-warnings --ignore-errors {EscapeArg(url)}";
-            var output = await RunYtdlpAsync(args);
+            var output = await RunYtdlpAsync(args, cancellationToken);
 
             var playUrl = output?.Trim();
             if (!string.IsNullOrWhiteSpace(playUrl) &&
@@ -73,6 +87,10 @@ public class YouTubeMusicService : IMusicSearchService
             }
 
             return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -119,13 +137,17 @@ public class YouTubeMusicService : IMusicSearchService
         return tracks;
     }
 
-    private async Task<string?> RunYtdlpAsync(string args)
+    private async Task<string?> RunYtdlpAsync(string args, CancellationToken cancellationToken)
     {
         try
         {
+            var ytdlpPath = File.Exists(_ytdlpPath)
+                ? _ytdlpPath
+                : await YtdlpManager.EnsureInstalledAsync(cancellationToken);
+
             var psi = new ProcessStartInfo
             {
-                FileName = _ytdlpPath,
+                FileName = ytdlpPath,
                 Arguments = args,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -136,13 +158,19 @@ public class YouTubeMusicService : IMusicSearchService
             using var process = Process.Start(psi);
             if (process == null) return null;
 
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+            var outputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var errorTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
 
             try
             {
-                await process.WaitForExitAsync(cts.Token);
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                throw;
             }
             catch (OperationCanceledException)
             {
@@ -161,6 +189,10 @@ public class YouTubeMusicService : IMusicSearchService
             }
 
             return output;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
