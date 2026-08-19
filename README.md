@@ -75,4 +75,4 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 - 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态和跨源回退降级。
 - Node.js 便携包目前记录 SHA256 供审计，但尚未自动对照官方 `SHASUMS256.txt` 做完整性校验。
 - 原生音频设备异常属于运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试。
-- Light 模式 token 目前与 Dark 同值占位，浅色配色需按视觉稿微调。
+- Light/Dark 已使用独立配色 token，主界面、设置页和弹层会随主题完整切换。

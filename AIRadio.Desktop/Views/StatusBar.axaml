@@ -11,8 +11,14 @@
                        Foreground="{DynamicResource ShellText}" VerticalAlignment="Center"/>
             <TextBlock Grid.Column="1"
                        Text="{Binding CurrentState, Converter={x:Static conv:RadioStateToTextConverter.Instance}}"
-                       Foreground="{Binding CurrentState, Converter={x:Static conv:RadioStateToBrushConverter.Instance}}"
-                       FontSize="11" FontFamily="Consolas" VerticalAlignment="Center"/>
+                       FontSize="11" FontFamily="Consolas" VerticalAlignment="Center">
+                <TextBlock.Foreground>
+                    <MultiBinding Converter="{x:Static conv:RadioStateToBrushConverter.Instance}">
+                        <Binding Path="CurrentState"/>
+                        <Binding Path="IsDarkMode"/>
+                    </MultiBinding>
+                </TextBlock.Foreground>
+            </TextBlock>
         </Grid>
     </Border>
 </UserControl>

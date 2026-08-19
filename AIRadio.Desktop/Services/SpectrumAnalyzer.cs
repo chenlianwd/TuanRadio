@@ -13,7 +13,9 @@ public sealed class SpectrumAnalyzer : IDisposable
     private const int FftSize = 1024;
     private const int FallbackIntervalMs = 33;
     private const int RealSpectrumTimeoutMs = 180;
-    private const float RealSpectrumActivityThreshold = 0.01f;
+    // 低于此峰值时，真实回环数据通常只是设备底噪；让播放态视觉兜底接管，
+    // 避免底噪不断刷新时间戳，导致频谱条永远停在最小高度。
+    private const float RealSpectrumActivityThreshold = 0.08f;
 
     private readonly WasapiLoopbackCapture? _capture;
     private readonly Func<bool>? _isPlaybackActive;

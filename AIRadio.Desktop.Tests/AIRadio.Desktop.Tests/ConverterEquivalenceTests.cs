@@ -1,7 +1,9 @@
+using System.Collections.Generic;
+using System.Globalization;
 using AIRadio.Desktop.Converters;
 using AIRadio.Desktop.Models;
 using Avalonia.Layout;
-using System.Globalization;
+using Avalonia.Media;
 using Xunit;
 
 namespace AIRadio.Desktop.Tests;
@@ -36,4 +38,22 @@ public class ConverterEquivalenceTests
     [InlineData(RadioState.Error, "ERROR")]
     public void RadioStateToText_MapsCorrectly(RadioState state, string expected)
         => Assert.Equal(expected, RadioStateToTextConverter.Instance.Convert(state, typeof(string), null, CultureInfo.InvariantCulture));
+
+    [Theory]
+    [InlineData(RadioState.Idle)]
+    [InlineData(RadioState.Curating)]
+    [InlineData(RadioState.Searching)]
+    [InlineData(RadioState.Speaking)]
+    [InlineData(RadioState.Playing)]
+    [InlineData(RadioState.Error)]
+    public void RadioStateToBrush_UsesDifferentPaletteForLightAndDark(RadioState state)
+    {
+        var converter = RadioStateToBrushConverter.Instance;
+        var dark = Assert.IsType<SolidColorBrush>(
+            converter.Convert(new List<object?> { state, true }, typeof(object), null, CultureInfo.InvariantCulture));
+        var light = Assert.IsType<SolidColorBrush>(
+            converter.Convert(new List<object?> { state, false }, typeof(object), null, CultureInfo.InvariantCulture));
+
+        Assert.NotEqual(dark.Color, light.Color);
+    }
 }

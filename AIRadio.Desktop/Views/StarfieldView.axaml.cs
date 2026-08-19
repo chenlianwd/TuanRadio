@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 
 namespace AIRadio.Desktop.Views;
@@ -16,6 +17,8 @@ public partial class StarfieldView : UserControl
     private DispatcherTimer? _timer;
     private float[] _spectrum = new float[32];
     private double _canvasW, _canvasH;
+    private ThemeVariant? _starTheme;
+    private IBrush _starBrush = Brushes.White;
     private const int StarCount = 55; // Visual density — higher = more stars, lower = better performance
     private bool _initialized;
 
@@ -49,6 +52,7 @@ public partial class StarfieldView : UserControl
     {
         StarCanvas.Children.Clear();
         _stars.Clear();
+        UpdateStarBrush(force: true);
 
         for (int i = 0; i < StarCount; i++)
         {
@@ -56,7 +60,7 @@ public partial class StarfieldView : UserControl
             {
                 Width = 1.5,
                 Height = 1.5,
-                Fill = Brushes.White,
+                Fill = _starBrush,
                 Opacity = 0.15
             };
 
@@ -90,6 +94,8 @@ public partial class StarfieldView : UserControl
 
     private void OnTick(object? sender, EventArgs e)
     {
+        UpdateStarBrush();
+
         var w = Bounds.Width;
         var h = Bounds.Height;
         if (w > 10) _canvasW = w;
@@ -123,6 +129,24 @@ public partial class StarfieldView : UserControl
             Canvas.SetLeft(star.Ellipse, star.X);
             Canvas.SetTop(star.Ellipse, star.Y);
         }
+    }
+
+    private void UpdateStarBrush(bool force = false)
+    {
+        var theme = ActualThemeVariant;
+        if (!force && Equals(theme, _starTheme))
+            return;
+
+        _starTheme = theme;
+        _starBrush = StarCanvas.FindResource("StarColor") switch
+        {
+            Color color => new SolidColorBrush(color),
+            IBrush brush => brush,
+            _ => Brushes.White
+        };
+
+        foreach (var star in _stars)
+            star.Ellipse.Fill = _starBrush;
     }
 
     private class Star

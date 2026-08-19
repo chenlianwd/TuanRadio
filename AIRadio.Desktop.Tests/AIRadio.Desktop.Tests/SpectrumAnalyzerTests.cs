@@ -49,6 +49,24 @@ public class SpectrumAnalyzerTests
     }
 
     [Fact]
+    public void LowLevelCapturedFrame_DoesNotPreventFallback()
+    {
+        long now = 1_000;
+        using var analyzer = new SpectrumAnalyzer(() => true, () => now, initializeCapture: false);
+        var received = new List<float[]>();
+        analyzer.SpectrumReady += received.Add;
+        var lowLevelSpectrum = new float[32];
+        Array.Fill(lowLevelSpectrum, 0.02f);
+
+        analyzer.PushCapturedSpectrumForTesting(lowLevelSpectrum);
+        analyzer.RunFallbackTickForTesting();
+
+        Assert.Single(received);
+        Assert.NotSame(lowLevelSpectrum, received[0]);
+        Assert.Contains(received[0], value => value > 0.04f);
+    }
+
+    [Fact]
     public void MeaningfulCapturedFrame_SuppressesFallbackUntilTimeout()
     {
         long now = 1_000;

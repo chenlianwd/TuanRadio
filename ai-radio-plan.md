@@ -108,7 +108,7 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 
 ### 子项目 1 收尾（2026-08-14）
 
-- Theme 全量 token 化达成 spec §9 零残留：MainWindow.axaml / SettingsView.axaml / SpectrumView.axaml / ChatArea.axaml.cs 全部迁移到 `Themes/Colors.xaml` 的 `C_<HEX>` token；Light/Dark 双套字典已就位（Light 暂占位同值）。
+- Theme 全量 token 化达成 spec §9 零残留：MainWindow.axaml / SettingsView.axaml / SpectrumView.axaml / ChatArea.axaml.cs 全部迁移到 `Themes/Colors.axaml` 的 `C_<HEX>` token；Light/Dark 双套字典均已配置独立配色。
 - 孤儿旧 View（ChatView/PlayerView/PlaylistView）删除，其中活跃引用的 `TabVisibleConverter` / `FavoriteIconConverter` 迁入 `Converters/` 目录。
 - 子项目 2「节目单卡片只留短标签」落地：移除卡片 Reason，节目单整体推荐理由通过 `DjOpening` 已进 DJ 气泡；修复 PlaylistDrawer 标签背景 `C_2221ED76}0` 拼写 typo。
 - 子项目 5「音源 fallback UI + 设置连接诊断」确认落地：`BuildSearchStatusMessage` 透传各源成功/超时/失败；`TestConnectionAsync` 覆盖空 Key/模型名/成功/失败+RecoveryHint。
@@ -119,7 +119,7 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - 外部音源失败原因的用户可读分类，以及同一歌曲多候选的质量评分。
 - Node.js/yt-dlp 下载文件的官方校验和验证与版本固定策略。
 - 连续播放、TTS 插播、快速切歌、睡眠唤醒和关闭窗口的自动化耐久测试。
-- Light 模式浅色配色按视觉稿微调（token 结构已就位，当前与 Dark 同值）。
+- 持续根据视觉验收微调 Light/Dark 模式的对比度与可读性。
 - 天气、日历、歌词暂不进入第一轮开发。
 
 ## 构建与测试
