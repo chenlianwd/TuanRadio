@@ -62,8 +62,8 @@ public partial class ChatArea : UserControl
             _micButton = sender as Button;
             if (_micButton != null)
             {
-                _micButton.Background = (IBrush)_micButton.FindResource("C_FF56F5C4")!;
-                _micButton.Foreground = (IBrush)_micButton.FindResource("C_FF050507")!;
+                _micButton.Background = ResolveBrush(_micButton, "C_FF56F5C4");
+                _micButton.Foreground = ResolveBrush(_micButton, "C_FF050507");
             }
             (sender as Control)?.Focus();
             e.Pointer.Capture(sender as IInputElement);
@@ -93,7 +93,16 @@ public partial class ChatArea : UserControl
     private void ResetMicButton()
     {
         if (_micButton == null) return;
-        _micButton.Background = (IBrush)_micButton.FindResource("C_33262835")!;
-        _micButton.Foreground = (IBrush)_micButton.FindResource("C_FFEDEDF5")!;
+        _micButton.Background = ResolveBrush(_micButton, "C_33262835");
+        _micButton.Foreground = ResolveBrush(_micButton, "C_FFEDEDF5");
     }
+
+    // 主题资源是 Color 而非 IBrush，直接强转会抛 InvalidCastException
+    private static IBrush? ResolveBrush(Control control, string key)
+        => control.FindResource(key) switch
+        {
+            Color c => new SolidColorBrush(c),
+            IBrush b => b,
+            _ => null
+        };
 }

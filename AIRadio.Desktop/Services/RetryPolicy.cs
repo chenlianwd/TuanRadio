@@ -31,7 +31,7 @@ public static class RetryPolicy
             {
                 return await action(cancellationToken);
             }
-            catch (HttpRequestException ex) when (attempt < maxRetries)
+            catch (Exception ex) when (attempt < maxRetries && IsTransient(ex, cancellationToken))
             {
                 attempt++;
                 var delay = baseDelayMs * Math.Pow(2, attempt - 1);
@@ -40,6 +40,12 @@ public static class RetryPolicy
             }
         }
     }
+
+    // HttpClient 超时表现为 TaskCanceledException（派生自 OCE）——是最常见的瞬态网络
+    // 故障之一；用户主动取消（外部 token 已触发）绝不能重试
+    private static bool IsTransient(Exception ex, CancellationToken cancellationToken)
+        => ex is HttpRequestException or TimeoutException ||
+           (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested);
 
     public static async Task ExecuteAsync(
         Func<Task> action,

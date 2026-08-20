@@ -76,6 +76,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         {
             _audioService.RemoveTrack(track);
             Tracks.Remove(track);
+            // 同步收藏视图：删除的曲目留在 Favorites 里会成为不可播的幽灵条目
+            if (Favorites.Contains(track))
+                Favorites.Remove(track);
+            _favoriteIds.Remove(track.Id);
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
@@ -83,6 +87,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         {
             _audioService.ClearPlaylist();
             Tracks.Clear();
+            // 收藏从属于播放列表：清空后重载时收藏本来就会随之消失，这里同步清理避免幽灵条目和脏持久化
+            Favorites.Clear();
+            _favoriteIds.Clear();
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
@@ -107,28 +114,41 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         AddOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(async track =>
         {
-            SetSearchStatus($"正在添加《{track.Title}》...");
-            var url = await ResolvePlayUrlAsync(track);
-            if (url == null)
+            try
             {
-                SetSearchStatus("这首歌暂时无法获取播放地址，换一个结果试试。");
-                return;
-            }
+                SetSearchStatus($"正在添加《{track.Title}》...");
+                var url = await ResolvePlayUrlAsync(track);
+                if (url == null)
+                {
+                    SetSearchStatus("这首歌暂时无法获取播放地址，换一个结果试试。");
+                    return;
+                }
 
-            // Check if already in playlist
-            var existing = Tracks.FirstOrDefault(t => t.FilePath == url);
-            if (existing != null)
+                // Check if already in playlist
+                var existing = Tracks.FirstOrDefault(t => t.FilePath == url);
+                if (existing != null)
+                {
+                    SetSearchStatus("这首歌已经在播放列表里了。");
+                    return;
+                }
+
+                var t = track.ToTrack(url);
+                Tracks.Add(t);
+                _audioService.AddTracks(new[] { t });
+                TabIndex = 0;
+                await SaveAsync();
+                SetSearchStatus($"已添加《{track.Title}》。");
+            }
+            catch (OperationCanceledException)
             {
-                SetSearchStatus("这首歌已经在播放列表里了。");
-                return;
+                // 关闭窗口等场景的取消，不需要用户可见的错误提示
             }
-
-            var t = track.ToTrack(url);
-            Tracks.Add(t);
-            _audioService.AddTracks(new[] { t });
-            TabIndex = 0;
-            await SaveAsync();
-            SetSearchStatus($"已添加《{track.Title}》。");
+            catch (Exception ex)
+            {
+                // ReactiveCommand 异常若无订阅者会落入 RxApp.DefaultExceptionHandler 直接抛出
+                Log.Warning(ex, "Failed to add online track {Title}", track.Title);
+                SetSearchStatus($"添加《{track.Title}》失败，请稍后重试。");
+            }
         });
 
         ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
@@ -320,23 +340,6 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var data = new PlaylistData
-        {
-            Tracks = Tracks.Select(t => new PlaylistTrack
-            {
-                Id = t.Id,
-                Title = t.Title,
-                Artist = t.Artist,
-                Album = t.Album,
-                DurationMs = (long)t.Duration.TotalMilliseconds,
-                FilePath = t.FilePath,
-                SourceId = t.SourceId,
-                IsOnline = !string.IsNullOrWhiteSpace(t.SourceId),
-                IsFavorite = _favoriteIds.Contains(t.Id)
-            }).ToList(),
-            FavoriteIds = _favoriteIds.ToList()
-        };
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
         var gateHeld = false;
         try
         {
@@ -344,6 +347,26 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             gateHeld = true;
             if (Volatile.Read(ref _disposed) != 0)
                 return;
+
+            // 快照必须在保存 gate 内生成：SemaphoreSlim 不保证 FIFO 唤醒，
+            // gate 外生成的快照可能以"旧数据后写"覆盖新一次保存
+            var data = new PlaylistData
+            {
+                Tracks = Tracks.Select(t => new PlaylistTrack
+                {
+                    Id = t.Id,
+                    Title = t.Title,
+                    Artist = t.Artist,
+                    Album = t.Album,
+                    DurationMs = (long)t.Duration.TotalMilliseconds,
+                    FilePath = t.FilePath,
+                    SourceId = t.SourceId,
+                    IsOnline = !string.IsNullOrWhiteSpace(t.SourceId),
+                    IsFavorite = _favoriteIds.Contains(t.Id)
+                }).ToList(),
+                FavoriteIds = _favoriteIds.ToList()
+            };
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
 
             Directory.CreateDirectory(_playlistDir);
             if (_customWriter)
@@ -517,7 +540,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
 
-    private Track? FindMatchingTrack(Track track)
+    internal Track? FindMatchingTrack(Track track)
     {
         return Tracks.FirstOrDefault(t =>
             (!string.IsNullOrWhiteSpace(track.SourceId) && t.SourceId == track.SourceId) ||

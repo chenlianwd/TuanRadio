@@ -108,9 +108,12 @@ public class PlayerViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(pos =>
             {
-                CurrentSeconds = pos.TotalSeconds;
+                // 拖动期间 Slider 通过 TwoWay 绑定写入 CurrentSeconds，此处回写会把 thumb 拉回播放位置
                 if (!_isDragging)
+                {
+                    CurrentSeconds = pos.TotalSeconds;
                     DisplaySeconds = pos.TotalSeconds;
+                }
                 PositionText = FormatTime(pos);
             });
 

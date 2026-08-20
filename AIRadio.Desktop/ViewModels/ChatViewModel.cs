@@ -33,6 +33,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _ttsErrorSub;
     private readonly IDisposable _stateSub;
     private string? _pendingCommand;
+    private Track? _pendingRecommendedTrack;
 
     private WaveInEvent? _waveIn;
     private WaveFileWriter? _waveWriter;
@@ -415,6 +416,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         RefreshStatus();
         SetWorkingNotice("AI 正在回复", "正在请求 AI 服务，最多等待 30 秒。");
         _pendingCommand = null;
+        _pendingRecommendedTrack = null;
 
         try
         {
@@ -758,7 +760,24 @@ public class ChatViewModel : ViewModelBase, IDisposable
             };
         }
 
-        var recommended = await RequestDjRecommendationAsync(current, _lifetimeCts.Token);
+        // 节目单推荐优先（会话级氛围偏好在节目单路径生效），失败/无结果再回退 DJ 单曲推荐
+        Track? recommended = null;
+        try
+        {
+            recommended = await RequestProgramRecommendationAsync(current, _lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Program recommendation failed for chat request, falling back to DJ single-track");
+        }
+
+        if (recommended == null)
+            recommended = await RequestDjRecommendationAsync(current, _lifetimeCts.Token);
+
         if (recommended == null)
         {
             Messages.Add(new ChatMessage
@@ -777,11 +796,43 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 _audioService.AddTracks(new[] { recommended });
         }
 
-        var index = FindAudioTrackIndex(recommended.SourceId ?? recommended.Id, recommended.FilePath);
+        // 经 pending 机制在 TTS 播完后切歌，与 play: 指令的行为一致
+        _pendingRecommendedTrack = recommended;
         var displayText = $"给你推荐《{recommended.Title}》 - {recommended.Artist}。";
-        await RespondWithCommandAsync(displayText, null, "happy");
+        await RespondWithCommandAsync(displayText, "play_recommended", "happy");
+    }
+
+    private void PlayPendingRecommendedTrack()
+    {
+        var track = _pendingRecommendedTrack;
+        _pendingRecommendedTrack = null;
+        if (track == null) return;
+
+        // TTS 期间列表可能变化，播放前重查索引，避免旧索引指向错误曲目
+        var index = FindAudioTrackIndex(track.SourceId ?? track.Id, track.FilePath);
         if (index >= 0)
             _audioService.PlayAtIndex(index);
+    }
+
+    private Task<Track?> RequestProgramRecommendationAsync(
+        Track? current,
+        CancellationToken cancellationToken)
+    {
+        if (_recommendationService == null)
+            return Task.FromResult<Track?>(null);
+
+        var request = new RecommendationRequest
+        {
+            UserIntent = "继续当前电台",
+            CurrentTrack = current,
+            Favorites = _audioService.Playlist.Where(t => t.IsFavorite).ToList(),
+            Playlist = _audioService.Playlist.ToList(),
+            ExcludedTracks = _audioService.Playlist.ToList()
+        };
+
+        return _recommendationService is RecommendationService recommendationService
+            ? recommendationService.GetNextTrackAsync(request, cancellationToken)
+            : _recommendationService.GetNextTrackAsync(request).WaitAsync(cancellationToken);
     }
 
     private Task<Track?> RequestDjRecommendationAsync(
@@ -985,6 +1036,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
             else if (command == "recommend_more")
             {
                 await RecommendFreshTrackAsync();
+            }
+            else if (command == "play_recommended")
+            {
+                PlayPendingRecommendedTrack();
             }
             else if (command.StartsWith("change_mood:", StringComparison.OrdinalIgnoreCase))
             {

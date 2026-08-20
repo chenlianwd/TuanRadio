@@ -92,8 +92,8 @@
             <Grid Grid.Row="2" Grid.ColumnSpan="3" ColumnDefinitions="42,*,42" Margin="0,10,0,0">
                 <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}" FontSize="11"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"/>
-                <Slider Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
-                        Value="{Binding PlayerVM.CurrentSeconds}" PointerReleased="OnProgressSliderReleased"/>
+                <Slider x:Name="ProgressSlider" Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                        Value="{Binding PlayerVM.CurrentSeconds}"/>
                 <TextBlock Grid.Column="2" Text="{Binding PlayerVM.DurationText}" FontSize="11"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FF9A9AA6}" HorizontalAlignment="Right"/>
             </Grid>

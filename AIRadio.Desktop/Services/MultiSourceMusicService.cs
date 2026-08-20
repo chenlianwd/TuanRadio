@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AIRadio.Desktop.Models;
 using Serilog;
 
 namespace AIRadio.Desktop.Services;
@@ -16,6 +17,8 @@ public class MultiSourceMusicService : IMusicSearchService
 {
     private static readonly TimeSpan PrimarySourceTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SourceTimeout = TimeSpan.FromSeconds(5);
+    // yt-dlp 子进程搜索（含首次安装下载）无法在常规源预算内完成，YouTube 需要独立长预算
+    private static readonly TimeSpan SlowSourceTimeout = TimeSpan.FromSeconds(30);
     private readonly HttpClient _httpClient;
     private readonly List<IMusicSearchService> _sources;
     private readonly object _reportGate = new();
@@ -80,15 +83,48 @@ public class MultiSourceMusicService : IMusicSearchService
                 Log.Warning("Primary source {Source} returned no playable result for '{Keyword}'; trying fallback sources", primary.Name, keyword);
         }
 
-        var tasks = _sources.Skip(1).Select(s => SearchWithFallback(
-            s,
-            keyword,
-            limit,
-            SourceTimeout,
-            cancellationToken));
+        var tasks = _sources.Skip(1)
+            .Where(s => s is not YouTubeMusicService)
+            .Select(s => SearchWithFallback(
+                s,
+                keyword,
+                limit,
+                SourceTimeout,
+                cancellationToken));
         var results = await Task.WhenAll(tasks);
         cancellationToken.ThrowIfCancellationRequested();
-        var merged = results.SelectMany(r => r).Take(limit * 2).ToList();
+
+        // 跨源去重：同一首歌多源命中只保留首个（顺序即源优先级）
+        var merged = new List<OnlineTrack>();
+        foreach (var track in results.SelectMany(r => r))
+        {
+            if (merged.Count >= limit * 2)
+                break;
+            if (merged.Any(m => MusicIdentity.IsSameSongLoose(m.Title, m.Artist, track.Title, track.Artist)))
+                continue;
+            merged.Add(track);
+        }
+
+        // YouTube 是最低优先级兜底：5s 并行预算下必然超时被丢结果，
+        // 仅当其余源全部无结果时再单独跑，避免拖慢常规搜索路径
+        if (merged.Count == 0)
+        {
+            foreach (var slowSource in _sources.OfType<YouTubeMusicService>())
+            {
+                var slowResults = await SearchWithFallback(
+                    slowSource,
+                    keyword,
+                    limit,
+                    SlowSourceTimeout,
+                    cancellationToken);
+                if (slowResults.Count > 0)
+                {
+                    merged.AddRange(slowResults.Take(limit * 2));
+                    break;
+                }
+            }
+        }
+
         Log.Information("Music search '{Keyword}' returned {Count} fallback result(s)", keyword, merged.Count);
         return merged;
     }
@@ -172,7 +208,8 @@ public class MultiSourceMusicService : IMusicSearchService
                 continue;
 
             var candidates = await SearchForPlaybackFallbackAsync(source, query, cancellationToken);
-            var candidate = candidates.FirstOrDefault(candidate => IsSameSong(candidate, track));
+            var candidate = candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
+                candidate.Title, candidate.Artist, track.Title, track.Artist));
             if (candidate == null)
                 continue;
 
@@ -348,23 +385,6 @@ public class MultiSourceMusicService : IMusicSearchService
         var parts = trackId.Split(':', 2);
         return parts.Length == 2 ? parts[1] : trackId;
     }
-
-    private static bool IsSameSong(OnlineTrack candidate, OnlineTrack requested)
-    {
-        var requestedTitle = NormalizeMusicText(requested.Title);
-        var candidateTitle = NormalizeMusicText(candidate.Title);
-        if (requestedTitle.Length == 0 || candidateTitle.Length == 0 || requestedTitle != candidateTitle)
-            return false;
-
-        var requestedArtist = NormalizeMusicText(requested.Artist);
-        var candidateArtist = NormalizeMusicText(candidate.Artist);
-        return requestedArtist.Length == 0 || candidateArtist.Length == 0 ||
-               requestedArtist.Contains(candidateArtist, StringComparison.Ordinal) ||
-               candidateArtist.Contains(requestedArtist, StringComparison.Ordinal);
-    }
-
-    private static string NormalizeMusicText(string value)
-        => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
     private void AddSearchReport(SourceSearchStatus status)
     {

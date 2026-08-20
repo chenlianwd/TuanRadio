@@ -43,8 +43,10 @@ public class KuwoMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (!root.TryGetProperty("code", out var codeElement) || codeElement.GetInt32() != 200)
-                return new List<OnlineTrack>();
+            if (!root.TryGetProperty("code", out var codeElement) ||
+                codeElement.ValueKind != JsonValueKind.Number ||
+                codeElement.GetInt32() != 200)
+                throw new MusicSourceBusinessException($"酷我接口业务码异常({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})");
 
             var tracks = new List<OnlineTrack>();
             if (!root.TryGetProperty("data", out var dataElement) ||
@@ -53,15 +55,22 @@ public class KuwoMusicService : IMusicSearchService
 
             foreach (var item in listElement.EnumerateArray())
             {
-                tracks.Add(new OnlineTrack
+                try
                 {
-                    Id = "kuwo:" + (item.TryGetProperty("rid", out var rid) ? rid.GetInt64().ToString() : "0"),
-                    Title = item.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
-                    Artist = item.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "",
-                    Album = item.TryGetProperty("album", out var album) ? album.GetString() ?? "" : "",
-                    DurationMs = item.TryGetProperty("duration", out var dur) ? dur.GetInt32() * 1000L : 0,
-                    Source = "酷我"
-                });
+                    tracks.Add(new OnlineTrack
+                    {
+                        Id = "kuwo:" + (item.TryGetProperty("rid", out var rid) ? rid.GetInt64().ToString() : "0"),
+                        Title = item.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+                        Artist = item.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "",
+                        Album = item.TryGetProperty("album", out var album) ? album.GetString() ?? "" : "",
+                        DurationMs = item.TryGetProperty("duration", out var dur) ? dur.GetInt32() * 1000L : 0,
+                        Source = "酷我"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug(ex, "Skipped malformed Kuwo search item");
+                }
             }
 
             return tracks;
@@ -70,7 +79,7 @@ public class KuwoMusicService : IMusicSearchService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Kuwo search failed");
             return new List<OnlineTrack>();

@@ -25,9 +25,13 @@ public class SpectrumViewModel : ViewModelBase, IDisposable
             .Subscribe(data =>
             {
                 var count = Math.Min(data.Length, BandCount);
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < BandCount; i++)
                 {
-                    Bands[i] = data[i];
+                    // 尾部残留旧值要清零；显著未变化的频段跳过 Replace 通知，
+                    // 30Hz×32 的集合通知是频谱 UI 的主要开销
+                    var value = i < count ? data[i] : 0f;
+                    if (Math.Abs(Bands[i] - value) > 0.01f)
+                        Bands[i] = value;
                 }
                 SpectrumReceived?.Invoke(data);
             });

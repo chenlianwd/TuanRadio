@@ -34,6 +34,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private int _autoRadioAdvancing;
     private int _disposed;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
+    // 自然结束续播与手动 Next 的 nextCallback 两条推荐管线共用此门串行化，
+    // 避免并发时双份推荐请求、双份加列表、双次切歌
+    private readonly SemaphoreSlim _advanceGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
 
     public PlayerViewModel PlayerVM { get; }
@@ -269,7 +272,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.AddExternalTrack(current);
 
         PlaylistVM.ToggleFavoriteCommand.Execute(current).Subscribe();
-        IsCurrentFavorite = current.IsFavorite;
+        // 命令内部切换的是列表内的匹配实例（与 current 可能不是同一引用），必须从匹配实例回读
+        IsCurrentFavorite = PlaylistVM.FindMatchingTrack(current)?.IsFavorite ?? current.IsFavorite;
     }
 
     private async Task TellSongStoryAsync()
@@ -279,7 +283,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         var current = _audioService.CurrentTrack;
         if (current == null) return;
-        var story = await _djService.GenerateSongStoryAsync(current);
+        var story = await _djService.GenerateSongStoryAsync(current, _lifetimeCts.Token);
         if (IsDisposed)
             return;
 
@@ -514,25 +518,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             var current = _audioService.CurrentTrack;
             var originalTrack = current;
             var originalCount = PlaylistVM.Tracks.Count;
-            Track? recommended = null;
 
-            // Smart pick: prioritize favorites, exclude currently playing track, avoid same-artist repetition
-            var favorites = PlaylistVM.Favorites.ToList();
-            var allTracks = PlaylistVM.Tracks.ToList();
-            if (favorites.Count > 0)
-            {
-                var candidates = favorites.Where(t => t != current).ToList();
-                if (candidates.Count == 0)
-                    candidates = favorites;
-                recommended = PickDiversifiedTrack(candidates, current);
-            }
-            else if (allTracks.Count > 0)
-            {
-                var candidates = allTracks.Where(t => t != current).ToList();
-                if (candidates.Count == 0)
-                    candidates = allTracks;
-                recommended = PickDiversifiedTrack(candidates, current);
-            }
+            // 选曲启发式（收藏优先、排除当前曲、避开同歌手）统一收敛在 RecommendationService
+            var recommended = RecommendationService.PickStartupRecommendation(
+                PlaylistVM.Favorites,
+                PlaylistVM.Tracks,
+                current);
 
             if (recommended == null) return;
 
@@ -580,16 +571,21 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
         try
         {
-            await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
-            if (ShouldUseFreshRadioRecommendations())
+            await _advanceGate.WaitAsync(_lifetimeCts.Token);
+            try
             {
+                // 等门期间手动 Next 可能已完成推进，本次自然结束续播作废
+                if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current))
+                    return;
+
+                await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
                 var success = await PlayWithFreshRecommendation(current);
                 if (!success && !IsDisposed)
                     await PlayWithPlaylistRotation(current);
             }
-            else if (!IsDisposed)
+            finally
             {
-                await PlayWithPlaylistRotation(current);
+                _advanceGate.Release();
             }
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
@@ -656,7 +652,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
         if (pool.Count == 0) return;
 
-        var next = PickDiversifiedTrack(pool, current);
+        var next = RecommendationService.PickDiversifiedTrack(pool, current);
         if (next == null) return;
 
         if (IsDisposed)
@@ -665,8 +661,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (!PlaylistVM.Tracks.Contains(next))
             PlaylistVM.AddExternalTrack(next);
 
-        var index = PlaylistVM.Tracks.IndexOf(next);
-        if (index < 0) return;
+        if (PlaylistVM.Tracks.IndexOf(next) < 0) return;
 
         var script = await GenerateTrackIntroductionAsync(current, next, _lifetimeCts.Token);
         if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return;
@@ -674,24 +669,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ChatVM.AddAssistantMessage(script.Text);
         DjVisualCue?.Invoke(script.Expression, script.Motion);
         await SpeakDjTextAsync(script.Text);
-        if (!IsDisposed && IsSameTrack(_audioService.CurrentTrack, current))
-            _audioService.PlayAtIndex(index);
+
+        // 串场期间列表可能被增删，旧索引会指向错误曲目，播放前必须重查
+        var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrack(t, next));
+        if (playIndex >= 0 && !IsDisposed && IsSameTrack(_audioService.CurrentTrack, current))
+            _audioService.PlayAtIndex(playIndex);
     }
-
-    private static Track? PickDiversifiedTrack(List<Track> pool, Track? current)
-    {
-        if (pool.Count == 0) return null;
-        if (pool.Count == 1) return pool[0];
-
-        // Try to avoid same artist as current
-        var sameArtist = pool.Where(t => current != null && t.Artist == current.Artist).ToList();
-        var differentArtist = pool.Except(sameArtist).ToList();
-
-        var candidates = differentArtist.Count > 0 ? differentArtist : pool;
-        return candidates[Random.Shared.Next(candidates.Count)];
-    }
-
-    private static bool ShouldUseFreshRadioRecommendations() => true;
 
     private void AttachRecommendationContext(Track? current)
     {
@@ -793,17 +776,28 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed)
             return null;
 
-        await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
-        var current = _audioService.CurrentTrack;
-        AttachRecommendationContext(current);
-        var recommended = await GetRecommendedTrackAsync(current);
-        if (!IsDisposed && recommended != null &&
-            !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
+        await _advanceGate.WaitAsync(_lifetimeCts.Token);
+        try
         {
-            PlaylistVM.AddExternalTrack(recommended);
-        }
+            if (IsDisposed)
+                return null;
 
-        return IsDisposed ? null : recommended;
+            await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
+            var current = _audioService.CurrentTrack;
+            AttachRecommendationContext(current);
+            var recommended = await GetRecommendedTrackAsync(current);
+            if (!IsDisposed && recommended != null &&
+                !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
+            {
+                PlaylistVM.AddExternalTrack(recommended);
+            }
+
+            return IsDisposed ? null : recommended;
+        }
+        finally
+        {
+            _advanceGate.Release();
+        }
     }
 
     private Task<Track?> RequestRecommendedTrackAsync(

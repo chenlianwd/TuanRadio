@@ -14,6 +14,7 @@ public class RecommendationService : IRecommendationService
     private readonly ILLMService _llm;
     private readonly IMusicSearchService _musicSearch;
     private readonly List<UserMusicFeedback> _feedback = new();
+    private readonly HashSet<string> _returnedTrackIds = new(StringComparer.OrdinalIgnoreCase);
     private string? _moodBias;
 
     public RecommendationService(ILLMService llm, IMusicSearchService musicSearch)
@@ -98,6 +99,9 @@ public class RecommendationService : IRecommendationService
                 ? $"我先为你排了 {tracks.Count(x => x.IsPlayable)} 首可播放歌曲。"
                 : "暂时没找到合适的可播放歌曲。"
         };
+        // 新节目单生成即清空已播记忆：记忆只防"同一节目单内反复返回同一首"，
+        // 跨节目单的重复由调用方的 ExcludedTracks 负责
+        _returnedTrackIds.Clear();
         CurrentProgram = program;
         return program;
     }
@@ -110,17 +114,27 @@ public class RecommendationService : IRecommendationService
         CancellationToken cancellationToken)
     {
         var excluded = BuildExcludedTracks(request);
+        // 已播记忆：防止调用方未把已播曲目放进 ExcludedTracks 时，同一首被反复返回
         var next = CurrentProgram?.Tracks.FirstOrDefault(x =>
             x.IsPlayable &&
             !IsExcluded(x.Track, excluded) &&
+            !IsAlreadyReturned(x.Track) &&
             !_feedback.Any(f => f.Action == MusicFeedbackAction.Dislike && IsSameSource(f.TrackId, x.Track.SourceId ?? x.Track.Id)));
 
-        if (next != null)
-            return next.Track;
+        if (next == null)
+        {
+            var program = await CreateProgramAsync(request, cancellationToken);
+            next = program.Tracks.FirstOrDefault(x => x.IsPlayable && !IsAlreadyReturned(x.Track));
+        }
 
-        var program = await CreateProgramAsync(request, cancellationToken);
-        return program.Tracks.FirstOrDefault(x => x.IsPlayable)?.Track;
+        if (next != null)
+            _returnedTrackIds.Add(next.Track.SourceId ?? next.Track.Id);
+
+        return next?.Track;
     }
+
+    private bool IsAlreadyReturned(Track track)
+        => _returnedTrackIds.Contains(track.SourceId ?? track.Id);
 
     public void RecordFeedback(UserMusicFeedback feedback)
     {
@@ -135,6 +149,32 @@ public class RecommendationService : IRecommendationService
 
     /// <summary>会话级氛围偏好：覆盖意图正则检测出的 mood，并注入搜索词生成提示。传 null/空白清除。</summary>
     public void SetMoodBias(string? mood) => _moodBias = NormalizeMood(mood);
+
+    /// <summary>电台轮换选曲启发式：优先避开与当前曲同歌手，避免连播同一歌手。</summary>
+    public static Track? PickDiversifiedTrack(IReadOnlyList<Track> pool, Track? current)
+    {
+        if (pool.Count == 0) return null;
+        if (pool.Count == 1) return pool[0];
+
+        var differentArtist = pool.Where(t => current == null || t.Artist != current.Artist).ToList();
+        var candidates = differentArtist.Count > 0 ? differentArtist : pool.ToList();
+        return candidates[Random.Shared.Next(candidates.Count)];
+    }
+
+    /// <summary>启动推荐选曲启发式：收藏优先，排除正在播放的曲目，再做同歌手分散。</summary>
+    public static Track? PickStartupRecommendation(
+        IReadOnlyList<Track> favorites,
+        IReadOnlyList<Track> allTracks,
+        Track? current)
+    {
+        var source = favorites.Count > 0 ? favorites : allTracks;
+        if (source.Count == 0) return null;
+
+        var candidates = source.Where(t => t != current).ToList();
+        if (candidates.Count == 0)
+            candidates = source.ToList();
+        return PickDiversifiedTrack(candidates, current);
+    }
 
     private static string? NormalizeMood(string? mood)
     {

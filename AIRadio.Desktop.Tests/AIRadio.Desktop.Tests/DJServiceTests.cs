@@ -241,4 +241,28 @@ public class DJServiceTests
             "world",
             It.Is<List<ChatMessage>>(h => h.Count >= 2)), Times.Once);
     }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_TrimsHistoryInUserAssistantPairs()
+    {
+        // 回归：Anthropic 要求首条非 system 消息必须是 user，裁剪必须按 user/assistant 成对删除，
+        // 逐条删除会让历史以 assistant 开头，长对话后请求被 400 拒绝
+        _djService.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        var captured = new List<List<ChatMessage>>();
+        _mockLlm
+            .Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("回复")
+            .Callback<string, List<ChatMessage>>((_, history) => captured.Add(history.ToList()));
+
+        for (var i = 0; i < 15; i++)
+            await _djService.GenerateChatResponseAsync($"消息{i}");
+
+        var last = captured[^1];
+        Assert.Equal(21, last.Count); // system + 上限 20 条
+        Assert.Equal(MessageRole.System, last[0].Role);
+        Assert.Equal(MessageRole.User, last[1].Role);
+        for (var i = 1; i < last.Count; i++)
+            Assert.Equal(i % 2 == 1 ? MessageRole.User : MessageRole.Assistant, last[i].Role);
+    }
 }

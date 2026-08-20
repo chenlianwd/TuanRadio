@@ -36,8 +36,10 @@ public class NeteaseMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
 
-            if (!root.TryGetProperty("code", out var codeEl) || codeEl.GetInt32() != 200)
-                return new List<OnlineTrack>();
+            if (!root.TryGetProperty("code", out var codeEl) ||
+                codeEl.ValueKind != JsonValueKind.Number ||
+                codeEl.GetInt32() != 200)
+                throw new MusicSourceBusinessException($"网易接口业务码异常({(codeEl.ValueKind == JsonValueKind.Number ? codeEl.GetInt32() : -1)})，本地代理或鉴权可能失效");
 
             if (!root.TryGetProperty("result", out var result) ||
                 !result.TryGetProperty("songs", out var songs))
@@ -47,30 +49,38 @@ public class NeteaseMusicService : IMusicSearchService
 
             foreach (var song in songs.EnumerateArray())
             {
-                var artistName = "未知";
-                if (song.TryGetProperty("artists", out var artists) &&
-                    artists.GetArrayLength() > 0 &&
-                    artists[0].TryGetProperty("name", out var nameEl))
+                try
                 {
-                    artistName = nameEl.GetString() ?? "未知";
-                }
+                    var artistName = "未知";
+                    if (song.TryGetProperty("artists", out var artists) &&
+                        artists.GetArrayLength() > 0 &&
+                        artists[0].TryGetProperty("name", out var nameEl))
+                    {
+                        artistName = nameEl.GetString() ?? "未知";
+                    }
 
-                var albumName = "";
-                if (song.TryGetProperty("album", out var album) &&
-                    album.TryGetProperty("name", out var albumEl))
-                {
-                    albumName = albumEl.GetString() ?? "";
-                }
+                    var albumName = "";
+                    if (song.TryGetProperty("album", out var album) &&
+                        album.TryGetProperty("name", out var albumEl))
+                    {
+                        albumName = albumEl.GetString() ?? "";
+                    }
 
-                tracks.Add(new OnlineTrack
+                    tracks.Add(new OnlineTrack
+                    {
+                        Id = "netease:" + (song.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "0"),
+                        Title = song.TryGetProperty("name", out var titleEl) ? titleEl.GetString() ?? "" : "",
+                        Artist = artistName,
+                        Album = albumName,
+                        DurationMs = song.TryGetProperty("duration", out var durEl) ? durEl.GetInt64() : 0,
+                        Source = "网易"
+                    });
+                }
+                catch (Exception ex)
                 {
-                    Id = "netease:" + (song.TryGetProperty("id", out var idEl) ? idEl.GetInt64().ToString() : "0"),
-                    Title = song.TryGetProperty("name", out var titleEl) ? titleEl.GetString() ?? "" : "",
-                    Artist = artistName,
-                    Album = albumName,
-                    DurationMs = song.TryGetProperty("duration", out var durEl) ? durEl.GetInt64() : 0,
-                    Source = "网易"
-                });
+                    // 非官方接口字段变类型是常态：单条畸形条目只跳过自身，不让整源结果作废
+                    Log.Debug(ex, "Skipped malformed Netease search item");
+                }
             }
 
             return tracks;
@@ -79,7 +89,7 @@ public class NeteaseMusicService : IMusicSearchService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Netease search failed");
             return new List<OnlineTrack>();

@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
@@ -112,7 +113,7 @@ public class MusicApiServer : IDisposable
             }
 
             // Short-lived HttpClient for startup health check only (called once)
-            using var http = new HttpClient();
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
             for (int i = 0; i < MaxStartupRetries; i++)
             {
                 try
@@ -120,7 +121,8 @@ public class MusicApiServer : IDisposable
                     using var resp = await http.GetAsync(
                         $"http://127.0.0.1:{_port}/search?keywords=test&limit=1",
                         cancellationToken);
-                    if (resp.IsSuccessStatusCode)
+                    if (resp.IsSuccessStatusCode &&
+                        LooksLikeNeteaseSearchResponse(await resp.Content.ReadAsStringAsync(cancellationToken)))
                     {
                         Log.Information("Music API server ready on port {Port}", _port);
                         return;
@@ -128,14 +130,16 @@ public class MusicApiServer : IDisposable
                 }
                 catch
                 {
-                    await Task.Delay(500, cancellationToken);
                 }
 
+                await Task.Delay(500, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (Volatile.Read(ref _disposed) != 0)
                     return;
             }
 
+            // 健康检查失败也要回收进程：留着只会占用端口并让后续启动复用判断复杂化
+            Stop();
             Log.Warning("Music API server did not become ready within 15 seconds");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -197,7 +201,13 @@ public class MusicApiServer : IDisposable
             using var response = await http.GetAsync(
                 $"http://127.0.0.1:{_port}/search?keywords=test&limit=1",
                 cancellationToken);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+                return false;
+
+            // 仅凭 2xx 复用端口会被恰好占用 37250 的第三方本地进程冒充，
+            // 校验响应体是 NeteaseCloudMusicApi 形状的 JSON 才认可为自有服务
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return LooksLikeNeteaseSearchResponse(body);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -206,6 +216,24 @@ public class MusicApiServer : IDisposable
         catch (Exception ex)
         {
             Log.Debug(ex, "Music API readiness probe failed on port {Port}", _port);
+            return false;
+        }
+    }
+
+    private static bool LooksLikeNeteaseSearchResponse(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 64 * 1024)
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object &&
+                   doc.RootElement.TryGetProperty("code", out var code) &&
+                   code.ValueKind == JsonValueKind.Number;
+        }
+        catch (JsonException)
+        {
             return false;
         }
     }
