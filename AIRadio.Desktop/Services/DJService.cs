@@ -122,12 +122,18 @@ Response rules:
         }
     }
 
-    public async Task<SongStory> GenerateSongStoryAsync(Track track)
+    public Task<SongStory> GenerateSongStoryAsync(Track track)
+        => GenerateSongStoryAsync(track, CancellationToken.None);
+
+    public async Task<SongStory> GenerateSongStoryAsync(Track track, CancellationToken cancellationToken)
     {
         try
         {
             var prompt = $"歌曲《{track.Title}》- {track.Artist}。用 3-5 句话给电台听众讲讲这首歌的背景、风格或趣闻，亲切口语化，每句独占一行。";
-            var text = await _llm.ChatAsync(prompt, new List<ChatMessage>());
+            var text = _llm is LLMService llm
+                ? await llm.ChatAsync(prompt, new List<ChatMessage>(), cancellationToken)
+                : await _llm.ChatAsync(prompt, new List<ChatMessage>())
+                    .WaitAsync(cancellationToken);
             var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                              .Select(t => t.Trim())
                              .Where(t => t.Length > 0)
@@ -152,10 +158,16 @@ Response rules:
             _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
             _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
 
-            // Trim history to avoid unbounded growth (keep system prompt + last N messages)
+            // Trim history to avoid unbounded growth (keep system prompt + last N messages)。
+            // 必须按 user/assistant 成对删除：Anthropic 要求首条非 system 消息必须是 user，
+            // 逐条 RemoveAt(1) 会让序列以 assistant 开头，长对话后请求被 400 拒绝
             const int maxHistoryMessages = 20;
             while (_chatHistory.Count > maxHistoryMessages + 1)
+            {
                 _chatHistory.RemoveAt(1);
+                if (_chatHistory.Count > 1)
+                    _chatHistory.RemoveAt(1);
+            }
             _currentEmotion = DetectEmotion(response);
             return response;
         }

@@ -31,6 +31,18 @@ public partial class StarfieldView : UserControl
             _timer?.Stop();
             _initialized = false;
         };
+        // 隐藏（如星空开关只设 IsVisible=false，控件仍挂载）时停掉 30fps 定时器，
+        // 可见时恢复；Loaded 之前 _timer 为空，恢复由 OnLoaded 负责
+        PropertyChanged += (_, e) =>
+        {
+            if (e.Property == IsVisibleProperty)
+            {
+                if (IsVisible)
+                    _timer?.Start();
+                else
+                    _timer?.Stop();
+            }
+        };
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)

@@ -6,9 +6,15 @@ namespace AIRadio.Desktop.Models;
 // Track is intentionally mutable — instances are owned by ViewModels and mutated in-place
 // for performance (e.g., IsFavorite toggle, FilePath URL refresh). Converting to a record
 // or immutable type would require significant refactoring of PlaylistViewModel and AudioService.
-public class Track
+public class Track : System.ComponentModel.INotifyPropertyChanged
 {
     private const int MaxCoverArtBytes = 4 * 1024 * 1024;
+
+    // 仅 IsFavorite 提供变更通知：播放列表行内图标直接绑定该属性，
+    // 无通知时切换收藏后 ♥/♡ 不刷新
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private bool _isFavorite;
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
@@ -17,7 +23,18 @@ public class Track
     public string FilePath { get; set; } = string.Empty;
     public byte[]? CoverArt { get; set; }
     public string? SourceId { get; set; }
-    public bool IsFavorite { get; set; }
+
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        set
+        {
+            if (value == _isFavorite) return;
+            _isFavorite = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsFavorite)));
+        }
+    }
+
     public object? Tag { get; set; }
 
     public static Track FromFile(string filePath)

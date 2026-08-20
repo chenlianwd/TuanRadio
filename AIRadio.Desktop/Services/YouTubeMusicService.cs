@@ -113,7 +113,14 @@ public class YouTubeMusicService : IMusicSearchService
                 var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
                 var title = root.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null;
                 var channel = root.TryGetProperty("channel", out var chEl) ? chEl.GetString() : null;
-                var duration = root.TryGetProperty("duration", out var durEl) ? durEl.GetInt64() : 0;
+                // yt-dlp 的 duration 常为小数或 null，GetInt64 会抛 InvalidOperationException 且逃过 JsonException 捕获
+                var duration = 0L;
+                if (root.TryGetProperty("duration", out var durEl) &&
+                    durEl.ValueKind == JsonValueKind.Number &&
+                    durEl.TryGetInt64(out var parsedDuration))
+                {
+                    duration = parsedDuration;
+                }
 
                 if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title))
                     continue;

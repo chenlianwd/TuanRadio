@@ -14,6 +14,13 @@
             <Color x:Key="ChromeButtonClose">#FF6E6E80</Color>
             <Color x:Key="SurfaceFooter">#F0222234</Color>
             <Color x:Key="StarColor">#FFFFFFFF</Color>
+            <!-- StatusBar 状态机语义色（RadioStateToBrushConverter 消费） -->
+            <Color x:Key="StateIdleColor">#FFB5B5C8</Color>
+            <Color x:Key="StateCuratingColor">#FFA783FF</Color>
+            <Color x:Key="StateSearchingColor">#FFFFC86B</Color>
+            <Color x:Key="StateSpeakingColor">#FFB9FFE8</Color>
+            <Color x:Key="StatePlayingColor">#FF56F5C4</Color>
+            <Color x:Key="StateErrorColor">#FFFF4444</Color>
             <Color x:Key="C_00000000">#00000000</Color>
             <Color x:Key="C_01000000">#01000000</Color>
             <Color x:Key="C_10000000">#10000000</Color>
@@ -80,6 +87,13 @@
             <Color x:Key="ChromeButtonClose">#FF5A5362</Color>
             <Color x:Key="SurfaceFooter">#FFF0EBF5</Color>
             <Color x:Key="StarColor">#FF4C4557</Color>
+            <!-- StatusBar 状态机语义色（RadioStateToBrushConverter 消费） -->
+            <Color x:Key="StateIdleColor">#FF5F5968</Color>
+            <Color x:Key="StateCuratingColor">#FF7546AB</Color>
+            <Color x:Key="StateSearchingColor">#FF936000</Color>
+            <Color x:Key="StateSpeakingColor">#FF23654F</Color>
+            <Color x:Key="StatePlayingColor">#FF0E7B58</Color>
+            <Color x:Key="StateErrorColor">#FFC62828</Color>
             <Color x:Key="C_00000000">#00000000</Color>
             <Color x:Key="C_01000000">#01000000</Color>
             <Color x:Key="C_10000000">#FFEDE7F2</Color>

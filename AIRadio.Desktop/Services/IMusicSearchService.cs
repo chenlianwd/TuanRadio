@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,4 +43,15 @@ public class OnlineTrack
         FilePath = playUrl,
         SourceId = Id  // store original ID for URL re-resolution
     };
+}
+
+/// <summary>
+/// 音源接口返回了明确的业务失败（鉴权失败、风控、代理失效等）。
+/// 与"正常搜索无结果"区分：聚合层把这类异常透传为逐源 failed 状态，而不是误报"成功 0 条"。
+/// </summary>
+public class MusicSourceBusinessException : Exception
+{
+    public MusicSourceBusinessException(string message) : base(message)
+    {
+    }
 }

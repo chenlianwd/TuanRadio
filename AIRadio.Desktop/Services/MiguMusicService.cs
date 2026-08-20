@@ -39,7 +39,7 @@ public class MiguMusicService : IMusicSearchService
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(json) || json[0] == '<')
-                return new List<OnlineTrack>();
+                throw new MusicSourceBusinessException("咪咕接口返回了非 JSON 响应（可能被门户页劫持）");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -49,25 +49,32 @@ public class MiguMusicService : IMusicSearchService
             {
                 foreach (var item in musics.EnumerateArray())
                 {
-                    var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" :
-                             item.TryGetProperty("copyrightId", out var cId) ? cId.GetString() ?? "" : "";
-                    var title = item.TryGetProperty("songName", out var t) ? t.GetString() ?? "" :
-                                item.TryGetProperty("title", out var t2) ? t2.GetString() ?? "" : "";
-                    var artist = item.TryGetProperty("singerName", out var ar) ? ar.GetString() ?? "" :
-                                 item.TryGetProperty("singer", out var ar2) ? ar2.GetString() ?? "" : "";
-                    var album = item.TryGetProperty("albumName", out var al) ? al.GetString() ?? "" : "";
-
-                    if (!string.IsNullOrEmpty(id))
+                    try
                     {
-                        tracks.Add(new OnlineTrack
+                        var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" :
+                                 item.TryGetProperty("copyrightId", out var cId) ? cId.GetString() ?? "" : "";
+                        var title = item.TryGetProperty("songName", out var t) ? t.GetString() ?? "" :
+                                    item.TryGetProperty("title", out var t2) ? t2.GetString() ?? "" : "";
+                        var artist = item.TryGetProperty("singerName", out var ar) ? ar.GetString() ?? "" :
+                                     item.TryGetProperty("singer", out var ar2) ? ar2.GetString() ?? "" : "";
+                        var album = item.TryGetProperty("albumName", out var al) ? al.GetString() ?? "" : "";
+
+                        if (!string.IsNullOrEmpty(id))
                         {
-                            Id = "migu:" + id,
-                            Title = title,
-                            Artist = artist,
-                            Album = album,
-                            DurationMs = 0,
-                            Source = "咪咕"
-                        });
+                            tracks.Add(new OnlineTrack
+                            {
+                                Id = "migu:" + id,
+                                Title = title,
+                                Artist = artist,
+                                Album = album,
+                                DurationMs = 0,
+                                Source = "咪咕"
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "Skipped malformed Migu search item");
                     }
                 }
             }
@@ -78,7 +85,7 @@ public class MiguMusicService : IMusicSearchService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Migu search failed");
             return new List<OnlineTrack>();

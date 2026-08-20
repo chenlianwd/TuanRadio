@@ -48,32 +48,47 @@ public class KugouMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
+            // status=1 为正常；接口被风控/参数失效时返回其它状态码
+            if (root.TryGetProperty("status", out var statusEl) &&
+                statusEl.ValueKind == JsonValueKind.Number &&
+                statusEl.GetInt32() != 1)
+            {
+                throw new MusicSourceBusinessException($"酷狗接口业务状态异常({statusEl.GetInt32()})");
+            }
+
             var tracks = new List<OnlineTrack>();
             if (root.TryGetProperty("data", out var data) &&
                 data.TryGetProperty("lists", out var lists))
             {
                 foreach (var item in lists.EnumerateArray())
                 {
-                    if (!item.TryGetProperty("SongName", out var songNameEl) ||
-                        !item.TryGetProperty("SingerName", out var singerNameEl) ||
-                        !item.TryGetProperty("FileHash", out var fileIdEl))
-                        continue;
-
-                    var songName = songNameEl.GetString() ?? "";
-                    var singerName = singerNameEl.GetString() ?? "";
-                    var albumName = item.TryGetProperty("AlbumName", out var a) ? a.GetString() ?? "" : "";
-                    var fileId = fileIdEl.GetString() ?? "";
-                    var duration = item.TryGetProperty("Duration", out var d) ? d.GetInt32() : 0;
-
-                    tracks.Add(new OnlineTrack
+                    try
                     {
-                        Id = "kugou:" + fileId,
-                        Title = songName,
-                        Artist = singerName,
-                        Album = albumName,
-                        DurationMs = duration * 1000L,
-                        Source = "酷狗"
-                    });
+                        if (!item.TryGetProperty("SongName", out var songNameEl) ||
+                            !item.TryGetProperty("SingerName", out var singerNameEl) ||
+                            !item.TryGetProperty("FileHash", out var fileIdEl))
+                            continue;
+
+                        var songName = songNameEl.GetString() ?? "";
+                        var singerName = singerNameEl.GetString() ?? "";
+                        var albumName = item.TryGetProperty("AlbumName", out var a) ? a.GetString() ?? "" : "";
+                        var fileId = fileIdEl.GetString() ?? "";
+                        var duration = item.TryGetProperty("Duration", out var d) ? d.GetInt32() : 0;
+
+                        tracks.Add(new OnlineTrack
+                        {
+                            Id = "kugou:" + fileId,
+                            Title = songName,
+                            Artist = singerName,
+                            Album = albumName,
+                            DurationMs = duration * 1000L,
+                            Source = "酷狗"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "Skipped malformed Kugou search item");
+                    }
                 }
             }
 
@@ -83,7 +98,7 @@ public class KugouMusicService : IMusicSearchService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Kugou search failed");
             return new List<OnlineTrack>();

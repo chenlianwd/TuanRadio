@@ -75,16 +75,37 @@ public class EdgeTtsService : ITtsService, IDisposable
 
         try
         {
-            return await SynthesizeViaWebSocketAsync(text, voice, emotion, linkedCts.Token);
+            var audio = await SynthesizeViaWebSocketAsync(text, voice, emotion, linkedCts.Token);
+            // 空音频说明本次合成没有产出任何数据，按失败处理走重试，避免"合成成功但无声"
+            if (audio.Length > 0)
+                return audio;
+            throw new InvalidOperationException("Edge TTS returned empty audio");
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception firstAttempt)
         {
-            Log.Warning(ex, "Edge TTS synthesis failed for voice {Voice}", voice);
-            throw;
+            // 服务端按"一连接一次合成"设计，复用连接可能在合成中途收到 Close；
+            // 用全新连接重试一次
+            Log.Warning(firstAttempt, "Edge TTS first attempt failed for voice {Voice}, retrying with fresh connection", voice);
+            try
+            {
+                var audio = await SynthesizeViaWebSocketAsync(text, voice, emotion, linkedCts.Token);
+                if (audio.Length > 0)
+                    return audio;
+                throw new InvalidOperationException("Edge TTS returned empty audio after retry");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Edge TTS synthesis failed for voice {Voice}", voice);
+                throw;
+            }
         }
     }
 
@@ -201,7 +222,11 @@ public class EdgeTtsService : ITtsService, IDisposable
                     result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), timeoutCts.Token);
 
                     if (result.MessageType == WebSocketMessageType.Close)
-                        goto done;
+                    {
+                        // 未收到 turn.end 就收到 Close = 本次合成被服务端中断，
+                        // 返回部分音频会被上层当作成功（表现为无声），必须按失败抛出
+                        throw new InvalidOperationException("Edge TTS connection closed before synthesis completed");
+                    }
 
                     if (result.MessageType == WebSocketMessageType.Binary)
                     {
@@ -228,7 +253,7 @@ public class EdgeTtsService : ITtsService, IDisposable
                 // Consume remaining frames for this turn
                 break;
             }
-            done:
+
             return audioStream.ToArray();
         }
         catch (Exception)

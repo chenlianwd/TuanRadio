@@ -25,6 +25,11 @@ public class WhisperSttServiceTests : IDisposable
     [Fact]
     public async Task TranscribeAsync_MissingModelFile_ReturnsEmptyOrNull()
     {
+        // 隔离防护：模型缺失时 TranscribeAsync 内部会触发 ~148MB 真实下载，
+        // 仅在模型已就位时执行，否则跳过
+        if (!IsModelAlreadyDownloaded())
+            return;
+
         // WhisperSttService requires a model file; without it, TranscribeAsync should handle gracefully
         var service = new WhisperSttService();
         var wavPath = Path.Combine(_tempDir, "test.wav");
@@ -50,6 +55,10 @@ public class WhisperSttServiceTests : IDisposable
     [Fact]
     public async Task TranscribeAsync_EmptyWavFile_HandlesGracefully()
     {
+        // 同上：避免在干净机器上触发模型下载
+        if (!IsModelAlreadyDownloaded())
+            return;
+
         var service = new WhisperSttService();
         var wavPath = Path.Combine(_tempDir, "empty.wav");
         File.WriteAllBytes(wavPath, Array.Empty<byte>());
@@ -72,6 +81,11 @@ public class WhisperSttServiceTests : IDisposable
         var ex = Record.Exception(() => service.Dispose());
         Assert.Null(ex);
     }
+
+    private static bool IsModelAlreadyDownloaded()
+        => File.Exists(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AIRadio", "models", "ggml-base.bin"));
 
     private static byte[] CreateMinimalWav()
     {

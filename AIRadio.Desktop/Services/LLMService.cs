@@ -17,6 +17,8 @@ namespace AIRadio.Desktop.Services;
 /// </summary>
 public class LLMService : ILLMService
 {
+    private const int MaxOutputTokens = 800;
+
     private static readonly Dictionary<string, string> Providers = new()
     {
         ["openai"] = "https://api.openai.com/v1",
@@ -71,6 +73,11 @@ public class LLMService : ILLMService
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (LlmApiException)
+        {
+            // 已带失败分类（如 InvalidResponse），不要二次包装丢失分类
             throw;
         }
         catch (Exception ex)
@@ -160,7 +167,7 @@ public class LLMService : ILLMService
             {
                 model,
                 messages,
-                max_tokens = 300,
+                max_tokens = MaxOutputTokens,
                 temperature = 0.8
             };
 
@@ -198,7 +205,11 @@ public class LLMService : ILLMService
             }
 
             Log.Warning("Unrecognized LLM response format: {Response}", responseJson[..Math.Min(200, responseJson.Length)]);
-            return "";
+            throw new LlmApiException(new ApiFailureInfo(
+                ApiFailureKind.InvalidResponse,
+                "AI 返回了无法识别的格式",
+                "响应不是预期的 OpenAI chat/completions 结构。",
+                "请检查设置中的模型名称与服务地址是否匹配，或稍后重试。"));
         }, timeoutCts.Token, maxRetries: 2);
     }
 
@@ -206,8 +217,9 @@ public class LLMService : ILLMService
         List<object> messages,
         CancellationToken cancellationToken)
     {
-        // Extract system message and convert to Claude format
-        string systemPrompt = "";
+        // Extract system message and convert to Claude format.
+        // 多条 system（LLMService 内置"小音"人设 + DJ 角色人设）必须合并而不是相互覆盖
+        var systemParts = new List<string>();
         var claudeMessages = new List<object>();
         foreach (var msg in messages)
         {
@@ -216,82 +228,96 @@ public class LLMService : ILLMService
             var role = msgDict.GetValueOrDefault("role")?.ToString() ?? "user";
             var msgContent = msgDict.GetValueOrDefault("content")?.ToString() ?? "";
             if (role == "system")
-                systemPrompt = msgContent;
+            {
+                if (!string.IsNullOrWhiteSpace(msgContent))
+                    systemParts.Add(msgContent);
+            }
             else
+            {
                 claudeMessages.Add(new { role, content = msgContent });
+            }
         }
 
         var config = _config;
         var model = _model;
         var baseUrl = _baseUrl;
-        var requestBody = new
-        {
-            model,
-            system = systemPrompt,
-            messages = claudeMessages,
-            max_tokens = 300
-        };
-
-        var json = JsonSerializer.Serialize(requestBody);
-        using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-        using var request = new HttpRequestMessage(HttpMethod.Post, BuildAnthropicMessagesEndpoint(baseUrl))
+
+        return await RetryPolicy.ExecuteAsync(async ct =>
         {
-            Content = content
-        };
-        request.Headers.Add("x-api-key", config.ApiKey);
-        request.Headers.Add("anthropic-version", "2023-06-01");
-
-        using var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            timeoutCts.Token);
-        var responseJson = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            Log.Warning("Anthropic API error {StatusCode}: {Body}", response.StatusCode, responseJson);
-            throw new LlmApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
-        }
-
-        using var doc = JsonDocument.Parse(responseJson);
-        var root = doc.RootElement;
-
-        // Anthropic 可能先返回 thinking 块，正文不一定是 content[0]。
-        if (root.TryGetProperty("content", out var contentElement))
-        {
-            if (contentElement.ValueKind == JsonValueKind.String)
-                return contentElement.GetString() ?? "";
-
-            if (contentElement.ValueKind == JsonValueKind.Array)
+            var requestBody = new
             {
-                var textParts = new List<string>();
-                foreach (var block in contentElement.EnumerateArray())
-                {
-                    if (block.ValueKind == JsonValueKind.String &&
-                        !string.IsNullOrWhiteSpace(block.GetString()))
-                    {
-                        textParts.Add(block.GetString()!);
-                    }
+                model,
+                system = string.Join("\n\n", systemParts),
+                messages = claudeMessages,
+                max_tokens = MaxOutputTokens
+            };
 
-                    if (block.ValueKind == JsonValueKind.Object &&
-                        block.TryGetProperty("text", out var text) &&
-                        !string.IsNullOrWhiteSpace(text.GetString()))
-                    {
-                        textParts.Add(text.GetString()!);
-                    }
-                }
+            var json = JsonSerializer.Serialize(requestBody);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                if (textParts.Count > 0)
-                    return string.Join("\n", textParts);
+            using var request = new HttpRequestMessage(HttpMethod.Post, BuildAnthropicMessagesEndpoint(baseUrl))
+            {
+                Content = content
+            };
+            request.Headers.Add("x-api-key", config.ApiKey);
+            request.Headers.Add("anthropic-version", "2023-06-01");
+
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
+            var responseJson = await response.Content.ReadAsStringAsync(ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.Warning("Anthropic API error {StatusCode}: {Body}", response.StatusCode, responseJson);
+                throw new LlmApiException(ApiFailureInfo.FromStatusCode(response.StatusCode, responseJson));
             }
-        }
 
-        Log.Warning("Unrecognized Anthropic response format: {Response}",
-            responseJson[..Math.Min(200, responseJson.Length)]);
-        return "";
+            using var doc = JsonDocument.Parse(responseJson);
+            var root = doc.RootElement;
+
+            // Anthropic 可能先返回 thinking 块，正文不一定是 content[0]。
+            if (root.TryGetProperty("content", out var contentElement))
+            {
+                if (contentElement.ValueKind == JsonValueKind.String)
+                    return contentElement.GetString() ?? "";
+
+                if (contentElement.ValueKind == JsonValueKind.Array)
+                {
+                    var textParts = new List<string>();
+                    foreach (var block in contentElement.EnumerateArray())
+                    {
+                        if (block.ValueKind == JsonValueKind.String &&
+                            !string.IsNullOrWhiteSpace(block.GetString()))
+                        {
+                            textParts.Add(block.GetString()!);
+                        }
+
+                        if (block.ValueKind == JsonValueKind.Object &&
+                            block.TryGetProperty("text", out var text) &&
+                            !string.IsNullOrWhiteSpace(text.GetString()))
+                        {
+                            textParts.Add(text.GetString()!);
+                        }
+                    }
+
+                    if (textParts.Count > 0)
+                        return string.Join("\n", textParts);
+                }
+            }
+
+            Log.Warning("Unrecognized Anthropic response format: {Response}",
+                responseJson[..Math.Min(200, responseJson.Length)]);
+            throw new LlmApiException(new ApiFailureInfo(
+                ApiFailureKind.InvalidResponse,
+                "AI 返回了无法识别的格式",
+                "响应不是预期的 Anthropic messages 结构。",
+                "请检查设置中的模型名称与服务地址是否匹配，或稍后重试。"));
+        }, timeoutCts.Token, maxRetries: 2);
     }
 
     private bool IsConfigured()

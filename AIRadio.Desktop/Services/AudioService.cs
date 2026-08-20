@@ -31,6 +31,9 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<Track?> _trackEndedSubject = new();
     private readonly Subject<string> _ttsErrorSubject = new();
     private readonly List<Track> _playlist = new();
+    // UI 线程（增删/清空）与后台续播线程（NextAsync 追加）并发访问 _playlist/_currentIndex，
+    // 无同步的检查-使用间隙会抛越界异常
+    private readonly object _playlistGate = new();
     private int _currentIndex = -1;
     private bool _shuffle;
     private string _repeatMode = "radio";
@@ -71,9 +74,12 @@ public class AudioService : IAudioService, IDisposable
     // Crossfade
     private float _userVolume = 0.8f;
     private const double CrossfadeSeconds = 2.0;
+    private const float TtsDuckVolumeRatio = 0.35f;
     private static readonly TimeSpan PlaybackCallbackReleaseDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan UrlRefreshTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan NativeCleanupTimeout = TimeSpan.FromSeconds(2);
+    // 推荐链路（LLM+多源搜索）挂起时的硬超时兜底，避免 _nextGate 被长期占用导致电台静默停播
+    private static readonly TimeSpan NextCallbackTimeout = TimeSpan.FromSeconds(60);
     private bool _isFading;
     private readonly System.Threading.Timer _fadeTimer;
     private Func<Task<Track?>>? _nextCallback;
@@ -105,8 +111,28 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    public Track? CurrentTrack => _currentIndex >= 0 && _currentIndex < _playlist.Count ? _playlist[_currentIndex] : null;
-    public IReadOnlyList<Track> Playlist => _playlist.AsReadOnly();
+    public Track? CurrentTrack
+    {
+        get
+        {
+            lock (_playlistGate)
+            {
+                return _currentIndex >= 0 && _currentIndex < _playlist.Count ? _playlist[_currentIndex] : null;
+            }
+        }
+    }
+
+    public IReadOnlyList<Track> Playlist
+    {
+        get
+        {
+            // 返回快照：直接暴露 live 列表会让 UI 枚举与后台 AddTracks 交错
+            lock (_playlistGate)
+            {
+                return _playlist.ToArray();
+            }
+        }
+    }
     public bool IsShuffled => _shuffle;
     public string RepeatMode => _repeatMode;
 
@@ -170,7 +196,7 @@ public class AudioService : IAudioService, IDisposable
                 else
                 {
                     _resumeAfterTts = false;
-                    QueuePlayerVolume((int)(_userVolume * 35));
+                    QueuePlayerVolume((int)(_userVolume * TtsDuckVolumeRatio * 100));
                 }
             }
             else
@@ -227,6 +253,17 @@ public class AudioService : IAudioService, IDisposable
     }
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    private bool IsTtsPlaybackActive
+    {
+        get
+        {
+            lock (_ttsStateGate)
+            {
+                return _ttsOutput?.PlaybackState == NAudio.Wave.PlaybackState.Playing;
+            }
+        }
+    }
 
     private long GetLastKnownPositionMs() => Math.Max(0, Interlocked.Read(ref _lastPositionMs));
 
@@ -469,9 +506,12 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         CancelPendingPlayback();
-        _playlist.Clear();
-        _playlist.AddRange(tracks);
-        _currentIndex = _playlist.Count > 0 ? 0 : -1;
+        lock (_playlistGate)
+        {
+            _playlist.Clear();
+            _playlist.AddRange(tracks);
+            _currentIndex = _playlist.Count > 0 ? 0 : -1;
+        }
         NotifyTrackChanged();
     }
 
@@ -486,9 +526,12 @@ public class AudioService : IAudioService, IDisposable
         {
             tracks.Add(Track.FromFile(path));
         }
-        _playlist.Clear();
-        _playlist.AddRange(tracks);
-        _currentIndex = _playlist.Count > 0 ? 0 : -1;
+        lock (_playlistGate)
+        {
+            _playlist.Clear();
+            _playlist.AddRange(tracks);
+            _currentIndex = _playlist.Count > 0 ? 0 : -1;
+        }
         NotifyTrackChanged();
     }
 
@@ -497,12 +540,19 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
-        _playlist.AddRange(tracks);
-        if (_currentIndex < 0 && _playlist.Count > 0)
+        var shouldNotify = false;
+        lock (_playlistGate)
         {
-            _currentIndex = 0;
-            NotifyTrackChanged();
+            _playlist.AddRange(tracks);
+            if (_currentIndex < 0 && _playlist.Count > 0)
+            {
+                _currentIndex = 0;
+                shouldNotify = true;
+            }
         }
+
+        if (shouldNotify)
+            NotifyTrackChanged();
     }
 
     public void RemoveTrack(Track track)
@@ -510,15 +560,24 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
-        var index = _playlist.IndexOf(track);
-        if (index < 0) return;
+        var shouldStop = false;
+        lock (_playlistGate)
+        {
+            var index = _playlist.IndexOf(track);
+            if (index < 0) return;
 
-        _playlist.RemoveAt(index);
-        if (index < _currentIndex) _currentIndex--;
-        else if (index == _currentIndex)
+            _playlist.RemoveAt(index);
+            if (index < _currentIndex) _currentIndex--;
+            else if (index == _currentIndex)
+            {
+                if (_currentIndex >= _playlist.Count) _currentIndex = _playlist.Count - 1;
+                shouldStop = true;
+            }
+        }
+
+        if (shouldStop)
         {
             Stop();
-            if (_currentIndex >= _playlist.Count) _currentIndex = _playlist.Count - 1;
             NotifyTrackChanged();
         }
     }
@@ -529,8 +588,11 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         Stop();
-        _playlist.Clear();
-        _currentIndex = -1;
+        lock (_playlistGate)
+        {
+            _playlist.Clear();
+            _currentIndex = -1;
+        }
         NotifyTrackChanged();
     }
 
@@ -617,16 +679,39 @@ public class AudioService : IAudioService, IDisposable
             var nextCallback = _nextCallback;
             if (_repeatMode == "radio" && nextCallback != null)
             {
-                var track = await nextCallback();
+                // 推荐回调不回到 UI 线程执行：网络推荐完成后避免在 Avalonia UI 线程
+                // 上做 LibVLC 原生 Stop/Media/Play 同步调用
+                Track? track = null;
+                try
+                {
+                    track = await nextCallback()
+                        .WaitAsync(NextCallbackTimeout, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    Serilog.Log.Warning("Radio next callback timed out after {Seconds}s; falling back to playlist rotation", NextCallbackTimeout.TotalSeconds);
+                }
+
                 if (IsDisposed)
                     return;
 
                 if (track != null)
                 {
-                    if (_currentIndex >= 0 && _currentIndex < _playlist.Count &&
-                        _playlist[_currentIndex].FilePath == track.FilePath)
+                    var currentSnapshot = CurrentTrack;
+                    if (currentSnapshot != null && currentSnapshot.FilePath == track.FilePath)
                     {
-                        var retry = await nextCallback();
+                        Track? retry = null;
+                        try
+                        {
+                            retry = await nextCallback()
+                                .WaitAsync(NextCallbackTimeout, CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+                        catch (TimeoutException)
+                        {
+                            Serilog.Log.Warning("Radio next callback retry timed out");
+                        }
                         if (retry != null && retry.FilePath != track.FilePath)
                             track = retry;
                     }
@@ -636,27 +721,29 @@ public class AudioService : IAudioService, IDisposable
 
                     var index = FindTrackIndex(track);
                     if (index < 0)
-                    {
-                        AddTracks(new[] { track });
-                        index = _playlist.Count - 1;
-                    }
+                        index = AddTracksAndReturnLastIndex(new[] { track });
                     PlayAtIndex(index);
                 }
-                else if (_playlist.Count > 1 && _currentIndex >= 0)
+                else
                 {
-                    // 推荐服务暂时不可用时，仍保持在线电台连续播放，
-                    // 回退到当前歌单中的下一首，而不是静默停在 Stopped。
-                    var fallbackIndex = (_currentIndex + 1) % _playlist.Count;
-                    PlayTrack(fallbackIndex);
+                    var (count, currentIndex) = SnapshotPlaylist();
+                    if (count > 1 && currentIndex >= 0)
+                    {
+                        // 推荐服务暂时不可用时，仍保持在线电台连续播放，
+                        // 回退到当前歌单中的下一首，而不是静默停在 Stopped。
+                        var fallbackIndex = (currentIndex + 1) % count;
+                        PlayTrack(fallbackIndex);
+                    }
                 }
                 return;
             }
 
-            if (_playlist.Count == 0) return;
+            var (playlistCount, currentIndexSnapshot) = SnapshotPlaylist();
+            if (playlistCount == 0) return;
 
             var nextIndex = _shuffle
-                ? _rng.Next(_playlist.Count)
-                : (_currentIndex + 1) % _playlist.Count;
+                ? _rng.Next(playlistCount)
+                : (currentIndexSnapshot + 1) % playlistCount;
             PlayTrack(nextIndex);
         }
         catch (Exception ex)
@@ -676,7 +763,8 @@ public class AudioService : IAudioService, IDisposable
 
         try
         {
-            if (_playlist.Count == 0) return;
+            var (count, currentIndex) = SnapshotPlaylist();
+            if (count == 0) return;
 
             if (GetLastKnownPositionMs() > 3000)
             {
@@ -684,7 +772,7 @@ public class AudioService : IAudioService, IDisposable
                 return;
             }
 
-            var previousIndex = (_currentIndex - 1 + _playlist.Count) % _playlist.Count;
+            var previousIndex = (currentIndex - 1 + count) % count;
             PlayTrack(previousIndex);
         }
         catch (Exception ex)
@@ -699,15 +787,46 @@ public class AudioService : IAudioService, IDisposable
             PlayTrack(index, isRetry: false);
     }
 
+    private (int Count, int CurrentIndex) SnapshotPlaylist()
+    {
+        lock (_playlistGate)
+        {
+            return (_playlist.Count, _currentIndex);
+        }
+    }
+
+    private int AddTracksAndReturnLastIndex(IEnumerable<Track> tracks)
+    {
+        var shouldNotify = false;
+        int lastIndex;
+        lock (_playlistGate)
+        {
+            _playlist.AddRange(tracks);
+            if (_currentIndex < 0 && _playlist.Count > 0)
+            {
+                _currentIndex = 0;
+                shouldNotify = true;
+            }
+            lastIndex = _playlist.Count - 1;
+        }
+
+        if (shouldNotify)
+            NotifyTrackChanged();
+        return lastIndex;
+    }
+
     private int FindTrackIndex(Track track)
     {
-        for (int i = 0; i < _playlist.Count; i++)
+        lock (_playlistGate)
         {
-            var item = _playlist[i];
-            if (!string.IsNullOrWhiteSpace(track.SourceId) && item.SourceId == track.SourceId)
-                return i;
-            if (!string.IsNullOrWhiteSpace(track.FilePath) && item.FilePath == track.FilePath)
-                return i;
+            for (int i = 0; i < _playlist.Count; i++)
+            {
+                var item = _playlist[i];
+                if (!string.IsNullOrWhiteSpace(track.SourceId) && item.SourceId == track.SourceId)
+                    return i;
+                if (!string.IsNullOrWhiteSpace(track.FilePath) && item.FilePath == track.FilePath)
+                    return i;
+            }
         }
 
         return -1;
@@ -723,11 +842,17 @@ public class AudioService : IAudioService, IDisposable
 
     private void PlayTrackCore(int index, bool isRetry = false, bool skipUrlRefresh = false)
     {
-        if (IsDisposed || index < 0 || index >= _playlist.Count) return;
+        Track track;
+        lock (_playlistGate)
+        {
+            if (IsDisposed || index < 0 || index >= _playlist.Count) return;
+
+            _currentIndex = index; // 确保 CurrentTrack 在 NotifyTrackChanged 时正确
+            track = _playlist[index];
+        }
 
         var requestId = Interlocked.Increment(ref _playRequestId);
         Interlocked.Exchange(ref _recoveryScheduled, 0);
-        _currentIndex = index; // 确保 CurrentTrack 在 NotifyTrackChanged 时正确
         Interlocked.Exchange(ref _lastPositionMs, 0);
         _trackStartedAtMs = Environment.TickCount64;
         if (!isRetry)
@@ -735,7 +860,6 @@ public class AudioService : IAudioService, IDisposable
             _earlyEndRetryCount = 0;
             _playbackErrorRetryCount = 0;
         }
-        var track = _playlist[index];
         Media? newMedia = null;
         var mediaAssigned = false;
         try
@@ -1263,11 +1387,16 @@ public class AudioService : IAudioService, IDisposable
 
             if (_fadeDirection == 1)
             {
-                QueuePlayerVolume((int)(_userVolume * progress * 100));
+                // TTS 播报期间淡入不能把音量拉过 duck 电平，否则串场人声被音乐盖住
+                var effectiveProgress = IsTtsPlaybackActive
+                    ? Math.Min(progress, TtsDuckVolumeRatio)
+                    : progress;
+                QueuePlayerVolume((int)(_userVolume * effectiveProgress * 100));
                 if (progress >= 1.0)
                 {
                     _isFading = false;
-                    QueuePlayerVolume((int)(_userVolume * 100));
+                    if (!IsTtsPlaybackActive)
+                        QueuePlayerVolume((int)(_userVolume * 100));
                     _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
                 }
             }
