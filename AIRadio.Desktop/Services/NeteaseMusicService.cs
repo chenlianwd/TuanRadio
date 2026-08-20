@@ -109,6 +109,12 @@ public class NeteaseMusicService : IMusicSearchService
             if (root.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
             {
                 var first = data[0];
+                if (IsTrialOrRestricted(first))
+                {
+                    Log.Information("Netease returned a trial-only stream for {Id}; trying another source", trackId);
+                    return null;
+                }
+
                 if (first.TryGetProperty("url", out var urlEl))
                 {
                     var playUrl = urlEl.GetString();
@@ -128,4 +134,28 @@ public class NeteaseMusicService : IMusicSearchService
             return null;
         }
     }
+
+    private static bool IsTrialOrRestricted(JsonElement item)
+    {
+        if (item.TryGetProperty("freeTrialInfo", out var trialInfo) &&
+            trialInfo.ValueKind == JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        if (!item.TryGetProperty("freeTrialPrivilege", out var privilege) ||
+            privilege.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        return TryGetPositiveInt32(privilege, "listenType") ||
+               TryGetPositiveInt32(privilege, "cannotListenReason");
+    }
+
+    private static bool TryGetPositiveInt32(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var value) &&
+           value.ValueKind == JsonValueKind.Number &&
+           value.TryGetInt32(out var number) &&
+           number > 0;
 }

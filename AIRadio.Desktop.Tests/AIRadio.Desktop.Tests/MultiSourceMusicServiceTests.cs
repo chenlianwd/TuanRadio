@@ -51,17 +51,117 @@ public class MultiSourceMusicServiceTests
             });
         }));
         var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var track = new OnlineTrack
+        {
+            Id = "netease:123",
+            Title = "测试歌曲",
+            Artist = "测试歌手"
+        };
 
         var url = await service.GetPlayUrlAsync(
-            new OnlineTrack
-            {
-                Id = "netease:123",
-                Title = "测试歌曲",
-                Artist = "测试歌手"
-            },
+            track,
             CancellationToken.None);
 
         Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("fallback:456", track.Id);
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_TreatsNeteaseTrialStreamAsUnavailable()
+    {
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            if (url.Contains("/song/url", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"code\":200,\"data\":[{\"url\":\"https://trial.invalid/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            });
+        }));
+        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var track = new OnlineTrack
+        {
+            Id = "netease:123",
+            Title = "测试歌曲",
+            Artist = "测试歌手"
+        };
+
+        var url = await service.GetPlayUrlAsync(track, CancellationToken.None);
+
+        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("fallback:456", track.Id);
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_KeepsNeteaseFullStream()
+    {
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            var body = url.Contains("/song/url", StringComparison.Ordinal)
+                ? "{\"code\":200,\"data\":[{\"url\":\"https://preferred.invalid/full.mp3\",\"freeTrialInfo\":null,\"freeTrialPrivilege\":{\"listenType\":0,\"cannotListenReason\":0}}]}"
+                : "{\"code\":0}";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            });
+        }));
+        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var track = new OnlineTrack
+        {
+            Id = "netease:123",
+            Title = "测试歌曲",
+            Artist = "测试歌手"
+        };
+
+        var url = await service.GetPlayUrlAsync(track, CancellationToken.None);
+
+        Assert.Equal("https://preferred.invalid/full.mp3", url);
+        Assert.Equal("netease:123", track.Id);
+    }
+
+    [Fact]
+    public async Task GetAlternativePlayUrlAsync_SkipsCurrentSource()
+    {
+        var preferredPlayRequests = 0;
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            if (url.Contains("/song/url", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref preferredPlayRequests);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"code\":200,\"data\":[{\"url\":\"https://preferred.invalid/test.mp3\"}]}")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            });
+        }));
+        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var track = new OnlineTrack
+        {
+            Id = "netease:123",
+            Title = "测试歌曲",
+            Artist = "测试歌手"
+        };
+
+        var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
+
+        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("fallback:456", track.Id);
+        Assert.Equal(0, preferredPlayRequests);
     }
 
     [Fact]

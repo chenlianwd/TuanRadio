@@ -143,13 +143,32 @@ public class MultiSourceMusicService : IMusicSearchService
                 return preferredUrl;
         }
 
+        return await GetFallbackPlayUrlAsync(track, preferred, cancellationToken);
+    }
+
+    /// <summary>
+    /// 当前音源已经提前结束时，跳过该音源并按歌曲元数据寻找替代播放地址。
+    /// 成功时同步更新 track.Id，确保后续刷新继续使用实际生效的音源。
+    /// </summary>
+    public Task<string?> GetAlternativePlayUrlAsync(
+        OnlineTrack track,
+        CancellationToken cancellationToken)
+        => GetFallbackPlayUrlAsync(track, FindSource(track.Id), cancellationToken);
+
+    private async Task<string?> GetFallbackPlayUrlAsync(
+        OnlineTrack track,
+        IMusicSearchService? excludedSource,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var query = string.IsNullOrWhiteSpace(track.Artist)
             ? track.Title
             : $"{track.Title} {track.Artist}";
 
         foreach (var source in _sources)
         {
-            if (ReferenceEquals(source, preferred))
+            if (ReferenceEquals(source, excludedSource))
                 continue;
 
             var candidates = await SearchForPlaybackFallbackAsync(source, query, cancellationToken);
@@ -163,10 +182,16 @@ public class MultiSourceMusicService : IMusicSearchService
                 cancellationToken);
             if (!string.IsNullOrWhiteSpace(url))
             {
+                var previousSource = excludedSource?.Name ?? "unknown";
+                track.Id = candidate.Id;
+                track.Source = candidate.Source;
+                if (candidate.DurationMs > 0)
+                    track.DurationMs = candidate.DurationMs;
+
                 Log.Information(
                     "Playback URL fallback switched {Track} from {Preferred} to {Source}",
                     track.Title,
-                    preferred?.Name ?? "unknown",
+                    previousSource,
                     source.Name);
                 return url;
             }
