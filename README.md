@@ -25,7 +25,7 @@ AIRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电�
 - Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
 - 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
 - 多平台音乐搜索：网易云优先，酷我/酷狗/咪咕并行 fallback，YouTube 作为最低优先级兜底；每个源有独立硬超时，搜索状态逐源显示成功/超时/失败。
-- 播放 URL 失效时会依据歌名和歌手跨源重新匹配，不会把一个平台的歌曲 ID 直接交给另一个平台。
+- 播放 URL 失效或返回明确试听流时会依据歌名和歌手跨源重新匹配，并同步实际生效的音源 ID。
 - 真实 FFT 频谱：WasapiLoopbackCapture 采集系统输出 + 1024 点 FFT 转 32 频段；无有效回环数据时启用播放态视觉兜底，并限制幅度与刷新分配。
 - 统一电台状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error），StatusBar 实时显示。
 - Light/Dark 双主题，全部颜色走 `Themes/Colors.axaml` token。
@@ -34,7 +34,8 @@ AIRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电�
 
 ## 稳定性设计
 
-- URL 刷新和音量排空在后台执行；LibVLC 播放器操作统一串行，自动续播与聊天入口停止 TTS 时采用 2 秒有界后台等待，避免设备异常拖死 Avalonia UI。
+- URL 刷新和音量排空在后台执行；在线歌曲提前结束时依次刷新当前源、尝试替代源、再进入续播，避免同一试听片段循环重放。
+- LibVLC 播放器操作统一串行，自动续播与聊天入口停止 TTS 时采用 2 秒有界后台等待，避免设备异常拖死 Avalonia UI。
 - 在线搜索、LLM、推荐、Edge TTS、Whisper 和 yt-dlp 支持超时或应用生命周期取消；关闭窗口后不再继续更新 ViewModel。
 - LibVLC、WASAPI 与 NAudio 的释放采用有界等待和后台续清理，窗口关闭不会无限等待原生回调。
 - 播放列表和设置使用串行、临时文件替换写入，降低并发保存及异常退出造成半份 JSON 的风险。

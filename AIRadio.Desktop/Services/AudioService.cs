@@ -15,6 +15,8 @@ using PlaybackState = AIRadio.Desktop.Models.PlaybackState;
 
 namespace AIRadio.Desktop.Services;
 
+public sealed record TrackUrlResolution(string Url, string? SourceId);
+
 public class AudioService : IAudioService, IDisposable
 {
     private static readonly object LibVlcLifecycleGate = new();
@@ -76,6 +78,13 @@ public class AudioService : IAudioService, IDisposable
     private readonly System.Threading.Timer _fadeTimer;
     private Func<Task<Track?>>? _nextCallback;
     private EventHandler<StoppedEventArgs>? _ttsPlaybackStoppedHandler;
+
+    internal enum EarlyEndRecoveryAction
+    {
+        RefreshCurrentSource,
+        TryAlternativeSource,
+        Advance
+    }
 
     public bool IsPlaying => !IsDisposed && _currentState == PlaybackState.Playing;
     public TimeSpan CurrentPosition => IsDisposed
@@ -704,15 +713,15 @@ public class AudioService : IAudioService, IDisposable
         return -1;
     }
 
-    private void PlayTrack(int index, bool isRetry = false)
+    private void PlayTrack(int index, bool isRetry = false, bool skipUrlRefresh = false)
     {
         lock (_playerOperationGate)
         {
-            PlayTrackCore(index, isRetry);
+            PlayTrackCore(index, isRetry, skipUrlRefresh);
         }
     }
 
-    private void PlayTrackCore(int index, bool isRetry = false)
+    private void PlayTrackCore(int index, bool isRetry = false, bool skipUrlRefresh = false)
     {
         if (IsDisposed || index < 0 || index >= _playlist.Count) return;
 
@@ -737,14 +746,15 @@ public class AudioService : IAudioService, IDisposable
             // Online tracks may have stale URLs — always refresh before playing to avoid 403.
             // Fire-and-forget refresh only applies when we're in a retry path; normal
             // playback must await the fresh URL so we don't play with an expired link.
-            if (!string.IsNullOrEmpty(track.SourceId) &&
+            if (!skipUrlRefresh &&
+                !string.IsNullOrEmpty(track.SourceId) &&
                 (_urlResolver != null || _trackUrlResolver != null))
             {
                 var isOnlineUrl = filePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                                   filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
                 if (isRetry || string.IsNullOrWhiteSpace(filePath))
                 {
-                    _ = RefreshAndPlayTrackAsync(index, track, requestId);
+                    _ = RefreshAndPlayTrackAsync(index, track, requestId, isRetry);
                     SetState(PlaybackState.Stopped);
                     NotifyTrackChanged();
                     return;
@@ -819,9 +829,13 @@ public class AudioService : IAudioService, IDisposable
         if (track == null || !LooksLikeEarlyEnd(track))
             return false;
 
-        if (_earlyEndRetryCount == 0 && _currentIndex >= 0)
+        if (_currentIndex < 0)
+            return true;
+
+        var recoveryAction = GetEarlyEndRecoveryAction(_earlyEndRetryCount);
+        _earlyEndRetryCount++;
+        if (recoveryAction == EarlyEndRecoveryAction.RefreshCurrentSource)
         {
-            _earlyEndRetryCount++;
             Log.Warning(
                 "Ignoring early end for {Track} at {Position}/{Duration}; retrying current track",
                 track.Title,
@@ -831,6 +845,18 @@ public class AudioService : IAudioService, IDisposable
                 _currentIndex,
                 Volatile.Read(ref _playRequestId),
                 "early end");
+        }
+        else if (recoveryAction == EarlyEndRecoveryAction.TryAlternativeSource)
+        {
+            Log.Warning(
+                "Repeated early end for {Track} at {Position}/{Duration}; trying another source",
+                track.Title,
+                TimeSpan.FromMilliseconds(GetLastKnownPositionMs()),
+                track.Duration);
+            ScheduleAlternativeSourceRetry(
+                _currentIndex,
+                track,
+                Volatile.Read(ref _playRequestId));
         }
         else
         {
@@ -846,6 +872,14 @@ public class AudioService : IAudioService, IDisposable
 
         return true;
     }
+
+    internal static EarlyEndRecoveryAction GetEarlyEndRecoveryAction(int completedRecoveryCount)
+        => completedRecoveryCount switch
+        {
+            <= 0 => EarlyEndRecoveryAction.RefreshCurrentSource,
+            1 => EarlyEndRecoveryAction.TryAlternativeSource,
+            _ => EarlyEndRecoveryAction.Advance
+        };
 
     private bool LooksLikeEarlyEnd(Track track)
     {
@@ -867,16 +901,16 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
-            var newUrl = await ResolveUrlWithTimeoutAsync(track);
-            if (!string.IsNullOrEmpty(newUrl) &&
+            var resolution = await ResolveUrlWithTimeoutAsync(track);
+            if (resolution != null &&
                 requestId == Volatile.Read(ref _playRequestId) &&
                 _currentIndex >= 0 &&
                 _currentIndex < _playlist.Count &&
-                ReferenceEquals(_playlist[_currentIndex], track) &&
-                newUrl != track.FilePath)
+                ReferenceEquals(_playlist[_currentIndex], track))
             {
-                track.FilePath = newUrl;
-                Log.Debug("Refreshed URL for track {Track}", track.Title);
+                var changed = ApplyTrackUrlResolution(track, resolution);
+                if (changed)
+                    Log.Debug("Refreshed URL for track {Track}", track.Title);
             }
         }
         catch (OperationCanceledException) when (IsDisposed)
@@ -889,24 +923,23 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    private async System.Threading.Tasks.Task RefreshAndPlayTrackAsync(int index, Track track, int requestId)
+    private async System.Threading.Tasks.Task RefreshAndPlayTrackAsync(
+        int index,
+        Track track,
+        int requestId,
+        bool isRetry)
     {
         try
         {
-            var newUrl = await ResolveUrlWithTimeoutAsync(track);
-            if (!string.IsNullOrEmpty(newUrl) && newUrl != track.FilePath)
-            {
-                track.FilePath = newUrl;
-                Log.Debug("Refreshed URL before play for track {Track}", track.Title);
-            }
-
-            if (!string.IsNullOrEmpty(newUrl) &&
-                !string.IsNullOrEmpty(track.FilePath) &&
+            var resolution = await ResolveUrlWithTimeoutAsync(track);
+            if (resolution != null &&
                 requestId == Volatile.Read(ref _playRequestId) &&
                 index >= 0 && index < _playlist.Count &&
                 ReferenceEquals(_playlist[index], track))
             {
-                PlayTrack(index, isRetry: false);
+                if (ApplyTrackUrlResolution(track, resolution))
+                    Log.Debug("Refreshed URL before play for track {Track}", track.Title);
+                PlayTrack(index, isRetry, skipUrlRefresh: true);
                 return;
             }
 
@@ -923,16 +956,52 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    private async Task<string?> ResolveUrlWithTimeoutAsync(Track track)
+    private async Task<TrackUrlResolution?> ResolveUrlWithTimeoutAsync(Track track)
     {
+        using var resolverCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
         try
         {
             var cancellationToken = _lifetimeCts.Token;
-            var resolver = _trackUrlResolver != null
-                ? _trackUrlResolver(track)
-                : _urlResolver!(track.SourceId!);
-            return await resolver
+            if (_trackUrlResolver != null)
+            {
+                return await _trackUrlResolver(track, resolverCts.Token)
+                    .WaitAsync(UrlRefreshTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var url = await _urlResolver!(track.SourceId!)
                 .WaitAsync(UrlRefreshTimeout, cancellationToken)
+                .ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(url)
+                ? null
+                : new TrackUrlResolution(url, track.SourceId);
+        }
+        catch (OperationCanceledException) when (IsDisposed)
+        {
+            return null;
+        }
+        catch (TimeoutException)
+        {
+            resolverCts.Cancel();
+            Log.Warning(
+                "Refreshing play URL timed out after {Seconds}s for {SourceId}",
+                UrlRefreshTimeout.TotalSeconds,
+                track.SourceId);
+            return null;
+        }
+    }
+
+    private async Task<TrackUrlResolution?> ResolveAlternativeUrlWithTimeoutAsync(Track track)
+    {
+        var resolver = _fallbackTrackUrlResolver;
+        if (resolver == null)
+            return null;
+
+        using var resolverCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        try
+        {
+            return await resolver(track, resolverCts.Token)
+                .WaitAsync(UrlRefreshTimeout, _lifetimeCts.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (IsDisposed)
@@ -941,8 +1010,9 @@ public class AudioService : IAudioService, IDisposable
         }
         catch (TimeoutException)
         {
+            resolverCts.Cancel();
             Log.Warning(
-                "Refreshing play URL timed out after {Seconds}s for {SourceId}",
+                "Resolving alternative play URL timed out after {Seconds}s for {SourceId}",
                 UrlRefreshTimeout.TotalSeconds,
                 track.SourceId);
             return null;
@@ -984,6 +1054,93 @@ public class AudioService : IAudioService, IDisposable
                 Volatile.Write(ref _recoveryScheduled, 0);
             }
         });
+    }
+
+    private void ScheduleAlternativeSourceRetry(int index, Track track, int requestId)
+    {
+        if (_fallbackTrackUrlResolver == null)
+        {
+            ScheduleNextTrack(requestId, "alternative source resolver unavailable");
+            return;
+        }
+
+        if (IsDisposed || Interlocked.CompareExchange(ref _recoveryScheduled, 1, 0) != 0)
+            return;
+
+        var cancellationToken = _lifetimeCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(PlaybackCallbackReleaseDelay, cancellationToken).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested ||
+                    IsDisposed ||
+                    requestId != Volatile.Read(ref _playRequestId) ||
+                    index != Volatile.Read(ref _currentIndex) ||
+                    index < 0 ||
+                    index >= _playlist.Count ||
+                    !ReferenceEquals(_playlist[index], track))
+                {
+                    return;
+                }
+
+                var previousUrl = track.FilePath;
+                var previousSourceId = track.SourceId;
+                var resolution = await ResolveAlternativeUrlWithTimeoutAsync(track).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested ||
+                    IsDisposed ||
+                    requestId != Volatile.Read(ref _playRequestId) ||
+                    index != Volatile.Read(ref _currentIndex) ||
+                    index < 0 ||
+                    index >= _playlist.Count ||
+                    !ReferenceEquals(_playlist[index], track))
+                {
+                    return;
+                }
+
+                var sourceChanged = resolution != null &&
+                    !string.Equals(previousSourceId, resolution.SourceId, StringComparison.Ordinal);
+                var urlChanged = resolution != null &&
+                    !string.Equals(previousUrl, resolution.Url, StringComparison.Ordinal);
+                if (resolution != null && (sourceChanged || urlChanged))
+                {
+                    ApplyTrackUrlResolution(track, resolution);
+                    Log.Information(
+                        "Retrying {Track} with alternative source {SourceId}",
+                        track.Title,
+                        track.SourceId);
+                    PlayTrack(index, isRetry: true, skipUrlRefresh: true);
+                    return;
+                }
+
+                ScheduleNextTrack(requestId, "alternative source unavailable");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // 应用关闭时取消替代音源解析。
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Alternative source recovery failed for {Track}", track.Title);
+                ScheduleNextTrack(requestId, "alternative source recovery failed");
+            }
+            finally
+            {
+                Volatile.Write(ref _recoveryScheduled, 0);
+            }
+        });
+    }
+
+    private static bool ApplyTrackUrlResolution(Track track, TrackUrlResolution resolution)
+    {
+        var resolvedSourceId = string.IsNullOrWhiteSpace(resolution.SourceId)
+            ? track.SourceId
+            : resolution.SourceId;
+        var changed = !string.Equals(track.FilePath, resolution.Url, StringComparison.Ordinal) ||
+                      !string.Equals(track.SourceId, resolvedSourceId, StringComparison.Ordinal);
+        track.FilePath = resolution.Url;
+        track.SourceId = resolvedSourceId;
+        return changed;
     }
 
     private void ScheduleNextTrack(int requestId, string reason)
@@ -1068,12 +1225,30 @@ public class AudioService : IAudioService, IDisposable
     private int _fadeDirection = 1;
     private long _lastAdvanceMs;
     private Func<string, Task<string?>>? _urlResolver;
-    private Func<Track, Task<string?>>? _trackUrlResolver;
+    private Func<Track, CancellationToken, Task<TrackUrlResolution?>>? _trackUrlResolver;
+    private Func<Track, CancellationToken, Task<TrackUrlResolution?>>? _fallbackTrackUrlResolver;
 
-    public void SetTrackUrlResolver(Func<Track, Task<string?>> resolver)
+    public void SetTrackUrlResolver(Func<Track, CancellationToken, Task<TrackUrlResolution?>> resolver)
     {
         if (!IsDisposed)
             _trackUrlResolver = resolver;
+    }
+
+    public void SetTrackUrlResolver(Func<Track, Task<string?>> resolver)
+    {
+        SetTrackUrlResolver(async (track, _) =>
+        {
+            var url = await resolver(track).ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(url)
+                ? null
+                : new TrackUrlResolution(url, track.SourceId);
+        });
+    }
+
+    public void SetFallbackTrackUrlResolver(Func<Track, CancellationToken, Task<TrackUrlResolution?>> resolver)
+    {
+        if (!IsDisposed)
+            _fallbackTrackUrlResolver = resolver;
     }
 
     private void DoFadeStep()
@@ -1187,6 +1362,7 @@ public class AudioService : IAudioService, IDisposable
         _nextCallback = null;
         _urlResolver = null;
         _trackUrlResolver = null;
+        _fallbackTrackUrlResolver = null;
         _currentState = PlaybackState.Stopped;
         _isFading = false;
 

@@ -120,23 +120,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService is Services.AudioService audioSvc)
         {
             audioSvc.SetUrlResolver(async id => await musicSearchService.GetPlayUrlAsync(id));
-            audioSvc.SetTrackUrlResolver(async track =>
-            {
-                var sourceId = track.SourceId ?? track.Id;
-                var onlineTrack = new OnlineTrack
-                {
-                    Id = sourceId,
-                    Title = track.Title,
-                    Artist = track.Artist,
-                    Album = track.Album,
-                    DurationMs = (long)track.Duration.TotalMilliseconds
-                };
-
-                if (musicSearchService is MultiSourceMusicService multi)
-                    return await multi.GetPlayUrlAsync(onlineTrack, _lifetimeCts.Token);
-
-                return await musicSearchService.GetPlayUrlAsync(sourceId);
-            });
+            audioSvc.SetTrackUrlResolver((track, cancellationToken) =>
+                ResolveTrackUrlAsync(track, requireAlternative: false, cancellationToken));
+            audioSvc.SetFallbackTrackUrlResolver((track, cancellationToken) =>
+                ResolveTrackUrlAsync(track, requireAlternative: true, cancellationToken));
             audioSvc.SetNextCallback(GetNextTrackForAudioServiceAsync);
         }
 
@@ -236,6 +223,41 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(_ => Now = DateTimeOffset.Now);
+    }
+
+    private async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
+        Track track,
+        bool requireAlternative,
+        CancellationToken cancellationToken)
+    {
+        var sourceId = track.SourceId ?? track.Id;
+        if (_musicSearchService is not MultiSourceMusicService multi)
+        {
+            if (requireAlternative)
+                return null;
+
+            var directUrl = await _musicSearchService.GetPlayUrlAsync(sourceId, cancellationToken);
+            return string.IsNullOrWhiteSpace(directUrl)
+                ? null
+                : new TrackUrlResolution(directUrl, sourceId);
+        }
+
+        var onlineTrack = new OnlineTrack
+        {
+            Id = sourceId,
+            Title = track.Title,
+            Artist = track.Artist,
+            Album = track.Album,
+            DurationMs = (long)track.Duration.TotalMilliseconds
+        };
+
+        var url = requireAlternative
+            ? await multi.GetAlternativePlayUrlAsync(onlineTrack, cancellationToken)
+            : await multi.GetPlayUrlAsync(onlineTrack, cancellationToken);
+
+        return string.IsNullOrWhiteSpace(url)
+            ? null
+            : new TrackUrlResolution(url, onlineTrack.Id);
     }
 
     private void ToggleCurrentFavorite()

@@ -302,4 +302,152 @@ public class AudioServiceTests
         Assert.False(result);
         svc.Dispose();
     }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(5, 2)]
+    public void GetEarlyEndRecoveryAction_UsesBoundedRecoverySequence(
+        int completedRecoveryCount,
+        int expectedAction)
+    {
+        var result = AudioService.GetEarlyEndRecoveryAction(completedRecoveryCount);
+
+        Assert.Equal((AudioService.EarlyEndRecoveryAction)expectedAction, result);
+    }
+
+    [Fact]
+    public async Task AlternativeSourceRetry_DoesNotApplyResultAfterPlaybackRequestChanges()
+    {
+        var svc = new AudioService();
+        try
+        {
+            var original = new Track
+            {
+                Title = "Original",
+                SourceId = "netease:123",
+                FilePath = "https://trial.invalid/30s.mp3"
+            };
+            var selected = new Track
+            {
+                Title = "Selected",
+                SourceId = "kuwo:789",
+                FilePath = "https://selected.invalid/full.mp3"
+            };
+            svc.LoadTracks(new[] { original, selected });
+
+            var resolverStarted = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var resolverCompletion = new TaskCompletionSource<TrackUrlResolution?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            svc.SetFallbackTrackUrlResolver((_, _) =>
+            {
+                resolverStarted.TrySetResult(true);
+                return resolverCompletion.Task;
+            });
+
+            var requestIdField = typeof(AudioService).GetField(
+                "_playRequestId",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var currentIndexField = typeof(AudioService).GetField(
+                "_currentIndex",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var recoveryScheduledField = typeof(AudioService).GetField(
+                "_recoveryScheduled",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var scheduleMethod = typeof(AudioService).GetMethod(
+                "ScheduleAlternativeSourceRetry",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(requestIdField);
+            Assert.NotNull(currentIndexField);
+            Assert.NotNull(recoveryScheduledField);
+            Assert.NotNull(scheduleMethod);
+
+            var requestId = (int)requestIdField!.GetValue(svc)!;
+            scheduleMethod!.Invoke(svc, new object[] { 0, original, requestId });
+            await resolverStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            requestIdField.SetValue(svc, requestId + 1);
+            currentIndexField!.SetValue(svc, 1);
+            resolverCompletion.SetResult(new TrackUrlResolution(
+                "https://fallback.invalid/full.mp3",
+                "fallback:456"));
+
+            for (var attempt = 0;
+                 attempt < 100 && (int)recoveryScheduledField!.GetValue(svc)! != 0;
+                 attempt++)
+            {
+                await Task.Delay(10);
+            }
+
+            Assert.Equal(0, (int)recoveryScheduledField!.GetValue(svc)!);
+            Assert.Same(selected, svc.CurrentTrack);
+            Assert.Equal("netease:123", original.SourceId);
+            Assert.Equal("https://trial.invalid/30s.mp3", original.FilePath);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RefreshBeforePlay_DoesNotApplyResolutionToStaleRequest()
+    {
+        var svc = new AudioService();
+        try
+        {
+            var original = new Track
+            {
+                Title = "Original",
+                SourceId = "netease:123",
+                FilePath = "https://trial.invalid/30s.mp3"
+            };
+            var selected = new Track
+            {
+                Title = "Selected",
+                SourceId = "kuwo:789",
+                FilePath = "https://selected.invalid/full.mp3"
+            };
+            svc.LoadTracks(new[] { original, selected });
+
+            var resolverCompletion = new TaskCompletionSource<TrackUrlResolution?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            svc.SetTrackUrlResolver((_, _) => resolverCompletion.Task);
+
+            var requestIdField = typeof(AudioService).GetField(
+                "_playRequestId",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var currentIndexField = typeof(AudioService).GetField(
+                "_currentIndex",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var refreshMethod = typeof(AudioService).GetMethod(
+                "RefreshAndPlayTrackAsync",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(requestIdField);
+            Assert.NotNull(currentIndexField);
+            Assert.NotNull(refreshMethod);
+
+            var requestId = (int)requestIdField!.GetValue(svc)!;
+            var refreshTask = (Task)refreshMethod!.Invoke(
+                svc,
+                new object[] { 0, original, requestId, true })!;
+
+            requestIdField.SetValue(svc, requestId + 1);
+            currentIndexField!.SetValue(svc, 1);
+            resolverCompletion.SetResult(new TrackUrlResolution(
+                "https://fallback.invalid/full.mp3",
+                "fallback:456"));
+            await refreshTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Same(selected, svc.CurrentTrack);
+            Assert.Equal("netease:123", original.SourceId);
+            Assert.Equal("https://trial.invalid/30s.mp3", original.FilePath);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
 }
