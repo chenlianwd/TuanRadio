@@ -329,4 +329,31 @@ public class SettingsViewModelTests
             File.Delete(settingsFile);
         }
     }
+
+    [Fact]
+    public async Task SaveAndLoad_PersistsCompactModeSettings()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var settingsFile = Path.Combine(dir, "settings.json");
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            vm.CompactModeTopmost = true;
+            vm.StartInCompactMode = true;
+            await vm.SaveCommand.Execute();
+
+            var reloaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await reloaded.LoadAsync();
+
+            Assert.True(reloaded.CompactModeTopmost);
+            Assert.True(reloaded.StartInCompactMode);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
 }
+

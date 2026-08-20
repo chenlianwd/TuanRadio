@@ -35,6 +35,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _providerSub;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private bool _isLoadingSettings;
+    private string? _lastCharacterSignature;
     private int _disposed;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -53,6 +54,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool TtsEnabled { get; set; } = true;
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool EnableStarfield { get; set; } = true;
+    [Reactive] public bool CompactModeTopmost { get; set; }
+    [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
@@ -184,6 +187,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 if (root.TryGetProperty("enable_starfield", out var starfield))
                     EnableStarfield = starfield.GetBoolean();
 
+                if (root.TryGetProperty("compact_mode_topmost", out var compactTopmost))
+                    CompactModeTopmost = compactTopmost.GetBoolean();
+
+                if (root.TryGetProperty("start_in_compact_mode", out var startCompact))
+                    StartInCompactMode = startCompact.GetBoolean();
+
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
 
@@ -203,6 +212,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 LoadCharacterOverrides(SelectedCharacter);
 
             ConfigureLlm();
+
+            // 加载完成即建立角色签名基线：启动后的第一次无关保存（主题/简洁模式）不会误触发事件
+            _lastCharacterSignature = BuildCharacterSignature();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -222,6 +234,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         return _overrides.TryGetValue(characterId, out var ov) ? ov : null;
     }
+
+    private string BuildCharacterSignature()
+        => JsonSerializer.Serialize(new
+        {
+            language = SelectedLanguage,
+            tts = TtsEnabled,
+            overrides = _overrides
+                .OrderBy(kv => kv.Key)
+                .Select(kv => new { id = kv.Key, kv.Value.VoiceId, kv.Value.Personality })
+        });
 
     private async Task TestConnectionAsync()
     {
@@ -302,6 +324,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 overridesJson[kv.Key] = new { voice_id = kv.Value.VoiceId, personality = kv.Value.Personality };
             }
 
+            // 角色相关设置（语言/TTS/覆盖项）未变化时不触发 CharacterSettingsChanged：
+            // 该事件会让 MainWindowViewModel 重新 Initialize DJ 并清空聊天历史，
+            // 主题/简洁模式这类无关保存不应带来这个副作用
+            var characterSignature = BuildCharacterSignature();
+            var characterSettingsChanged = characterSignature != _lastCharacterSignature;
+            _lastCharacterSignature = characterSignature;
+
             var settingsData = new
             {
                 llm_provider = SelectedProvider,
@@ -310,6 +339,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 tts_enabled = TtsEnabled,
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
+                compact_mode_topmost = CompactModeTopmost,
+                start_in_compact_mode = StartInCompactMode,
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 character_overrides = overridesJson
@@ -320,7 +351,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             await File.WriteAllTextAsync(tempPath, json, _lifetimeCts.Token);
             File.Move(tempPath, _settingsFile, overwrite: true);
 
-            CharacterSettingsChanged?.Invoke();
+            if (characterSettingsChanged)
+                CharacterSettingsChanged?.Invoke();
             StatusMessage = "设置已保存";
             Log.Information("Settings saved to {Path}", _settingsFile);
         }

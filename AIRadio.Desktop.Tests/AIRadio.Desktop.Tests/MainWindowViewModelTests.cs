@@ -243,4 +243,54 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void ToggleCompactModeCommand_TogglesModeAndClosesOverlays()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var audio = CreateAudioMock(new List<Track>(), () => null);
+        var dj = new Mock<IDJService>();
+        var llm = new Mock<ILLMService>();
+        var storage = new Mock<ISecureStorage>();
+        var search = new Mock<IMusicSearchService>();
+        var stt = new Mock<ISttService>();
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            var settingsDir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(settingsDir);
+            vm = new MainWindowViewModel(
+                audio.Object,
+                dj.Object,
+                llm.Object,
+                storage.Object,
+                search.Object,
+                stt.Object,
+                CreateTempPlaylistFile(),
+                settingsFile: Path.Combine(settingsDir, "settings.json"));
+
+            vm.IsSettingsOpen = true;
+            vm.IsLibraryOpen = true;
+            vm.IsCharacterPickerOpen = true;
+
+            vm.ToggleCompactModeCommand.Execute(System.Reactive.Unit.Default).Subscribe();
+
+            Assert.True(vm.IsCompactMode);
+            Assert.False(vm.IsSettingsOpen);
+            Assert.False(vm.IsLibraryOpen);
+            Assert.False(vm.IsCharacterPickerOpen);
+
+            vm.ToggleCompactModeCommand.Execute(System.Reactive.Unit.Default).Subscribe();
+            Assert.False(vm.IsCompactMode);
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }
+
