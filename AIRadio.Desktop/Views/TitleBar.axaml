@@ -1,6 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="AIRadio.Desktop.Views.TitleBar">
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             x:Class="AIRadio.Desktop.Views.TitleBar"
+             x:DataType="vm:MainWindowViewModel">
 
     <Border Background="{DynamicResource SurfaceTitleBar}" PointerPressed="OnTitleBarPointerPressed">
         <Grid ColumnDefinitions="Auto,*,Auto" Margin="12,0">
@@ -10,6 +12,15 @@
                            Foreground="{DynamicResource TitleText}" VerticalAlignment="Center"/>
             </StackPanel>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <Button Width="30" Height="24" Padding="0" BorderThickness="0"
+                        Background="{DynamicResource C_00000000}"
+                        Foreground="{DynamicResource ChromeButton}"
+                        Command="{Binding ToggleCompactModeCommand}"
+                        ToolTip.Tip="简洁模式" AutomationProperties.Name="Compact mode">
+                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource ChromeButton}" StrokeThickness="2"
+                          Fill="Transparent" StrokeLineCap="Round"
+                          Data="M4,14 L10,14 L10,20 M20,10 L14,10 L14,4 M14,10 L21,3 M3,21 L10,14"/>
+                </Button>
                 <Button Width="30" Height="24" Padding="0" BorderThickness="0"
                         Background="{DynamicResource C_00000000}"
                         Foreground="{DynamicResource ChromeButton}" Click="OnMinimizeClicked"

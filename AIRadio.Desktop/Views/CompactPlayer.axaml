@@ -1,0 +1,108 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
+             x:Class="AIRadio.Desktop.Views.CompactPlayer"
+             x:DataType="vm:MainWindowViewModel">
+
+    <UserControl.Resources>
+        <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
+    </UserControl.Resources>
+
+    <Border Margin="6" Background="{DynamicResource SurfaceShell}"
+            BorderBrush="{DynamicResource BorderShell}" BorderThickness="1"
+            CornerRadius="12" ClipToBounds="True">
+        <Grid RowDefinitions="Auto,*" Margin="12,6,12,8">
+
+            <!-- 行1：状态点 + 曲目信息 + 收藏/最小化/关闭/展开；整行可拖动、双击还原 -->
+            <Grid x:Name="InfoRow" MinHeight="30" Background="Transparent"
+                  ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto"
+                  PointerPressed="OnDragAreaPressed" DoubleTapped="OnExpandDoubleTapped">
+                <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center">
+                    <Border.Background>
+                        <MultiBinding Converter="{x:Static conv:RadioStateToBrushConverter.Instance}">
+                            <Binding Path="CurrentState"/>
+                            <Binding Path="IsDarkMode"/>
+                        </MultiBinding>
+                    </Border.Background>
+                </Border>
+
+                <DockPanel Grid.Column="1" Margin="8,0,8,0">
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding PlayerVM.TrackArtist}"
+                               FontFamily="Consolas, Microsoft YaHei UI" FontSize="11"
+                               Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" MaxWidth="110"/>
+                    <TextBlock Text="{Binding PlayerVM.TrackTitle}"
+                               FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" FontWeight="700"
+                               Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+
+                <Button Grid.Column="2" Width="26" Height="24" Padding="0"
+                        Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="收藏" AutomationProperties.Name="Favorite">
+                    <Grid>
+                        <PathIcon Width="14" Height="14" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
+                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                        <PathIcon Width="14" Height="14" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsCurrentFavorite}"
+                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                    </Grid>
+                </Button>
+                <Button Grid.Column="3" Width="26" Height="24" Padding="0" Click="OnMinimizeClicked"
+                        ToolTip.Tip="最小化" AutomationProperties.Name="Minimize">
+                    <Rectangle Width="12" Height="2" RadiusX="1" RadiusY="1" Fill="{DynamicResource C_FF8A8A96}"/>
+                </Button>
+                <Button Grid.Column="4" Width="26" Height="24" Padding="0" Click="OnCloseClicked"
+                        ToolTip.Tip="关闭" AutomationProperties.Name="Close">
+                    <Path Width="13" Height="13" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
+                          Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
+                </Button>
+                <Button Grid.Column="5" Width="26" Height="24" Padding="0"
+                        Command="{Binding ToggleCompactModeCommand}"
+                        ToolTip.Tip="展开" AutomationProperties.Name="Expand">
+                    <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
+                          Data="M15,3 L21,3 L21,9 M9,21 L3,21 L3,15 M21,3 L14,10 M3,21 L10,14" Fill="Transparent" StrokeLineCap="Round"/>
+                </Button>
+            </Grid>
+
+            <!-- 行2：上一首/播放/下一首 + 时间 + 进度 + 迷你频谱 -->
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="0,2,0,0">
+                <Button Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.PreviousCommand}"
+                        ToolTip.Tip="上一首" AutomationProperties.Name="Previous">
+                    <PathIcon Width="14" Height="14" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
+                </Button>
+                <Button Grid.Column="1" Width="32" Height="28" Padding="0" Command="{Binding PlayerVM.PlayCommand}"
+                        ToolTip.Tip="播放/暂停" AutomationProperties.Name="Play/Pause">
+                    <Grid>
+                        <PathIcon Width="13" Height="13" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
+                                  Data="M8,5 L19,12 L8,19 Z"/>
+                        <PathIcon Width="13" Height="13" IsVisible="{Binding PlayerVM.IsPlaying}"
+                                  Data="M7,5 L10,5 L10,19 L7,19 Z M14,5 L17,5 L17,19 L14,19 Z"/>
+                    </Grid>
+                </Button>
+                <Button Grid.Column="2" Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.NextCommand}"
+                        ToolTip.Tip="下一首" AutomationProperties.Name="Next">
+                    <PathIcon Width="14" Height="14" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
+                </Button>
+                <TextBlock Grid.Column="3" Text="{Binding PlayerVM.PositionText}" FontSize="10" FontFamily="Consolas"
+                           Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                <Slider Grid.Column="4" x:Name="CompactProgressSlider" MinHeight="12"
+                        Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                        Value="{Binding PlayerVM.CurrentSeconds}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="5" Text="{Binding PlayerVM.DurationText}" FontSize="10" FontFamily="Consolas"
+                           Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <!-- 迷你频谱：8 段，code-behind 订阅 SpectrumVM.SpectrumReceived 更新高度 -->
+                <StackPanel x:Name="SpectrumPanel" Grid.Column="6" Orientation="Horizontal" Spacing="2"
+                            Width="46" Height="20" VerticalAlignment="Center">
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

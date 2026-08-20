@@ -65,6 +65,12 @@
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
                               OnContent="" OffContent=""/>
             </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="简洁模式窗口置顶" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactModeTopmost, Mode=TwoWay}"
+                              OnContent="" OffContent=""/>
+            </Grid>
         </StackPanel>
 
         <!-- Character customization -->

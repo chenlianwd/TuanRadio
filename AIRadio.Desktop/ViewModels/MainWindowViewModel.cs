@@ -57,6 +57,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public CharacterProfile SelectedCharacter { get; set; }
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool IsCurrentFavorite { get; set; }
+    [Reactive] public bool IsCompactMode { get; set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
@@ -83,6 +84,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleCompactModeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCurrentFavoriteCommand { get; }
@@ -101,7 +103,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IMusicSearchService musicSearchService,
         ISttService sttService,
         string? playlistFile = null,
-        IRecommendationService? recommendationService = null)
+        IRecommendationService? recommendationService = null,
+        string? settingsFile = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -116,7 +119,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService);
-        SettingsVM = new SettingsViewModel(_llmService, secureStorage);
+        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
         // Set URL resolver for re-fresh of online track URLs (prevents 403 from expired links)
@@ -154,6 +157,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         });
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
+        ToggleCompactModeCommand = ReactiveCommand.Create(ToggleCompactMode);
         UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
 
@@ -398,6 +402,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             return;
 
         IsDarkMode = SettingsVM.IsDarkMode;
+        // 启动时恢复上次的窗口模式（简洁/标准）
+        IsCompactMode = SettingsVM.StartInCompactMode;
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
@@ -409,6 +415,17 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         // AI startup recommendation: analyze playlist and recommend a song
         _ = AnnounceStartupFollowupAsync(_lifetimeCts.Token);
+    }
+
+    private void ToggleCompactMode()
+    {
+        IsCompactMode = !IsCompactMode;
+        if (IsCompactMode)
+            CloseOverlays();
+
+        // 记住窗口模式，下次启动直接进入上次模式（复用主题切换的保存链路）
+        SettingsVM.StartInCompactMode = IsCompactMode;
+        SettingsVM.SaveCommand.Execute().Subscribe();
     }
 
     public void CloseOverlays()

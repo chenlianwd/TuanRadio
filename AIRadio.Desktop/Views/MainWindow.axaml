@@ -60,9 +60,10 @@
     </Window.Styles>
 
     <Grid x:Name="RootGrid" Background="{DynamicResource SurfaceRoot}" RowDefinitions="30,*">
-        <local:TitleBar Grid.Row="0"/>
+        <local:TitleBar Grid.Row="0" IsVisible="{Binding !IsCompactMode}"/>
 
         <Border x:Name="ShellCard" Grid.Row="1"
+                IsVisible="{Binding !IsCompactMode}"
                 Margin="14"
                 VerticalAlignment="Stretch"
                 HorizontalAlignment="Stretch"
@@ -156,5 +157,8 @@
             <local:CharacterPicker DataContext="{Binding}"/>
             </Grid>
         </Border>
+
+        <!-- 简洁模式：两行紧凑卡，覆盖标题栏与主壳区域 -->
+        <local:CompactPlayer Grid.Row="0" Grid.RowSpan="2" IsVisible="{Binding IsCompactMode}"/>
     </Grid>
 </Window>
