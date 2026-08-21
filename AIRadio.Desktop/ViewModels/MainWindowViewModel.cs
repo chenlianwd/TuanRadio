@@ -162,7 +162,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleCompactTopmostCommand = ReactiveCommand.Create(() =>
         {
             SettingsVM.CompactModeTopmost = !SettingsVM.CompactModeTopmost;
-            SettingsVM.SaveCommand.Execute().Subscribe();
+            SettingsVM.SaveUiStateCommand.Execute().Subscribe();
         });
         UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
@@ -177,7 +177,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 if (Avalonia.Application.Current is { } app)
                     app.RequestedThemeVariant = isDark ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
                 SettingsVM.IsDarkMode = isDark;
-                SettingsVM.SaveCommand.Execute().Subscribe();
+                SettingsVM.SaveUiStateCommand.Execute().Subscribe();
         });
         ToggleCurrentFavoriteCommand = ReactiveCommand.Create(ToggleCurrentFavorite);
         LikeCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Like));
@@ -403,7 +403,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         // 记住窗口模式，下次启动直接进入上次模式（复用主题切换的保存链路）
         SettingsVM.StartInCompactMode = IsCompactMode;
-        SettingsVM.SaveCommand.Execute().Subscribe();
+        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
     }
 
     public void CloseOverlays()
