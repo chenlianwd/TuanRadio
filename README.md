@@ -29,6 +29,7 @@ AIRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电�
 - 真实 FFT 频谱：WasapiLoopbackCapture 采集系统输出 + 1024 点 FFT 转 32 频段；无有效回环数据时启用播放态视觉兜底，并限制幅度与刷新分配。
 - 统一电台状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error），StatusBar 实时显示。
 - Light/Dark 双主题，全部颜色走 `Themes/Colors.axaml` token。
+- 简洁播放模式：一键收缩为两行紧凑卡（曲目信息/播放控制/进度/收藏/迷你频谱/窗口控制），拖动、双击或 Esc 还原；窗口模式记忆，置顶可选（设置页开关）。
 - 收藏持久化到 `FavoriteIds`，并兼容旧的 `IsFavorite` 数据。
 - 通过 Node.js 启动网易云音乐 API，本地缺少 Node.js 时可下载便携版。
 
@@ -39,6 +40,8 @@ AIRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电�
 - 在线搜索、LLM、推荐、Edge TTS、Whisper 和 yt-dlp 支持超时或应用生命周期取消；关闭窗口后不再继续更新 ViewModel。
 - LibVLC、WASAPI 与 NAudio 的释放采用有界等待和后台续清理，窗口关闭不会无限等待原生回调。
 - 播放列表和设置使用串行、临时文件替换写入，降低并发保存及异常退出造成半份 JSON 的风险。
+- 播放列表与当前索引跨线程同步访问并返回快照；电台续播推荐链路带硬超时兜底，推荐挂起不会拖停电台。
+- Edge TTS 合成被服务端中断或返回空音频时自动换新连接重试；音源业务失败（鉴权/风控）逐源透传为失败状态而非"成功 0 条"。
 - 日志默认写入 `%APPDATA%\AIRadio\logs\airadio-*.log`，播放中断、音源超时和退出清理问题优先从这里排查。
 
 ## 项目结构
@@ -51,7 +54,7 @@ AIRadio.Desktop/
   Services/                播放、AI DJ、LLM、TTS、推荐、搜索、ASR、环境服务
   Themes/                  Colors.axaml 主题 token（Light/Dark）
   ViewModels/              ReactiveUI ViewModel
-  Views/                   Avalonia 视图（TitleBar/ClockStage/PlayerDeck/ChatArea/PlaylistDrawer/StatusBar 等 UserControl）
+  Views/                   Avalonia 视图（TitleBar/ClockStage/PlayerDeck/CompactPlayer/ChatArea/PlaylistDrawer/StatusBar 等 UserControl）
   server/                  NeteaseCloudMusicApi Node.js 服务
 AIRadio.Desktop.Tests/     xUnit 测试
 ```

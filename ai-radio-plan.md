@@ -31,6 +31,7 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - 音源韧性加固：内置音源取消传播、逐源硬超时、首选源可播性检查、按歌曲元数据跨源 URL 回退。
 - 退出与资源治理：应用级取消链路覆盖推荐/LLM/TTS/STT/搜索，LibVLC/WASAPI/NAudio 后台续清理。
 - 频谱稳定性加固：真实 FFT 幅度改为 dB 映射、无回环数据视觉兜底、复用 FFT 工作缓冲区。
+- 简洁播放模式：CompactPlayer 两行紧凑卡，窗口收缩还原、模式记忆与可选置顶。
 
 ## 当前流程
 
@@ -91,6 +92,10 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 - Edge TTS、Whisper、MusicApiServer、yt-dlp 和 ViewModel 后台任务纳入关闭取消链路。
 - 频谱改用 dB 幅度映射并复用 FFT 缓冲区，修复频谱顶满、停滞和高频分配。
 - PlayerDeck 限制边界并调整右侧自适应列，修复音量滑块溢出。
+
+**已完成（全量审查修复 + 简洁播放模式，2026-08-20）：**
+- 全量代码审查集中修复：麦克风按钮 InvalidCastException、进度条拖动与 seek 接线、YouTube 源 duration 解析与兜底分层、Anthropic 历史裁剪与 system 合并、本地 API 端口身份校验、播放列表跨线程安全、续播回调硬超时、EdgeTTS 无声重连、四源逐条容错与业务失败状态透传、RetryPolicy 超时覆盖、推荐已播记忆与双管线串行化。
+- 简洁播放模式：标题栏收缩为两行紧凑卡（状态点/曲目/收藏/窗口控制 + 播放控制/进度/迷你频谱），进入时关闭浮层、快照还原窗口边界（含最大化），模式记忆与置顶设置写入 settings.json；无关设置保存不再触发角色重初始化清空聊天历史。
 
 **已完成（视图重构 + 状态机，2026-08）：**
 - 统一状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error）派生 `MainWindowViewModel.CurrentState`，StatusBar 绑定显示。
