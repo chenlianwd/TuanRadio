@@ -139,7 +139,7 @@ public class SettingsViewModelTests
     }
 
     [Fact]
-    public void SelectedProvider_ClearsProviderSpecificValues()
+    public void SelectedProvider_KeepsSavedValues()
     {
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
 
@@ -148,9 +148,10 @@ public class SettingsViewModelTests
         vm.BaseUrl = "https://api.deepseek.com/v1";
 
         vm.SelectedProvider = "local";
-        Assert.Empty(vm.ApiKey);
-        Assert.Empty(vm.Model);
-        Assert.Empty(vm.BaseUrl);
+
+        Assert.Equal("remote-secret", vm.ApiKey);
+        Assert.Equal("deepseek-chat", vm.Model);
+        Assert.Equal("https://api.deepseek.com/v1", vm.BaseUrl);
     }
 
     [Fact]
@@ -276,7 +277,7 @@ public class SettingsViewModelTests
     }
 
     [Fact]
-    public async Task SaveCommand_EmptyKey_RemovesCurrentAndLegacyCredentials()
+    public async Task SaveCommand_EmptyKey_KeepsCurrentCredentialAndRemovesLegacy()
     {
         var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
         try
@@ -289,8 +290,51 @@ public class SettingsViewModelTests
 
             await vm.SaveCommand.Execute();
 
-            _mockStorage.Verify(x => x.DeleteApiKey("llm"), Times.Once);
+            _mockStorage.Verify(x => x.DeleteApiKey("llm"), Times.Never);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", It.IsAny<string>()), Times.Never);
             _mockStorage.Verify(x => x.DeleteApiKey("minimax"), Times.Once);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task SaveUiStateCommand_PreservesLlmFieldsFromDiskAndSkipsSecureStorage()
+    {
+        var settingsFile = Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_base_url": "https://proxy.example/v1",
+              "llm_model": "claude-test",
+              "is_dark_mode": false
+            }
+            """);
+
+        try
+        {
+            // 模拟内存里的 LLM 字段已被清空：无关自动保存也不得覆盖磁盘上的配置
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                SelectedProvider = "openai",
+                BaseUrl = string.Empty,
+                Model = string.Empty,
+                IsDarkMode = true
+            };
+
+            await vm.SaveUiStateCommand.Execute();
+
+            _mockStorage.Verify(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _mockStorage.Verify(x => x.DeleteApiKey(It.IsAny<string>()), Times.Never);
+
+            var loaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await loaded.LoadAsync();
+            Assert.Equal("anthropic", loaded.SelectedProvider);
+            Assert.Equal("https://proxy.example/v1", loaded.BaseUrl);
+            Assert.Equal("claude-test", loaded.Model);
+            Assert.True(loaded.IsDarkMode);
         }
         finally
         {

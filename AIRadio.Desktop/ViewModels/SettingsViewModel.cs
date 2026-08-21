@@ -32,9 +32,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly string _settingsFile;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
-    private readonly IDisposable _providerSub;
     private readonly CancellationTokenSource _lifetimeCts = new();
-    private bool _isLoadingSettings;
     private string? _lastCharacterSignature;
     private bool _lastSaveSucceeded;
     private int _disposed;
@@ -98,6 +96,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
 
+    // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
+    // 磁盘上已有的 llm_* 字段原样保留
+    public ReactiveCommand<Unit, Unit> SaveUiStateCommand { get; }
+
     // Notify MainWindow when character settings change so it can re-apply
     public event Action? CharacterSettingsChanged;
 
@@ -109,24 +111,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _settingsDir = Path.GetDirectoryName(_settingsFile) ?? SettingsDir;
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
-        SaveCommand = ReactiveCommand.CreateFromTask(SaveAsync);
+        SaveCommand = ReactiveCommand.CreateFromTask(() => SaveAsync());
+        SaveUiStateCommand = ReactiveCommand.CreateFromTask(() => SaveAsync(persistLlmFields: false));
 
         // When character selection changes, load its overrides
         _selectedCharacterSub = this.WhenAnyValue(x => x.SelectedCharacter)
             .Where(c => c != null)
             .Subscribe(c => LoadCharacterOverrides(c!));
-
-        _providerSub = this.WhenAnyValue(x => x.SelectedProvider)
-            .Skip(1)
-            .Subscribe(_ =>
-            {
-                if (_isLoadingSettings)
-                    return;
-
-                ApiKey = string.Empty;
-                BaseUrl = string.Empty;
-                Model = string.Empty;
-            });
 
         // Default selection
         SelectedCharacter = Characters[0];
@@ -151,7 +142,6 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        _isLoadingSettings = true;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -225,10 +215,6 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         {
             Log.Warning(ex, "Failed to load settings");
         }
-        finally
-        {
-            _isLoadingSettings = false;
-        }
     }
 
     public (string VoiceId, string Personality)? GetOverride(string characterId)
@@ -285,7 +271,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task SaveAsync()
+    private async Task SaveAsync(bool persistLlmFields = true)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
@@ -299,7 +285,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
-            NormalizeLlmInputs();
+            if (persistLlmFields)
+                NormalizeLlmInputs();
 
             // Save current character overrides
             if (SelectedCharacter != null && CharacterVoice != null)
@@ -307,17 +294,29 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
             }
 
-            if (!string.IsNullOrWhiteSpace(ApiKey))
+            string providerToWrite, baseUrlToWrite, modelToWrite;
+            if (persistLlmFields)
             {
-                await _secureStorage.SaveApiKeyAsync(LlmCredentialService, ApiKey);
+                providerToWrite = SelectedProvider;
+                baseUrlToWrite = BaseUrl;
+                modelToWrite = Model;
+
+                if (!string.IsNullOrWhiteSpace(ApiKey))
+                {
+                    await _secureStorage.SaveApiKeyAsync(LlmCredentialService, ApiKey);
+                }
+                // ApiKey 为空时保留凭据管理器里的旧 key：自动保存路径随时可能触发保存，
+                // 把空值视为"未填写"而不是"要清除"
+                _secureStorage.DeleteApiKey(LegacyMinimaxCredentialService);
+                ConfigureLlm();
             }
             else
             {
-                _secureStorage.DeleteApiKey(LlmCredentialService);
+                var persisted = await ReadPersistedLlmFieldsAsync();
+                providerToWrite = persisted?.Provider ?? SelectedProvider;
+                baseUrlToWrite = persisted?.BaseUrl ?? BaseUrl;
+                modelToWrite = persisted?.Model ?? Model;
             }
-            _secureStorage.DeleteApiKey(LegacyMinimaxCredentialService);
-
-            ConfigureLlm();
 
             Directory.CreateDirectory(_settingsDir);
             var overridesJson = new Dictionary<string, object>();
@@ -335,9 +334,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             var settingsData = new
             {
-                llm_provider = SelectedProvider,
-                llm_base_url = BaseUrl,
-                llm_model = Model,
+                llm_provider = providerToWrite,
+                llm_base_url = baseUrlToWrite,
+                llm_model = modelToWrite,
                 tts_enabled = TtsEnabled,
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
@@ -375,6 +374,32 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private async Task<(string Provider, string BaseUrl, string Model)?> ReadPersistedLlmFieldsAsync()
+    {
+        try
+        {
+            if (!File.Exists(_settingsFile))
+                return null;
+
+            var json = await File.ReadAllTextAsync(_settingsFile, _lifetimeCts.Token);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return (
+                root.TryGetProperty("llm_provider", out var p) ? NormalizeProvider(p.GetString()) : "openai",
+                root.TryGetProperty("llm_base_url", out var b) ? b.GetString() ?? string.Empty : string.Empty,
+                root.TryGetProperty("llm_model", out var m) ? m.GetString() ?? string.Empty : string.Empty);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read persisted LLM fields, falling back to current values");
+            return null;
+        }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -382,7 +407,6 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
         _lifetimeCts.Cancel();
         _selectedCharacterSub.Dispose();
-        _providerSub.Dispose();
     }
 
     private void ConfigureLlm(string? apiKeyOverride = null)
