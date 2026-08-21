@@ -38,6 +38,19 @@ public class PlaylistViewModelTests
         return (vm, audioMock, searchMock);
     }
 
+    [Theory]
+    [InlineData("网易云音乐", "ok", 20, null, null, "网易云音乐成功20条")]
+    [InlineData("网易云音乐", "ok", 20, "试听或失效片段，已过滤", null, "网易云音乐搜到20条(试听或失效片段，已过滤)")]
+    [InlineData("YouTube", "timeout", 0, null, "超时(30s)", "YouTube超时")]
+    [InlineData("酷我音乐", "failed", 0, null, "连接被拒绝", "酷我音乐失败:连接被拒绝")]
+    public void FormatSourceStatus_CoversOkNoteTimeoutAndFailure(
+        string name, string status, int count, string? note, string? error, string expected)
+    {
+        var entry = new SourceSearchStatus(name, status, count, error, note);
+
+        Assert.Equal(expected, PlaylistViewModel.FormatSourceStatus(entry));
+    }
+
     // Temp directories are created per-test and not cleaned up (M45).
     // OS temp cleanup handles them; for CI, consider adding IDisposable with cleanup.
     private static string CreateTempPlaylistFile()

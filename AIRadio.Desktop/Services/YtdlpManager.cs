@@ -19,7 +19,7 @@ public static class YtdlpManager
     private static readonly string YtdlpExe = Path.Combine(YtdlpDir, "yt-dlp.exe");
     private static readonly SemaphoreSlim InstallGate = new(1, 1);
 
-    // 官方 release endpoint，首次真正使用 YouTube 时按需下载，避免启动阶段阻塞。
+    // 官方 release endpoint：App 启动后台预热下载；预热失败时首次真正使用 YouTube 会按需重试
     private const string DownloadUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 
     public static string GetYtdlpPath() => YtdlpExe;

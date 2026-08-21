@@ -107,6 +107,20 @@ public partial class App : Application
                 await _mainVm.InitializeAsync(cancellationToken);
 
             Log.Information("AI Radio initialized successfully");
+
+            // yt-dlp 首次下载约 20s，若发生在搜索兜底时会吃掉 YouTube 源的 30s 预算导致必然超时；
+            // 启动后台预热，失败只记日志，真正用到 YouTube 时仍会按需重试
+            try
+            {
+                await YtdlpManager.EnsureInstalledAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "yt-dlp prewarm failed");
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
