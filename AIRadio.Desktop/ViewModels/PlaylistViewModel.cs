@@ -501,14 +501,20 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 ? "没有找到可用结果。可以换个关键词，或检查网络/音乐 API 服务。"
                 : $"找到 {totalCount} 个结果。";
 
-        var perSource = string.Join("；", multi.LastSearchReport.Select(s =>
-            s.Status == "ok" ? $"{s.Name}成功{s.Count}条"
-            : s.Status == "timeout" ? $"{s.Name}超时"
-            : $"{s.Name}失败:{s.Error}"));
+        var perSource = string.Join("；", multi.LastSearchReport.Select(FormatSourceStatus));
         return totalCount == 0
             ? $"未找到结果。{perSource}"
             : $"找到 {totalCount} 个结果。{perSource}";
     }
+
+    internal static string FormatSourceStatus(Services.SourceSearchStatus status) => status.Status switch
+    {
+        "ok" => string.IsNullOrEmpty(status.Note)
+            ? $"{status.Name}成功{status.Count}条"
+            : $"{status.Name}搜到{status.Count}条({status.Note})",
+        "timeout" => $"{status.Name}超时",
+        _ => $"{status.Name}失败:{status.Error}"
+    };
 
     private void SetSearchStatus(string message)
     {

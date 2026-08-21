@@ -181,6 +181,45 @@ public class MultiSourceMusicServiceTests
             service.GetPlayUrlAsync("ignoringcancellation:123", cancellation.Token));
     }
 
+    [Fact]
+    public async Task SearchAsync_AnnotatesPrimaryReportWhenTopResultsAreTrialOnly()
+    {
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            if (url.Contains("/song/url", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"code\":200,\"data\":[{\"url\":\"https://trial.invalid/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
+                });
+            }
+
+            if (url.Contains("/search?", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"code\":200,\"result\":{\"songs\":[{\"id\":123,\"name\":\"测试歌曲\",\"artists\":[{\"name\":\"测试歌手\"}],\"album\":{\"name\":\"测试专辑\"},\"duration\":100000}]}}")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            });
+        }));
+        var service = new MultiSourceMusicService(client);
+
+        await service.SearchAsync("测试", 5, CancellationToken.None);
+
+        var primary = service.LastSearchReport.Single(s => s.Name == "网易云音乐");
+        Assert.Equal("ok", primary.Status);
+        Assert.Equal(1, primary.Count);
+        Assert.Equal("试听或失效片段，已过滤", primary.Note);
+    }
+
     private sealed class FallbackMusicService : IMusicSearchService
     {
         public string Name => "备用音源";

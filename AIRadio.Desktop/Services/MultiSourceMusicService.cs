@@ -72,15 +72,22 @@ public class MultiSourceMusicService : IMusicSearchService
                 limit,
                 PrimarySourceTimeout,
                 cancellationToken);
-            if (primaryResults.Count > 0 &&
-                await HasPlayableResultAsync(primary, primaryResults, cancellationToken))
-            {
-                Log.Information("Music search '{Keyword}' returned {Count} result(s) from primary source {Source}", keyword, primaryResults.Count, primary.Name);
-                return primaryResults.Take(limit * 2).ToList();
-            }
-
             if (primaryResults.Count > 0)
+            {
+                var probe = await ProbePrimaryPlayabilityAsync(primary, primaryResults, cancellationToken);
+                if (probe == PrimaryProbeResult.Playable)
+                {
+                    Log.Information("Music search '{Keyword}' returned {Count} result(s) from primary source {Source}", keyword, primaryResults.Count, primary.Name);
+                    return primaryResults.Take(limit * 2).ToList();
+                }
+
+                // 搜到结果但整组不可播（典型：版权受限只剩试听片段）时在报告注明，
+                // 否则 UI 只显示"成功N条"却没有任何结果，用户无法判断原因
+                AnnotateReport(primary.Name, probe == PrimaryProbeResult.ProbeTimeout
+                    ? "可播性检查超时，已跳过"
+                    : "试听或失效片段，已过滤");
                 Log.Warning("Primary source {Source} returned no playable result for '{Keyword}'; trying fallback sources", primary.Name, keyword);
+            }
         }
 
         var tasks = _sources.Skip(1)
@@ -278,7 +285,7 @@ public class MultiSourceMusicService : IMusicSearchService
         }
     }
 
-    private async Task<bool> HasPlayableResultAsync(
+    private async Task<PrimaryProbeResult> ProbePrimaryPlayabilityAsync(
         IMusicSearchService source,
         IReadOnlyList<OnlineTrack> tracks,
         CancellationToken cancellationToken)
@@ -294,16 +301,23 @@ public class MultiSourceMusicService : IMusicSearchService
                 var sourceId = parts.Length == 2 ? parts[1] : track.Id;
                 var url = await GetPlayUrlWithTimeout(source, sourceId, playabilityCts.Token);
                 if (!string.IsNullOrWhiteSpace(url))
-                    return true;
+                    return PrimaryProbeResult.Playable;
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             Log.Warning("Primary source {Name} playability check timed out", source.Name);
-            return false;
+            return PrimaryProbeResult.ProbeTimeout;
         }
 
-        return false;
+        return PrimaryProbeResult.NoPlayableTrack;
+    }
+
+    private enum PrimaryProbeResult
+    {
+        Playable,
+        NoPlayableTrack,
+        ProbeTimeout
     }
 
     private async Task<List<OnlineTrack>> SearchForPlaybackFallbackAsync(
@@ -391,7 +405,17 @@ public class MultiSourceMusicService : IMusicSearchService
         lock (_reportGate)
             _lastSearchReport.Add(status);
     }
+
+    private void AnnotateReport(string sourceName, string note)
+    {
+        lock (_reportGate)
+        {
+            var index = _lastSearchReport.FindIndex(s => s.Name == sourceName);
+            if (index >= 0)
+                _lastSearchReport[index] = _lastSearchReport[index] with { Note = note };
+        }
+    }
 }
 
-/// <summary>单个音源搜索状态（成功/超时/失败 + 原因）。</summary>
-public record SourceSearchStatus(string Name, string Status, int Count, string? Error);
+/// <summary>单个音源搜索状态（成功/超时/失败 + 原因；Note 附加说明如"已过滤"）。</summary>
+public record SourceSearchStatus(string Name, string Status, int Count, string? Error, string? Note = null);
