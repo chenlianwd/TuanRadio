@@ -16,7 +16,7 @@
 
             <!-- 行1：状态点 + 曲目信息 + 收藏/最小化/关闭/展开；整行可拖动、双击还原 -->
             <Grid x:Name="InfoRow" MinHeight="30" Background="Transparent"
-                  ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto"
+                  ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto"
                   PointerPressed="OnDragAreaPressed" DoubleTapped="OnExpandDoubleTapped">
                 <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center">
                     <Border.Background>
@@ -47,16 +47,28 @@
                                   Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
                     </Grid>
                 </Button>
-                <Button Grid.Column="3" Width="26" Height="24" Padding="0" Click="OnMinimizeClicked"
+                <Button Grid.Column="3" Width="26" Height="24" Padding="0"
+                        Command="{Binding ToggleCompactTopmostCommand}"
+                        ToolTip.Tip="置顶" AutomationProperties.Name="Always on top">
+                    <Grid>
+                        <PathIcon Width="14" Height="14" Foreground="{DynamicResource C_FF8A8A96}"
+                                  IsVisible="{Binding SettingsVM.CompactModeTopmost, Converter={StaticResource InverseBoolConverter}}"
+                                  Data="M16,9 V4 H17 C17.55,4 18,3.55 18,3 C18,2.45 17.55,2 17,2 H7 C6.45,2 6,2.45 6,3 C6,3.55 6.45,4 7,4 H8 V9 C8,10.66 6.66,12 5,12 V14 H10.97 V21 L12,22 L13,21 V14 H19 V12 C17.34,12 16,10.66 16,9 Z"/>
+                        <PathIcon Width="14" Height="14" Foreground="{DynamicResource C_FF56F5C4}"
+                                  IsVisible="{Binding SettingsVM.CompactModeTopmost}"
+                                  Data="M16,9 V4 H17 C17.55,4 18,3.55 18,3 C18,2.45 17.55,2 17,2 H7 C6.45,2 6,2.45 6,3 C6,3.55 6.45,4 7,4 H8 V9 C8,10.66 6.66,12 5,12 V14 H10.97 V21 L12,22 L13,21 V14 H19 V12 C17.34,12 16,10.66 16,9 Z"/>
+                    </Grid>
+                </Button>
+                <Button Grid.Column="4" Width="26" Height="24" Padding="0" Click="OnMinimizeClicked"
                         ToolTip.Tip="最小化" AutomationProperties.Name="Minimize">
                     <Rectangle Width="12" Height="2" RadiusX="1" RadiusY="1" Fill="{DynamicResource C_FF8A8A96}"/>
                 </Button>
-                <Button Grid.Column="4" Width="26" Height="24" Padding="0" Click="OnCloseClicked"
+                <Button Grid.Column="5" Width="26" Height="24" Padding="0" Click="OnCloseClicked"
                         ToolTip.Tip="关闭" AutomationProperties.Name="Close">
                     <Path Width="13" Height="13" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
                           Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
                 </Button>
-                <Button Grid.Column="5" Width="26" Height="24" Padding="0"
+                <Button Grid.Column="6" Width="26" Height="24" Padding="0"
                         Command="{Binding ToggleCompactModeCommand}"
                         ToolTip.Tip="展开" AutomationProperties.Name="Expand">
                     <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"

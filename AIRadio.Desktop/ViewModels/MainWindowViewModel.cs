@@ -85,6 +85,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleCompactTopmostCommand { get; }
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCurrentFavoriteCommand { get; }
@@ -158,6 +159,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
         ToggleCompactModeCommand = ReactiveCommand.Create(ToggleCompactMode);
+        ToggleCompactTopmostCommand = ReactiveCommand.Create(() =>
+        {
+            SettingsVM.CompactModeTopmost = !SettingsVM.CompactModeTopmost;
+            SettingsVM.SaveCommand.Execute().Subscribe();
+        });
         UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
 

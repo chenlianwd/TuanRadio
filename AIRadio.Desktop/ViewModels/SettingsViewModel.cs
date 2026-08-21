@@ -55,7 +55,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool TtsEnabled { get; set; } = true;
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool EnableStarfield { get; set; } = true;
-    [Reactive] public bool CompactModeTopmost { get; set; }
+    [Reactive] public bool CompactModeTopmost { get; set; } = true;
     [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
