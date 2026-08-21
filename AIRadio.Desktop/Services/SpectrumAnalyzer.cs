@@ -25,6 +25,19 @@ public sealed class SpectrumAnalyzer : IDisposable
     private readonly float[] _buffer = new float[FftSize];
     private readonly double[] _real = new double[FftSize];
     private readonly double[] _imaginary = new double[FftSize];
+
+    // 对数频段边界只依赖 FftSize/BandCount，预计算避免每帧 64 次 Math.Pow
+    private static readonly int[] BandEdges = BuildBandEdges();
+
+    private static int[] BuildBandEdges()
+    {
+        var half = FftSize / 2;
+        var edges = new int[BandCount + 1];
+        for (int b = 0; b <= BandCount; b++)
+            edges[b] = (int)Math.Floor(Math.Pow(half, b / (double)BandCount));
+        return edges;
+    }
+
     private int _bufferCount;
     private long _lastRealSpectrumAtMs;
     private int _fallbackWarningLogged;
@@ -137,9 +150,9 @@ public sealed class SpectrumAnalyzer : IDisposable
         var half = FftSize / 2;
         for (int b = 0; b < BandCount; b++)
         {
-            // 对数频率分组（低频窄、高频宽）
-            var lo = (int)Math.Floor(Math.Pow(half, b / (double)BandCount));
-            var hi = (int)Math.Floor(Math.Pow(half, (b + 1) / (double)BandCount));
+            // 对数频率分组（低频窄、高频宽），边界来自预计算表
+            var lo = BandEdges[b];
+            var hi = BandEdges[b + 1];
             if (hi <= lo) hi = lo + 1;
             double sum = 0;
             for (int k = lo; k < hi && k < half; k++)

@@ -47,7 +47,7 @@
                 <TextBlock Grid.Column="0" Text="AI 回复自动语音播报" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
-                              OnContent="" OffContent=""/>
+                              OnContent="开" OffContent="关"/>
             </Grid>
             <ComboBox SelectedValue="{Binding SpeechMixMode}"
                       ItemsSource="{Binding SpeechMixModes}"
@@ -63,13 +63,13 @@
                 <TextBlock Grid.Column="0" Text="星光背景随音乐呼吸" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
-                              OnContent="" OffContent=""/>
+                              OnContent="开" OffContent="关"/>
             </Grid>
             <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" Text="简洁模式窗口置顶" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactModeTopmost, Mode=TwoWay}"
-                              OnContent="" OffContent=""/>
+                              OnContent="开" OffContent="关"/>
             </Grid>
         </StackPanel>
 

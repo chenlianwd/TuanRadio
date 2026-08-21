@@ -130,6 +130,6 @@ AIRadio 的方向已经收敛为“复古 AI 电台”：
 ## 构建与测试
 
 ```bash
-dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal --no-restore
-dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal --no-restore "/p:UseSharedCompilation=false"
+dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
+dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"
 ```

@@ -73,7 +73,7 @@ public partial class CompactPlayer : UserControl
     private void OnDragAreaPressed(object? sender, PointerPressedEventArgs e)
     {
         // 命中行内按钮（收藏/最小化/关闭/展开）时不启动窗口拖动
-        if (IsOverButton(e.Source))
+        if (InteractionGuards.IsOverButton(e.Source))
             return;
 
         if (TopLevel.GetTopLevel(this) is Window window &&
@@ -86,7 +86,7 @@ public partial class CompactPlayer : UserControl
 
     private void OnExpandDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (IsOverButton(e.Source))
+        if (InteractionGuards.IsOverButton(e.Source))
             return;
 
         if (DataContext is MainWindowViewModel vm && vm.IsCompactMode)
@@ -103,19 +103,5 @@ public partial class CompactPlayer : UserControl
     {
         if (TopLevel.GetTopLevel(this) is Window window)
             window.Close();
-    }
-
-    private static bool IsOverButton(object? source)
-    {
-        var visual = source as Visual;
-        while (visual != null)
-        {
-            if (visual is Button)
-                return true;
-
-            visual = visual.GetVisualParent();
-        }
-
-        return false;
     }
 }

@@ -73,7 +73,7 @@
                 CornerRadius="18"
                 ClipToBounds="True">
             <Grid>
-            <Grid RowDefinitions="64,168,88,Auto,*,66,28">
+            <Grid RowDefinitions="64,168,88,*,66,28">
                 <!-- Brand header -->
                 <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
@@ -90,20 +90,20 @@
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
-                                    Command="{Binding ToggleCharacterPickerCommand}" ToolTip.Tip="DJ">
+                                    Command="{Binding ToggleCharacterPickerCommand}" ToolTip.Tip="DJ" AutomationProperties.Name="DJ 角色">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
                             </Button>
                             <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
-                                    Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search">
+                                    Command="{Binding OpenSearchCommand}" ToolTip.Tip="Search" AutomationProperties.Name="搜索">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
                             </Button>
                             <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
-                                    Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Settings">
+                                    Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="Settings" AutomationProperties.Name="设置">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,21 L4,14 M4,10 L4,3 M12,21 L12,12 M12,8 L12,3 M20,21 L20,16 M20,12 L20,3 M2,14 L6,14 M10,8 L14,8 M18,16 L22,16"/>
                             </Button>
                             <Button x:Name="ThemeButton" Padding="10,5"
                                     Background="{DynamicResource C_10000000}"
-                                    Command="{Binding ToggleThemeCommand}" ToolTip.Tip="Theme">
+                                    Command="{Binding ToggleThemeCommand}" ToolTip.Tip="Theme" AutomationProperties.Name="主题切换">
                                 <Grid>
                                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" IsVisible="{Binding IsDarkMode}"
                                           Data="M21,12.8 C20.1,16.9 16.4,20 12,20 C7,20 3,16 3,11 C3,6.6 6.1,2.9 10.2,2 C9.4,3.2 9,4.6 9,6 C9,11 13,15 18,15 C19.1,15 20.1,14.8 21,14.4"/>
@@ -119,10 +119,10 @@
 
                 <local:PlayerDeck Grid.Row="2" DataContext="{Binding}"/>
 
-                <local:ChatArea Grid.Row="4" Grid.RowSpan="2" DataContext="{Binding}"/>
+                <local:ChatArea Grid.Row="3" Grid.RowSpan="2" DataContext="{Binding}"/>
 
                 <!-- StatusBar（统一电台状态，替换原 FooterBar） -->
-                <local:StatusBar Grid.Row="6" DataContext="{Binding}"/>
+                <local:StatusBar Grid.Row="5" DataContext="{Binding}"/>
             </Grid>
 
             <Border IsVisible="{Binding IsLibraryOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>

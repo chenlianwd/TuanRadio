@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.IO.Compression;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -41,21 +40,30 @@ public static class YtdlpManager
             Directory.CreateDirectory(YtdlpDir);
 
             Log.Information("Downloading yt-dlp...");
-            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
-            using var response = await http.GetAsync(
-                DownloadUrl,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            response.EnsureSuccessStatusCode();
-
             var tempPath = YtdlpExe + ".tmp";
-            await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
-            await using (var output = File.Create(tempPath))
+            try
             {
-                await input.CopyToAsync(output, cancellationToken);
-            }
+                using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+                using var response = await http.GetAsync(
+                    DownloadUrl,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
+                response.EnsureSuccessStatusCode();
 
-            File.Move(tempPath, YtdlpExe, overwrite: true);
+                await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
+                await using (var output = File.Create(tempPath))
+                {
+                    await input.CopyToAsync(output, cancellationToken);
+                }
+
+                File.Move(tempPath, YtdlpExe, overwrite: true);
+            }
+            catch
+            {
+                // 下载中途失败/取消时清掉半份 .tmp，避免残留占盘
+                try { File.Delete(tempPath); } catch { }
+                throw;
+            }
         }
         finally
         {

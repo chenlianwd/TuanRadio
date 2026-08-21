@@ -112,7 +112,10 @@ public class MiguMusicService : IMusicSearchService
             if (root.TryGetProperty("data", out var data) &&
                 data.TryGetProperty("listenUrl", out var listenUrl))
             {
-                return listenUrl.GetString();
+                // 空字符串视为无地址，继续尝试备用端点，避免"首端点空值即放弃"
+                var primaryUrl = listenUrl.GetString();
+                if (!string.IsNullOrWhiteSpace(primaryUrl))
+                    return primaryUrl;
             }
 
             // Try alternative endpoint

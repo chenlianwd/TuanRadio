@@ -308,8 +308,8 @@ public class ChatViewModelTests
         try
         {
             service.Volume = 0.5f;
-            // Volume getter returns player volume / 100, which may differ during playback
-            Assert.True(service.Volume > 0);
+            // 未播放时 Volume getter 直接返回用户音量缓存，可精确回读
+            Assert.Equal(0.5, service.Volume, precision: 2);
         }
         finally
         {

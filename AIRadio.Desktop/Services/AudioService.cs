@@ -106,7 +106,8 @@ public class AudioService : IAudioService, IDisposable
             if (IsDisposed)
                 return;
 
-            if (!_isFading)
+            // TTS 播报期间调整音量不打破 duck 电平，恢复全音量由 TTS 结束路径负责
+            if (!_isFading && !IsTtsPlaybackActive)
                 QueuePlayerVolume((int)(_userVolume * 100));
         }
     }
@@ -1332,21 +1333,10 @@ public class AudioService : IAudioService, IDisposable
     {
         _isFading = true;
         _fadeStepStart = Environment.TickCount64;
-        _fadeDirection = 1;
         _fadeTimer.Change(33, 33); // ~30fps
     }
 
-    private void StartFadeOut()
-    {
-        if (_isFading && _fadeDirection == -1) return;
-        _isFading = true;
-        _fadeStepStart = Environment.TickCount64;
-        _fadeDirection = -1;
-        _fadeTimer.Change(33, 33);
-    }
-
     private long _fadeStepStart;
-    private int _fadeDirection = 1;
     private long _lastAdvanceMs;
     private Func<string, Task<string?>>? _urlResolver;
     private Func<Track, CancellationToken, Task<TrackUrlResolution?>>? _trackUrlResolver;
@@ -1385,35 +1375,17 @@ public class AudioService : IAudioService, IDisposable
             var elapsed = (Environment.TickCount64 - _fadeStepStart) / 1000.0;
             var progress = Math.Clamp(elapsed / CrossfadeSeconds, 0.0, 1.0);
 
-            if (_fadeDirection == 1)
+            // TTS 播报期间淡入不能把音量拉过 duck 电平，否则串场人声被音乐盖住
+            var effectiveProgress = IsTtsPlaybackActive
+                ? Math.Min(progress, TtsDuckVolumeRatio)
+                : progress;
+            QueuePlayerVolume((int)(_userVolume * effectiveProgress * 100));
+            if (progress >= 1.0)
             {
-                // TTS 播报期间淡入不能把音量拉过 duck 电平，否则串场人声被音乐盖住
-                var effectiveProgress = IsTtsPlaybackActive
-                    ? Math.Min(progress, TtsDuckVolumeRatio)
-                    : progress;
-                QueuePlayerVolume((int)(_userVolume * effectiveProgress * 100));
-                if (progress >= 1.0)
-                {
-                    _isFading = false;
-                    if (!IsTtsPlaybackActive)
-                        QueuePlayerVolume((int)(_userVolume * 100));
-                    _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                }
-            }
-            else
-            {
-                QueuePlayerVolume((int)(_userVolume * (1.0 - progress) * 100));
-                if (progress >= 1.0)
-                {
-                    _isFading = false;
-                    _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                    // Auto-advance to next track
-                    if (_repeatMode == "single" && CurrentTrack != null)
-                        PlayTrack(_currentIndex);
-                    else if (_repeatMode == "list")
-                        Next();
-                    // "none" mode: let auto-radio handler manage continuation
-                }
+                _isFading = false;
+                if (!IsTtsPlaybackActive)
+                    QueuePlayerVolume((int)(_userVolume * 100));
+                _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
             }
         }
         finally

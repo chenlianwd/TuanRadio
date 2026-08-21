@@ -26,7 +26,7 @@
 ### 自动化验证
 
 - `dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal`：0 警告、0 错误。
-- `dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"`：174/174 通过。
+- `dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"`：174/174 通过（2026-08-19 快照；测试数量随演进变化，以当次运行为准）。
 - `git diff --check`：通过；仅存在 Git 的 LF/CRLF 工作区提示。
 
 ### 发布前仍需人工验证

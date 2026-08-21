@@ -38,12 +38,16 @@ public class KugouMusicService : IMusicSearchService
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             var text = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            // Kugou returns JSONP, strip callback wrapper
+            // Kugou returns JSONP, strip callback wrapper.
+            // 仅在响应确为 JSONP 包裹时剥壳：纯 JSON 响应中歌名带括号对会被错误截断
             var json = text;
-            var start = text.IndexOf('(');
-            var end = text.LastIndexOf(')');
-            if (start > 0 && end > start)
-                json = text.Substring(start + 1, end - start - 1);
+            if (!text.TrimStart().StartsWith("{"))
+            {
+                var start = text.IndexOf('(');
+                var end = text.LastIndexOf(')');
+                if (start > 0 && end > start)
+                    json = text.Substring(start + 1, end - start - 1);
+            }
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;

@@ -346,34 +346,6 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         Log.Information("Switched to character: {Name} (voice: {Voice})", character.DisplayName, voiceId);
     }
 
-    private async System.Threading.Tasks.Task HandleTrackTransitionAsync(Track current, Track next)
-    {
-        try
-        {
-            if (IsDisposed)
-                return;
-
-            var script = await GenerateTrackIntroductionAsync(current, next, _lifetimeCts.Token);
-            if (IsDisposed)
-                return;
-
-            ChatVM.AddAssistantMessage(script.Text);
-            Log.Information("DJ: {Text}", script.Text);
-            DjVisualCue?.Invoke(script.Expression, script.Motion);
-
-            if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(script.Text))
-            {
-                var speechData = await GenerateSpeechAsync(script.Text, _lifetimeCts.Token);
-                if (speechData is { Length: > 0 } && !IsDisposed)
-                    _audioService.PlayTtsAudio(speechData);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DJ intro failed");
-        }
-    }
-
     // Parameterless ctor for designer/testing only; production uses DI with shared HttpClient singleton
     public MainWindowViewModel() : this(
         new AudioService(),
@@ -595,7 +567,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current))
                     return;
 
-                await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
+                await DjTtsInterop.StopTtsWithoutBlockingUiAsync(_audioService, _lifetimeCts.Token);
                 var success = await PlayWithFreshRecommendation(current);
                 if (!success && !IsDisposed)
                     await PlayWithPlaylistRotation(current);
@@ -744,7 +716,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         try
         {
-            var fallback = await RequestDjRecommendationAsync(current, _lifetimeCts.Token);
+            var fallback = await DjTtsInterop.RequestDjRecommendationAsync(_djService, current, _lifetimeCts.Token);
             return IsDisposed ? null : fallback;
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
@@ -799,7 +771,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (IsDisposed)
                 return null;
 
-            await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
+            await DjTtsInterop.StopTtsWithoutBlockingUiAsync(_audioService, _lifetimeCts.Token);
             var current = _audioService.CurrentTrack;
             AttachRecommendationContext(current);
             var recommended = await GetRecommendedTrackAsync(current);
@@ -824,13 +796,6 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             ? recommendationService.GetNextTrackAsync(request, cancellationToken)
             : _recommendationService.GetNextTrackAsync(request).WaitAsync(cancellationToken);
 
-    private Task<Track?> RequestDjRecommendationAsync(
-        Track? current,
-        CancellationToken cancellationToken)
-        => _djService is DJService djService
-            ? djService.RecommendNextTrackAsync(current, cancellationToken)
-            : _djService.RecommendNextTrackAsync(current).WaitAsync(cancellationToken);
-
     private Task<DJScript> GenerateTrackIntroductionAsync(
         Track current,
         Track next,
@@ -838,28 +803,6 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         => _djService is DJService djService
             ? djService.GenerateTrackIntroductionAsync(current, next, cancellationToken)
             : _djService.GenerateTrackIntroductionAsync(current, next).WaitAsync(cancellationToken);
-
-    private Task<byte[]?> GenerateSpeechAsync(string text, CancellationToken cancellationToken)
-        => _djService is DJService djService
-            ? djService.GenerateSpeechAsync(text, cancellationToken)
-            : _djService.GenerateSpeechAsync(text).WaitAsync(cancellationToken);
-
-    private async Task StopTtsWithoutBlockingUiAsync(CancellationToken cancellationToken)
-    {
-        var stopTask = Task.Factory.StartNew(
-            _audioService.StopTts,
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
-        try
-        {
-            await stopTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
-        }
-        catch (TimeoutException)
-        {
-            Log.Warning("TTS stop did not complete within 2 seconds; continuing without blocking UI");
-        }
-    }
 
     private static bool IsSameTrack(Track? left, Track? right) => TrackComparer.IsSameTrack(left, right);
 
@@ -889,7 +832,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
             try
             {
-                var speechData = await GenerateSpeechAsync(text, token);
+                var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, text, token);
                 if (speechData is { Length: > 0 } && !IsDisposed && !token.IsCancellationRequested)
                 {
                     var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(

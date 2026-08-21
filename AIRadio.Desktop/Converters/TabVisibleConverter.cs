@@ -5,7 +5,7 @@ using Avalonia.Data;
 
 namespace AIRadio.Desktop.Converters;
 
-// Tab content visibility: visible when TabIndex equals parameter (0=列表, 1=收藏, 2=搜索)
+// Tab content visibility: visible when TabIndex equals parameter (0=列表, 1=收藏, 2=搜索, 3=节目单)
 public class TabVisibleConverter : IValueConverter
 {
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
