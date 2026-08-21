@@ -1,8 +1,8 @@
-# AIRadio — Project Context & Memory
+# TuanRadio — Project Context & Memory
 
 ## Project
 
-AIRadio 是一个 Windows 桌面 AI 电台播放器。
+TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 
 技术栈：.NET 10、Avalonia 11.3.9、ReactiveUI、LibVLCSharp、NAudio、LLM（OpenAI/Anthropic 兼容/本地三格式）、Edge TTS、Whisper、多平台在线音乐搜索。
 

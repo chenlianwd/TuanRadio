@@ -8,7 +8,7 @@
         xmlns:conv="using:AIRadio.Desktop.Converters"
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="AIRadio FM"
+        Title="TuanRadio FM"
         Width="760" Height="760"
         MinWidth="700" MinHeight="700"
         SystemDecorations="None"
@@ -84,7 +84,7 @@
                                            Foreground="{DynamicResource C_FFFFFFFF}"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
-                            <TextBlock Text="AIRadio" FontSize="24" FontWeight="700"
+                            <TextBlock Text="TuanRadio" FontSize="24" FontWeight="700"
                                        FontFamily="Consolas, Microsoft YaHei UI"
                                        Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"/>
                         </StackPanel>

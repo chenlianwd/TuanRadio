@@ -96,7 +96,7 @@ public class RecommendedTrack
 
 public class RadioProgram
 {
-    public string Title { get; set; } = "AIRadio Program";
+    public string Title { get; set; } = "TuanRadio Program";
     public ListeningContext Context { get; set; } = new();
     public List<RecommendedTrack> Tracks { get; set; } = new();
     public string DjOpening { get; set; } = string.Empty;

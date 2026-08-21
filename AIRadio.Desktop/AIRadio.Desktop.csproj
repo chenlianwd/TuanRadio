@@ -7,7 +7,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon>Assets\airadio.ico</ApplicationIcon>
     <AssemblyName>AIRadio</AssemblyName>
-    <Product>AIRadio FM</Product>
+    <Product>TuanRadio FM</Product>
     <Description>AI-powered personal radio station</Description>
   </PropertyGroup>
 

@@ -13,14 +13,14 @@ public class RadioStateToTextConverter : IValueConverter
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
         => value is RadioState s ? s switch
         {
-            RadioState.Idle => "AIRADIO FM",
+            RadioState.Idle => "TUANRADIO FM",
             RadioState.Curating => "CURATING",
             RadioState.Searching => "SEARCHING",
             RadioState.Speaking => "SPEAKING",
             RadioState.Playing => "ON AIR",
             RadioState.Error => "ERROR",
-            _ => "AIRADIO FM"
-        } : "AIRADIO FM";
+            _ => "TUANRADIO FM"
+        } : "TUANRADIO FM";
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => null;
 }
