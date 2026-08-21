@@ -36,6 +36,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly CancellationTokenSource _lifetimeCts = new();
     private bool _isLoadingSettings;
     private string? _lastCharacterSignature;
+    private bool _lastSaveSucceeded;
     private int _disposed;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -268,7 +269,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             var result = await _llmService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
             var successMessage = $"连接成功并已保存：{result[..Math.Min(50, result.Length)]}...";
             await SaveAsync();
-            if (StatusMessage == "设置已保存")
+            if (_lastSaveSucceeded)
                 StatusMessage = successMessage;
         }
         catch (Exception ex)
@@ -289,6 +290,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
+        _lastSaveSucceeded = false;
         var gateHeld = false;
         try
         {
@@ -353,6 +355,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             if (characterSettingsChanged)
                 CharacterSettingsChanged?.Invoke();
+            _lastSaveSucceeded = true;
             StatusMessage = "设置已保存";
             Log.Information("Settings saved to {Path}", _settingsFile);
         }

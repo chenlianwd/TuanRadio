@@ -1,5 +1,7 @@
 # 视图重构 + 统一状态机 实施计划
 
+> **状态（2026-08-21 回填）：本计划已实施完成并落地主干**——视图拆分/RadioState 状态机/Converter 迁移/Theme token 化均已验证。文中 ".NET 8 / ReactiveUI 20.1.1" 为写作时快照，当前代码为 .NET 10；checkbox 未回勾；Task 5 的 `BoolToAccentBrushConverter.cs` 因旧 ChatView/PlayerView 被整体删除而无对应文件（合并目标不存在，已绕过）。当前状态以 `ai-radio-plan.md` 与 `AGENTS.md` 为准，本文仅作过程记录，**不要按本文继续执行**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 MainWindow 单体（668 行 axaml + god-class code-behind）拆为独立 UserControl，引入统一 RadioState 状态机，合并重复 Converter，Theme 颜色 token 化，code-behind 逻辑迁移到 VM/子控件。

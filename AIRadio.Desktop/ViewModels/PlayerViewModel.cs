@@ -47,6 +47,9 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     {
         _audioService = audioService;
         UpdateRepeatMode(_audioService.RepeatMode);
+        // 与服务端的当前状态对齐（音量/随机），避免启动瞬间两端不同步
+        Volume = _audioService.Volume;
+        IsShuffled = _audioService.IsShuffled;
 
         PlayCommand = ReactiveCommand.Create(() =>
         {

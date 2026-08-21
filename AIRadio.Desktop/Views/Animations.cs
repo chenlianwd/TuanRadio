@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Media;
 using System;
 using System.Threading.Tasks;
 
@@ -26,14 +25,6 @@ public static class Animations
         await Task.Delay(30);
         await FadeOutAsync(border, TimeSpan.FromMilliseconds(80));
         await FadeInAsync(border, TimeSpan.FromMilliseconds(100));
-    }
-
-    public static async Task PlayCharacterSwitchAsync(Border border, TextBlock letter, string newChar, Action commit)
-    {
-        await FadeOutAsync(letter, TimeSpan.FromMilliseconds(150));
-        letter.Text = newChar.Length > 0 ? newChar[0].ToString() : "?";
-        await FadeInAsync(letter, TimeSpan.FromMilliseconds(200));
-        commit();
     }
 }
 

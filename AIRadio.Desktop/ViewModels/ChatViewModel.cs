@@ -420,7 +420,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         try
         {
-            await StopTtsWithoutBlockingUiAsync(_lifetimeCts.Token);
+            await DjTtsInterop.StopTtsWithoutBlockingUiAsync(_audioService, _lifetimeCts.Token);
             if (IsFreshRecommendationRequest(text))
             {
                 await RecommendFreshTrackAsync();
@@ -511,7 +511,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             StatusText = "VOICE...";
             SetWorkingNotice("正在生成语音", "AI 文字已返回，正在调用语音服务。");
-            var speechData = await GenerateSpeechAsync(ttsText, _lifetimeCts.Token);
+            var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
             if (speechData is { Length: > 0 })
             {
                 _audioService.PlayTtsAudio(speechData);
@@ -550,7 +550,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         StatusText = "VOICE...";
         SetWorkingNotice("正在生成语音", "正在调用语音服务。");
-        var speechData = await GenerateSpeechAsync(ttsText, _lifetimeCts.Token);
+        var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
         if (speechData is { Length: > 0 })
         {
             _audioService.PlayTtsAudio(speechData);
@@ -776,7 +776,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
 
         if (recommended == null)
-            recommended = await RequestDjRecommendationAsync(current, _lifetimeCts.Token);
+            recommended = await DjTtsInterop.RequestDjRecommendationAsync(_djService, current, _lifetimeCts.Token);
 
         if (recommended == null)
         {
@@ -833,35 +833,6 @@ public class ChatViewModel : ViewModelBase, IDisposable
         return _recommendationService is RecommendationService recommendationService
             ? recommendationService.GetNextTrackAsync(request, cancellationToken)
             : _recommendationService.GetNextTrackAsync(request).WaitAsync(cancellationToken);
-    }
-
-    private Task<Track?> RequestDjRecommendationAsync(
-        Track? current,
-        CancellationToken cancellationToken)
-        => _djService is DJService djService
-            ? djService.RecommendNextTrackAsync(current, cancellationToken)
-            : _djService.RecommendNextTrackAsync(current).WaitAsync(cancellationToken);
-
-    private Task<byte[]?> GenerateSpeechAsync(string text, CancellationToken cancellationToken)
-        => _djService is DJService djService
-            ? djService.GenerateSpeechAsync(text, cancellationToken)
-            : _djService.GenerateSpeechAsync(text).WaitAsync(cancellationToken);
-
-    private async Task StopTtsWithoutBlockingUiAsync(CancellationToken cancellationToken)
-    {
-        var stopTask = Task.Factory.StartNew(
-            _audioService.StopTts,
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
-        try
-        {
-            await stopTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
-        }
-        catch (TimeoutException)
-        {
-            Log.Warning("TTS stop did not complete within 2 seconds; continuing without blocking UI");
-        }
     }
 
     private static bool IsFreshRecommendationRequest(string text)

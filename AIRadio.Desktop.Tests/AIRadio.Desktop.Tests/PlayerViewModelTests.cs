@@ -1,9 +1,11 @@
 using System;
+using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using Moq;
+using ReactiveUI;
 using Xunit;
 
 namespace AIRadio.Desktop.Tests;
@@ -44,44 +46,86 @@ public class PlayerViewModelTests
         Assert.Equal("电台模式", vm.RepeatModeTip);
     }
 
-    [Fact]
-    public void PlayerViewModel_SeekTo_DoesNotThrow()
+    private static Mock<IAudioService> CreatePositionalAudioMock(Subject<TimeSpan> positions)
     {
-        var service = new AudioService();
-        var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(service);
+        var audio = new Mock<IAudioService>();
+        audio.SetupGet(x => x.RepeatMode).Returns("radio");
+        audio.SetupGet(x => x.TrackChanged).Returns(new Subject<Track?>());
+        audio.SetupGet(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.SetupGet(x => x.PositionChanged).Returns(positions);
+        audio.Setup(x => x.Seek(It.IsAny<TimeSpan>()));
+        return audio;
+    }
 
+    [Fact]
+    public void PlayerViewModel_SeekTo_UpdatesPositionTextAndForwardsToService()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
         try
         {
+            var positions = new Subject<TimeSpan>();
+            double? seekTarget = null;
+            var audio = CreatePositionalAudioMock(positions);
+            audio.Setup(x => x.Seek(It.IsAny<TimeSpan>()))
+                .Callback<TimeSpan>(ts => seekTarget = ts.TotalSeconds);
+
+            using var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(audio.Object);
+            positions.OnNext(TimeSpan.FromSeconds(12));
+            Assert.Equal(12, vm.CurrentSeconds);
+            Assert.Equal("0:12", vm.PositionText);
+
             vm.SeekTo(30.0);
-            vm.StartSeek();
-            vm.EndSeek(60.0);
-            // No exception means success
+            Assert.Equal(30.0, seekTarget);
         }
         finally
         {
-            vm.Dispose();
-            service.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
         }
     }
 
     [Fact]
-    public void PlayerViewModel_DraggingState_Tracked()
+    public void PlayerViewModel_DraggingState_FreezesPositionUpdates()
     {
-        var service = new AudioService();
-        var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(service);
-
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
         try
         {
+            var positions = new Subject<TimeSpan>();
+            var audio = CreatePositionalAudioMock(positions);
+
+            using var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(audio.Object);
+            positions.OnNext(TimeSpan.FromSeconds(10));
+
             vm.StartSeek();
-            vm.EndSeek(100.0);
-            // _isDragging is private; this test verifies StartSeek/EndSeek don't throw.
-            // Position-related behavior is covered by AudioService integration.
+            positions.OnNext(TimeSpan.FromSeconds(50));
+            // 拖动期间不得回写 CurrentSeconds，否则 Slider 会被播放位置拉回
+            Assert.Equal(10, vm.CurrentSeconds);
+
+            vm.EndSeek(50);
+            positions.OnNext(TimeSpan.FromSeconds(51));
+            Assert.Equal(51, vm.CurrentSeconds);
         }
         finally
         {
-            vm.Dispose();
-            service.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
         }
+    }
+
+    [Fact]
+    public void PlayerViewModel_SyncsInitialVolumeAndShuffleFromService()
+    {
+        var audio = new Mock<IAudioService>();
+        audio.SetupGet(x => x.RepeatMode).Returns("radio");
+        audio.SetupGet(x => x.TrackChanged).Returns(new Subject<Track?>());
+        audio.SetupGet(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+        audio.SetupGet(x => x.Volume).Returns(0.4f);
+        audio.SetupGet(x => x.IsShuffled).Returns(true);
+
+        using var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(audio.Object);
+        Assert.Equal(0.4f, vm.Volume);
+        Assert.True(vm.IsShuffled);
     }
 
     [Fact]

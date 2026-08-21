@@ -57,6 +57,16 @@ public partial class App : Application
 
             Log.Information("AI Radio starting...");
 
+            // 全局兜底：未观察的任务异常标记已观察避免进程被撕掉，未处理域异常落日志便于事后排查
+            TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
+                Log.Error(e.Exception, "Unobserved task exception");
+                e.SetObserved();
+            };
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+                Log.Fatal(e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString()),
+                    "Unhandled AppDomain exception");
+
             try
             {
                 var services = new ServiceCollection();

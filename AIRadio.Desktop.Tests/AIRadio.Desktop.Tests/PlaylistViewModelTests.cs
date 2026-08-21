@@ -80,7 +80,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public async Task ToggleFavorite_AddsToFavoritesWhenTrue()
+    public Task ToggleFavorite_AddsToFavoritesWhenTrue()
     {
         var (vm, _, _) = CreateVm();
         var track = new Track { Id = "toggle-test-1", Title = "Test", Artist = "Me" };
@@ -90,10 +90,11 @@ public class PlaylistViewModelTests
 
         Assert.True(track.IsFavorite);
         Assert.Contains(track, vm.Favorites);
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task ToggleFavorite_RemovesFromFavoritesWhenFalse()
+    public Task ToggleFavorite_RemovesFromFavoritesWhenFalse()
     {
         var (vm, _, _) = CreateVm();
         var track = new Track { Id = "toggle-test-2", Title = "Test", Artist = "Me" };
@@ -104,6 +105,7 @@ public class PlaylistViewModelTests
 
         Assert.False(track.IsFavorite);
         Assert.DoesNotContain(track, vm.Favorites);
+        return Task.CompletedTask;
     }
 
     [Fact]
@@ -173,7 +175,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public async Task RemoveTrackCommand_RemovesTrackAndCallsAudioService()
+    public Task RemoveTrackCommand_RemovesTrackAndCallsAudioService()
     {
         var (vm, audioMock, _) = CreateVm();
         var track = new Track { Title = "Test", FilePath = "" };
@@ -183,6 +185,7 @@ public class PlaylistViewModelTests
 
         audioMock.Verify(x => x.RemoveTrack(track), Times.Once);
         Assert.DoesNotContain(track, vm.Tracks);
+        return Task.CompletedTask;
     }
 
     [Fact]
@@ -212,7 +215,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public async Task AddOnlineCommand_AddsTrackToPlaylist()
+    public Task AddOnlineCommand_AddsTrackToPlaylist()
     {
         var (vm, audioMock, searchMock) = CreateVm();
         searchMock.Setup(x => x.GetPlayUrlAsync("track1"))
@@ -225,10 +228,11 @@ public class PlaylistViewModelTests
         Assert.Single(vm.Tracks);
         Assert.Equal("Online Song", vm.Tracks[0].Title);
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Once);
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task AddOnlineCommand_DoesNotDuplicateExistingUrl()
+    public Task AddOnlineCommand_DoesNotDuplicateExistingUrl()
     {
         var (vm, audioMock, searchMock) = CreateVm();
         searchMock.Setup(x => x.GetPlayUrlAsync("track1"))
@@ -241,10 +245,11 @@ public class PlaylistViewModelTests
         vm.AddOnlineCommand.Execute(onlineTrack).Subscribe();
 
         Assert.Single(vm.Tracks);
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task SearchAsync_ClearsAndFillsSearchResults()
+    public Task SearchAsync_ClearsAndFillsSearchResults()
     {
         var (vm, _, searchMock) = CreateVm();
         var results = new List<OnlineTrack>
@@ -263,6 +268,7 @@ public class PlaylistViewModelTests
 
         Assert.Equal(2, vm.SearchResults.Count);
         Assert.Equal(2, vm.TabIndex); // auto-switches to search tab
+        return Task.CompletedTask;
     }
 
     [Fact]

@@ -69,7 +69,7 @@ dotnet run --project AIRadio.Desktop\AIRadio.Desktop.csproj
 ## 验证
 
 ```bash
-dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal --no-restore "/p:UseSharedCompilation=false"
+dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"
 ```
 
 ## 已知技术债
