@@ -6,13 +6,13 @@
              x:DataType="vm:MainWindowViewModel">
     <Grid RowDefinitions="*,Auto">
         <!-- Radio room -->
-        <Grid Grid.Row="0" Background="{DynamicResource C_E9161623}">
-            <TextBlock x:Name="RoomDots"
+        <Grid Grid.Row="0" Background="{DynamicResource C_E9161623}" RowDefinitions="Auto,Auto,*">
+            <TextBlock x:Name="RoomDots" Grid.RowSpan="3"
                        IsHitTestVisible="False" Opacity="0.20" FontSize="11"
                        LineHeight="17" FontFamily="Consolas"
                        Foreground="{DynamicResource C_FF44465C}" TextWrapping="Wrap"/>
 
-            <Border Background="{DynamicResource C_66111113}" BorderBrush="{DynamicResource C_222F303A}" BorderThickness="0,0,0,1"
+            <Border Grid.Row="0" Background="{DynamicResource C_66111113}" BorderBrush="{DynamicResource C_222F303A}" BorderThickness="0,0,0,1"
                     Height="46" VerticalAlignment="Top">
                 <Grid ColumnDefinitions="*,Auto" Margin="22,0">
                     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
@@ -24,7 +24,7 @@
                 </Grid>
             </Border>
 
-            <Grid Margin="22,60,22,12">
+            <Grid Grid.Row="2" Margin="22,12,22,12">
                 <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding ChatVM.Messages}">
                         <ItemsControl.ItemTemplate>
@@ -46,9 +46,9 @@
                 </ScrollViewer>
             </Grid>
 
-            <Border IsVisible="{Binding ChatVM.ShowStatusNotice}"
-                    HorizontalAlignment="Right" VerticalAlignment="Top"
-                    Margin="22,56,22,0" Background="{DynamicResource C_EE050507}"
+            <!-- 状态提示占独立布局行，避免浮层盖住消息（原为右上角浮层，会挡住首条消息） -->
+            <Border Grid.Row="1" IsVisible="{Binding ChatVM.ShowStatusNotice}"
+                    HorizontalAlignment="Right" Margin="22,10,22,0" Background="{DynamicResource C_EE050507}"
                     BorderBrush="{DynamicResource C_3356F5C4}" BorderThickness="1" CornerRadius="4"
                     Padding="12,9" MaxWidth="360">
                 <StackPanel Spacing="3">
@@ -70,9 +70,9 @@
                 </StackPanel>
             </Border>
 
-            <Button IsVisible="{Binding ChatVM.ShowStatusRecall}"
+            <Button Grid.Row="1" IsVisible="{Binding ChatVM.ShowStatusRecall}"
                     Command="{Binding ChatVM.RestoreStatusNoticeCommand}"
-                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="22,56,22,0"
+                    HorizontalAlignment="Right" Margin="22,10,22,0"
                     Padding="10,6" Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_3356F5C4}"
                     BorderThickness="1" CornerRadius="4" ToolTip.Tip="查看语音播放提示">
                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -81,7 +81,7 @@
                 </StackPanel>
             </Button>
 
-            <Border IsVisible="{Binding ChatVM.IsListening}"
+            <Border Grid.Row="2" IsVisible="{Binding ChatVM.IsListening}"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="22,0,22,14"
                     Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_6656F5C4}" BorderThickness="1"
                     CornerRadius="4" Padding="12,8">
@@ -97,7 +97,7 @@
                 </StackPanel>
             </Border>
 
-            <Border IsVisible="{Binding ChatVM.IsRecognizing}"
+            <Border Grid.Row="2" IsVisible="{Binding ChatVM.IsRecognizing}"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="22,0,22,14"
                     Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_66A783FF}" BorderThickness="1"
                     CornerRadius="4" Padding="12,8">
