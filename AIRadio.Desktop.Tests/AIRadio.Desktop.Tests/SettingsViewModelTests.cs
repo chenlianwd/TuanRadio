@@ -331,6 +331,13 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void CompactModeTopmost_DefaultsToTrue()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        Assert.True(vm.CompactModeTopmost);
+    }
+
+    [Fact]
     public async Task SaveAndLoad_PersistsCompactModeSettings()
     {
         var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));

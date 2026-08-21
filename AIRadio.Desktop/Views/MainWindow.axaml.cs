@@ -19,6 +19,7 @@ public partial class MainWindow : Window, IDisposable
     private Border? _avatarBorder;
     private Action<string, string>? _djVisualCueHandler;
     private IDisposable? _compactModeSub;
+    private IDisposable? _compactTopmostSub;
     private WindowBoundsSnapshot? _standardBounds;
 
     private readonly record struct WindowBoundsSnapshot(double Width, double Height, PixelPoint Position, WindowState State);
@@ -36,6 +37,8 @@ public partial class MainWindow : Window, IDisposable
                 {
                     _compactModeSub?.Dispose();
                     _compactModeSub = null;
+                    _compactTopmostSub?.Dispose();
+                    _compactTopmostSub = null;
                     if (_djVisualCueHandler != null)
                     {
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
@@ -52,6 +55,15 @@ public partial class MainWindow : Window, IDisposable
                 _compactModeSub = vm.WhenAnyValue(x => x.IsCompactMode)
                     .ObserveOn(RxApp.MainThreadScheduler)
                     .Subscribe(ApplyCompactMode);
+
+                // 简洁模式下置顶开关变化时实时生效（标准模式不置顶）
+                _compactTopmostSub = vm.SettingsVM.WhenAnyValue(x => x.CompactModeTopmost)
+                    .ObserveOn(RxApp.MainThreadScheduler)
+                    .Subscribe(topmost =>
+                    {
+                        if (vm.IsCompactMode)
+                            Topmost = topmost;
+                    });
 
                 // Keep search explicit. Auto-search can leave the UI waiting on a
                 // partial keyword while the user is still typing.
@@ -70,8 +82,7 @@ public partial class MainWindow : Window, IDisposable
             MinHeight = CompactHeight;
             Width = CompactWidth;
             Height = CompactHeight;
-            if (_activeVm is { SettingsVM.CompactModeTopmost: true })
-                Topmost = true;
+            Topmost = _activeVm is { SettingsVM.CompactModeTopmost: true };
         }
         else
         {
@@ -128,6 +139,7 @@ public partial class MainWindow : Window, IDisposable
     public void Dispose()
     {
         _compactModeSub?.Dispose();
+        _compactTopmostSub?.Dispose();
         if (_activeVm != null)
         {
             if (_djVisualCueHandler != null)
