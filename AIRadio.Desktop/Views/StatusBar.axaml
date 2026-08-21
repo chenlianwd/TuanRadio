@@ -7,7 +7,7 @@
 
     <Border Background="{DynamicResource SurfaceFooter}" Padding="22,0">
         <Grid ColumnDefinitions="*,Auto">
-            <TextBlock Text="AIRADIO FM" FontSize="11" FontFamily="Consolas"
+            <TextBlock Text="TUANRADIO FM" FontSize="11" FontFamily="Consolas"
                        Foreground="{DynamicResource ShellText}" VerticalAlignment="Center"/>
             <TextBlock Grid.Column="1"
                        Text="{Binding CurrentState, Converter={x:Static conv:RadioStateToTextConverter.Instance}}"

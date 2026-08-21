@@ -282,7 +282,7 @@ public class RecommendationService : IRecommendationService
 
     private static string BuildReason(ListeningContext context)
         => string.IsNullOrWhiteSpace(context.UserIntent)
-            ? $"这首歌适合 {context.TimeOfDay} 的 AIRadio 续播。"
+            ? $"这首歌适合 {context.TimeOfDay} 的 TuanRadio 续播。"
             : $"它和“{context.UserIntent}”的氛围接近，可以接在当前电台里。";
 
     private static List<string> BuildTags(ListeningContext context, OnlineTrack track)

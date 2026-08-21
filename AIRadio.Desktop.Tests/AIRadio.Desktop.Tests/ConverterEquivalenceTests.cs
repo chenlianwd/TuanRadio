@@ -30,7 +30,7 @@ public class ConverterEquivalenceTests
     }
 
     [Theory]
-    [InlineData(RadioState.Idle, "AIRADIO FM")]
+    [InlineData(RadioState.Idle, "TUANRADIO FM")]
     [InlineData(RadioState.Curating, "CURATING")]
     [InlineData(RadioState.Searching, "SEARCHING")]
     [InlineData(RadioState.Speaking, "SPEAKING")]

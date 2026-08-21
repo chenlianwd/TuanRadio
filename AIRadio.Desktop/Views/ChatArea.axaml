@@ -17,7 +17,7 @@
                 <Grid ColumnDefinitions="*,Auto" Margin="22,0">
                     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                         <Ellipse Width="9" Height="9" Fill="{DynamicResource C_FF56F5C4}"/>
-                        <TextBlock Text="AIRadio" FontSize="16" FontFamily="Consolas" Foreground="{DynamicResource C_FFEDEDF5}"/>
+                        <TextBlock Text="TuanRadio" FontSize="16" FontFamily="Consolas" Foreground="{DynamicResource C_FFEDEDF5}"/>
                     </StackPanel>
                     <TextBlock Grid.Column="1" Text="LIVE" FontSize="12" FontFamily="Consolas"
                                Foreground="{DynamicResource C_FF8DFFC8}" VerticalAlignment="Center"/>
