@@ -24,6 +24,13 @@ public class MainWindowViewModelTests
         return Path.Combine(dir, "playlist.json");
     }
 
+    private static string CreateTempSettingsFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "settings.json");
+    }
+
     private static Mock<IAudioService> CreateAudioMock(List<Track> playlist, Func<Track?> currentTrack)
     {
         var audio = new Mock<IAudioService>();
@@ -74,7 +81,8 @@ public class MainWindowViewModelTests
             storage.Object,
             search.Object,
             stt.Object,
-            CreateTempPlaylistFile());
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile());
 
         try
         {
@@ -145,7 +153,8 @@ public class MainWindowViewModelTests
             storage.Object,
             search.Object,
             stt.Object,
-            CreateTempPlaylistFile());
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile());
 
         try
         {
@@ -197,7 +206,8 @@ public class MainWindowViewModelTests
             search.Object,
             stt.Object,
             CreateTempPlaylistFile(),
-            recommendations.Object);
+            settingsFile: CreateTempSettingsFile(),
+            recommendationService: recommendations.Object);
 
         try
         {
@@ -229,13 +239,108 @@ public class MainWindowViewModelTests
             new Mock<ISecureStorage>().Object,
             new Mock<IMusicSearchService>().Object,
             new Mock<ISttService>().Object,
-            CreateTempPlaylistFile());
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile());
 
         try
         {
             vm.Dispose();
 
             audio.Verify(x => x.StopTts(), Times.Never);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task LoadLocalStateAsync_RestoresLocalStateWithoutAnnouncements()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var audio = CreateAudioMock(new List<Track>(), () => null);
+        var dj = new Mock<IDJService>();
+        dj.SetupGet(x => x.TtsEnabled).Returns(true);
+        var recommendations = new Mock<IRecommendationService>();
+        recommendations.SetupGet(x => x.FeedbackHistory).Returns(Array.Empty<UserMusicFeedback>());
+        var settingsDir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(settingsDir);
+        var settingsFile = Path.Combine(settingsDir, "settings.json");
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_model": "glm-5.3",
+              "is_dark_mode": false,
+              "start_in_compact_mode": true
+            }
+            """);
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = new MainWindowViewModel(
+                audio.Object,
+                dj.Object,
+                new Mock<ILLMService>().Object,
+                new Mock<ISecureStorage>().Object,
+                new Mock<IMusicSearchService>().Object,
+                new Mock<ISttService>().Object,
+                CreateTempPlaylistFile(),
+                settingsFile: settingsFile,
+                recommendationService: recommendations.Object);
+
+            await vm.LoadLocalStateAsync();
+
+            Assert.Equal("anthropic", vm.SettingsVM.SelectedProvider);
+            Assert.Equal("glm-5.3", vm.SettingsVM.Model);
+            Assert.False(vm.IsDarkMode);
+            Assert.True(vm.IsCompactMode);
+            // 本地恢复阶段不做任何播报，开场留给会话阶段
+            dj.Verify(x => x.GenerateSpeechAsync(It.IsAny<string>()), Times.Never);
+            audio.Verify(x => x.Play(), Times.Never);
+        }
+        finally
+        {
+            vm?.Dispose();
+            try { Directory.Delete(settingsDir, true); } catch { }
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_AnnouncesWelcome()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var audio = CreateAudioMock(new List<Track>(), () => null);
+        var dj = new Mock<IDJService>();
+        dj.SetupGet(x => x.TtsEnabled).Returns(true);
+        dj.Setup(x => x.GenerateSpeechAsync(It.IsAny<string>()))
+            .ReturnsAsync(Array.Empty<byte>());
+        var recommendations = new Mock<IRecommendationService>();
+        recommendations.SetupGet(x => x.FeedbackHistory).Returns(Array.Empty<UserMusicFeedback>());
+
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            dj.Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile(),
+            recommendationService: recommendations.Object);
+
+        try
+        {
+            await vm.StartSessionAsync();
+
+            // 欢迎语播报属于会话阶段
+            dj.Verify(x => x.GenerateSpeechAsync(It.IsAny<string>()), Times.AtLeastOnce);
         }
         finally
         {

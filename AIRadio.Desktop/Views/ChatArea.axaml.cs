@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Linq;
 using System.Reactive;
 using AIRadio.Desktop.ViewModels;
@@ -15,6 +16,7 @@ public partial class ChatArea : UserControl
 {
     private Button? _micButton;
     private NotifyCollectionChangedEventHandler? _messagesHandler;
+    private PropertyChangedEventHandler? _statusRowHandler;
     private MainWindowViewModel? _currentVm;
 
     public ChatArea()
@@ -35,6 +37,8 @@ public partial class ChatArea : UserControl
     {
         if (_currentVm != null && _messagesHandler != null)
             _currentVm.ChatVM.Messages.CollectionChanged -= _messagesHandler;
+        if (_currentVm != null && _statusRowHandler != null)
+            _currentVm.ChatVM.PropertyChanged -= _statusRowHandler;
 
         if (DataContext is MainWindowViewModel vm)
         {
@@ -42,6 +46,15 @@ public partial class ChatArea : UserControl
             _messagesHandler = (_, _) => Dispatcher.UIThread.Post(
                 () => ChatScrollViewer?.ScrollToEnd(), DispatcherPriority.Background);
             vm.ChatVM.Messages.CollectionChanged += _messagesHandler;
+            // 状态提示条显隐会挤压消息视口，需重新贴底，避免最新消息被推出可视区
+            _statusRowHandler = (_, e) =>
+            {
+                if (e.PropertyName == nameof(ChatViewModel.ShowStatusNotice) ||
+                    e.PropertyName == nameof(ChatViewModel.ShowStatusRecall))
+                    Dispatcher.UIThread.Post(
+                        () => ChatScrollViewer?.ScrollToEnd(), DispatcherPriority.Background);
+            };
+            vm.ChatVM.PropertyChanged += _statusRowHandler;
         }
         else
         {

@@ -23,8 +23,15 @@
     <Exec Command="npm install" WorkingDirectory="server" />
   </Target>
 
+  <Target Name="NpmInstallKugou" BeforeTargets="Build" Condition="!Exists('server-kugou\node_modules\.package-lock.json')">
+    <Exec Command="npm install --omit=dev" WorkingDirectory="server-kugou" />
+  </Target>
+
   <ItemGroup>
     <Content Include="server\**" Exclude="server\node_modules\.package-lock.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="server-kugou\**" Exclude="server-kugou\node_modules\.package-lock.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

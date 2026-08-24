@@ -20,6 +20,7 @@ public partial class App : Application
 {
     private IServiceProvider? _serviceProvider;
     private MusicApiServer? _musicApiServer;
+    private MusicApiServer? _kugouApiServer;
     private MainWindowViewModel? _mainVm;
     private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
@@ -80,6 +81,15 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
                 _musicApiServer = new MusicApiServer();
+                _kugouApiServer = new MusicApiServer(
+                    port: 37251,
+                    serverDirName: "server-kugou",
+                    healthQuery: "/search?keywords=test&pagesize=1",
+                    healthResponseValidator: LooksLikeKugouSearchResponse,
+                    logTag: "KugouApi",
+                    // 酷狗未登录时 /search 返回 502 + 合法 JSON（error_code:152），
+                    // 不能用 2xx 判活，只能按响应体形状识别
+                    requireSuccessStatusCode: false);
                 _initializationTask = StartMusicAndInitializeAsync(_lifetimeCts.Token);
 
                 Log.Information("AI Radio shell started successfully");
@@ -99,12 +109,54 @@ public partial class App : Application
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // 先恢复已保存的音源登录态，再启动代理：设置页扫码与音源请求共用同一份内存副本
+            if (_serviceProvider != null)
+                await _serviceProvider.GetRequiredService<MusicAccountStore>().LoadAsync();
+
+            // 本地状态（设置/歌单/主题/简洁模式）恢复不依赖网络，先于音乐代理执行：
+            // 设置页在窗口可交互时即显示真实配置，而不是等待 Node 代理就绪期间的空默认值。
+            // 本地文件异常只降级为默认值，不得中断后续音乐代理与会话开场
+            if (_mainVm != null)
+            {
+                try
+                {
+                    await _mainVm.LoadLocalStateAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to restore local state, continuing with music server startup");
+                }
+            }
+
             if (_musicApiServer != null)
                 await _musicApiServer.StartAsync(cancellationToken);
 
+            // 酷狗代理失败不阻断主流程：未登录时该源本就不可用，报业务异常透传即可
+            if (_kugouApiServer != null)
+            {
+                try
+                {
+                    await _kugouApiServer.StartAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Kugou API server startup failed");
+                }
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
+            // 会话开场（欢迎语/开播推荐/账号昵称）依赖音源代理就绪，放在代理之后
             if (_mainVm != null)
-                await _mainVm.InitializeAsync(cancellationToken);
+                await _mainVm.StartSessionAsync(cancellationToken);
 
             Log.Information("AI Radio initialized successfully");
 
@@ -139,11 +191,15 @@ public partial class App : Application
         services.AddSingleton<IAudioService, AudioService>();
         services.AddSingleton<ILLMService, LLMService>();
         services.AddSingleton<ITtsService, EdgeTtsService>();
+        services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
+        services.AddSingleton<MusicAccountStore>(sp =>
+            new MusicAccountStore(sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<IMusicSearchService>(sp =>
         {
+            var accounts = sp.GetRequiredService<MusicAccountStore>();
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
-            var ytSource = new YouTubeMusicService(ytdlpPath);
-            return new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>(), ytSource);
+            var ytSource = new YouTubeMusicService(ytdlpPath, accounts);
+            return new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>(), accounts, ytSource);
         });
         services.AddSingleton<IDJService>(sp =>
             new DJService(
@@ -154,9 +210,19 @@ public partial class App : Application
             new RecommendationService(
                 sp.GetRequiredService<ILLMService>(),
                 sp.GetRequiredService<IMusicSearchService>()));
-        services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<ISttService, WhisperSttService>();
-        services.AddSingleton<MainWindowViewModel>();
+        // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
+        services.AddSingleton(sp => new MainWindowViewModel(
+            sp.GetRequiredService<IAudioService>(),
+            sp.GetRequiredService<IDJService>(),
+            sp.GetRequiredService<ILLMService>(),
+            sp.GetRequiredService<ISecureStorage>(),
+            sp.GetRequiredService<IMusicSearchService>(),
+            sp.GetRequiredService<ISttService>(),
+            PlaylistViewModel.DefaultPlaylistFile,
+            SettingsViewModel.DefaultSettingsFile,
+            accountStore: sp.GetRequiredService<MusicAccountStore>(),
+            httpClient: sp.GetRequiredService<System.Net.Http.HttpClient>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
@@ -164,8 +230,28 @@ public partial class App : Application
         Log.Information("AI Radio shutting down...");
         _lifetimeCts.Cancel();
         _mainVm?.Dispose();
+        _kugouApiServer?.Dispose();
         _musicApiServer?.Dispose();
         (_serviceProvider as IDisposable)?.Dispose();
         Log.CloseAndFlush();
+    }
+
+    /// <summary>酷狗代理健康检查：与网易不同，其响应形状以数字 status 字段标识。</summary>
+    private static bool LooksLikeKugouSearchResponse(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 64 * 1024)
+            return false;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                   doc.RootElement.TryGetProperty("status", out var status) &&
+                   status.ValueKind == System.Text.Json.JsonValueKind.Number;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 }

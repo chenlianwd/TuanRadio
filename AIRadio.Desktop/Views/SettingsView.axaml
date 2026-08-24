@@ -29,6 +29,53 @@
                        TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0"/>
         </StackPanel>
 
+        <!-- Music source accounts -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="音源账号" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="网易云音乐（扫码登录）" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Command="{Binding NeteaseQrLoginCommand}" Content="扫码登录"
+                            Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
+                            Foreground="{DynamicResource C_FF000000}"/>
+                    <Button Command="{Binding NeteaseLogoutCommand}" Content="退出登录"
+                            Padding="14,6" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="{Binding NeteaseAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
+                           TextWrapping="Wrap"/>
+                <Image Source="{Binding NeteaseQrImage}" IsVisible="{Binding IsNeteaseQrVisible}"
+                       Width="180" Height="180" Stretch="Uniform"/>
+                <TextBlock Text="登录后免费账号仍只能试听 VIP 歌曲的片段，黑胶会员可完整播放" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="酷狗音乐（扫码登录）" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Command="{Binding KugouQrLoginCommand}" Content="扫码登录"
+                            Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
+                            Foreground="{DynamicResource C_FF000000}"/>
+                    <Button Command="{Binding KugouLogoutCommand}" Content="退出登录"
+                            Padding="14,6" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="{Binding KugouAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
+                           TextWrapping="Wrap"/>
+                <Image Source="{Binding KugouQrImage}" IsVisible="{Binding IsKugouQrVisible}"
+                       Width="180" Height="180" Stretch="Uniform"/>
+                <TextBlock Text="酷狗音源必须登录后才能播放；在官方 App 每日看广告领到的会员在这里同样有效" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="YouTube 音源（yt-dlp 登录态）" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
+                          ItemsSource="{Binding YtdlpBrowsers}"
+                          SelectedValueBinding="{Binding Id}"
+                          DisplayMemberBinding="{Binding DisplayName}"
+                          HorizontalAlignment="Stretch"/>
+                <TextBlock Text="YouTube 会拦截未登录请求（not a bot 风控）；选择已登录过 YouTube 的浏览器可复用其 Cookies" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+        </StackPanel>
+
         <!-- Language selection -->
         <StackPanel Spacing="6">
             <TextBlock Text="AI 回复语言" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>

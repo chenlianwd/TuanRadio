@@ -2,6 +2,7 @@ using ReactiveUI;
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using Avalonia.Media;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -32,13 +33,22 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly string _settingsFile;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
+    private readonly IDisposable _selectedYtdlpBrowserSub;
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly MusicAccountStore _accounts;
+    private readonly NeteaseAccountService _neteaseAccount;
+    private readonly KugouAccountService _kugouAccount;
+    private bool _neteaseQrRunning;
+    private bool _kugouQrRunning;
+    private bool _loadingYtdlpBrowser;
     private string? _lastCharacterSignature;
     private bool _lastSaveSucceeded;
     private int _disposed;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
-    private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
+
+    /// <summary>应用真实使用的用户配置路径；仅生产组合根允许落在这里，测试必须显式传临时路径。</summary>
+    public static readonly string DefaultSettingsFile = Path.Combine(SettingsDir, "settings.json");
 
     // Per-character overrides: character id → (voiceId, personalityPrompt)
     private readonly Dictionary<string, (string VoiceId, string Personality)> _overrides = new();
@@ -57,6 +67,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
+
+    // 音源账号（网易扫码/酷狗扫码/yt-dlp cookies）
+    [Reactive] public string NeteaseAccountStatus { get; set; } = "未登录";
+    [Reactive] public IImage? NeteaseQrImage { get; set; }
+    [Reactive] public bool IsNeteaseQrVisible { get; set; }
+    [Reactive] public string KugouAccountStatus { get; set; } = "未登录";
+    [Reactive] public IImage? KugouQrImage { get; set; }
+    [Reactive] public bool IsKugouQrVisible { get; set; }
+    [Reactive] public VoiceOption? SelectedYtdlpBrowser { get; set; }
 
     // Character customization
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
@@ -93,8 +112,24 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         new() { Id = "pause", DisplayName = "说话时暂停音乐" },
     };
 
+    public List<VoiceOption> YtdlpBrowsers { get; } = new()
+    {
+        new() { Id = "", DisplayName = "不使用" },
+        new() { Id = "chrome", DisplayName = "Chrome" },
+        new() { Id = "edge", DisplayName = "Edge" },
+        new() { Id = "firefox", DisplayName = "Firefox" },
+        new() { Id = "brave", DisplayName = "Brave" },
+        new() { Id = "chromium", DisplayName = "Chromium" },
+        new() { Id = "opera", DisplayName = "Opera" },
+        new() { Id = "vivaldi", DisplayName = "Vivaldi" },
+    };
+
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
+    public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
+    public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
+    public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
+    public ReactiveCommand<Unit, Unit> KugouLogoutCommand { get; }
 
     // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
     // 磁盘上已有的 llm_* 字段原样保留
@@ -103,21 +138,52 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     // Notify MainWindow when character settings change so it can re-apply
     public event Action? CharacterSettingsChanged;
 
-    public SettingsViewModel(ILLMService llmService, ISecureStorage secureStorage, string? settingsFile = null)
+    public SettingsViewModel(
+        ILLMService llmService,
+        ISecureStorage secureStorage,
+        string settingsFile,
+        MusicAccountStore? accountStore = null,
+        System.Net.Http.HttpClient? httpClient = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
-        _settingsFile = settingsFile ?? SettingsFile;
+        _settingsFile = settingsFile;
         _settingsDir = Path.GetDirectoryName(_settingsFile) ?? SettingsDir;
+        _accounts = accountStore ?? new MusicAccountStore(secureStorage);
+        var http = httpClient ?? new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _neteaseAccount = new NeteaseAccountService(http);
+        _kugouAccount = new KugouAccountService(http);
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(() => SaveAsync());
+
+        // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
+        // 磁盘上已有的 llm_* 字段原样保留
         SaveUiStateCommand = ReactiveCommand.CreateFromTask(() => SaveAsync(persistLlmFields: false));
+        NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
+        NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
+        KugouQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunKugouQrLoginAsync());
+        KugouLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutKugouAsync());
 
         // When character selection changes, load its overrides
         _selectedCharacterSub = this.WhenAnyValue(x => x.SelectedCharacter)
             .Where(c => c != null)
             .Subscribe(c => LoadCharacterOverrides(c!));
+
+        // 默认选中必须在订阅之前完成，否则构造即触发一次无意义（且有副作用）的自动保存
+        SelectedYtdlpBrowser = YtdlpBrowsers[0];
+        // Skip(1)：WhenAnyValue 订阅时会立刻发射当前值，跳过它避免构造期触发自动保存
+        _selectedYtdlpBrowserSub = this.WhenAnyValue(x => x.SelectedYtdlpBrowser)
+            .Skip(1)
+            .Where(b => b != null)
+            .Subscribe(b =>
+            {
+                _accounts.YtdlpCookieBrowser = b!.Id;
+                if (_loadingYtdlpBrowser)
+                    return;
+                // 用户切换浏览器时跟随保存，不触碰 LLM 字段与凭据
+                _ = SaveUiStateCommand.Execute();
+            });
 
         // Default selection
         SelectedCharacter = Characters[0];
@@ -151,10 +217,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 ApiKey = key;
             }
 
-            if (File.Exists(_settingsFile))
+            using var doc = await OpenSettingsDocumentAsync(cancellationToken);
+            if (doc != null)
             {
-                var json = await File.ReadAllTextAsync(_settingsFile, cancellationToken);
-                using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
                 if (root.TryGetProperty("llm_provider", out var provider))
@@ -187,6 +252,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
 
+                if (root.TryGetProperty("ytdlp_cookie_browser", out var browserEl))
+                {
+                    var browserId = browserEl.GetString() ?? "";
+                    // 加载期赋值只同步内存态，不触发跟随保存
+                    _loadingYtdlpBrowser = true;
+                    SelectedYtdlpBrowser = YtdlpBrowsers.Find(b => b.Id == browserId) ?? YtdlpBrowsers[0];
+                    _loadingYtdlpBrowser = false;
+                }
+
                 if (root.TryGetProperty("character_overrides", out var ovElem))
                 {
                     foreach (var prop in ovElem.EnumerateObject())
@@ -204,6 +278,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             ConfigureLlm();
 
+            // 账号昵称查询依赖本地音乐代理，就绪后由 RefreshAccountStatusAsync 刷新；
+            // 加载期只按 cookie 有无恢复基础状态，避免误显示"未登录"，也不发网络请求
+            if (!string.IsNullOrEmpty(_accounts.NeteaseCookie))
+                NeteaseAccountStatus = "已登录";
+            if (!string.IsNullOrEmpty(_accounts.KugouCookie))
+                KugouAccountStatus = "已登录";
+
             // 加载完成即建立角色签名基线：启动后的第一次无关保存（主题/简洁模式）不会误触发事件
             _lastCharacterSignature = BuildCharacterSignature();
         }
@@ -220,6 +301,30 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public (string VoiceId, string Personality)? GetOverride(string characterId)
     {
         return _overrides.TryGetValue(characterId, out var ov) ? ov : null;
+    }
+
+    /// <summary>优先读 settings.json，损坏或读不了时回退 .bak；两者都不可用返回 null，调用方按默认值运行。</summary>
+    private async Task<JsonDocument?> OpenSettingsDocumentAsync(CancellationToken cancellationToken)
+    {
+        foreach (var path in new[] { _settingsFile, _settingsFile + ".bak" })
+        {
+            if (!File.Exists(path))
+                continue;
+            try
+            {
+                var json = await File.ReadAllTextAsync(path, cancellationToken);
+                return JsonDocument.Parse(json);
+            }
+            catch (JsonException ex)
+            {
+                Log.Warning(ex, "Settings file {Path} is corrupt", path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.Warning(ex, "Settings file {Path} is unreadable", path);
+            }
+        }
+        return null;
     }
 
     private string BuildCharacterSignature()
@@ -268,6 +373,185 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         {
             IsTesting = false;
             TestConnectionButtonText = "测试连接";
+        }
+    }
+
+    /// <summary>刷新音源账号昵称状态；依赖本地音乐代理已就绪，代理启动完成后调用。</summary>
+    public async Task RefreshAccountStatusAsync()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(_accounts.NeteaseCookie))
+            {
+                var nickname = await _neteaseAccount.GetNicknameAsync(_accounts.NeteaseCookie!, _lifetimeCts.Token);
+                NeteaseAccountStatus = nickname != null
+                    ? $"已登录：{nickname}"
+                    : "已登录（昵称获取失败，登录态可能过期）";
+            }
+
+            if (!string.IsNullOrEmpty(_accounts.KugouCookie))
+            {
+                var nickname = await _kugouAccount.GetNicknameAsync(_accounts.KugouCookie!, _lifetimeCts.Token);
+                KugouAccountStatus = nickname != null ? $"已登录：{nickname}" : "已登录";
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Account status refresh failed");
+        }
+    }
+
+    private async Task RunNeteaseQrLoginAsync()
+    {
+        if (_neteaseQrRunning)
+            return;
+        _neteaseQrRunning = true;
+        try
+        {
+            var session = await _neteaseAccount.CreateQrSessionAsync(_lifetimeCts.Token);
+            if (session == null)
+            {
+                NeteaseAccountStatus = "二维码创建失败：本地音乐服务未就绪，请稍后重试";
+                return;
+            }
+
+            NeteaseQrImage = CreateBitmap(session.QrPng);
+            IsNeteaseQrVisible = true;
+            NeteaseAccountStatus = "请用网易云音乐 App 扫码";
+
+            for (int i = 0; i < 100; i++)
+            {
+                await Task.Delay(1500, _lifetimeCts.Token);
+                var result = await _neteaseAccount.CheckQrAsync(session.Key, _lifetimeCts.Token);
+                switch (result.State)
+                {
+                    case QrState.Waiting:
+                        break;
+                    case QrState.Scanned:
+                        NeteaseAccountStatus = "已扫码，请在手机上确认";
+                        break;
+                    case QrState.Confirmed when !string.IsNullOrEmpty(result.Cookie):
+                        await _accounts.SetNeteaseCookieAsync(result.Cookie!);
+                        IsNeteaseQrVisible = false;
+                        NeteaseQrImage = null;
+                        var nickname = await _neteaseAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
+                        NeteaseAccountStatus = $"已登录：{nickname ?? "未知昵称"}";
+                        return;
+                    case QrState.Expired:
+                        NeteaseAccountStatus = "二维码已过期，请重新扫码";
+                        return;
+                    default:
+                        NeteaseAccountStatus = "登录失败：接口返回异常，请重试";
+                        return;
+                }
+            }
+            NeteaseAccountStatus = "等待扫码超时，请重试";
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Netease QR login failed");
+            NeteaseAccountStatus = $"登录失败：{ex.Message}";
+        }
+        finally
+        {
+            _neteaseQrRunning = false;
+        }
+    }
+
+    private async Task RunKugouQrLoginAsync()
+    {
+        if (_kugouQrRunning)
+            return;
+        _kugouQrRunning = true;
+        try
+        {
+            var session = await _kugouAccount.CreateQrSessionAsync(_lifetimeCts.Token);
+            if (session == null)
+            {
+                KugouAccountStatus = "二维码创建失败：本地酷狗服务未就绪，请稍后重试";
+                return;
+            }
+
+            KugouQrImage = CreateBitmap(session.QrPng);
+            IsKugouQrVisible = true;
+            KugouAccountStatus = "请用酷狗音乐 App 扫码";
+
+            for (int i = 0; i < 100; i++)
+            {
+                await Task.Delay(1500, _lifetimeCts.Token);
+                var result = await _kugouAccount.CheckQrAsync(session.Key, _lifetimeCts.Token);
+                switch (result.State)
+                {
+                    case QrState.Waiting:
+                        break;
+                    case QrState.Scanned:
+                        KugouAccountStatus = "已扫码，请在手机上确认";
+                        break;
+                    case QrState.Confirmed when !string.IsNullOrEmpty(result.Cookie):
+                        await _accounts.SetKugouCookieAsync(result.Cookie!);
+                        IsKugouQrVisible = false;
+                        KugouQrImage = null;
+                        var nickname = await _kugouAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
+                        KugouAccountStatus = $"已登录：{nickname ?? "未知昵称"}";
+                        return;
+                    case QrState.Expired:
+                        KugouAccountStatus = "二维码已过期，请重新扫码";
+                        return;
+                    default:
+                        KugouAccountStatus = "登录失败：接口返回异常，请重试";
+                        return;
+                }
+            }
+            KugouAccountStatus = "等待扫码超时，请重试";
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Kugou QR login failed");
+            KugouAccountStatus = $"登录失败：{ex.Message}";
+        }
+        finally
+        {
+            _kugouQrRunning = false;
+        }
+    }
+
+    private async Task LogoutNeteaseAsync()
+    {
+        await _accounts.SetNeteaseCookieAsync(null);
+        IsNeteaseQrVisible = false;
+        NeteaseQrImage = null;
+        NeteaseAccountStatus = "未登录";
+    }
+
+    private async Task LogoutKugouAsync()
+    {
+        await _accounts.SetKugouCookieAsync(null);
+        IsKugouQrVisible = false;
+        KugouQrImage = null;
+        KugouAccountStatus = "未登录";
+    }
+
+    private static IImage? CreateBitmap(byte[] png)
+    {
+        try
+        {
+            using var stream = new MemoryStream(png);
+            return new Avalonia.Media.Imaging.Bitmap(stream);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to decode QR image");
+            return null;
         }
     }
 
@@ -344,13 +628,29 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 start_in_compact_mode = StartInCompactMode,
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
+                ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
                 character_overrides = overridesJson
             };
             // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager
             var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
             var tempPath = _settingsFile + ".tmp";
             await File.WriteAllTextAsync(tempPath, json, _lifetimeCts.Token);
-            File.Move(tempPath, _settingsFile, overwrite: true);
+            // 旧配置轮转为 .bak：settings.json 被外部进程覆盖或写坏时留有恢复途径；
+            // .bak 被占用等备份失败只降级为直接覆盖，不能阻塞保存
+            if (File.Exists(_settingsFile))
+            {
+                try
+                {
+                    File.Replace(tempPath, _settingsFile, _settingsFile + ".bak");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    Log.Warning(ex, "Failed to rotate settings backup, overwriting directly");
+                    File.Move(tempPath, _settingsFile, overwrite: true);
+                }
+            }
+            else
+                File.Move(tempPath, _settingsFile);
 
             if (characterSettingsChanged)
                 CharacterSettingsChanged?.Invoke();
@@ -407,6 +707,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
         _lifetimeCts.Cancel();
         _selectedCharacterSub.Dispose();
+        _selectedYtdlpBrowserSub.Dispose();
     }
 
     private void ConfigureLlm(string? apiKeyOverride = null)
