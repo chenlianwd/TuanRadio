@@ -146,6 +146,46 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
+    public async Task LoadAsync_KeepsPersistedUrlUntilRefreshOnlineUrlsAsync()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        await File.WriteAllTextAsync(playlistFile,
+            """
+            {
+              "Tracks": [
+                {
+                  "Id": "netease:stale",
+                  "Title": "旧链接",
+                  "Artist": "歌手",
+                  "Album": "",
+                  "DurationMs": 200000,
+                  "FilePath": "http://old-expired.example/a.mp3",
+                  "SourceId": "netease:stale",
+                  "IsOnline": true,
+                  "IsFavorite": false
+                }
+              ],
+              "FavoriteIds": []
+            }
+            """);
+
+        var (vm, audioMock, searchMock) = CreateVm(playlistFile);
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:stale"))
+            .ReturnsAsync("http://fresh.example/a.mp3");
+
+        await vm.LoadAsync();
+
+        // 本地加载阶段不碰音源：保留磁盘上的旧链接，等代理就绪后再刷新
+        searchMock.Verify(x => x.GetPlayUrlAsync(It.IsAny<string>()), Times.Never);
+        Assert.Equal("http://old-expired.example/a.mp3", vm.Tracks[0].FilePath);
+
+        await vm.RefreshOnlineUrlsAsync();
+
+        searchMock.Verify(x => x.GetPlayUrlAsync("netease:stale"), Times.Once);
+        Assert.Equal("http://fresh.example/a.mp3", vm.Tracks[0].FilePath);
+    }
+
+    [Fact]
     public async Task LoadAsync_PreservesOnlineFavoriteWhenUrlRefreshFails()
     {
         var playlistFile = CreateTempPlaylistFile();

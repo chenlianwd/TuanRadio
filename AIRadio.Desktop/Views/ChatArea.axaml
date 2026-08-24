@@ -46,28 +46,34 @@
                 </ScrollViewer>
             </Grid>
 
-            <!-- 状态提示占独立布局行，避免浮层盖住消息（原为右上角浮层，会挡住首条消息） -->
+            <!-- 状态提示占独立布局行避免覆盖消息，并压缩为单行省高度：全文与恢复建议放 Tooltip -->
             <Border Grid.Row="1" IsVisible="{Binding ChatVM.ShowStatusNotice}"
-                    HorizontalAlignment="Right" Margin="22,10,22,0" Background="{DynamicResource C_EE050507}"
+                    HorizontalAlignment="Right" Margin="22,8,22,0" Background="{DynamicResource C_EE050507}"
                     BorderBrush="{DynamicResource C_3356F5C4}" BorderThickness="1" CornerRadius="4"
-                    Padding="12,9" MaxWidth="360">
-                <StackPanel Spacing="3">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
-                            <Ellipse Width="6" Height="6" Fill="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding ChatVM.StatusHeadline}" FontSize="12" FontWeight="700"
-                                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFB9FFE8}"/>
-                        </StackPanel>
-                        <Button Grid.Column="1" Command="{Binding ChatVM.DismissStatusNoticeCommand}"
-                                Content="x" Width="22" Height="22" Padding="0"
-                                Background="{DynamicResource C_00000000}" Foreground="{DynamicResource C_FFB9FFE8}" BorderThickness="0"
-                                ToolTip.Tip="收起提示"/>
-                    </Grid>
-                    <TextBlock Text="{Binding ChatVM.StatusDetail}" FontSize="11" TextWrapping="Wrap"
-                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFD8D8EA}"/>
-                    <TextBlock Text="{Binding ChatVM.StatusRecoveryHint}" FontSize="11" TextWrapping="Wrap"
-                               FontFamily="Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFC86B}"/>
-                </StackPanel>
+                    Padding="12,5" MaxWidth="460">
+                <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+                    <Ellipse Grid.Column="0" Width="6" Height="6" Fill="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="{Binding ChatVM.StatusHeadline}" FontSize="11" FontWeight="700"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFB9FFE8}"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Text="{Binding ChatVM.StatusDetail}" FontSize="11" TextTrimming="CharacterEllipsis"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFD8D8EA}"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="3" Command="{Binding ChatVM.DismissStatusNoticeCommand}"
+                            Content="x" Width="18" Height="18" Padding="0"
+                            Background="{DynamicResource C_00000000}" Foreground="{DynamicResource C_FFB9FFE8}" BorderThickness="0"
+                            ToolTip.Tip="收起提示"/>
+                </Grid>
+                <ToolTip.Tip>
+                    <StackPanel MaxWidth="320" Spacing="4">
+                        <TextBlock Text="{Binding ChatVM.StatusDetail}" TextWrapping="Wrap"
+                                   FontFamily="Consolas, Microsoft YaHei UI" FontSize="11"
+                                   Foreground="{DynamicResource C_FFD8D8EA}"/>
+                        <TextBlock Text="{Binding ChatVM.StatusRecoveryHint}" TextWrapping="Wrap"
+                                   FontFamily="Microsoft YaHei UI" FontSize="11"
+                                   Foreground="{DynamicResource C_FFFFC86B}"/>
+                    </StackPanel>
+                </ToolTip.Tip>
             </Border>
 
             <Button Grid.Row="1" IsVisible="{Binding ChatVM.ShowStatusRecall}"

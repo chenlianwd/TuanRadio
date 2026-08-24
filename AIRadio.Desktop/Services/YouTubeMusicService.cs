@@ -18,12 +18,14 @@ namespace AIRadio.Desktop.Services;
 public class YouTubeMusicService : IMusicSearchService
 {
     private readonly string _ytdlpPath;
+    private readonly MusicAccountStore? _accounts;
 
     public string Name => "YouTube";
 
-    public YouTubeMusicService(string ytdlpPath)
+    public YouTubeMusicService(string ytdlpPath, MusicAccountStore? accounts = null)
     {
         _ytdlpPath = ytdlpPath;
+        _accounts = accounts;
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
@@ -37,7 +39,7 @@ public class YouTubeMusicService : IMusicSearchService
         try
         {
             // Use --dump-json for structured output (one JSON object per line)
-            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings";
+            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings{BuildCookieArgs()}";
             var output = await RunYtdlpAsync(args, cancellationToken);
 
             if (string.IsNullOrWhiteSpace(output))
@@ -76,7 +78,7 @@ public class YouTubeMusicService : IMusicSearchService
 
             var url = $"https://www.youtube.com/watch?v={videoId}";
 
-            var args = $"-f ba --get-url --no-warnings --ignore-errors {EscapeArg(url)}";
+            var args = $"-f ba --get-url --no-warnings --ignore-errors{BuildCookieArgs()} {EscapeArg(url)}";
             var output = await RunYtdlpAsync(args, cancellationToken);
 
             var playUrl = output?.Trim();
@@ -206,6 +208,16 @@ public class YouTubeMusicService : IMusicSearchService
             Log.Debug(ex, "yt-dlp execution failed");
             return null;
         }
+    }
+
+    /// <summary>
+    /// YouTube 对匿名流量默认弹出 "Sign in to confirm you're not a bot" 风控，
+    /// 配置了浏览器来源 cookies 时透传给 yt-dlp 复用真实登录态。
+    /// </summary>
+    private string BuildCookieArgs()
+    {
+        var browser = _accounts?.YtdlpCookieBrowser;
+        return string.IsNullOrEmpty(browser) ? "" : $" --cookies-from-browser {EscapeArg(browser)}";
     }
 
     private static string EscapeArg(string arg)

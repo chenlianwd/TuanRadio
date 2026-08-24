@@ -27,10 +27,13 @@ public class SettingsViewModelTests
             .Returns(Task.CompletedTask);
     }
 
+    private static string CreateTempSettingsFile()
+        => Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
+
     [Fact]
     public void GetOverride_ReturnsStoredOverride()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         vm.SelectedCharacter = vm.Characters.First();
 
         // Override not set yet
@@ -45,7 +48,7 @@ public class SettingsViewModelTests
     [Fact]
     public void Voices_ListContainsAllOptions()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.Equal(6, vm.Voices.Count);
         Assert.Contains(vm.Voices, v => v.Id == "male-qn-qingse");
@@ -55,7 +58,7 @@ public class SettingsViewModelTests
     [Fact]
     public void Languages_ListContainsZhAndEn()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.Equal(2, vm.Languages.Count);
         Assert.Contains(vm.Languages, l => l.Id == "zh");
@@ -65,7 +68,7 @@ public class SettingsViewModelTests
     [Fact]
     public void Characters_ListContainsPresets()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.True(vm.Characters.Count >= 6);
         Assert.Contains(vm.Characters, c => c.Id == "haru" && c.DisplayName == "Lumen");
@@ -76,7 +79,7 @@ public class SettingsViewModelTests
     [Fact]
     public void SelectedCharacter_DefaultsToFirst()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.NotNull(vm.SelectedCharacter);
         Assert.Equal("haru", vm.SelectedCharacter.Id);
@@ -85,7 +88,7 @@ public class SettingsViewModelTests
     [Fact]
     public void TtsEnabled_DefaultsToTrue()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.True(vm.TtsEnabled);
     }
@@ -93,7 +96,7 @@ public class SettingsViewModelTests
     [Fact]
     public void SelectedLanguage_DefaultsToZh()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.Equal("zh", vm.SelectedLanguage);
     }
@@ -101,7 +104,7 @@ public class SettingsViewModelTests
     [Fact]
     public void LlmSettings_DefaultToOpenAiCompatibleProfile()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.Equal("openai", vm.SelectedProvider);
         Assert.Empty(vm.Model);
@@ -141,7 +144,7 @@ public class SettingsViewModelTests
     [Fact]
     public void SelectedProvider_KeepsSavedValues()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         vm.ApiKey = "remote-secret";
         vm.Model = "deepseek-chat";
@@ -193,7 +196,7 @@ public class SettingsViewModelTests
     [Fact]
     public void TestConnectionCommand_CanBeCreated()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         vm.ApiKey = "";
 
         vm.TestConnectionCommand.Subscribe(_ => { });
@@ -204,7 +207,7 @@ public class SettingsViewModelTests
     [Fact]
     public async Task TestConnectionCommand_EmptyKey_SetsErrorMessage()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         vm.ApiKey = "";
 
         await vm.TestConnectionCommand.Execute();
@@ -377,8 +380,194 @@ public class SettingsViewModelTests
     [Fact]
     public void CompactModeTopmost_DefaultsToTrue()
     {
-        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         Assert.True(vm.CompactModeTopmost);
+    }
+
+    [Fact]
+    public async Task SaveAsync_RotatesPreviousSettingsToBakFile()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic"
+            }
+            """);
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                Model = "new-model"
+            };
+
+            await vm.SaveCommand.Execute();
+
+            var bak = settingsFile + ".bak";
+            Assert.True(File.Exists(bak));
+            Assert.Contains("\"llm_provider\": \"anthropic\"", await File.ReadAllTextAsync(bak));
+            Assert.Contains("\"llm_model\": \"new-model\"", await File.ReadAllTextAsync(settingsFile));
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_CorruptSettingsFile_FallsBackToBak()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, "{ not valid json");
+        await File.WriteAllTextAsync(settingsFile + ".bak", """
+            {
+              "llm_provider": "anthropic",
+              "llm_model": "claude-test"
+            }
+            """);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync("current-key");
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            await vm.LoadAsync();
+
+            Assert.Equal("anthropic", vm.SelectedProvider);
+            Assert.Equal("claude-test", vm.Model);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_MissingSettingsFile_FallsBackToBak()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile + ".bak", """
+            {
+              "llm_base_url": "https://proxy.example/v1"
+            }
+            """);
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            await vm.LoadAsync();
+
+            Assert.Equal("https://proxy.example/v1", vm.BaseUrl);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_LockedBakFile_DoesNotBlockSave()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, "{\"llm_provider\":\"anthropic\"}");
+        await File.WriteAllTextAsync(settingsFile + ".bak", "{\"old\":true}");
+        // 独占锁定 .bak，模拟杀毒/索引器/编辑器占用导致 File.Replace 失败
+        await using var lockedBak = new FileStream(
+            settingsFile + ".bak", FileMode.Open, FileAccess.Read, FileShare.None);
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                Model = "new-model"
+            };
+
+            await vm.SaveCommand.Execute();
+
+            var json = await File.ReadAllTextAsync(settingsFile);
+            Assert.Contains("\"llm_model\": \"new-model\"", json);
+            Assert.Equal("设置已保存", vm.StatusMessage);
+        }
+        finally
+        {
+            lockedBak.Dispose();
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_FirstSave_CreatesNoBakFile()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                Model = "first-model"
+            };
+
+            await vm.SaveCommand.Execute();
+
+            Assert.True(File.Exists(settingsFile));
+            Assert.False(File.Exists(settingsFile + ".bak"));
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_SecondSave_RotatesBakToLatestContent()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            vm.Model = "model-v1";
+            await vm.SaveCommand.Execute();
+
+            vm.Model = "model-v2";
+            await vm.SaveCommand.Execute();
+
+            var bak = await File.ReadAllTextAsync(settingsFile + ".bak");
+            Assert.Contains("\"llm_model\": \"model-v1\"", bak);
+            Assert.Contains("\"llm_model\": \"model-v2\"", await File.ReadAllTextAsync(settingsFile));
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithSavedCookies_ShowsLoggedInPlaceholderWithoutProxy()
+    {
+        _mockStorage.Setup(x => x.GetApiKeyAsync("netease-cookie")).ReturnsAsync("MUSIC_U=stub");
+        _mockStorage.Setup(x => x.GetApiKeyAsync("kugou-cookie")).ReturnsAsync("kg stub");
+        var accountStore = new MusicAccountStore(_mockStorage.Object);
+        await accountStore.LoadAsync();
+        var settingsFile = CreateTempSettingsFile();
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile, accountStore: accountStore);
+
+            await vm.LoadAsync();
+
+            // 昵称查询依赖本地音乐代理，加载期只按 cookie 有无恢复基础状态，不得发网络请求
+            Assert.Equal("已登录", vm.NeteaseAccountStatus);
+            Assert.Equal("已登录", vm.KugouAccountStatus);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
     }
 
     [Fact]

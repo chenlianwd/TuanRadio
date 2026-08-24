@@ -16,6 +16,10 @@ public class MusicApiServer : IDisposable
     private const int DefaultPort = 37250;
     private const int MaxStartupRetries = 30;
     private readonly string _serverDir;
+    private readonly string _healthQuery;
+    private readonly Func<string, bool> _healthValidator;
+    private readonly string _logTag;
+    private readonly bool _requireSuccessStatusCode;
     private readonly object _processGate = new();
     private int _disposed;
 
@@ -32,10 +36,26 @@ public class MusicApiServer : IDisposable
         }
     }
 
-    public MusicApiServer(int port = DefaultPort)
+    /// <summary>
+    /// 本地 Node 音乐 API 代理管理器。默认参数对应网易云代理（server 目录 + 37250 端口），
+    /// 酷狗代理复用本类并传入各自的目录/端口/健康检查形状。
+    /// requireSuccessStatusCode=false 适用于"业务失败也用 2xx 之外的状态码表达"的代理
+    /// （如酷狗未登录搜索返回 502 + 合法 JSON），此时仅凭响应体形状判定健康。
+    /// </summary>
+    public MusicApiServer(
+        int port = DefaultPort,
+        string? serverDirName = null,
+        string? healthQuery = null,
+        Func<string, bool>? healthResponseValidator = null,
+        string? logTag = null,
+        bool requireSuccessStatusCode = true)
     {
         _port = port;
-        _serverDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server");
+        _serverDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, serverDirName ?? "server");
+        _healthQuery = healthQuery ?? "/search?keywords=test&limit=1";
+        _healthValidator = healthResponseValidator ?? LooksLikeNeteaseSearchResponse;
+        _logTag = logTag ?? "MusicApi";
+        _requireSuccessStatusCode = requireSuccessStatusCode;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -61,7 +81,7 @@ public class MusicApiServer : IDisposable
         // 其他 Node/开发服务。
         if (await IsServerReadyAsync(cancellationToken))
         {
-            Log.Information("Music API server is already available on port {Port}", _port);
+            Log.Information("{Tag} server is already available on port {Port}", _logTag, _port);
             return;
         }
 
@@ -96,13 +116,13 @@ public class MusicApiServer : IDisposable
                 process.OutputDataReceived += (_, e) =>
                 {
                     if (!string.IsNullOrEmpty(e.Data))
-                        Log.Debug("MusicApi: {Line}", e.Data);
+                        Log.Debug("{Tag}: {Line}", _logTag, e.Data);
                 };
 
                 process.ErrorDataReceived += (_, e) =>
                 {
                     if (!string.IsNullOrEmpty(e.Data))
-                        Log.Warning("MusicApi ERR: {Line}", e.Data);
+                        Log.Warning("{Tag} ERR: {Line}", _logTag, e.Data);
                 };
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -119,12 +139,12 @@ public class MusicApiServer : IDisposable
                 try
                 {
                     using var resp = await http.GetAsync(
-                        $"http://127.0.0.1:{_port}/search?keywords=test&limit=1",
+                        $"http://127.0.0.1:{_port}{_healthQuery}",
                         cancellationToken);
-                    if (resp.IsSuccessStatusCode &&
-                        LooksLikeNeteaseSearchResponse(await resp.Content.ReadAsStringAsync(cancellationToken)))
+                    if (HealthResponseAccepted(resp) &&
+                        _healthValidator(await resp.Content.ReadAsStringAsync(cancellationToken)))
                     {
-                        Log.Information("Music API server ready on port {Port}", _port);
+                        Log.Information("{Tag} server ready on port {Port}", _logTag, _port);
                         return;
                     }
                 }
@@ -140,7 +160,7 @@ public class MusicApiServer : IDisposable
 
             // 健康检查失败也要回收进程：留着只会占用端口并让后续启动复用判断复杂化
             Stop();
-            Log.Warning("Music API server did not become ready within 15 seconds");
+            Log.Warning("{Tag} server did not become ready within 15 seconds", _logTag);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -149,7 +169,7 @@ public class MusicApiServer : IDisposable
         catch (Exception ex)
         {
             Stop();
-            Log.Error(ex, "Failed to start music API server");
+            Log.Error(ex, "Failed to start {Tag} server", _logTag);
         }
     }
 
@@ -171,7 +191,7 @@ public class MusicApiServer : IDisposable
             {
                 process.Kill(entireProcessTree: true);
                 process.WaitForExit(3000);
-                Log.Information("Music API server stopped");
+                Log.Information("{Tag} server stopped", _logTag);
             }
         }
         catch (Exception ex)
@@ -199,15 +219,15 @@ public class MusicApiServer : IDisposable
         try
         {
             using var response = await http.GetAsync(
-                $"http://127.0.0.1:{_port}/search?keywords=test&limit=1",
+                $"http://127.0.0.1:{_port}{_healthQuery}",
                 cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            if (!HealthResponseAccepted(response))
                 return false;
 
-            // 仅凭 2xx 复用端口会被恰好占用 37250 的第三方本地进程冒充，
-            // 校验响应体是 NeteaseCloudMusicApi 形状的 JSON 才认可为自有服务
+            // 仅凭 2xx 复用端口会被恰好占用本地端口的第三方进程冒充，
+            // 校验响应体是目标 API 形状的 JSON 才认可为自有服务
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            return LooksLikeNeteaseSearchResponse(body);
+            return _healthValidator(body);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -215,10 +235,13 @@ public class MusicApiServer : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Music API readiness probe failed on port {Port}", _port);
+            Log.Debug(ex, "{Tag} readiness probe failed on port {Port}", _logTag, _port);
             return false;
         }
     }
+
+    private bool HealthResponseAccepted(HttpResponseMessage response)
+        => !_requireSuccessStatusCode || response.IsSuccessStatusCode;
 
     private static bool LooksLikeNeteaseSearchResponse(string body)
     {

@@ -103,9 +103,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ISecureStorage secureStorage,
         IMusicSearchService musicSearchService,
         ISttService sttService,
-        string? playlistFile = null,
+        string playlistFile,
+        string settingsFile,
         IRecommendationService? recommendationService = null,
-        string? settingsFile = null)
+        MusicAccountStore? accountStore = null,
+        System.Net.Http.HttpClient? httpClient = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -120,7 +122,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService);
-        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile);
+        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient);
         SpectrumVM = new SpectrumViewModel(_audioService);
 
         // Set URL resolver for re-fresh of online track URLs (prevents 403 from expired links)
@@ -359,11 +361,20 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         new LLMService(new System.Net.Http.HttpClient()),
         new WindowsSecureStorage(),
         new MultiSourceMusicService(new System.Net.Http.HttpClient()),
-        new WhisperSttService())
+        new WhisperSttService(),
+        PlaylistViewModel.DefaultPlaylistFile,
+        SettingsViewModel.DefaultSettingsFile)
     {
     }
 
     public async System.Threading.Tasks.Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await LoadLocalStateAsync(cancellationToken);
+        await StartSessionAsync(cancellationToken);
+    }
+
+    /// <summary>本地状态恢复：设置/歌单/主题/简洁模式/角色，纯本地读取不依赖网络，先于音乐代理执行。</summary>
+    public async System.Threading.Tasks.Task LoadLocalStateAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
@@ -385,6 +396,19 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
+    }
+
+    /// <summary>会话开场：账号状态刷新、欢迎语与开播推荐，依赖音源代理就绪。</summary>
+    public async System.Threading.Tasks.Task StartSessionAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsDisposed)
+            return;
+
+        await SettingsVM.RefreshAccountStatusAsync();
+
+        // 恢复的在线曲目带着磁盘上的过期链接，趁代理已就绪先刷新，再播欢迎语避免首播 403
+        await PlaylistVM.RefreshOnlineUrlsAsync(cancellationToken);
 
         await AnnounceWelcomeAsync(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();

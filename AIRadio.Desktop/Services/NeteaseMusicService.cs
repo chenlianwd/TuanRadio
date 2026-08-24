@@ -12,12 +12,17 @@ public class NeteaseMusicService : IMusicSearchService
 {
     private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
+    private readonly MusicAccountStore? _accounts;
 
     public string Name => "网易云音乐";
 
-    public NeteaseMusicService(HttpClient httpClient, string baseUrl = "http://127.0.0.1:37250")
+    public NeteaseMusicService(
+        HttpClient httpClient,
+        MusicAccountStore? accounts = null,
+        string baseUrl = "http://127.0.0.1:37250")
     {
         _httpClient = httpClient;
+        _accounts = accounts;
         _baseUrl = baseUrl.TrimEnd('/');
     }
 
@@ -32,7 +37,15 @@ public class NeteaseMusicService : IMusicSearchService
         try
         {
             var url = $"{_baseUrl}/search?keywords={Uri.EscapeDataString(keyword)}&limit={limit}";
-            var response = await _httpClient.GetStringAsync(url, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // 本地代理按 URL 缓存 2 分钟，而登录态走的是请求头：登录前后同一关键词的
+            // 结果集不同（VIP 可见性/排序），带 cookie 时必须绕过缓存
+            if (!string.IsNullOrEmpty(_accounts?.NeteaseCookie))
+                request.Headers.TryAddWithoutValidation("x-apicache-bypass", "true");
+            ApplyLoginCookie(request);
+            using var searchResponse = await _httpClient.SendAsync(request, cancellationToken);
+            searchResponse.EnsureSuccessStatusCode();
+            var response = await searchResponse.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
 
@@ -107,6 +120,8 @@ public class NeteaseMusicService : IMusicSearchService
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             // 播放地址是带签名的临时 CDN 链接，重试时不能复用本地 API 的 2 分钟缓存。
             request.Headers.TryAddWithoutValidation("x-apicache-bypass", "true");
+            // 登录后带上账号 cookie：VIP 账号可解锁 fee=1 歌曲的完整播放地址
+            ApplyLoginCookie(request);
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
             var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -143,6 +158,15 @@ public class NeteaseMusicService : IMusicSearchService
             Log.Warning(ex, "Netease get play url failed for {Id}", trackId);
             return null;
         }
+    }
+
+    private void ApplyLoginCookie(HttpRequestMessage request)
+    {
+        // 本地代理会解析请求头 Cookie 传给上游接口；HttpURLConnection 式 CookieContainer
+        // 会因 Set-Cookie 的 Secure 标记在 http://127.0.0.1 上拒收，因此手动透传
+        var cookie = _accounts?.NeteaseCookie;
+        if (!string.IsNullOrEmpty(cookie))
+            request.Headers.TryAddWithoutValidation("Cookie", cookie);
     }
 
     private static bool IsTrialOrRestricted(JsonElement item)

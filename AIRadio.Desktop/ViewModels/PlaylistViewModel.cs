@@ -34,7 +34,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly HashSet<string> _favoriteIds = new();
     private static readonly string DefaultPlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
-    private static readonly string DefaultPlaylistFile = Path.Combine(DefaultPlaylistDir, "playlist.json");
+
+    /// <summary>应用真实使用的播放列表路径；仅生产组合根允许落在这里，测试必须显式传临时路径。</summary>
+    public static readonly string DefaultPlaylistFile = Path.Combine(DefaultPlaylistDir, "playlist.json");
 
     public ObservableCollection<Track> Tracks { get; } = new();
     public ObservableCollection<Track> Favorites { get; } = new();
@@ -239,8 +241,6 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             Tracks.Clear();
             Favorites.Clear();
 
-            // Separate online and local tracks
-            var onlineItems = new List<(PlaylistTrack Item, Track Track)>();
             foreach (var item in data.Tracks)
             {
                 if (item.IsOnline && !string.IsNullOrEmpty(item.SourceId))
@@ -256,7 +256,6 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                         SourceId = item.SourceId,
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
-                    onlineItems.Add((item, track));
                     Tracks.Add(track);
                     if (track.IsFavorite)
                         Favorites.Add(track);
@@ -277,38 +276,6 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                     if (track.IsFavorite)
                         Favorites.Add(track);
                 }
-            }
-
-            // Refresh online URLs in parallel
-            if (onlineItems.Count > 0)
-            {
-                using var refreshGate = new SemaphoreSlim(4, 4);
-                var tasks = onlineItems.Select(async x =>
-                {
-                    await refreshGate.WaitAsync(cancellationToken);
-                    try
-                    {
-                        if (string.IsNullOrWhiteSpace(x.Item.SourceId))
-                            return;
-
-                        var url = await ResolvePlayUrlAsync(x.Item.SourceId, cancellationToken);
-                        if (!string.IsNullOrEmpty(url))
-                            x.Track.FilePath = url;
-                    }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Warning(ex, "Failed to refresh URL for {SourceId}", x.Item.SourceId);
-                    }
-                    finally
-                    {
-                        refreshGate.Release();
-                    }
-                });
-                await Task.WhenAll(tasks);
             }
 
             if (Tracks.Count > 0)
@@ -333,6 +300,42 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (loadCompleted && Volatile.Read(ref _disposed) == 0)
                 _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted); // save once after load completes
         }
+    }
+
+    /// <summary>刷新已恢复在线曲目的播放链接；依赖音源代理就绪，在本地加载阶段之后调用。</summary>
+    public async Task RefreshOnlineUrlsAsync(CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        var onlineTracks = Tracks.Where(t => !string.IsNullOrWhiteSpace(t.SourceId)).ToList();
+        if (onlineTracks.Count == 0)
+            return;
+
+        using var refreshGate = new SemaphoreSlim(4, 4);
+        var tasks = onlineTracks.Select(async track =>
+        {
+            await refreshGate.WaitAsync(cancellationToken);
+            try
+            {
+                var url = await ResolvePlayUrlAsync(track.SourceId!, cancellationToken);
+                if (!string.IsNullOrEmpty(url))
+                    track.FilePath = url;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to refresh URL for {SourceId}", track.SourceId);
+            }
+            finally
+            {
+                refreshGate.Release();
+            }
+        });
+        await Task.WhenAll(tasks);
     }
 
     internal async Task SaveAsync()
