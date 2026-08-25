@@ -32,6 +32,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _selectedTrackSub;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
+    // 读取到 v1 歌单时置位：首次成功写入 v2 前保留一代旧格式备份，之后清零保证幂等
+    private bool _pendingLegacyBackup;
     private static readonly string DefaultPlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
 
@@ -126,8 +128,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                // Check if already in playlist
-                var existing = Tracks.FirstOrDefault(t => t.FilePath == url);
+                // Check if already in playlist (stable identity, not the temporary URL)
+                var existing = Tracks.FirstOrDefault(t => MatchesOnlineTrack(t, track));
                 if (existing != null)
                 {
                     SetSearchStatus("这首歌已经在播放列表里了。");
@@ -224,6 +226,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (data == null || data.Tracks == null)
                 return;
 
+            // v1（无 Version 字段）在内存中一次性迁移为 v2；首次成功回写前由 SaveAsync 留一代备份
+            if (data.Version < PlaylistData.CurrentVersion)
+                _pendingLegacyBackup = true;
+
             _favoriteIds.Clear();
             if (data.FavoriteIds != null && data.FavoriteIds.Count > 0)
             {
@@ -243,8 +249,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
             foreach (var item in data.Tracks)
             {
-                if (item.IsOnline && !string.IsNullOrEmpty(item.SourceId))
+                var sourceId = ResolvePersistedSourceId(item);
+                if (!string.IsNullOrEmpty(sourceId))
                 {
+                    // 在线曲目：磁盘上的 FilePath 可能是过期签名直链，读取时即丢弃，播放前懒解析
                     var track = new Track
                     {
                         Id = item.Id,
@@ -252,8 +260,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                         Artist = item.Artist,
                         Album = item.Album,
                         Duration = TimeSpan.FromMilliseconds(item.DurationMs),
-                        FilePath = item.FilePath,
-                        SourceId = item.SourceId,
+                        FilePath = string.Empty,
+                        SourceId = sourceId,
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
                     Tracks.Add(track);
@@ -302,40 +310,17 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>刷新已恢复在线曲目的播放链接；依赖音源代理就绪，在本地加载阶段之后调用。</summary>
-    public async Task RefreshOnlineUrlsAsync(CancellationToken cancellationToken = default)
+    /// <summary>还原持久化的音源身份：v2 优先 Provider，v1 回退 SourceId 兼容字段。</summary>
+    private static string? ResolvePersistedSourceId(PlaylistTrack item)
     {
-        if (Volatile.Read(ref _disposed) != 0)
-            return;
-
-        var onlineTracks = Tracks.Where(t => !string.IsNullOrWhiteSpace(t.SourceId)).ToList();
-        if (onlineTracks.Count == 0)
-            return;
-
-        using var refreshGate = new SemaphoreSlim(4, 4);
-        var tasks = onlineTracks.Select(async track =>
+        if (item.Provider != null && !string.IsNullOrEmpty(item.Provider.TrackId))
         {
-            await refreshGate.WaitAsync(cancellationToken);
-            try
-            {
-                var url = await ResolvePlayUrlAsync(track.SourceId!, cancellationToken);
-                if (!string.IsNullOrEmpty(url))
-                    track.FilePath = url;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Failed to refresh URL for {SourceId}", track.SourceId);
-            }
-            finally
-            {
-                refreshGate.Release();
-            }
-        });
-        await Task.WhenAll(tasks);
+            return string.IsNullOrEmpty(item.Provider.ProviderId)
+                ? item.Provider.TrackId
+                : $"{item.Provider.ProviderId}:{item.Provider.TrackId}";
+        }
+
+        return string.IsNullOrWhiteSpace(item.SourceId) ? null : item.SourceId;
     }
 
     internal async Task SaveAsync()
@@ -355,23 +340,14 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             // gate 外生成的快照可能以"旧数据后写"覆盖新一次保存
             var data = new PlaylistData
             {
-                Tracks = Tracks.Select(t => new PlaylistTrack
-                {
-                    Id = t.Id,
-                    Title = t.Title,
-                    Artist = t.Artist,
-                    Album = t.Album,
-                    DurationMs = (long)t.Duration.TotalMilliseconds,
-                    FilePath = t.FilePath,
-                    SourceId = t.SourceId,
-                    IsOnline = !string.IsNullOrWhiteSpace(t.SourceId),
-                    IsFavorite = _favoriteIds.Contains(t.Id)
-                }).ToList(),
+                Version = PlaylistData.CurrentVersion,
+                Tracks = Tracks.Select(ToPlaylistTrack).ToList(),
                 FavoriteIds = _favoriteIds.ToList()
             };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
 
             Directory.CreateDirectory(_playlistDir);
+            TryKeepLegacyBackup();
             if (_customWriter)
             {
                 await _writeAllTextAsync(_playlistFile, json);
@@ -401,6 +377,56 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private PlaylistTrack ToPlaylistTrack(Track t)
+    {
+        var isOnline = !string.IsNullOrWhiteSpace(t.SourceId);
+        PlaylistProviderRef? provider = null;
+        if (isOnline)
+        {
+            var parsed = ProviderTrackRef.FromSourceId(t.SourceId);
+            provider = new PlaylistProviderRef
+            {
+                ProviderId = parsed?.ProviderId ?? string.Empty,
+                TrackId = parsed?.TrackId ?? t.SourceId!
+            };
+        }
+
+        return new PlaylistTrack
+        {
+            Id = t.Id,
+            Provider = provider,
+            Title = t.Title,
+            Artist = t.Artist,
+            Album = t.Album,
+            DurationMs = (long)t.Duration.TotalMilliseconds,
+            // 在线曲目不落盘临时直链：签名 URL 会过期且可能泄露凭据；本地曲目保存稳定路径
+            FilePath = isOnline ? string.Empty : t.FilePath,
+            IsOnline = isOnline,
+            IsFavorite = _favoriteIds.Contains(t.Id)
+        };
+    }
+
+    /// <summary>
+    /// v1 → v2 首次回写前保留一代旧格式备份（供手动降级旧版本时恢复）。
+    /// 无论备份是否成功都清零标记：后续保存不得用 v2 内容覆盖已生成的备份。
+    /// </summary>
+    private void TryKeepLegacyBackup()
+    {
+        if (!_pendingLegacyBackup)
+            return;
+
+        _pendingLegacyBackup = false;
+        try
+        {
+            if (File.Exists(_playlistFile))
+                File.Copy(_playlistFile, _playlistFile + ".v1.bak", overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to keep v1 playlist backup before writing v2");
+        }
+    }
+
     private async Task PlayOnlineAsync(OnlineTrack track)
     {
         if (_isPlayingOnline) return;
@@ -416,8 +442,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            // Check if track already in playlist (by URL)
-            var existingIndex = Tracks.FindIndex(t => t.FilePath == url);
+            // Check if track already in playlist (stable identity, not the temporary URL)
+            var existingIndex = Tracks.FindIndex(t => MatchesOnlineTrack(t, track));
             if (existingIndex >= 0)
             {
                 _audioService.PlayAtIndex(existingIndex);
@@ -446,19 +472,23 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// 在线曲目重复判定：同源稳定身份（SourceId）或标准化同曲（跨源换源后仍视为同一首）。
+    /// 临时 URL 刷新后会变化，不参与判定。
+    /// </summary>
+    internal static bool MatchesOnlineTrack(Track track, OnlineTrack online)
+    {
+        if (string.IsNullOrWhiteSpace(track.SourceId))
+            return false;
+
+        return string.Equals(track.SourceId, online.Id, StringComparison.Ordinal) ||
+               MusicIdentity.IsSameSongLoose(track.Title, track.Artist, online.Title, online.Artist);
+    }
+
     private Task<List<OnlineTrack>> SearchMusicAsync(string keyword, int limit)
         => _musicSearchService is Services.MultiSourceMusicService multi
             ? multi.SearchAsync(keyword, limit, _lifetimeCts.Token)
             : _musicSearchService.SearchAsync(keyword, limit);
-
-    private Task<string?> ResolvePlayUrlAsync(string trackId, CancellationToken? cancellationToken = null)
-    {
-        if (_musicSearchService is Services.MultiSourceMusicService multi)
-            return multi.GetPlayUrlAsync(trackId, cancellationToken ?? _lifetimeCts.Token);
-
-        // 兼容外部/测试音源实现：它们只实现旧签名时仍按原契约调用。
-        return _musicSearchService.GetPlayUrlAsync(trackId);
-    }
 
     private Task<string?> ResolvePlayUrlAsync(OnlineTrack track)
         => _musicSearchService is Services.MultiSourceMusicService multi
@@ -604,6 +634,10 @@ public static class ObservableCollectionExtensions
 // DTOs for JSON deserialization — mutable setters required by JsonSerializer
 internal class PlaylistData
 {
+    public const int CurrentVersion = 2;
+
+    /// <summary>歌单格式版本；v1 文件没有该字段，反序列化后为 0。</summary>
+    public int Version { get; set; }
     public List<PlaylistTrack> Tracks { get; set; } = new();
     public List<string> FavoriteIds { get; set; } = new();
 }
@@ -611,12 +645,21 @@ internal class PlaylistData
 internal class PlaylistTrack
 {
     public string Id { get; set; } = "";
+    public PlaylistProviderRef? Provider { get; set; }
     public string Title { get; set; } = "";
     public string Artist { get; set; } = "";
     public string Album { get; set; } = "";
     public long DurationMs { get; set; }
+    /// <summary>本地曲目保存稳定文件路径；在线曲目恒为空（临时直链不落盘）。</summary>
     public string FilePath { get; set; } = "";
+    /// <summary>v1 读取兼容字段；v2 写入只使用 Provider。</summary>
     public string? SourceId { get; set; }
     public bool IsOnline { get; set; }
     public bool IsFavorite { get; set; }
+}
+
+internal class PlaylistProviderRef
+{
+    public string ProviderId { get; set; } = "";
+    public string TrackId { get; set; } = "";
 }

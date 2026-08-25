@@ -100,4 +100,32 @@ public class TrackIdentityTests
         Assert.False(MusicIdentity.IsSameSource("netease:1", null));
         Assert.False(MusicIdentity.IsSameSource("", "netease:1"));
     }
+
+    // ---- ProviderTrackRef（稳定音源身份：持久化与 Provider 契约共用）----
+
+    [Fact]
+    public void ProviderTrackRef_FromSourceId_ParsesAndRoundTrips()
+    {
+        var parsed = ProviderTrackRef.FromSourceId("netease:123");
+        Assert.Equal(new ProviderTrackRef("netease", "123"), parsed);
+        Assert.Equal("netease:123", parsed!.ToSourceId());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("noprefix")]
+    [InlineData(":leading")]
+    public void ProviderTrackRef_FromSourceId_ReturnsNullForUnprefixed(string? sourceId)
+    {
+        Assert.Null(ProviderTrackRef.FromSourceId(sourceId));
+    }
+
+    [Fact]
+    public void ProviderTrackRef_ToSourceId_ToleratesMissingProvider()
+    {
+        // 无前缀的旧 ID 保存为 ProviderId 为空，还原时不捏造前缀
+        Assert.Equal("raw-id", new ProviderTrackRef("", "raw-id").ToSourceId());
+    }
 }
