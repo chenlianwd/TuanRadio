@@ -17,14 +17,13 @@ namespace AIRadio.Desktop.Services;
 /// </summary>
 public class YouTubeMusicService : IMusicSearchService
 {
-    private readonly string _ytdlpPath;
     private readonly MusicAccountStore? _accounts;
 
     public string Name => "YouTube";
 
+    // ytdlpPath 参数保留以兼容现有调用方；yt-dlp 的安装与版本治理统一由 YtdlpManager 受管路径负责
     public YouTubeMusicService(string ytdlpPath, MusicAccountStore? accounts = null)
     {
-        _ytdlpPath = ytdlpPath;
         _accounts = accounts;
     }
 
@@ -150,9 +149,7 @@ public class YouTubeMusicService : IMusicSearchService
     {
         try
         {
-            var ytdlpPath = File.Exists(_ytdlpPath)
-                ? _ytdlpPath
-                : await YtdlpManager.EnsureInstalledAsync(cancellationToken);
+            var ytdlpPath = await EnsureUsableYtdlpAsync(cancellationToken);
 
             var psi = new ProcessStartInfo
             {
@@ -208,6 +205,35 @@ public class YouTubeMusicService : IMusicSearchService
             Log.Debug(ex, "yt-dlp execution failed");
             return null;
         }
+    }
+
+    /// <summary>
+    /// 获取可用的 yt-dlp 路径：低于最低安全版本的安装禁用本源；
+    /// 更新失败（如离线）时保留满足最低版本的现有安装。
+    /// </summary>
+    private async Task<string> EnsureUsableYtdlpAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await YtdlpManager.EnsureInstalledAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "yt-dlp version check/update failed; falling back to existing install");
+        }
+
+        var status = YtdlpManager.GetStatus();
+        if (!status.Installed || !status.MeetsMinimumSecureVersion)
+        {
+            Log.Warning("YouTube source disabled: {Reason}", status.DisableReason);
+            throw new YtdlpUnavailableException(status.DisableReason ?? "yt-dlp 不可用");
+        }
+
+        return YtdlpManager.GetYtdlpPath();
     }
 
     /// <summary>

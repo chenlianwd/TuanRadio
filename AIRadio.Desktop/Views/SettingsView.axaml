@@ -73,6 +73,8 @@
                           DisplayMemberBinding="{Binding DisplayName}"
                           HorizontalAlignment="Stretch"/>
                 <TextBlock Text="YouTube 会拦截未登录请求（not a bot 风控）；选择已登录过 YouTube 的浏览器可复用其 Cookies" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
+                           Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
         </StackPanel>
 
