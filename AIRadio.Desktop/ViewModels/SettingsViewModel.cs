@@ -42,6 +42,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private bool _kugouQrRunning;
     private bool _loadingYtdlpBrowser;
     private bool _ytdlpCookieNoticeShown;
+    private readonly IDisposable _selectedLanguageSub;
+    // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
+    private readonly Action _onLanguageChanged;
     private string? _lastCharacterSignature;
     private bool _lastSaveSucceeded;
     private int _disposed;
@@ -87,46 +90,21 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public VoiceOption? CharacterVoice { get; set; }
     [Reactive] public string CharacterPersonality { get; set; } = string.Empty;
 
-    public List<VoiceOption> Voices { get; } = new()
-    {
-        new() { Id = "male-qn-qingse", DisplayName = "青涩男声" },
-        new() { Id = "male-qn-jingying", DisplayName = "精英男声" },
-        new() { Id = "male-qn-badao", DisplayName = "霸道男声" },
-        new() { Id = "female-shaonv", DisplayName = "少女音" },
-        new() { Id = "female-yujie", DisplayName = "御姐音" },
-        new() { Id = "female-chengshu", DisplayName = "成熟女声" },
-    };
+    // 依赖语言的选项列表：构造与语言切换时由 RebuildLocalizedOptionLists 就地填充
+    public List<VoiceOption> Voices { get; } = new();
 
+    // 语言名按 i18n 惯例保留母语写法，不随界面语言重建
     public List<VoiceOption> Languages { get; } = new()
     {
         new() { Id = "zh", DisplayName = "中文" },
         new() { Id = "en", DisplayName = "English" },
     };
 
-    public List<VoiceOption> LlmProviders { get; } = new()
-    {
-        new() { Id = "openai", DisplayName = "OpenAI 兼容格式" },
-        new() { Id = "anthropic", DisplayName = "Anthropic 兼容格式" },
-        new() { Id = "local", DisplayName = "本地模型" },
-    };
+    public List<VoiceOption> LlmProviders { get; } = new();
 
-    public List<VoiceOption> SpeechMixModes { get; } = new()
-    {
-        new() { Id = "duck", DisplayName = "说话时降低音乐音量" },
-        new() { Id = "pause", DisplayName = "说话时暂停音乐" },
-    };
+    public List<VoiceOption> SpeechMixModes { get; } = new();
 
-    public List<VoiceOption> YtdlpBrowsers { get; } = new()
-    {
-        new() { Id = "", DisplayName = "不使用" },
-        new() { Id = "chrome", DisplayName = "Chrome" },
-        new() { Id = "edge", DisplayName = "Edge" },
-        new() { Id = "firefox", DisplayName = "Firefox" },
-        new() { Id = "brave", DisplayName = "Brave" },
-        new() { Id = "chromium", DisplayName = "Chromium" },
-        new() { Id = "opera", DisplayName = "Opera" },
-        new() { Id = "vivaldi", DisplayName = "Vivaldi" },
-    };
+    public List<VoiceOption> YtdlpBrowsers { get; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -174,6 +152,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             .Where(c => c != null)
             .Subscribe(c => LoadCharacterOverrides(c!));
 
+        // 初始填充选项列表（依赖当前语言），必须在默认选中赋值之前完成
+        RebuildLocalizedOptionLists();
+
         // 默认选中必须在订阅之前完成，否则构造即触发一次无意义（且有副作用）的自动保存
         SelectedYtdlpBrowser = YtdlpBrowsers[0];
         // Skip(1)：WhenAnyValue 订阅时会立刻发射当前值，跳过它避免构造期触发自动保存
@@ -190,8 +171,77 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 _ = SaveUiStateCommand.Execute();
             });
 
+        // 界面显示语言严格跟随本选项：加载读到旧值与用户切换时都经 Apply 生效
+        _selectedLanguageSub = this.WhenAnyValue(x => x.SelectedLanguage)
+            .Skip(1)
+            .Subscribe(language => AppLanguage.Apply(language));
+
+        // 语言切换时刷新常驻文案与选项列表显示名（静态事件，Dispose 退订）
+        _onLanguageChanged = () =>
+        {
+            TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
+            RebuildLocalizedOptionLists();
+        };
+        AppLanguage.Changed += _onLanguageChanged;
+
         // Default selection
         SelectedCharacter = Characters[0];
+    }
+
+    /// <summary>就地重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
+    private void RebuildLocalizedOptionLists()
+    {
+        var voiceId = CharacterVoice?.Id;
+        Voices.Clear();
+        Voices.AddRange(new[]
+        {
+            new VoiceOption { Id = "male-qn-qingse", DisplayName = AppLanguage.T("青涩男声", "Soft male") },
+            new VoiceOption { Id = "male-qn-jingying", DisplayName = AppLanguage.T("精英男声", "Elite male") },
+            new VoiceOption { Id = "male-qn-badao", DisplayName = AppLanguage.T("霸道男声", "Bold male") },
+            new VoiceOption { Id = "female-shaonv", DisplayName = AppLanguage.T("少女音", "Girl voice") },
+            new VoiceOption { Id = "female-yujie", DisplayName = AppLanguage.T("御姐音", "Mature female") },
+            new VoiceOption { Id = "female-chengshu", DisplayName = AppLanguage.T("成熟女声", "Grown female") },
+        });
+        if (voiceId != null)
+            CharacterVoice = Voices.FirstOrDefault(v => v.Id == voiceId) ?? Voices[0];
+
+        LlmProviders.Clear();
+        LlmProviders.AddRange(new[]
+        {
+            new VoiceOption { Id = "openai", DisplayName = AppLanguage.T("OpenAI 兼容格式", "OpenAI-compatible") },
+            new VoiceOption { Id = "anthropic", DisplayName = AppLanguage.T("Anthropic 兼容格式", "Anthropic-compatible") },
+            new VoiceOption { Id = "local", DisplayName = AppLanguage.T("本地模型", "Local model") },
+        });
+
+        SpeechMixModes.Clear();
+        SpeechMixModes.AddRange(new[]
+        {
+            new VoiceOption { Id = "duck", DisplayName = AppLanguage.T("说话时降低音乐音量", "Duck volume while speaking") },
+            new VoiceOption { Id = "pause", DisplayName = AppLanguage.T("说话时暂停音乐", "Pause music while speaking") },
+        });
+
+        var browserId = SelectedYtdlpBrowser?.Id;
+        _loadingYtdlpBrowser = true;
+        try
+        {
+            YtdlpBrowsers.Clear();
+            YtdlpBrowsers.AddRange(new[]
+            {
+                new VoiceOption { Id = "", DisplayName = AppLanguage.T("不使用", "Don't use") },
+                new VoiceOption { Id = "chrome", DisplayName = "Chrome" },
+                new VoiceOption { Id = "edge", DisplayName = "Edge" },
+                new VoiceOption { Id = "firefox", DisplayName = "Firefox" },
+                new VoiceOption { Id = "brave", DisplayName = "Brave" },
+                new VoiceOption { Id = "chromium", DisplayName = "Chromium" },
+                new VoiceOption { Id = "opera", DisplayName = "Opera" },
+                new VoiceOption { Id = "vivaldi", DisplayName = "Vivaldi" },
+            });
+            SelectedYtdlpBrowser = YtdlpBrowsers.FirstOrDefault(b => b.Id == browserId) ?? YtdlpBrowsers[0];
+        }
+        finally
+        {
+            _loadingYtdlpBrowser = false;
+        }
     }
 
     /// <summary>
@@ -211,7 +261,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             return;
 
         _ytdlpCookieNoticeShown = true;
-        YtdlpCookieNotice = $"隐私提示：已启用 {browserId} 浏览器 Cookies。yt-dlp 仅在本机读取该浏览器的 YouTube 登录态用于播放请求，Cookies 不会上传、记录或写入日志。";
+        YtdlpCookieNotice = AppLanguage.T(
+            $"隐私提示：已启用 {browserId} 浏览器 Cookies。yt-dlp 仅在本机读取该浏览器的 YouTube 登录态用于播放请求，Cookies 不会上传、记录或写入日志。",
+            $"Privacy notice: {browserId} browser cookies enabled. yt-dlp only reads this browser's YouTube sign-in locally for playback requests; cookies are never uploaded, logged or stored in logs.");
         IsYtdlpCookieNoticeVisible = true;
     }
 
@@ -307,9 +359,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             // 账号昵称查询依赖本地音乐代理，就绪后由 RefreshAccountStatusAsync 刷新；
             // 加载期只按 cookie 有无恢复基础状态，避免误显示"未登录"，也不发网络请求
             if (!string.IsNullOrEmpty(_accounts.NeteaseCookie))
-                NeteaseAccountStatus = "已登录";
+                NeteaseAccountStatus = AppLanguage.T("已登录", "Signed in");
             if (!string.IsNullOrEmpty(_accounts.KugouCookie))
-                KugouAccountStatus = "已登录";
+                KugouAccountStatus = AppLanguage.T("已登录", "Signed in");
 
             // 加载完成即建立角色签名基线：启动后的第一次无关保存（主题/简洁模式）不会误触发事件
             _lastCharacterSignature = BuildCharacterSignature();
@@ -367,24 +419,24 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         if (RequiresApiKey(SelectedProvider) && string.IsNullOrWhiteSpace(ApiKey))
         {
-            StatusMessage = "请先输入 API Key";
+            StatusMessage = AppLanguage.T("请先输入 API Key", "Enter your API key first");
             return;
         }
         if (string.IsNullOrWhiteSpace(Model))
         {
-            StatusMessage = "请先输入模型名称";
+            StatusMessage = AppLanguage.T("请先输入模型名称", "Enter a model name first");
             return;
         }
 
         IsTesting = true;
-        TestConnectionButtonText = "正在测试...";
-        StatusMessage = "正在测试连接...";
+        TestConnectionButtonText = AppLanguage.T("正在测试...", "Testing...");
+        StatusMessage = AppLanguage.T("正在测试连接...", "Testing connection...");
         try
         {
             NormalizeLlmInputs();
             ConfigureLlm(ApiKey);
-            var result = await _llmService.ChatAsync("你好，请用一句话回复", new List<ChatMessage>());
-            var successMessage = $"连接成功并已保存：{result[..Math.Min(50, result.Length)]}...";
+            var result = await _llmService.ChatAsync(AppLanguage.T("你好，请用一句话回复", "Hello, reply in one sentence"), new List<ChatMessage>());
+            var successMessage = AppLanguage.T($"连接成功并已保存：{result[..Math.Min(50, result.Length)]}...", $"Connected and saved: {result[..Math.Min(50, result.Length)]}...");
             await SaveAsync();
             if (_lastSaveSucceeded)
                 StatusMessage = successMessage;
@@ -393,12 +445,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         {
             var failure = ApiFailureInfo.FromException(ex);
             Log.Error(ex, "AI service API error");
-            StatusMessage = $"连接失败：{failure.Title}。{failure.RecoveryHint}";
+            StatusMessage = AppLanguage.T($"连接失败：{failure.Title}。{failure.RecoveryHint}", $"Connection failed: {failure.Title}. {failure.RecoveryHint}");
         }
         finally
         {
             IsTesting = false;
-            TestConnectionButtonText = "测试连接";
+            TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
         }
     }
 
@@ -411,14 +463,14 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             {
                 var nickname = await _neteaseAccount.GetNicknameAsync(_accounts.NeteaseCookie!, _lifetimeCts.Token);
                 NeteaseAccountStatus = nickname != null
-                    ? $"已登录：{nickname}"
-                    : "已登录（昵称获取失败，登录态可能过期）";
+                    ? AppLanguage.T($"已登录：{nickname}", $"Signed in: {nickname}")
+                    : AppLanguage.T("已登录（昵称获取失败，登录态可能过期）", "Signed in (nickname unavailable; login may have expired)");
             }
 
             if (!string.IsNullOrEmpty(_accounts.KugouCookie))
             {
                 var nickname = await _kugouAccount.GetNicknameAsync(_accounts.KugouCookie!, _lifetimeCts.Token);
-                KugouAccountStatus = nickname != null ? $"已登录：{nickname}" : "已登录";
+                KugouAccountStatus = nickname != null ? AppLanguage.T($"已登录：{nickname}", $"Signed in: {nickname}") : AppLanguage.T("已登录", "Signed in");
             }
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -441,13 +493,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             var session = await _neteaseAccount.CreateQrSessionAsync(_lifetimeCts.Token);
             if (session == null)
             {
-                NeteaseAccountStatus = "二维码创建失败：本地音乐服务未就绪，请稍后重试";
+                NeteaseAccountStatus = AppLanguage.T("二维码创建失败：本地音乐服务未就绪，请稍后重试", "Failed to create QR code: local music service not ready, try again later");
                 return;
             }
 
             NeteaseQrImage = CreateBitmap(session.QrPng);
             IsNeteaseQrVisible = true;
-            NeteaseAccountStatus = "请用网易云音乐 App 扫码";
+            NeteaseAccountStatus = AppLanguage.T("请用网易云音乐 App 扫码", "Scan with the NetEase Cloud Music app");
 
             for (int i = 0; i < 100; i++)
             {
@@ -458,24 +510,24 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     case QrState.Waiting:
                         break;
                     case QrState.Scanned:
-                        NeteaseAccountStatus = "已扫码，请在手机上确认";
+                        NeteaseAccountStatus = AppLanguage.T("已扫码，请在手机上确认", "Scanned; confirm on your phone");
                         break;
                     case QrState.Confirmed when !string.IsNullOrEmpty(result.Cookie):
                         await _accounts.SetNeteaseCookieAsync(result.Cookie!);
                         IsNeteaseQrVisible = false;
                         NeteaseQrImage = null;
                         var nickname = await _neteaseAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
-                        NeteaseAccountStatus = $"已登录：{nickname ?? "未知昵称"}";
+                        NeteaseAccountStatus = AppLanguage.T($"已登录：{nickname ?? "未知昵称"}", $"Signed in: {nickname ?? "unknown"}");
                         return;
                     case QrState.Expired:
-                        NeteaseAccountStatus = "二维码已过期，请重新扫码";
+                        NeteaseAccountStatus = AppLanguage.T("二维码已过期，请重新扫码", "QR code expired; scan again");
                         return;
                     default:
-                        NeteaseAccountStatus = "登录失败：接口返回异常，请重试";
+                        NeteaseAccountStatus = AppLanguage.T("登录失败：接口返回异常，请重试", "Login failed: unexpected API response, try again");
                         return;
                 }
             }
-            NeteaseAccountStatus = "等待扫码超时，请重试";
+            NeteaseAccountStatus = AppLanguage.T("等待扫码超时，请重试", "Timed out waiting for the scan; try again");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -483,7 +535,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Netease QR login failed");
-            NeteaseAccountStatus = $"登录失败：{ex.Message}";
+            NeteaseAccountStatus = AppLanguage.T($"登录失败：{ex.Message}", $"Login failed: {ex.Message}");
         }
         finally
         {
@@ -501,13 +553,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             var session = await _kugouAccount.CreateQrSessionAsync(_lifetimeCts.Token);
             if (session == null)
             {
-                KugouAccountStatus = "二维码创建失败：本地酷狗服务未就绪，请稍后重试";
+                KugouAccountStatus = AppLanguage.T("二维码创建失败：本地酷狗服务未就绪，请稍后重试", "Failed to create QR code: local Kugou service not ready, try again later");
                 return;
             }
 
             KugouQrImage = CreateBitmap(session.QrPng);
             IsKugouQrVisible = true;
-            KugouAccountStatus = "请用酷狗音乐 App 扫码";
+            KugouAccountStatus = AppLanguage.T("请用酷狗音乐 App 扫码", "Scan with the Kugou Music app");
 
             for (int i = 0; i < 100; i++)
             {
@@ -518,24 +570,24 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     case QrState.Waiting:
                         break;
                     case QrState.Scanned:
-                        KugouAccountStatus = "已扫码，请在手机上确认";
+                        KugouAccountStatus = AppLanguage.T("已扫码，请在手机上确认", "Scanned; confirm on your phone");
                         break;
                     case QrState.Confirmed when !string.IsNullOrEmpty(result.Cookie):
                         await _accounts.SetKugouCookieAsync(result.Cookie!);
                         IsKugouQrVisible = false;
                         KugouQrImage = null;
                         var nickname = await _kugouAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
-                        KugouAccountStatus = $"已登录：{nickname ?? "未知昵称"}";
+                        KugouAccountStatus = AppLanguage.T($"已登录：{nickname ?? "未知昵称"}", $"Signed in: {nickname ?? "unknown"}");
                         return;
                     case QrState.Expired:
-                        KugouAccountStatus = "二维码已过期，请重新扫码";
+                        KugouAccountStatus = AppLanguage.T("二维码已过期，请重新扫码", "QR code expired; scan again");
                         return;
                     default:
-                        KugouAccountStatus = "登录失败：接口返回异常，请重试";
+                        KugouAccountStatus = AppLanguage.T("登录失败：接口返回异常，请重试", "Login failed: unexpected API response, try again");
                         return;
                 }
             }
-            KugouAccountStatus = "等待扫码超时，请重试";
+            KugouAccountStatus = AppLanguage.T("等待扫码超时，请重试", "Timed out waiting for the scan; try again");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -543,7 +595,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Kugou QR login failed");
-            KugouAccountStatus = $"登录失败：{ex.Message}";
+            KugouAccountStatus = AppLanguage.T($"登录失败：{ex.Message}", $"Login failed: {ex.Message}");
         }
         finally
         {
@@ -556,7 +608,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         await _accounts.SetNeteaseCookieAsync(null);
         IsNeteaseQrVisible = false;
         NeteaseQrImage = null;
-        NeteaseAccountStatus = "未登录";
+        NeteaseAccountStatus = AppLanguage.T("未登录", "Not signed in");
     }
 
     private async Task LogoutKugouAsync()
@@ -564,7 +616,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         await _accounts.SetKugouCookieAsync(null);
         IsKugouQrVisible = false;
         KugouQrImage = null;
-        KugouAccountStatus = "未登录";
+        KugouAccountStatus = AppLanguage.T("未登录", "Not signed in");
     }
 
     private static IImage? CreateBitmap(byte[] png)
@@ -681,7 +733,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             if (characterSettingsChanged)
                 CharacterSettingsChanged?.Invoke();
             _lastSaveSucceeded = true;
-            StatusMessage = "设置已保存";
+            StatusMessage = AppLanguage.T("设置已保存", "Settings saved");
             Log.Information("Settings saved to {Path}", _settingsFile);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -691,7 +743,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to save settings");
-            StatusMessage = $"保存失败：{ex.Message}";
+            StatusMessage = AppLanguage.T($"保存失败：{ex.Message}", $"Save failed: {ex.Message}");
         }
         finally
         {
@@ -734,6 +786,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _lifetimeCts.Cancel();
         _selectedCharacterSub.Dispose();
         _selectedYtdlpBrowserSub.Dispose();
+        _selectedLanguageSub.Dispose();
+        AppLanguage.Changed -= _onLanguageChanged;
     }
 
     private void ConfigureLlm(string? apiKeyOverride = null)

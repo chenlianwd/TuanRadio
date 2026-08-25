@@ -16,6 +16,8 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _stateSub;
     private readonly IDisposable _posSub;
     private readonly IDisposable _volSub;
+    // 常驻文案随语言切换重算；静态事件必须持委托在 Dispose 退订
+    private readonly Action _onLanguageChanged;
 
     public IAudioService AudioService => _audioService;
 
@@ -33,7 +35,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public string ShuffleText { get; set; } = "🔀";
     [Reactive] public string RepeatMode { get; set; } = "radio";
     [Reactive] public string RepeatText { get; set; } = "DJ";
-    [Reactive] public string RepeatModeTip { get; set; } = "电台模式";
+    [Reactive] public string RepeatModeTip { get; set; } = "电台模式"; // 语言切换时由 _onLanguageChanged 重算
 
     private bool _isDragging;
 
@@ -92,7 +94,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                 }
                 else
                 {
-                    TrackTitle = "未播放";
+                    TrackTitle = AppLanguage.T("未播放", "Nothing playing");
                     TrackArtist = "";
                     TotalSeconds = 0;
                     DurationText = "0:00";
@@ -123,6 +125,15 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         _volSub = this.WhenAnyValue(x => x.Volume)
             .Skip(1)
             .Subscribe(v => _audioService.Volume = v);
+
+        _onLanguageChanged = () =>
+        {
+            UpdateRepeatMode(RepeatMode);
+            // 仅重置占位文案；有曲目在播时保留真实标题
+            if (TrackTitle is "未播放" or "Nothing playing")
+                TrackTitle = AppLanguage.T("未播放", "Nothing playing");
+        };
+        AppLanguage.Changed += _onLanguageChanged;
     }
 
     public void SeekTo(double seconds)
@@ -147,6 +158,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         _stateSub?.Dispose();
         _posSub?.Dispose();
         _volSub?.Dispose();
+        AppLanguage.Changed -= _onLanguageChanged;
     }
 
     private static string FormatTime(TimeSpan ts)
@@ -161,10 +173,10 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         RepeatMode = mode;
         (RepeatText, RepeatModeTip) = mode switch
         {
-            "radio" => ("DJ", "电台模式"),
-            "list" => ("ALL", "列表循环"),
-            "single" => ("ONE", "单曲循环"),
-            _ => ("OFF", "关闭循环")
+            "radio" => ("DJ", AppLanguage.T("电台模式", "Radio mode")),
+            "list" => ("ALL", AppLanguage.T("列表循环", "Repeat all")),
+            "single" => ("ONE", AppLanguage.T("单曲循环", "Repeat one")),
+            _ => ("OFF", AppLanguage.T("关闭循环", "Repeat off"))
         };
     }
 }

@@ -58,6 +58,9 @@ public partial class App : Application
 
             Log.Information("AI Radio starting...");
 
+            // 界面文案宿主必须先于任何视图挂载；语言随后由设置加载时 Apply
+            AppLanguage.Attach(this);
+
             // 全局兜底：未观察的任务异常标记已观察避免进程被撕掉，未处理域异常落日志便于事后排查
             TaskScheduler.UnobservedTaskException += (_, e) =>
             {

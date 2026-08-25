@@ -16,7 +16,7 @@
                         Background="{DynamicResource C_00000000}"
                         Foreground="{DynamicResource ChromeButton}"
                         Command="{Binding ToggleCompactModeCommand}"
-                        ToolTip.Tip="简洁模式" AutomationProperties.Name="Compact mode">
+                        ToolTip.Tip="{DynamicResource S_CompactMode}" AutomationProperties.Name="Compact mode">
                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource ChromeButton}" StrokeThickness="2"
                           Fill="Transparent" StrokeLineCap="Round"
                           Data="M4,14 L10,14 L10,20 M20,10 L14,10 L14,4 M14,10 L21,3 M3,21 L10,14"/>
@@ -24,14 +24,14 @@
                 <Button Width="30" Height="24" Padding="0" BorderThickness="0"
                         Background="{DynamicResource C_00000000}"
                         Foreground="{DynamicResource ChromeButton}" Click="OnMinimizeClicked"
-                        ToolTip.Tip="Minimize" AutomationProperties.Name="Minimize"
+                        ToolTip.Tip="{DynamicResource S_Minimize}" AutomationProperties.Name="Minimize"
                         TabIndex="1">
                     <Rectangle Width="14" Height="2" RadiusX="1" RadiusY="1" Fill="{DynamicResource ChromeButton}"/>
                 </Button>
                 <Button Width="30" Height="24" Padding="0" BorderThickness="0"
                         Background="{DynamicResource C_00000000}"
                         Foreground="{DynamicResource ChromeButtonClose}" Click="OnCloseClicked"
-                        ToolTip.Tip="Close" AutomationProperties.Name="Close"
+                        ToolTip.Tip="{DynamicResource S_Close}" AutomationProperties.Name="Close"
                         TabIndex="2">
                     <Path Width="16" Height="16" Stretch="Uniform" Stroke="{DynamicResource ChromeButtonClose}" StrokeThickness="2"
                           Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>

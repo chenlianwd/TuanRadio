@@ -62,7 +62,7 @@
                     <Button Grid.Column="3" Command="{Binding ChatVM.DismissStatusNoticeCommand}"
                             Content="x" Width="18" Height="18" Padding="0"
                             Background="{DynamicResource C_00000000}" Foreground="{DynamicResource C_FFB9FFE8}" BorderThickness="0"
-                            ToolTip.Tip="收起提示"/>
+                            ToolTip.Tip="{DynamicResource S_TipCollapse}"/>
                 </Grid>
                 <ToolTip.Tip>
                     <StackPanel MaxWidth="320" Spacing="4">
@@ -80,7 +80,7 @@
                     Command="{Binding ChatVM.RestoreStatusNoticeCommand}"
                     HorizontalAlignment="Right" Margin="22,10,22,0"
                     Padding="10,6" Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_3356F5C4}"
-                    BorderThickness="1" CornerRadius="4" ToolTip.Tip="查看语音播放提示">
+                    BorderThickness="1" CornerRadius="4" ToolTip.Tip="{DynamicResource S_TipVoiceHint}">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <Ellipse Width="6" Height="6" Fill="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
                     <TextBlock Text="VOICE" FontSize="11" FontFamily="Consolas" Foreground="{DynamicResource C_FFB9FFE8}"/>
@@ -119,19 +119,19 @@
         <Border Grid.Row="1" Background="{DynamicResource C_E91B1B2A}" Padding="22,10">
             <Grid ColumnDefinitions="*,56,50" ColumnSpacing="9">
                 <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
-                         Watermark="Say something to the DJ..." KeyDown="OnChatInputKeyDown" TabIndex="10"/>
+                         Watermark="{DynamicResource S_ChatWatermark}" KeyDown="OnChatInputKeyDown" TabIndex="10"/>
                 <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
                         Background="{DynamicResource C_33262835}"
                         PointerPressed="OnMicPointerPressed"
                         PointerReleased="OnMicPointerReleased"
                         PointerCaptureLost="OnMicPointerCaptureLost"
-                        ToolTip.Tip="Hold to talk" AutomationProperties.Name="Microphone">
+                        ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="Microphone">
                     <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
                 </Button>
                 <Button Grid.Column="2" FontSize="11"
                         Background="{DynamicResource C_FF7F7896}" Foreground="{DynamicResource C_FF111118}"
                         Command="{Binding ChatVM.SendMessageCommand}"
-                        ToolTip.Tip="Send" AutomationProperties.Name="Send">
+                        ToolTip.Tip="{DynamicResource S_Send}" AutomationProperties.Name="Send">
                     <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FF111118}" StrokeThickness="2.2" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
                 </Button>
             </Grid>

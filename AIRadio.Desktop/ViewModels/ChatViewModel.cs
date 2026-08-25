@@ -120,9 +120,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
             {
                 SetFailureNotice(new ApiFailureInfo(
                     ApiFailureKind.InvalidResponse,
-                    "语音播放失败",
+                    AppLanguage.T("语音播放失败", "Voice playback failed"),
                     message,
-                    "可以在设置里暂时关闭语音播报，或检查系统默认音频输出设备。"));
+                    AppLanguage.T("可以在设置里暂时关闭语音播报，或检查系统默认音频输出设备。", "You can turn off voice playback in Settings for now, or check the default audio output device.")));
 
                 // TTS failed — still execute pending command so user action is not lost
                 if (_pendingCommand != null)
@@ -414,7 +414,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         InputText = string.Empty;
         IsProcessing = true;
         RefreshStatus();
-        SetWorkingNotice("AI 正在回复", "正在请求 AI 服务，最多等待 30 秒。");
+        SetWorkingNotice(AppLanguage.T("AI 正在回复", "AI is replying"), AppLanguage.T("正在请求 AI 服务，最多等待 30 秒。", "Requesting the AI service; waiting up to 30 seconds."));
         _pendingCommand = null;
         _pendingRecommendedTrack = null;
 
@@ -431,8 +431,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 (!requiresConfidentMatch || await HasConfidentSongMatchAsync(songQuery)))
             {
                 var displayText = isArtistRequest
-                    ? $"好，我来找{songQuery}的歌。"
-                    : $"好，我来找《{songQuery}》。";
+                    ? AppLanguage.T($"好，我来找{songQuery}的歌。", $"OK, finding songs by {songQuery}.")
+                    : AppLanguage.T($"好，我来找《{songQuery}》。", $"OK, let me find \"{songQuery}\".");
                 var playCommand = isArtistRequest
                     ? $"play_artist:{songQuery}"
                     : $"play:{songQuery}";
@@ -443,7 +443,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             var response = await _djService.GenerateChatResponseAsync(text);
             if (_djService.LastFailure is { } chatFailure)
             {
-                AddFailureMessage("AI 回复失败", chatFailure);
+                AddFailureMessage(AppLanguage.T("AI 回复失败", "AI reply failed"), chatFailure);
                 SetFailureNotice(chatFailure);
                 return;
             }
@@ -454,13 +454,13 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 Messages.Add(new ChatMessage
                 {
                     Role = MessageRole.System,
-                    Content = "AI 服务尚未配置。请在设置中填写 API Key 后再试。"
+                    Content = AppLanguage.T("AI 服务尚未配置。请在设置中填写 API Key 后再试。", "AI service is not configured. Fill in your API key in Settings and try again.")
                 });
                 SetFailureNotice(new ApiFailureInfo(
                     ApiFailureKind.MissingApiKey,
-                    "AI 服务未配置",
-                    "需要在设置中配置 LLM API Key 才能使用 AI 对话功能。",
-                    "打开设置页填写 API Key。"));
+                    AppLanguage.T("AI 服务未配置", "AI service not configured"),
+                    AppLanguage.T("需要在设置中配置 LLM API Key 才能使用 AI 对话功能。", "An LLM API key is required in Settings to use AI chat."),
+                    AppLanguage.T("打开设置页填写 API Key。", "Open Settings and enter the API key.")));
                 return;
             }
 
@@ -477,7 +477,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Messages.Add(new ChatMessage
             {
                 Role = MessageRole.Assistant,
-                Content = $"AI 回复失败：{failure.Title}。{failure.RecoveryHint}"
+                Content = AppLanguage.T($"AI 回复失败：{failure.Title}。{failure.RecoveryHint}", $"AI reply failed: {failure.Title}. {failure.RecoveryHint}")
             });
             SetFailureNotice(failure);
         }
@@ -510,7 +510,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText))
         {
             StatusText = "VOICE...";
-            SetWorkingNotice("正在生成语音", "AI 文字已返回，正在调用语音服务。");
+            SetWorkingNotice(AppLanguage.T("正在生成语音", "Generating voice"), AppLanguage.T("AI 文字已返回，正在调用语音服务。", "AI text is back; calling the voice service."));
             var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
             if (speechData is { Length: > 0 })
             {
@@ -523,9 +523,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 else
                     SetFailureNotice(new ApiFailureInfo(
                         ApiFailureKind.InvalidResponse,
-                        "语音生成失败",
-                        "语音服务没有返回可播放的音频数据。",
-                        "检查 API Key、账号权限和 TTS 额度后重试。"));
+                        AppLanguage.T("语音生成失败", "Voice generation failed"),
+                        AppLanguage.T("语音服务没有返回可播放的音频数据。", "The voice service returned no playable audio."),
+                        AppLanguage.T("检查 API Key、账号权限和 TTS 额度后重试。", "Check the API key, account permissions and TTS quota, then retry.")));
                 Log.Warning("TTS returned empty audio");
                 if (_pendingCommand != null)
                 {
@@ -549,7 +549,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(ttsText)) return;
 
         StatusText = "VOICE...";
-        SetWorkingNotice("正在生成语音", "正在调用语音服务。");
+        SetWorkingNotice(AppLanguage.T("正在生成语音", "Generating voice"), AppLanguage.T("正在调用语音服务。", "Calling the voice service."));
         var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
         if (speechData is { Length: > 0 })
         {
@@ -562,9 +562,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
             else
                 SetFailureNotice(new ApiFailureInfo(
                     ApiFailureKind.InvalidResponse,
-                    "语音生成失败",
-                    "语音服务没有返回可播放的音频数据。",
-                    "检查 API Key、账号权限和 TTS 额度后重试。"));
+                    AppLanguage.T("语音生成失败", "Voice generation failed"),
+                    AppLanguage.T("语音服务没有返回可播放的音频数据。", "The voice service returned no playable audio."),
+                    AppLanguage.T("检查 API Key、账号权限和 TTS 额度后重试。", "Check the API key, account permissions and TTS quota, then retry.")));
             Log.Warning("TTS returned empty audio");
         }
     }
@@ -588,11 +588,11 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         if (IsProcessing)
         {
-            SetWorkingNotice("AI 正在回复", "正在请求 AI 服务，最多等待 30 秒。");
+            SetWorkingNotice(AppLanguage.T("AI 正在回复", "AI is replying"), AppLanguage.T("正在请求 AI 服务，最多等待 30 秒。", "Requesting the AI service; waiting up to 30 seconds."));
         }
         else if (IsSpeaking)
         {
-            SetWorkingNotice("正在播报语音", "AI 回复已生成，正在播放 TTS 音频。");
+            SetWorkingNotice(AppLanguage.T("正在播报语音", "Speaking"), AppLanguage.T("AI 回复已生成，正在播放 TTS 音频。", "AI reply is ready; playing TTS audio."));
         }
         else
         {
@@ -783,7 +783,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Messages.Add(new ChatMessage
             {
                 Role = MessageRole.Assistant,
-                Content = "暂时没找到新的可播放推荐。你可以给我一个风格或歌手关键词，我继续帮你找。"
+                Content = AppLanguage.T("暂时没找到新的可播放推荐。你可以给我一个风格或歌手关键词，我继续帮你找。", "No new playable recommendations right now. Give me a genre or artist keyword and I'll keep looking.")
             });
             return;
         }
@@ -798,7 +798,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         // 经 pending 机制在 TTS 播完后切歌，与 play: 指令的行为一致
         _pendingRecommendedTrack = recommended;
-        var displayText = $"给你推荐《{recommended.Title}》 - {recommended.Artist}。";
+        var displayText = AppLanguage.T($"给你推荐《{recommended.Title}》 - {recommended.Artist}。", $"Here's a pick for you: \"{recommended.Title}\" - {recommended.Artist}.");
         await RespondWithCommandAsync(displayText, "play_recommended", "happy");
     }
 
@@ -823,7 +823,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         var request = new RecommendationRequest
         {
-            UserIntent = "继续当前电台",
+            UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
             CurrentTrack = current,
             Favorites = _audioService.Playlist.Where(t => t.IsFavorite).ToList(),
             Playlist = _audioService.Playlist.ToList(),
@@ -1021,8 +1021,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 {
                     Role = MessageRole.Assistant,
                     Content = string.IsNullOrWhiteSpace(mood)
-                        ? "我会调整接下来的推荐方向。"
-                        : $"我会把接下来的推荐调成 {mood} 一点。"
+                        ? AppLanguage.T("我会调整接下来的推荐方向。", "I'll adjust what I play next.")
+                        : AppLanguage.T($"我会把接下来的推荐调成 {mood} 一点。", $"I'll tune the next picks toward {mood}.")
                 });
             }
         }
@@ -1049,7 +1049,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 Messages.Add(new ChatMessage
                 {
                     Role = MessageRole.Assistant,
-                    Content = "没找到这首歌，换个关键词试试？"
+                    Content = AppLanguage.T("没找到这首歌，换个关键词试试？", "Couldn't find that track; try another keyword?")
                 });
                 return;
             }
@@ -1063,7 +1063,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 Messages.Add(new ChatMessage
                 {
                     Role = MessageRole.Assistant,
-                    Content = "这首歌暂时无法播放，换一首吧？"
+                    Content = AppLanguage.T("这首歌暂时无法播放，换一首吧？", "That track can't be played right now; try another?")
                 });
                 return;
             }

@@ -327,7 +327,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             _recommendationService.SetMoodBias("energetic");
 
         if (action == MusicFeedbackAction.Dislike)
-            ChatVM.AddAssistantMessage(SettingsVM.SelectedLanguage == "en" ? "Got it. I will avoid this track in the current session." : "收到，这首本轮先避开。");
+            ChatVM.AddAssistantMessage(AppLanguage.T("收到，这首本轮先避开。", "Got it. I will avoid this track in the current session."));
     }
 
     private void SwitchCharacter(CharacterProfile character)
@@ -464,9 +464,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed || cancellationToken.IsCancellationRequested)
             return;
 
-        var text = SettingsVM.SelectedLanguage == "en"
-            ? "No tracks yet. Tell me a mood or search a song, and I'll build today's station."
-            : "歌单还是空的。告诉我今天的心情，或者搜一首歌，我来帮你开台。";
+        var text = AppLanguage.T(
+            "歌单还是空的。告诉我今天的心情，或者搜一首歌，我来帮你开台。",
+            "No tracks yet. Tell me a mood or search a song, and I'll build today's station.");
 
         ChatVM.AddAssistantMessage(text);
 
@@ -481,9 +481,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed || cancellationToken.IsCancellationRequested)
             return;
 
-        var text = SettingsVM.SelectedLanguage == "en"
-            ? $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood."
-            : $"这里是 {SelectedCharacter.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。";
+        var text = AppLanguage.T(
+            $"这里是 {SelectedCharacter.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。",
+            $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood.");
 
         ChatVM.AddAssistantMessage(text);
         DjVisualCue?.Invoke("smile", "wave");
@@ -546,7 +546,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (recommended == null) return;
 
             var script = await GenerateTrackIntroductionAsync(
-                current ?? new Track { Title = "无", Artist = "未知" },
+                current ?? new Track { Title = AppLanguage.T("无", "None"), Artist = AppLanguage.T("未知", "Unknown") },
                 recommended,
                 cancellationToken);
 
@@ -710,7 +710,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         AttachRecommendationContext(current);
         var request = new RecommendationRequest
         {
-            UserIntent = "继续当前电台",
+            UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
             CurrentTrack = current,
             Favorites = PlaylistVM.Favorites.ToList(),
             Playlist = PlaylistVM.Tracks.ToList(),

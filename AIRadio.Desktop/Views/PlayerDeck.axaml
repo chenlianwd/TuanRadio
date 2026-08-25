@@ -28,10 +28,10 @@
 
             <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}" ToolTip.Tip="上一首" AutomationProperties.Name="Previous">
+                <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}" ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="Previous">
                     <PathIcon Width="16" Height="16" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
                 </Button>
-                <Button Width="38" Height="38" Background="{DynamicResource C_302B2E3C}" Command="{Binding PlayerVM.PlayCommand}" ToolTip.Tip="播放/暂停" AutomationProperties.Name="Play/Pause">
+                <Button Width="38" Height="38" Background="{DynamicResource C_302B2E3C}" Command="{Binding PlayerVM.PlayCommand}" ToolTip.Tip="{DynamicResource S_PlayPause}" AutomationProperties.Name="Play/Pause">
                     <Grid>
                         <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
                                   Data="M8,5 L19,12 L8,19 Z"/>
@@ -39,7 +39,7 @@
                                   Data="M7,5 L10,5 L10,19 L7,19 Z M14,5 L17,5 L17,19 L14,19 Z"/>
                     </Grid>
                 </Button>
-                <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="下一首" AutomationProperties.Name="Next">
+                <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}" ToolTip.Tip="{DynamicResource S_Next}" AutomationProperties.Name="Next">
                     <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                 </Button>
                 <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
@@ -49,7 +49,7 @@
                         <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9"/>
                     </StackPanel>
                 </Button>
-                <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="收藏当前歌曲">
+                <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="{DynamicResource S_FavCurrent}">
                     <Grid>
                         <PathIcon Width="17" Height="17" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
                                   Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
@@ -61,10 +61,10 @@
 
             <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6" MinWidth="0"
                         HorizontalAlignment="Right" VerticalAlignment="Center">
-                <Button Width="32" Height="30" Padding="0" Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="Library">
+                <Button Width="32" Height="30" Padding="0" Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="{DynamicResource S_Library}">
                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L20,18"/>
                 </Button>
-                <Button Width="32" Height="30" Padding="0" Command="{Binding OpenFavoritesCommand}" ToolTip.Tip="Favorites">
+                <Button Width="32" Height="30" Padding="0" Command="{Binding OpenFavoritesCommand}" ToolTip.Tip="{DynamicResource S_FavoritesTab}">
                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
                 </Button>
                 <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
@@ -76,17 +76,17 @@
             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
                         HorizontalAlignment="Center" Margin="0,9,0,0">
                 <Button Width="42" Height="24" Padding="0" Content="LIKE"
-                        FontSize="9" Command="{Binding LikeCurrentTrackCommand}" ToolTip.Tip="喜欢"/>
+                        FontSize="9" Command="{Binding LikeCurrentTrackCommand}" ToolTip.Tip="{DynamicResource S_Like}"/>
                 <Button Width="42" Height="24" Padding="0" Content="NOPE"
-                        FontSize="9" Command="{Binding DislikeCurrentTrackCommand}" ToolTip.Tip="不喜欢"/>
+                        FontSize="9" Command="{Binding DislikeCurrentTrackCommand}" ToolTip.Tip="{DynamicResource S_Dislike}"/>
                 <Button Width="42" Height="24" Padding="0" Content="SIM"
-                        FontSize="9" Command="{Binding SimilarToCurrentTrackCommand}" ToolTip.Tip="再来类似"/>
+                        FontSize="9" Command="{Binding SimilarToCurrentTrackCommand}" ToolTip.Tip="{DynamicResource S_Similar}"/>
                 <Button Width="42" Height="24" Padding="0" Content="CALM"
-                        FontSize="9" Command="{Binding CalmerRecommendationCommand}" ToolTip.Tip="换安静一点"/>
+                        FontSize="9" Command="{Binding CalmerRecommendationCommand}" ToolTip.Tip="{DynamicResource S_Calmer}"/>
                         <Button Width="42" Height="24" Padding="0" Content="FIRE"
-                        FontSize="9" Command="{Binding EnergeticRecommendationCommand}" ToolTip.Tip="换燃一点"/>
+                        FontSize="9" Command="{Binding EnergeticRecommendationCommand}" ToolTip.Tip="{DynamicResource S_Energetic}"/>
                         <Button Width="48" Height="24" Padding="0" Content="STORY"
-                        FontSize="9" Command="{Binding TellSongStoryCommand}" ToolTip.Tip="讲讲这首歌"/>
+                        FontSize="9" Command="{Binding TellSongStoryCommand}" ToolTip.Tip="{DynamicResource S_SongStory}"/>
                     </StackPanel>
 
             <Grid Grid.Row="2" Grid.ColumnSpan="3" ColumnDefinitions="42,*,42" Margin="0,10,0,0">
