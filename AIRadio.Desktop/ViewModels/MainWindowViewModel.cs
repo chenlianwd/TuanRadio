@@ -25,10 +25,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISttService _sttService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
+    private readonly IDisposable _playbackHistorySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
     private readonly IDisposable _languageTtsSub;
     private readonly IDisposable _speechMixSub;
+    private readonly IDisposable _spectrumStyleSub;
     private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
     private int _autoRadioAdvancing;
@@ -37,6 +39,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     // 自然结束续播与手动 Next 的 nextCallback 两条推荐管线共用此门串行化，
     // 避免并发时双份推荐请求、双份加列表、双次切歌
     private readonly SemaphoreSlim _advanceGate = new(1, 1);
+    private readonly SemaphoreSlim _programLoadGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
 
     public PlayerViewModel PlayerVM { get; }
@@ -59,6 +62,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsCurrentFavorite { get; set; }
     [Reactive] public bool IsCompactMode { get; set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
+    [Reactive] public bool HasCurrentRadioProgram { get; set; }
+    [Reactive] public bool IsProgramLoading { get; set; }
+    [Reactive] public string ProgramStatusText { get; set; } = AppLanguage.T(
+        "打开节目单时，DJ 会按当前收听风格生成下一组候选歌曲。",
+        "Open Program and the DJ will curate the next set from your current listening style.");
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
     [Reactive] public DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
@@ -81,6 +89,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> OpenFavoritesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenSearchCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenProgramCommand { get; }
+    public ReactiveCommand<Unit, Unit> RefreshProgramCommand { get; }
+    public ReactiveCommand<RecommendedTrack, Unit> PlayProgramTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
@@ -153,11 +163,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.TabIndex = 2;
             IsLibraryOpen = true;
         });
-        OpenProgramCommand = ReactiveCommand.Create(() =>
-        {
-            PlaylistVM.TabIndex = 3;
-            IsLibraryOpen = true;
-        });
+        OpenProgramCommand = ReactiveCommand.CreateFromTask(OpenProgramAsync);
+        RefreshProgramCommand = ReactiveCommand.CreateFromTask(() => LoadProgramAsync(force: true));
+        PlayProgramTrackCommand = ReactiveCommand.Create<RecommendedTrack>(PlayProgramTrack);
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
         ToggleCompactModeCommand = ReactiveCommand.Create(ToggleCompactMode);
@@ -202,6 +210,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(_ => SwitchCharacter(SelectedCharacter));
         _speechMixSub = SettingsVM.WhenAnyValue(x => x.SpeechMixMode)
             .Subscribe(mode => _audioService.SetSpeechMixMode(mode));
+        _spectrumStyleSub = SettingsVM.WhenAnyValue(x => x.SelectedSpectrumStyle)
+            .Subscribe(style => SpectrumVM.SelectedStyle = style);
 
         // Sync STT language with settings
         if (_sttService is WhisperSttService whisper)
@@ -222,6 +232,17 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _trackChangedSub = _audioService.TrackChanged
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(track => IsCurrentFavorite = track?.IsFavorite == true);
+
+        // TrackChanged 也会在载入列表、删除曲目和重试音源时触发；只有真正进入播放态
+        // 才能算作已播放历史，避免尚未播放的歌曲污染 DJ 的风格上下文。
+        _playbackHistorySub = _audioService.StateChanged
+            .Where(state => state == PlaybackState.Playing)
+            .Subscribe(_ =>
+            {
+                var current = _audioService.CurrentTrack;
+                if (current != null)
+                    _recommendationService.RecordPlayedTrack(current);
+            });
 
         // 统一电台状态机：从子 VM flags 派生 CurrentState（spec §5.2）
         this.WhenAnyValue(
@@ -286,6 +307,97 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlaylistVM.ToggleFavoriteCommand.Execute(current).Subscribe();
         // 命令内部切换的是列表内的匹配实例（与 current 可能不是同一引用），必须从匹配实例回读
         IsCurrentFavorite = PlaylistVM.FindMatchingTrack(current)?.IsFavorite ?? current.IsFavorite;
+    }
+
+    private async Task OpenProgramAsync()
+    {
+        PlaylistVM.TabIndex = 3;
+        IsLibraryOpen = true;
+        if (!HasCurrentRadioProgram)
+            await LoadProgramAsync(force: false);
+    }
+
+    private async Task LoadProgramAsync(bool force)
+    {
+        if (IsDisposed || (!force && HasCurrentRadioProgram))
+            return;
+
+        var gateAcquired = false;
+        try
+        {
+            await _programLoadGate.WaitAsync(_lifetimeCts.Token);
+            gateAcquired = true;
+
+            if (IsDisposed || (!force && HasCurrentRadioProgram))
+                return;
+
+            IsProgramLoading = true;
+            ProgramStatusText = AppLanguage.T("DJ 正在编排节目单…", "The DJ is curating your program...");
+            var request = CreateRecommendationRequest(_audioService.CurrentTrack);
+            var program = _recommendationService is RecommendationService recommendationService
+                ? await recommendationService.CreateProgramAsync(request, _lifetimeCts.Token)
+                : await _recommendationService.CreateProgramAsync(request).WaitAsync(_lifetimeCts.Token);
+            UpdateCurrentProgram(program);
+            ProgramStatusText = HasCurrentRadioProgram
+                ? string.Empty
+                : AppLanguage.T("暂时没有找到可播放的候选歌曲，请稍后重新编排。", "No playable candidates were found. Try refreshing the program later.");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load radio program");
+            ProgramStatusText = AppLanguage.T("节目单生成失败，请检查 AI 与音源连接后重试。", "Program generation failed. Check the AI and music source connections and try again.");
+        }
+        finally
+        {
+            if (gateAcquired)
+            {
+                IsProgramLoading = false;
+                _programLoadGate.Release();
+            }
+        }
+    }
+
+    private void PlayProgramTrack(RecommendedTrack item)
+    {
+        if (IsDisposed || item is not { IsPlayable: true } || string.IsNullOrWhiteSpace(item.Track.FilePath))
+            return;
+
+        var existing = PlaylistVM.FindMatchingTrack(item.Track);
+        if (existing == null)
+        {
+            PlaylistVM.AddExternalTrack(item.Track);
+            existing = PlaylistVM.FindMatchingTrack(item.Track) ?? item.Track;
+        }
+
+        var index = PlaylistVM.Tracks.FindIndex(track => IsSameTrackIdentity(track, existing));
+        if (index >= 0)
+            _audioService.PlayAtIndex(index);
+    }
+
+    private RecommendationRequest CreateRecommendationRequest(Track? current)
+    {
+        var recentlyPlayed = GetRecentlyPlayedSnapshot();
+        return new RecommendationRequest
+        {
+            UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
+            CurrentTrack = current,
+            Favorites = PlaylistVM.Favorites.ToList(),
+            Playlist = PlaylistVM.Tracks.ToList(),
+            RecentlyPlayed = recentlyPlayed,
+            ExcludedTracks = recentlyPlayed
+        };
+    }
+
+    private List<Track> GetRecentlyPlayedSnapshot()
+        => _recommendationService.RecentlyPlayed?.ToList() ?? new List<Track>();
+
+    private void UpdateCurrentProgram(RadioProgram? program)
+    {
+        CurrentRadioProgram = program;
+        HasCurrentRadioProgram = program?.Tracks.Any(track => track.IsPlayable) == true;
     }
 
     private async Task TellSongStoryAsync()
@@ -698,24 +810,20 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (current == null) return;
 
+        var recentlyPlayed = GetRecentlyPlayedSnapshot();
+
         current.Tag = new RecommendationContext
         {
             Favorites = PlaylistVM.Favorites.ToList(),
-            ExcludedTracks = PlaylistVM.Tracks.ToList()
+            RecentlyPlayed = recentlyPlayed,
+            ExcludedTracks = PlaylistVM.Tracks.Concat(recentlyPlayed).ToList()
         };
     }
 
     private async System.Threading.Tasks.Task<Track?> GetRecommendedTrackAsync(Track? current)
     {
         AttachRecommendationContext(current);
-        var request = new RecommendationRequest
-        {
-            UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
-            CurrentTrack = current,
-            Favorites = PlaylistVM.Favorites.ToList(),
-            Playlist = PlaylistVM.Tracks.ToList(),
-            ExcludedTracks = PlaylistVM.Tracks.ToList()
-        };
+        var request = CreateRecommendationRequest(current);
 
         try
         {
@@ -724,7 +832,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 return null;
 
             var prevOpening = CurrentRadioProgram?.DjOpening;
-            CurrentRadioProgram = _recommendationService.CurrentProgram;
+            UpdateCurrentProgram(_recommendationService.CurrentProgram);
             // 新节目单的开场白作为 DJ 气泡推荐理由（去重，避免续播每首刷屏）
             if (CurrentRadioProgram != null && CurrentRadioProgram.DjOpening != prevOpening
                 && !string.IsNullOrWhiteSpace(CurrentRadioProgram.DjOpening))
@@ -914,9 +1022,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         // 关闭线程同步 Stop NAudio，否则设备线程异常时会再次把窗口关闭卡住。
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
+        _playbackHistorySub?.Dispose();
         _darkModePersistSub?.Dispose();
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();
+        _spectrumStyleSub?.Dispose();
         _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;

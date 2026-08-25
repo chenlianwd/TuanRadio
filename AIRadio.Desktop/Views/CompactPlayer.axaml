@@ -77,7 +77,7 @@
             </Grid>
 
             <!-- 行2：上一首/播放/下一首 + 时间 + 进度 + 迷你频谱 -->
-            <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="0,2,0,0">
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto" Margin="0,2,0,0">
                 <Button Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.PreviousCommand}"
                         ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="Previous">
                     <PathIcon Width="14" Height="14" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
@@ -99,11 +99,35 @@
                            Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="6,0,0,0"/>
                 <Slider Grid.Column="4" x:Name="CompactProgressSlider" MinHeight="12"
                         Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                        Foreground="{DynamicResource AccentGreen}"
                         Value="{Binding PlayerVM.CurrentSeconds}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="5" Text="{Binding PlayerVM.DurationText}" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <!-- 常驻仅一个音量按钮；点击后用轻量 Popup 展开横向滑杆。 -->
+                <Panel Grid.Column="6" Margin="0,0,6,0">
+                    <ToggleButton x:Name="CompactVolumeButton" Width="26" Height="26" Padding="0"
+                                  ToolTip.Tip="{DynamicResource S_Volume}" AutomationProperties.Name="Volume">
+                        <Path Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource AccentGreen}"
+                              Data="M3,9 L7,9 L12,5 L12,19 L7,15 L3,15 Z M15,9 C16.6,10.7 16.6,13.3 15,15 L16.8,16.8 C19.4,14.1 19.4,9.9 16.8,7.2 Z"/>
+                    </ToggleButton>
+                    <Popup IsOpen="{Binding #CompactVolumeButton.IsChecked, Mode=TwoWay}"
+                           PlacementTarget="{Binding #CompactVolumeButton}"
+                           Placement="Top" IsLightDismissEnabled="True" VerticalOffset="-6">
+                        <Border Background="{DynamicResource SurfaceShell}" BorderBrush="{DynamicResource BorderShell}"
+                                BorderThickness="1" CornerRadius="8" Padding="10,8">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Slider Width="130" Minimum="0" Maximum="1"
+                                        Foreground="{DynamicResource AccentGreen}"
+                                        Value="{Binding PlayerVM.Volume}"/>
+                                <TextBlock Width="34" Text="{Binding PlayerVM.Volume, StringFormat={}{0:P0}}"
+                                           FontSize="10" FontFamily="Consolas" TextAlignment="Right"
+                                           Foreground="{DynamicResource AccentGreen}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </Panel>
                 <!-- 迷你频谱：8 段，code-behind 订阅 SpectrumVM.SpectrumReceived 更新高度 -->
-                <StackPanel x:Name="SpectrumPanel" Grid.Column="6" Orientation="Horizontal" Spacing="2"
+                <StackPanel x:Name="SpectrumPanel" Grid.Column="7" Orientation="Horizontal" Spacing="2"
                             Width="46" Height="20" VerticalAlignment="Center">
                     <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
                     <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>

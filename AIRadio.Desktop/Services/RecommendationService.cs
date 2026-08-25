@@ -14,7 +14,10 @@ public class RecommendationService : IRecommendationService
     private readonly ILLMService _llm;
     private readonly IMusicSearchService _musicSearch;
     private readonly List<UserMusicFeedback> _feedback = new();
+    private readonly List<Track> _recentlyPlayed = new();
     private readonly HashSet<string> _returnedTrackIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _programGate = new(1, 1);
+    private readonly object _stateGate = new();
     private string? _moodBias;
 
     public RecommendationService(ILLMService llm, IMusicSearchService musicSearch)
@@ -24,7 +27,23 @@ public class RecommendationService : IRecommendationService
     }
 
     public RadioProgram? CurrentProgram { get; private set; }
-    public IReadOnlyCollection<UserMusicFeedback> FeedbackHistory => _feedback.AsReadOnly();
+    public IReadOnlyCollection<UserMusicFeedback> FeedbackHistory
+    {
+        get
+        {
+            lock (_stateGate)
+                return _feedback.ToArray();
+        }
+    }
+
+    public IReadOnlyCollection<Track> RecentlyPlayed
+    {
+        get
+        {
+            lock (_stateGate)
+                return _recentlyPlayed.ToArray();
+        }
+    }
 
     public Task<RadioProgram> CreateProgramAsync(RecommendationRequest request)
         => CreateProgramAsync(request, CancellationToken.None);
@@ -33,8 +52,27 @@ public class RecommendationService : IRecommendationService
         RecommendationRequest request,
         CancellationToken cancellationToken)
     {
-        var context = BuildContext(_moodBias, request);
-        var queries = await GenerateQueriesAsync(request, context, cancellationToken);
+        await _programGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await CreateProgramCoreAsync(request, cancellationToken);
+        }
+        finally
+        {
+            _programGate.Release();
+        }
+    }
+
+    private async Task<RadioProgram> CreateProgramCoreAsync(
+        RecommendationRequest request,
+        CancellationToken cancellationToken)
+    {
+        string? moodBias;
+        lock (_stateGate)
+            moodBias = _moodBias;
+
+        var context = BuildContext(moodBias, request);
+        var queries = await GenerateQueriesAsync(request, context, moodBias, cancellationToken);
         var excluded = BuildExcludedTracks(request);
 
         var tracks = new List<RecommendedTrack>();
@@ -113,24 +151,32 @@ public class RecommendationService : IRecommendationService
         RecommendationRequest request,
         CancellationToken cancellationToken)
     {
-        var excluded = BuildExcludedTracks(request);
-        // 已播记忆：防止调用方未把已播曲目放进 ExcludedTracks 时，同一首被反复返回
-        var next = CurrentProgram?.Tracks.FirstOrDefault(x =>
-            x.IsPlayable &&
-            !IsExcluded(x.Track, excluded) &&
-            !IsAlreadyReturned(x.Track) &&
-            !_feedback.Any(f => f.Action == MusicFeedbackAction.Dislike && IsSameSource(f.TrackId, x.Track.SourceId ?? x.Track.Id)));
-
-        if (next == null)
+        await _programGate.WaitAsync(cancellationToken);
+        try
         {
-            var program = await CreateProgramAsync(request, cancellationToken);
-            next = program.Tracks.FirstOrDefault(x => x.IsPlayable && !IsAlreadyReturned(x.Track));
+            var excluded = BuildExcludedTracks(request);
+            // 已播记忆：防止调用方未把已播曲目放进 ExcludedTracks 时，同一首被反复返回
+            var next = CurrentProgram?.Tracks.FirstOrDefault(x =>
+                x.IsPlayable &&
+                !IsExcluded(x.Track, excluded) &&
+                !IsAlreadyReturned(x.Track) &&
+                !IsDisliked(x.Track));
+
+            if (next == null)
+            {
+                var program = await CreateProgramCoreAsync(request, cancellationToken);
+                next = program.Tracks.FirstOrDefault(x => x.IsPlayable && !IsAlreadyReturned(x.Track));
+            }
+
+            if (next != null)
+                _returnedTrackIds.Add(next.Track.SourceId ?? next.Track.Id);
+
+            return next?.Track;
         }
-
-        if (next != null)
-            _returnedTrackIds.Add(next.Track.SourceId ?? next.Track.Id);
-
-        return next?.Track;
+        finally
+        {
+            _programGate.Release();
+        }
     }
 
     private bool IsAlreadyReturned(Track track)
@@ -139,16 +185,35 @@ public class RecommendationService : IRecommendationService
     public void RecordFeedback(UserMusicFeedback feedback)
     {
         if (string.IsNullOrWhiteSpace(feedback.TrackId)) return;
-        _feedback.Add(feedback);
+        lock (_stateGate)
+        {
+            _feedback.Add(feedback);
 
-        // Cap feedback history to avoid unbounded growth
-        const int maxFeedback = 200;
-        if (_feedback.Count > maxFeedback)
-            _feedback.RemoveRange(0, _feedback.Count - maxFeedback);
+            // Cap feedback history to avoid unbounded growth
+            const int maxFeedback = 200;
+            if (_feedback.Count > maxFeedback)
+                _feedback.RemoveRange(0, _feedback.Count - maxFeedback);
+        }
+    }
+
+    public void RecordPlayedTrack(Track track)
+    {
+        lock (_stateGate)
+        {
+            _recentlyPlayed.RemoveAll(item => TrackComparer.IsSameTrackIdentity(item, track));
+            _recentlyPlayed.Add(track);
+            const int historyLimit = 20;
+            if (_recentlyPlayed.Count > historyLimit)
+                _recentlyPlayed.RemoveRange(0, _recentlyPlayed.Count - historyLimit);
+        }
     }
 
     /// <summary>会话级氛围偏好：覆盖意图正则检测出的 mood，并注入搜索词生成提示。传 null/空白清除。</summary>
-    public void SetMoodBias(string? mood) => _moodBias = NormalizeMood(mood);
+    public void SetMoodBias(string? mood)
+    {
+        lock (_stateGate)
+            _moodBias = NormalizeMood(mood);
+    }
 
     /// <summary>电台轮换选曲启发式：优先避开与当前曲同歌手，避免连播同一歌手。</summary>
     public static Track? PickDiversifiedTrack(IReadOnlyList<Track> pool, Track? current)
@@ -189,27 +254,56 @@ public class RecommendationService : IRecommendationService
 
     private List<Track> BuildExcludedTracks(RecommendationRequest request)
     {
+        Track[] played;
+        UserMusicFeedback[] feedback;
+        lock (_stateGate)
+        {
+            played = _recentlyPlayed.ToArray();
+            feedback = _feedback.ToArray();
+        }
+
         return request.ExcludedTracks
             .Concat(request.Playlist)
-            .Concat(_feedback
+            .Concat(request.RecentlyPlayed)
+            .Concat(played)
+            .Concat(feedback
                 .Where(x => x.Action == MusicFeedbackAction.Dislike)
                 .Select(x => new Track { SourceId = x.TrackId, Id = x.TrackId }))
             .ToList();
     }
 
+    private bool IsDisliked(Track track)
+    {
+        lock (_stateGate)
+        {
+            return _feedback.Any(f =>
+                f.Action == MusicFeedbackAction.Dislike &&
+                IsSameSource(f.TrackId, track.SourceId ?? track.Id));
+        }
+    }
+
     private async Task<List<string>> GenerateQueriesAsync(
         RecommendationRequest request,
         ListeningContext context,
+        string? moodBias,
         CancellationToken cancellationToken)
     {
-        var fallback = BuildFallbackQueries(request, context);
+        var recentHistory = BuildRecentHistory(request);
+        var fallback = BuildFallbackQueries(request, context, recentHistory);
         try
         {
-            var moodHint = string.IsNullOrWhiteSpace(_moodBias) ? "" : $"\n氛围偏好：{_moodBias}";
+            var moodHint = string.IsNullOrWhiteSpace(moodBias) ? "" : $"\n氛围偏好：{moodBias}";
+            var recentTracks = recentHistory
+                .Reverse()
+                .DistinctBy(track => $"{track.Title.Trim()}|{track.Artist.Trim()}", StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .Select(track => $"{track.Title} - {track.Artist}");
             var prompt = $"""
                 根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
+                关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。
                 用户意图：{request.UserIntent}
                 当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
+                最近已播放：{string.Join(", ", recentTracks)}
                 收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
                 """;
             var response = await ChatAsync(prompt, cancellationToken);
@@ -253,13 +347,40 @@ public class RecommendationService : IRecommendationService
         };
     }
 
-    private static List<string> BuildFallbackQueries(RecommendationRequest request, ListeningContext context)
+    private IReadOnlyCollection<Track> BuildRecentHistory(RecommendationRequest request)
+    {
+        Track[] recorded;
+        lock (_stateGate)
+            recorded = _recentlyPlayed.ToArray();
+
+        return recorded
+            .Concat(request.RecentlyPlayed)
+            .Reverse()
+            .DistinctBy(track => $"{track.Title.Trim()}|{track.Artist.Trim()}", StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .Reverse()
+            .ToArray();
+    }
+
+    private static List<string> BuildFallbackQueries(
+        RecommendationRequest request,
+        ListeningContext context,
+        IReadOnlyCollection<Track> recentHistory)
     {
         var queries = new List<string>();
         if (!string.IsNullOrWhiteSpace(request.UserIntent))
             queries.Add(request.UserIntent);
         if (request.CurrentTrack != null)
-            queries.Add($"{request.CurrentTrack.Title} {request.CurrentTrack.Artist}");
+            queries.Add($"{request.CurrentTrack.Artist} 相似歌曲");
+        var recentArtists = recentHistory
+            .Reverse()
+            .Select(track => track.Artist)
+            .Where(artist => !string.IsNullOrWhiteSpace(artist))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .ToList();
+        if (recentArtists.Count > 1)
+            queries.Add($"{string.Join(" ", recentArtists)} 相似风格");
         queries.Add(context.Mood switch
         {
             "calm" => "安静 氛围",

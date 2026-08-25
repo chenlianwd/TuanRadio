@@ -225,6 +225,53 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void PlaybackHistory_RecordsOnlyWhenTrackActuallyStartsPlaying()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var current = new Track
+        {
+            Id = "current",
+            SourceId = "test:current",
+            Title = "Current",
+            Artist = "AIRadio",
+            FilePath = "http://example.com/current.mp3"
+        };
+        var audio = CreateAudioMock(new List<Track> { current }, () => current);
+        var trackChanged = Assert.IsType<Subject<Track?>>(audio.Object.TrackChanged);
+        var stateChanged = Assert.IsType<Subject<PlaybackState>>(audio.Object.StateChanged);
+        var recommendations = new Mock<IRecommendationService>();
+        recommendations.SetupGet(x => x.RecentlyPlayed).Returns(Array.Empty<Track>());
+        recommendations.SetupGet(x => x.FeedbackHistory).Returns(Array.Empty<UserMusicFeedback>());
+
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            new Mock<IDJService>().Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile(),
+            recommendationService: recommendations.Object);
+
+        try
+        {
+            trackChanged.OnNext(current);
+            recommendations.Verify(x => x.RecordPlayedTrack(It.IsAny<Track>()), Times.Never);
+
+            stateChanged.OnNext(PlaybackState.Playing);
+            recommendations.Verify(x => x.RecordPlayedTrack(current), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
     public void Dispose_DoesNotSynchronouslyStopContainerOwnedAudioService()
     {
         var originalScheduler = RxApp.MainThreadScheduler;
@@ -398,4 +445,3 @@ public class MainWindowViewModelTests
         }
     }
 }
-

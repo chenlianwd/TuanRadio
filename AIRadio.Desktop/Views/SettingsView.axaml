@@ -114,6 +114,14 @@
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
                               OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
             </Grid>
+            <Grid ColumnDefinitions="*,180" ColumnSpacing="12">
+                <TextBlock Text="{DynamicResource S_SpectrumStyle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="1" SelectedValue="{Binding SelectedSpectrumStyle, Mode=TwoWay}"
+                          ItemsSource="{Binding SpectrumStyles}"
+                          SelectedValueBinding="{Binding Id}"
+                          DisplayMemberBinding="{Binding DisplayName}"/>
+            </Grid>
             <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" Text="{DynamicResource S_TopMostToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
