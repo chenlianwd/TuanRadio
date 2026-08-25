@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -99,6 +101,81 @@ public class SettingsViewModelTests
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         Assert.Equal("zh", vm.SelectedLanguage);
+    }
+
+    [Fact]
+    public void SelectedLanguage_English_RefreshesVisibleOptionsAndStatuses()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        try
+        {
+            vm.SelectedLanguage = "en";
+
+            Assert.Equal("Test", vm.TestConnectionButtonText);
+            Assert.Equal("Not signed in", vm.NeteaseAccountStatus);
+            Assert.Contains(vm.SpectrumStyles, option => option.DisplayName == "Neon wave");
+            Assert.Contains(vm.SpeechMixModes, option => option.DisplayName == "Duck volume while speaking");
+            Assert.StartsWith("You are Lumen", vm.CharacterPersonality);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply("zh");
+            CharacterProfile.RefreshLocalizedPresets();
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_English_LocalizesPreviouslySavedBuiltInPersonality()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "language": "en",
+              "character_overrides": {
+                "haru": {
+                  "voice_id": "female-shaonv",
+                  "personality": "你是名叫 Lumen 的中文电台 DJ。气质明亮、轻快、有元气，擅长把普通的一天说得轻盈一点。"
+                }
+              }
+            }
+            """);
+
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+        try
+        {
+            await vm.LoadAsync();
+
+            Assert.StartsWith("You are Lumen", vm.CharacterPersonality);
+            Assert.StartsWith("You are Lumen", vm.GetOverride("haru")?.Personality);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply("zh");
+            CharacterProfile.RefreshLocalizedPresets();
+        }
+    }
+
+    [Fact]
+    public async Task LanguageChange_RelocalizesExistingValidationStatus()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        try
+        {
+            await vm.TestConnectionCommand.Execute();
+            Assert.Equal("请先输入 API Key", vm.StatusMessage);
+
+            vm.SelectedLanguage = "en";
+
+            Assert.Equal("Enter your API key first", vm.StatusMessage);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply("zh");
+            CharacterProfile.RefreshLocalizedPresets();
+        }
     }
 
     [Fact]
@@ -619,5 +696,43 @@ public class SettingsViewModelTests
             File.Delete(settingsFile);
             File.Delete(settingsFile + ".bak");
         }
+    }
+
+    [Fact]
+    public async Task LanguageChange_PreservesAndRelocalizesAccountWarning()
+    {
+        var accountStore = new MusicAccountStore(_mockStorage.Object);
+        await accountStore.SetNeteaseCookieAsync("MUSIC_U=test-cookie");
+        using var httpClient = new HttpClient(new StaticResponseHandler("{\"data\":{\"code\":200,\"profile\":null}}"));
+        var vm = new SettingsViewModel(
+            _mockLlm.Object,
+            _mockStorage.Object,
+            CreateTempSettingsFile(),
+            accountStore,
+            httpClient);
+
+        try
+        {
+            await vm.RefreshAccountStatusAsync();
+            Assert.Contains("昵称获取失败", vm.NeteaseAccountStatus);
+
+            vm.SelectedLanguage = "en";
+
+            Assert.Equal("Signed in (nickname unavailable; login may have expired)", vm.NeteaseAccountStatus);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    private sealed class StaticResponseHandler(string content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(content)
+            });
     }
 }

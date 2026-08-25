@@ -52,7 +52,9 @@ public class NeteaseMusicService : IMusicSearchService
             if (!root.TryGetProperty("code", out var codeEl) ||
                 codeEl.ValueKind != JsonValueKind.Number ||
                 codeEl.GetInt32() != 200)
-                throw new MusicSourceBusinessException($"网易接口业务码异常({(codeEl.ValueKind == JsonValueKind.Number ? codeEl.GetInt32() : -1)})，本地代理或鉴权可能失效");
+                throw new MusicSourceBusinessException(AppLanguage.T(
+                    $"网易接口业务码异常({(codeEl.ValueKind == JsonValueKind.Number ? codeEl.GetInt32() : -1)})，本地代理或鉴权可能失效",
+                    $"NetEase returned an unexpected business code ({(codeEl.ValueKind == JsonValueKind.Number ? codeEl.GetInt32() : -1)}); the local proxy or authentication may be invalid"));
 
             if (!root.TryGetProperty("result", out var result) ||
                 !result.TryGetProperty("songs", out var songs))
@@ -64,12 +66,12 @@ public class NeteaseMusicService : IMusicSearchService
             {
                 try
                 {
-                    var artistName = "未知";
+                    var artistName = AppLanguage.T("未知", "Unknown");
                     if (song.TryGetProperty("artists", out var artists) &&
                         artists.GetArrayLength() > 0 &&
                         artists[0].TryGetProperty("name", out var nameEl))
                     {
-                        artistName = nameEl.GetString() ?? "未知";
+                        artistName = nameEl.GetString() ?? AppLanguage.T("未知", "Unknown");
                     }
 
                     var albumName = "";

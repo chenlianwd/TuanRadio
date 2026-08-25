@@ -67,6 +67,24 @@ public static class AppLanguage
     public static string T(string zh, string en)
         => _current == "en" ? en : zh;
 
+    /// <summary>把音源内部名称转换为当前界面的显示名称，兼容历史中英文及简称。</summary>
+    public static string MusicSourceName(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return string.Empty;
+
+        return source.Trim().ToLowerInvariant() switch
+        {
+            "netease" or "网易" or "网易云音乐" or "netease cloud music" => T("网易云音乐", "NetEase Cloud Music"),
+            "kugou" or "酷狗" or "酷狗音乐" or "kugou music" => T("酷狗音乐", "Kugou Music"),
+            "kuwo" or "酷我" or "酷我音乐" or "kuwo music" => T("酷我音乐", "Kuwo Music"),
+            "migu" or "咪咕" or "咪咕音乐" or "migu music" => T("咪咕音乐", "Migu Music"),
+            "youtube" or "youtube music" => "YouTube",
+            "多平台聚合" or "multi-source" or "multi-source music" => T("多平台聚合", "Multi-source"),
+            _ => source
+        };
+    }
+
     private static void FillStrings(string language)
     {
         if (_stringsHost == null)

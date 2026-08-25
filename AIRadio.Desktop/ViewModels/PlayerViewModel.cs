@@ -21,7 +21,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
 
     public IAudioService AudioService => _audioService;
 
-    [Reactive] public string TrackTitle { get; set; } = "未播放";
+    [Reactive] public string TrackTitle { get; set; } = AppLanguage.T("未播放", "Nothing playing");
     [Reactive] public string TrackArtist { get; set; } = "";
     [Reactive] public bool IsPlaying { get; set; }
     [Reactive] public string PlayPauseText { get; set; } = "▶";
@@ -35,7 +35,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public string ShuffleText { get; set; } = "🔀";
     [Reactive] public string RepeatMode { get; set; } = "radio";
     [Reactive] public string RepeatText { get; set; } = "DJ";
-    [Reactive] public string RepeatModeTip { get; set; } = "电台模式"; // 语言切换时由 _onLanguageChanged 重算
+    [Reactive] public string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
 
     private bool _isDragging;
 
@@ -88,7 +88,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                 if (track != null)
                 {
                     TrackTitle = track.Title;
-                    TrackArtist = track.Artist;
+                    TrackArtist = track.DisplayArtist;
                     TotalSeconds = track.Duration.TotalSeconds;
                     DurationText = FormatTime(track.Duration);
                 }
@@ -129,6 +129,11 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         _onLanguageChanged = () =>
         {
             UpdateRepeatMode(RepeatMode);
+            if (_audioService.CurrentTrack is { } currentTrack)
+            {
+                currentTrack.RefreshLocalization();
+                TrackArtist = currentTrack.DisplayArtist;
+            }
             // 仅重置占位文案；有曲目在播时保留真实标题
             if (TrackTitle is "未播放" or "Nothing playing")
                 TrackTitle = AppLanguage.T("未播放", "Nothing playing");

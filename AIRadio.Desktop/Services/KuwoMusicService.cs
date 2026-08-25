@@ -46,7 +46,9 @@ public class KuwoMusicService : IMusicSearchService
             if (!root.TryGetProperty("code", out var codeElement) ||
                 codeElement.ValueKind != JsonValueKind.Number ||
                 codeElement.GetInt32() != 200)
-                throw new MusicSourceBusinessException($"酷我接口业务码异常({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})");
+                throw new MusicSourceBusinessException(AppLanguage.T(
+                    $"酷我接口业务码异常({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})",
+                    $"Kuwo returned an unexpected business code ({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})"));
 
             var tracks = new List<OnlineTrack>();
             if (!root.TryGetProperty("data", out var dataElement) ||

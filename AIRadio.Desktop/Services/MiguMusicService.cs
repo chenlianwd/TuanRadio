@@ -39,7 +39,9 @@ public class MiguMusicService : IMusicSearchService
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(json) || json[0] == '<')
-                throw new MusicSourceBusinessException("咪咕接口返回了非 JSON 响应（可能被门户页劫持）");
+                throw new MusicSourceBusinessException(AppLanguage.T(
+                    "咪咕接口返回了非 JSON 响应（可能被门户页劫持）",
+                    "Migu returned a non-JSON response, possibly redirected to a portal page"));
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;

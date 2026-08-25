@@ -24,9 +24,9 @@
                 <TextBlock Text="{Binding Now, StringFormat='HH:mm'}" FontSize="56" FontWeight="700"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"
                            HorizontalAlignment="Center"/>
-                <TextBlock Text="{Binding Now, StringFormat='dddd'}" FontSize="13" FontFamily="Consolas"
+                <TextBlock Text="{Binding LocalizedDayOfWeek}" FontSize="13" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FFE5E5EC}" HorizontalAlignment="Center"/>
-                <TextBlock Text="{Binding Now, StringFormat='dd-MMM-yyyy'}" FontSize="10" FontFamily="Consolas"
+                <TextBlock Text="{Binding LocalizedDate}" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF858594}" HorizontalAlignment="Center"/>
             </StackPanel>
             <local:SpectrumView Grid.Column="2" DataContext="{Binding SpectrumVM}"

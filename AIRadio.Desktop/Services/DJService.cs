@@ -114,7 +114,9 @@ Response rules:
             Log.Error(ex, "Failed to generate track introduction");
             return new DJScript
             {
-                Text = $"接下来为你带来《{next.Title}》 - {next.Artist}，一起听听这段情绪。",
+                Text = _profile.Language == "en"
+                    ? $"Up next is “{next.Title}” by {next.Artist}. Let's settle into its mood."
+                    : $"接下来为你带来《{next.Title}》 - {next.Artist}，一起听听这段情绪。",
                 Emotion = "happy",
                 Expression = "smile",
                 Motion = "wave"
@@ -129,7 +131,9 @@ Response rules:
     {
         try
         {
-            var prompt = $"歌曲《{track.Title}》- {track.Artist}。用 3-5 句话给电台听众讲讲这首歌的背景、风格或趣闻，亲切口语化，每句独占一行。";
+            var prompt = _profile.Language == "en"
+                ? $"Tell radio listeners about '{track.Title}' by {track.Artist} in 3-5 friendly, conversational sentences. Cover its background, style, or an interesting fact, one sentence per line. Reply in English only."
+                : $"歌曲《{track.Title}》- {track.Artist}。用 3-5 句话给电台听众讲讲这首歌的背景、风格或趣闻，亲切口语化，每句独占一行。";
             var text = _llm is LLMService llm
                 ? await llm.ChatAsync(prompt, new List<ChatMessage>(), cancellationToken)
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>())

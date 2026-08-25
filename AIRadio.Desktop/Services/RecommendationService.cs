@@ -98,11 +98,11 @@ public class RecommendationService : IRecommendationService
                     tracks.Add(new RecommendedTrack
                     {
                         Track = result.ToTrack(string.Empty),
-                        Source = string.IsNullOrWhiteSpace(result.Source) ? ParseSource(result.Id) : result.Source,
+                        Source = GetSourceDisplayName(result),
                         IsPlayable = false,
                         Score = 0.1,
                         Tags = BuildTags(context, result),
-                        Reason = "找到了候选歌曲，但当前音源暂时不可播放。"
+                        Reason = BuildUnavailableReason()
                     });
                     continue;
                 }
@@ -112,7 +112,7 @@ public class RecommendationService : IRecommendationService
                 tracks.Add(new RecommendedTrack
                 {
                     Track = track,
-                    Source = string.IsNullOrWhiteSpace(result.Source) ? ParseSource(result.Id) : result.Source,
+                    Source = GetSourceDisplayName(result),
                     PlayUrl = url,
                     IsPlayable = true,
                     Score = 1.0 - playableCount * 0.05,
@@ -133,10 +133,9 @@ public class RecommendationService : IRecommendationService
             Title = BuildProgramTitle(context),
             Context = context,
             Tracks = tracks,
-            DjOpening = tracks.Any(x => x.IsPlayable)
-                ? $"我先为你排了 {tracks.Count(x => x.IsPlayable)} 首可播放歌曲。"
-                : "暂时没找到合适的可播放歌曲。"
+            DjOpening = BuildProgramOpening(tracks)
         };
+        ApplyLocalization(program);
         // 新节目单生成即清空已播记忆：记忆只防"同一节目单内反复返回同一首"，
         // 跨节目单的重复由调用方的 ExcludedTracks 负责
         _returnedTrackIds.Clear();
@@ -292,20 +291,32 @@ public class RecommendationService : IRecommendationService
         var fallback = BuildFallbackQueries(request, context, recentHistory);
         try
         {
-            var moodHint = string.IsNullOrWhiteSpace(moodBias) ? "" : $"\n氛围偏好：{moodBias}";
+            var userIntent = GetLocalizedUserIntent(request.UserIntentKey, request.UserIntent);
+            var moodHint = string.IsNullOrWhiteSpace(moodBias)
+                ? string.Empty
+                : AppLanguage.T($"\n氛围偏好：{moodBias}", $"\nMood preference: {moodBias}");
             var recentTracks = recentHistory
                 .Reverse()
                 .DistinctBy(track => $"{track.Title.Trim()}|{track.Artist.Trim()}", StringComparer.OrdinalIgnoreCase)
                 .Take(8)
                 .Select(track => $"{track.Title} - {track.Artist}");
-            var prompt = $"""
-                根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
-                关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。
-                用户意图：{request.UserIntent}
-                当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
-                最近已播放：{string.Join(", ", recentTracks)}
-                收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
-                """;
+            var prompt = AppLanguage.Current == "en"
+                ? $"""
+                    Generate 3 short music-search queries, one per line.
+                    Infer the shared genre, era, language and mood of recently played tracks instead of repeating one title.
+                    User intent: {userIntent}
+                    Current track: {request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
+                    Recently played: {string.Join(", ", recentTracks)}
+                    Favorites: {string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
+                    """
+                : $"""
+                    根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
+                    关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。
+                    用户意图：{userIntent}
+                    当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
+                    最近已播放：{string.Join(", ", recentTracks)}
+                    收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
+                    """;
             var response = await ChatAsync(prompt, cancellationToken);
             var queries = response
                 .Split(new[] { '\r', '\n', ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries)
@@ -335,6 +346,7 @@ public class RecommendationService : IRecommendationService
         return new ListeningContext
         {
             UserIntent = text,
+            UserIntentKey = request.UserIntentKey,
             Mood = mood,
             Scene = DetectScene(text),
             TimeOfDay = DateTime.Now.Hour switch
@@ -368,10 +380,13 @@ public class RecommendationService : IRecommendationService
         IReadOnlyCollection<Track> recentHistory)
     {
         var queries = new List<string>();
-        if (!string.IsNullOrWhiteSpace(request.UserIntent))
-            queries.Add(request.UserIntent);
+        var userIntent = GetLocalizedUserIntent(request.UserIntentKey, request.UserIntent);
+        if (!string.IsNullOrWhiteSpace(userIntent))
+            queries.Add(userIntent);
         if (request.CurrentTrack != null)
-            queries.Add($"{request.CurrentTrack.Artist} 相似歌曲");
+            queries.Add(AppLanguage.T(
+                $"{request.CurrentTrack.Artist} 相似歌曲",
+                $"songs similar to {request.CurrentTrack.Artist}"));
         var recentArtists = recentHistory
             .Reverse()
             .Select(track => track.Artist)
@@ -380,13 +395,15 @@ public class RecommendationService : IRecommendationService
             .Take(3)
             .ToList();
         if (recentArtists.Count > 1)
-            queries.Add($"{string.Join(" ", recentArtists)} 相似风格");
+            queries.Add(AppLanguage.T(
+                $"{string.Join(" ", recentArtists)} 相似风格",
+                $"music similar to {string.Join(" ", recentArtists)}"));
         queries.Add(context.Mood switch
         {
-            "calm" => "安静 氛围",
-            "energetic" => "摇滚 热血",
-            "sad" => "emo 治愈",
-            _ => "华语 流行"
+            "calm" => AppLanguage.T("安静 氛围", "calm ambient"),
+            "energetic" => AppLanguage.T("摇滚 热血", "energetic rock"),
+            "sad" => AppLanguage.T("emo 治愈", "reflective emo"),
+            _ => AppLanguage.T("华语 流行", "popular music")
         });
         return queries.Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToList();
     }
@@ -399,19 +416,79 @@ public class RecommendationService : IRecommendationService
     }
 
     private static string BuildProgramTitle(ListeningContext context)
-        => string.IsNullOrWhiteSpace(context.UserIntent) ? "今日电台" : $"为你调好的：{context.UserIntent}";
+    {
+        var userIntent = GetLocalizedUserIntent(context.UserIntentKey, context.UserIntent);
+        return string.IsNullOrWhiteSpace(userIntent)
+            ? AppLanguage.T("今日电台", "Today's Radio")
+            : AppLanguage.T($"为你调好的：{userIntent}", $"Tuned for you: {userIntent}");
+    }
 
     private static string BuildReason(ListeningContext context)
-        => string.IsNullOrWhiteSpace(context.UserIntent)
-            ? $"这首歌适合 {context.TimeOfDay} 的 TuanRadio 续播。"
-            : $"它和“{context.UserIntent}”的氛围接近，可以接在当前电台里。";
+    {
+        var userIntent = GetLocalizedUserIntent(context.UserIntentKey, context.UserIntent);
+        return string.IsNullOrWhiteSpace(userIntent)
+            ? AppLanguage.T(
+                $"这首歌适合 {LocalizeTimeOfDay(context.TimeOfDay)} 的 TuanRadio 续播。",
+                $"This track fits a {LocalizeTimeOfDay(context.TimeOfDay)} TuanRadio session.")
+            : AppLanguage.T(
+                $"它和“{userIntent}”的氛围接近，可以接在当前电台里。",
+                $"Its mood matches “{userIntent}” and fits naturally into this station.");
+    }
+
+    private static string GetLocalizedUserIntent(string? key, string? fallback)
+    {
+        if (key == RecommendationIntentKeys.ContinueStation ||
+            fallback is "继续当前电台" or "Continue current station")
+        {
+            return AppLanguage.T("继续当前电台", "Continue current station");
+        }
+
+        return fallback ?? string.Empty;
+    }
+
+    private static string BuildUnavailableReason()
+        => AppLanguage.T(
+            "找到了候选歌曲，但当前音源暂时不可播放。",
+            "This candidate was found, but its source is temporarily unavailable.");
+
+    private static string BuildProgramOpening(IReadOnlyCollection<RecommendedTrack> tracks)
+    {
+        var count = tracks.Count(track => track.IsPlayable);
+        return count > 0
+            ? AppLanguage.T($"我先为你排了 {count} 首可播放歌曲。", $"I've lined up {count} playable track(s) for you.")
+            : AppLanguage.T("暂时没找到合适的可播放歌曲。", "I couldn't find a suitable playable track right now.");
+    }
+
+    private static string LocalizeTimeOfDay(string value) => value switch
+    {
+        "morning" => AppLanguage.T("清晨", "morning"),
+        "afternoon" => AppLanguage.T("午后", "afternoon"),
+        "night" => AppLanguage.T("夜晚", "evening"),
+        "late-night" => AppLanguage.T("深夜", "late-night"),
+        _ => value
+    };
+
+    public static void ApplyLocalization(RadioProgram program)
+    {
+        program.Title = BuildProgramTitle(program.Context);
+        program.DjOpening = BuildProgramOpening(program.Tracks);
+        foreach (var item in program.Tracks)
+        {
+            item.Source = AppLanguage.MusicSourceName(item.Source);
+            item.Tags = item.Tags.Select(AppLanguage.MusicSourceName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToList();
+            item.Reason = item.IsPlayable ? BuildReason(program.Context) : BuildUnavailableReason();
+        }
+    }
 
     private static List<string> BuildTags(ListeningContext context, OnlineTrack track)
     {
         var tags = new List<string>();
         if (!string.IsNullOrWhiteSpace(context.Mood)) tags.Add(context.Mood);
         if (!string.IsNullOrWhiteSpace(context.Scene)) tags.Add(context.Scene);
-        if (!string.IsNullOrWhiteSpace(track.Source)) tags.Add(track.Source);
+        if (!string.IsNullOrWhiteSpace(track.Source)) tags.Add(AppLanguage.MusicSourceName(track.Source));
         return tags.Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToList();
     }
 
@@ -436,6 +513,10 @@ public class RecommendationService : IRecommendationService
         var idx = id.IndexOf(':');
         return idx > 0 ? id[..idx] : string.Empty;
     }
+
+    private static string GetSourceDisplayName(OnlineTrack track)
+        => AppLanguage.MusicSourceName(
+            string.IsNullOrWhiteSpace(track.Source) ? ParseSource(track.Id) : track.Source);
 
     private static bool IsExcluded(OnlineTrack candidate, IEnumerable<Track> excludedTracks)
         => excludedTracks.Any(track =>

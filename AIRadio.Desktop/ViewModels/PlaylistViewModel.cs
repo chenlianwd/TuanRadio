@@ -31,6 +31,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private int _disposed;
     private bool _isPlayingOnline;
     private bool _isLoading;
+    private Func<string>? _searchStatusFactory;
     private readonly IDisposable _selectedTrackSub;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
@@ -51,7 +52,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsSearching { get; set; }
     [Reactive] public bool HasSearchStatus { get; set; }
     [Reactive] public string SearchStatusMessage { get; set; } = string.Empty;
-    [Reactive] public string SearchButtonText { get; set; } = "搜索"; // 语言切换时由 _onLanguageChanged 重置
+    [Reactive] public string SearchButtonText { get; set; } = AppLanguage.T("搜索", "Search");
     [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
@@ -122,11 +123,11 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         {
             try
             {
-                SetSearchStatus(AppLanguage.T($"正在添加《{track.Title}》...", $"Adding \"{track.Title}\"..."));
+                SetSearchStatus(() => AppLanguage.T($"正在添加《{track.Title}》...", $"Adding \"{track.Title}\"..."));
                 var url = await ResolvePlayUrlAsync(track);
                 if (url == null)
                 {
-                    SetSearchStatus(AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
+                    SetSearchStatus(() => AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
                     return;
                 }
 
@@ -134,7 +135,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 var existing = Tracks.FirstOrDefault(t => MatchesOnlineTrack(t, track));
                 if (existing != null)
                 {
-                    SetSearchStatus(AppLanguage.T("这首歌已经在播放列表里了。", "Already in the playlist."));
+                    SetSearchStatus(() => AppLanguage.T("这首歌已经在播放列表里了。", "Already in the playlist."));
                     return;
                 }
 
@@ -143,7 +144,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 _audioService.AddTracks(new[] { t });
                 TabIndex = 0;
                 await SaveAsync();
-                SetSearchStatus(AppLanguage.T($"已添加《{track.Title}》。", $"Added \"{track.Title}\"."));
+                SetSearchStatus(() => AppLanguage.T($"已添加《{track.Title}》。", $"Added \"{track.Title}\"."));
             }
             catch (OperationCanceledException)
             {
@@ -153,7 +154,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             {
                 // ReactiveCommand 异常若无订阅者会落入 RxApp.DefaultExceptionHandler 直接抛出
                 Log.Warning(ex, "Failed to add online track {Title}", track.Title);
-                SetSearchStatus(AppLanguage.T($"添加《{track.Title}》失败，请稍后重试。", $"Failed to add \"{track.Title}\"; try again later."));
+                SetSearchStatus(() => AppLanguage.T($"添加《{track.Title}》失败，请稍后重试。", $"Failed to add \"{track.Title}\"; try again later."));
             }
         });
 
@@ -202,9 +203,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         _onLanguageChanged = () =>
         {
+            foreach (var track in Tracks)
+                track.RefreshLocalization();
             // 搜索进行中保留"搜索中..."文案，结束后由 finally 按新语言复位
             if (!IsSearching)
                 SearchButtonText = AppLanguage.T("搜索", "Search");
+            if (_searchStatusFactory != null)
+                SearchStatusMessage = _searchStatusFactory();
         };
         AppLanguage.Changed += _onLanguageChanged;
     }
@@ -447,12 +452,12 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         _isPlayingOnline = true;
         try
         {
-            SetSearchStatus(AppLanguage.T($"正在播放《{track.Title}》...", $"Playing \"{track.Title}\"..."));
+            SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》...", $"Playing \"{track.Title}\"..."));
             var url = await ResolvePlayUrlAsync(track);
             if (url == null)
             {
                 Log.Warning("No play URL for track {Id}", track.Id);
-                SetSearchStatus(AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
+                SetSearchStatus(() => AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
                 return;
             }
 
@@ -462,7 +467,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             {
                 _audioService.PlayAtIndex(existingIndex);
                 TabIndex = 0;
-                SetSearchStatus(AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
+                SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
                 return;
             }
 
@@ -473,12 +478,12 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             _audioService.PlayAtIndex(index);
             TabIndex = 0;
             await SaveAsync();
-            SetSearchStatus(AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
+            SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Play online failed for {Track}", track.Title);
-            SetSearchStatus(AppLanguage.T("播放失败，可能是音源不可用或网络超时。", "Playback failed; the source may be unavailable or the network timed out."));
+            SetSearchStatus(() => AppLanguage.T("播放失败，可能是音源不可用或网络超时。", "Playback failed; the source may be unavailable or the network timed out."));
         }
         finally
         {
@@ -516,7 +521,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         IsSearching = true;
         SearchButtonText = AppLanguage.T("搜索中...", "Searching...");
-        SetSearchStatus(AppLanguage.T($"正在搜索“{SearchText}”...", $"Searching \"{SearchText}\"..."));
+        SetSearchStatus(() => AppLanguage.T($"正在搜索“{SearchText}”...", $"Searching \"{SearchText}\"..."));
         try
         {
             var results = await SearchMusicAsync(SearchText, 20);
@@ -526,13 +531,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 SearchResults.Add(track);
             }
             TabIndex = 2; // auto-switch to search results
-            SetSearchStatus(BuildSearchStatusMessage(results.Count));
+            SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count));
             Log.Information("Search '{Query}' returned {Count} results", SearchText, results.Count);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Search failed");
-            SetSearchStatus(AppLanguage.T("搜索失败，可能是网络异常或音乐 API 服务不可用。", "Search failed; check the network or the music API service."));
+            SetSearchStatus(() => AppLanguage.T("搜索失败，可能是网络异常或音乐 API 服务不可用。", "Search failed; check the network or the music API service."));
         }
         finally
         {
@@ -560,16 +565,17 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     internal static string FormatSourceStatus(Services.SourceSearchStatus status) => status.Status switch
     {
         "ok" => string.IsNullOrEmpty(status.Note)
-            ? AppLanguage.T($"{status.Name}成功{status.Count}条", $"{status.Name}: {status.Count} result(s)")
-            : AppLanguage.T($"{status.Name}搜到{status.Count}条({status.Note})", $"{status.Name}: {status.Count} results ({status.Note})"),
-        "timeout" => AppLanguage.T($"{status.Name}超时", $"{status.Name} timed out"),
-        _ => AppLanguage.T($"{status.Name}失败:{status.Error}", $"{status.Name} failed: {status.Error}")
+            ? AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}成功{status.Count}条", $"{AppLanguage.MusicSourceName(status.Name)}: {status.Count} result(s)")
+            : AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}搜到{status.Count}条({status.Note})", $"{AppLanguage.MusicSourceName(status.Name)}: {status.Count} results ({status.Note})"),
+        "timeout" => AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}超时", $"{AppLanguage.MusicSourceName(status.Name)} timed out"),
+        _ => AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}失败:{status.Error}", $"{AppLanguage.MusicSourceName(status.Name)} failed: {status.Error}")
     };
 
-    private void SetSearchStatus(string message)
+    private void SetSearchStatus(Func<string> messageFactory)
     {
-        SearchStatusMessage = message;
-        HasSearchStatus = !string.IsNullOrWhiteSpace(message);
+        _searchStatusFactory = messageFactory;
+        SearchStatusMessage = messageFactory();
+        HasSearchStatus = !string.IsNullOrWhiteSpace(SearchStatusMessage);
     }
 
     public void AddExternalTrack(Track track)

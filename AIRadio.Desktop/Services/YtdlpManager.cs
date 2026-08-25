@@ -42,8 +42,10 @@ public static class YtdlpManager
         public string? DisableReason => Installed && MeetsMinimumSupportedVersion
             ? null
             : Installed
-                ? $"yt-dlp 版本过旧（{Version ?? "未知"}），低于最低支持版本 {MinimumSupportedVersion}，请联网后重启应用以自动更新"
-                : "yt-dlp 未安装";
+                ? AppLanguage.T(
+                    $"yt-dlp 版本过旧（{Version ?? "未知"}），低于最低支持版本 {MinimumSupportedVersion}，请联网后重启应用以自动更新",
+                    $"yt-dlp is outdated ({Version ?? "unknown"}); minimum supported version is {MinimumSupportedVersion}. Connect to the internet and restart the app to update it.")
+                : AppLanguage.T("yt-dlp 未安装", "yt-dlp is not installed");
     }
 
     /// <summary>读取当前安装状态；版本记录缺失（旧版应用用 latest 安装）视为未知。</summary>

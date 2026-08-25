@@ -263,4 +263,78 @@ public class RecommendationServiceTests
 
         Assert.Equal(1, maxConcurrentCalls);
     }
+
+    [Fact]
+    public async Task CreateProgramAsync_English_LocalizesPromptAndProgramContent()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("british rock");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                new() { Id = "netease:test", Title = "Test", Artist = "Artist", Source = "网易" }
+            });
+        search.Setup(x => x.GetPlayUrlAsync("netease:test"))
+            .ReturnsAsync("https://example.com/test.mp3");
+
+        try
+        {
+            AppLanguage.Apply("en");
+            var program = await service.CreateProgramAsync(new RecommendationRequest
+            {
+                UserIntent = "Continue current station"
+            });
+
+            Assert.Contains("Generate 3 short music-search queries", Assert.Single(prompts));
+            Assert.StartsWith("Tuned for you:", program.Title);
+            Assert.StartsWith("I've lined up", program.DjOpening);
+            var item = Assert.Single(program.Tracks);
+            Assert.Equal("NetEase Cloud Music", item.Source);
+            Assert.DoesNotContain(item.Reason, character => character is >= '\u4e00' and <= '\u9fff');
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public void ApplyLocalization_TranslatesStoredContinueStationIntent()
+    {
+        var program = new RadioProgram
+        {
+            Context = new ListeningContext
+            {
+                UserIntent = "继续当前电台",
+                TimeOfDay = "night"
+            },
+            Tracks =
+            [
+                new RecommendedTrack
+                {
+                    Track = new Track { Title = "Test", Artist = "Artist" },
+                    IsPlayable = true,
+                    Source = "网易"
+                }
+            ]
+        };
+
+        try
+        {
+            AppLanguage.Apply("en");
+            RecommendationService.ApplyLocalization(program);
+
+            Assert.Equal("Tuned for you: Continue current station", program.Title);
+            Assert.DoesNotMatch("[\\u4e00-\\u9fff]", program.Tracks[0].Reason);
+            Assert.Equal("NetEase Cloud Music", program.Tracks[0].Source);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
 }
