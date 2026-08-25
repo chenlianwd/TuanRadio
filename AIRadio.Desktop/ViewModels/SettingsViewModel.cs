@@ -41,6 +41,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private bool _neteaseQrRunning;
     private bool _kugouQrRunning;
     private bool _loadingYtdlpBrowser;
+    private bool _ytdlpCookieNoticeShown;
     private string? _lastCharacterSignature;
     private bool _lastSaveSucceeded;
     private int _disposed;
@@ -76,6 +77,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public IImage? KugouQrImage { get; set; }
     [Reactive] public bool IsKugouQrVisible { get; set; }
     [Reactive] public VoiceOption? SelectedYtdlpBrowser { get; set; }
+    // 首次启用浏览器 Cookies 的隐私提示（每次会话提示一次）
+    [Reactive] public string YtdlpCookieNotice { get; set; } = string.Empty;
+    [Reactive] public bool IsYtdlpCookieNoticeVisible { get; set; }
 
     // Character customization
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
@@ -179,6 +183,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             .Subscribe(b =>
             {
                 _accounts.YtdlpCookieBrowser = b!.Id;
+                UpdateYtdlpCookieNotice(b.Id);
                 if (_loadingYtdlpBrowser)
                     return;
                 // 用户切换浏览器时跟随保存，不触碰 LLM 字段与凭据
@@ -187,6 +192,27 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
         // Default selection
         SelectedCharacter = Characters[0];
+    }
+
+    /// <summary>
+    /// 首次（每次会话一次）从"不使用"切到具体浏览器时展示隐私提示：
+    /// 明确浏览器 Cookie 只在本机用于 yt-dlp 播放请求，不写入日志。
+    /// </summary>
+    private void UpdateYtdlpCookieNotice(string browserId)
+    {
+        if (string.IsNullOrEmpty(browserId))
+        {
+            YtdlpCookieNotice = string.Empty;
+            IsYtdlpCookieNoticeVisible = false;
+            return;
+        }
+
+        if (_ytdlpCookieNoticeShown)
+            return;
+
+        _ytdlpCookieNoticeShown = true;
+        YtdlpCookieNotice = $"隐私提示：已启用 {browserId} 浏览器 Cookies。yt-dlp 仅在本机读取该浏览器的 YouTube 登录态用于播放请求，Cookies 不会上传、记录或写入日志。";
+        IsYtdlpCookieNoticeVisible = true;
     }
 
     private void LoadCharacterOverrides(CharacterProfile character)
