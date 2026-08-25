@@ -19,15 +19,23 @@
     <InternalsVisibleTo Include="AIRadio.Desktop.Tests" />
   </ItemGroup>
 
-  <Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('server\node_modules\.package-lock.json')">
-    <Exec Command="npm install" WorkingDirectory="server" />
+  <PropertyGroup>
+    <!-- 实验性 Node 音乐代理（网易/酷狗）构建开关：-p:TuanRadioEnableNodeProviders=false
+         可在无 Node.js 环境构建核心；关闭后不执行 npm，也不复制代理目录 -->
+    <TuanRadioEnableNodeProviders Condition="'$(TuanRadioEnableNodeProviders)' == ''">true</TuanRadioEnableNodeProviders>
+  </PropertyGroup>
+
+  <!-- npm ci 严格按 lockfile 安装且失败不留"看似完整"的 node_modules（隐藏 lockfile 仅在装完时落盘）；
+       普通/CI 构建都不会隐式更新 lockfile -->
+  <Target Name="NpmInstall" BeforeTargets="Build" Condition="'$(TuanRadioEnableNodeProviders)' == 'true' And !Exists('server\node_modules\.package-lock.json')">
+    <Exec Command="npm ci --omit=dev" WorkingDirectory="server" />
   </Target>
 
-  <Target Name="NpmInstallKugou" BeforeTargets="Build" Condition="!Exists('server-kugou\node_modules\.package-lock.json')">
-    <Exec Command="npm install --omit=dev" WorkingDirectory="server-kugou" />
+  <Target Name="NpmInstallKugou" BeforeTargets="Build" Condition="'$(TuanRadioEnableNodeProviders)' == 'true' And !Exists('server-kugou\node_modules\.package-lock.json')">
+    <Exec Command="npm ci --omit=dev" WorkingDirectory="server-kugou" />
   </Target>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(TuanRadioEnableNodeProviders)' == 'true'">
     <Content Include="server\**" Exclude="server\node_modules\.package-lock.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
