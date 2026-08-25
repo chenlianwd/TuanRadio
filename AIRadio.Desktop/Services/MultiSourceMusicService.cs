@@ -17,10 +17,10 @@ public class MultiSourceMusicService : IMusicSearchService
 {
     private static readonly TimeSpan PrimarySourceTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SourceTimeout = TimeSpan.FromSeconds(5);
-    // yt-dlp 子进程搜索（含首次安装下载）无法在常规源预算内完成，YouTube 需要独立长预算
+    // yt-dlp 子进程允许使用较长的单源上限，但仍必须被整个搜索操作的剩余预算截断
     private static readonly TimeSpan SlowSourceTimeout = TimeSpan.FromSeconds(30);
-    // 0.4 统一 deadline：快速源搜索共享 8s 整体预算（对应量化门禁"普通在线搜索硬截止 8s"），
-    // 逐源预算从剩余时间中扣减，调用下一源前先检查剩余预算
+    // 0.4 统一 deadline：快速源与后续慢源共享 8s 整体预算（对应量化门禁"普通在线搜索硬截止 8s"），
+    // 每个单源预算从剩余时间中扣减，调用下一源前先检查剩余预算
     private static readonly TimeSpan SearchOverallDeadline = TimeSpan.FromSeconds(8);
     // 播放地址解析/跨源回退的整体预算，与 AudioService.UrlRefreshTimeout 对齐：
     // 内层每源 5s 不再无限串行叠加，由本 deadline 收口
@@ -76,10 +76,10 @@ public class MultiSourceMusicService : IMusicSearchService
             _lastSearchReport.Clear();
 
         cancellationToken.ThrowIfCancellationRequested();
-        // 快速源（非 YouTube）共享 8s 整体 deadline；到硬截止时未完成的源按超时收口
+        // 快速源优先使用 8s 整体 deadline；后续慢源只能使用其剩余部分
         var deadline = DateTimeOffset.UtcNow + SearchOverallDeadline;
-        using var fastPathCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        fastPathCts.CancelAfter(SearchOverallDeadline);
+        using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        searchCts.CancelAfter(SearchOverallDeadline);
 
         var merged = new List<OnlineTrack>();
         try
@@ -92,14 +92,14 @@ public class MultiSourceMusicService : IMusicSearchService
                     keyword,
                     limit,
                     CapBudget(PrimarySourceTimeout, RemainingBudget(deadline)),
-                    fastPathCts.Token);
+                    searchCts.Token);
                 if (primaryResults.Count > 0)
                 {
                     var probe = await ProbePrimaryPlayabilityAsync(
                         primary,
                         primaryResults,
                         CapBudget(SourceTimeout, RemainingBudget(deadline)),
-                        fastPathCts.Token);
+                        searchCts.Token);
                     if (probe == PrimaryProbeResult.Playable)
                     {
                         Log.Information("Music search '{Keyword}' returned {Count} result(s) from primary source {Source}", keyword, primaryResults.Count, primary.Name);
@@ -119,13 +119,13 @@ public class MultiSourceMusicService : IMusicSearchService
             if (fallbackBudget >= MinSourceBudget)
             {
                 var tasks = _sources.Skip(1)
-                    .Where(s => s is not YouTubeMusicService)
+                    .Where(s => !s.IsSlowSource)
                     .Select(s => SearchWithFallback(
                         s,
                         keyword,
                         limit,
                         fallbackBudget,
-                        fastPathCts.Token));
+                        searchCts.Token));
                 var results = await Task.WhenAll(tasks);
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -152,18 +152,34 @@ public class MultiSourceMusicService : IMusicSearchService
             Log.Debug("Fast search path cut off by overall deadline for '{Keyword}'", keyword);
         }
 
-        // YouTube 是最低优先级兜底：快速源预算下必然超时被丢结果，
-        // 仅当其余源全部无结果时再单独跑（独立慢预算），避免拖慢常规搜索路径
+        // YouTube 等慢源是最低优先级兜底：只使用整个搜索操作的剩余预算，
+        // 不得在 8s 总 deadline 之后再叠加自己的 30s 单源预算。
         if (merged.Count == 0)
         {
-            foreach (var slowSource in _sources.OfType<YouTubeMusicService>())
+            foreach (var slowSource in _sources.Where(s => s.IsSlowSource))
             {
-                var slowResults = await SearchWithFallback(
-                    slowSource,
-                    keyword,
-                    limit,
-                    SlowSourceTimeout,
-                    cancellationToken);
+                var slowBudget = CapBudget(SlowSourceTimeout, RemainingBudget(deadline));
+                if (slowBudget < MinSourceBudget || searchCts.IsCancellationRequested)
+                {
+                    Log.Debug("Slow source {Source} skipped for '{Keyword}': overall search deadline exhausted", slowSource.Name, keyword);
+                    break;
+                }
+
+                List<OnlineTrack> slowResults;
+                try
+                {
+                    slowResults = await SearchWithFallback(
+                        slowSource,
+                        keyword,
+                        limit,
+                        slowBudget,
+                        searchCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    Log.Debug("Slow source {Source} cut off by overall deadline for '{Keyword}'", slowSource.Name, keyword);
+                    break;
+                }
                 if (slowResults.Count > 0)
                 {
                     merged.AddRange(slowResults.Take(limit * 2));

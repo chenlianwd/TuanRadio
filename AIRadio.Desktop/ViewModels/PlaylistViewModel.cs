@@ -236,6 +236,16 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (data == null || data.Tracks == null)
                 return;
 
+            if (data.Version > PlaylistData.CurrentVersion)
+            {
+                // 未来格式不能由旧版应用降级回写，否则未知字段会被静默删除。
+                Log.Warning(
+                    "Playlist version {Version} is newer than supported version {CurrentVersion}; loading skipped without modifying the file",
+                    data.Version,
+                    PlaylistData.CurrentVersion);
+                return;
+            }
+
             // v1（无 Version 字段）在内存中一次性迁移为 v2；首次成功回写前由 SaveAsync 留一代备份
             if (data.Version < PlaylistData.CurrentVersion)
                 _pendingLegacyBackup = true;
@@ -357,7 +367,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
 
             Directory.CreateDirectory(_playlistDir);
-            TryKeepLegacyBackup();
+            KeepLegacyBackupOrThrow();
             if (_customWriter)
             {
                 await _writeAllTextAsync(_playlistFile, json);
@@ -418,23 +428,17 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// v1 → v2 首次回写前保留一代旧格式备份（供手动降级旧版本时恢复）。
-    /// 无论备份是否成功都清零标记：后续保存不得用 v2 内容覆盖已生成的备份。
+    /// 只有备份成功后才清零标记；备份失败必须中止本次 v2 写入，避免失去降级恢复点。
     /// </summary>
-    private void TryKeepLegacyBackup()
+    private void KeepLegacyBackupOrThrow()
     {
         if (!_pendingLegacyBackup)
             return;
 
+        if (File.Exists(_playlistFile))
+            File.Copy(_playlistFile, _playlistFile + ".v1.bak", overwrite: true);
+
         _pendingLegacyBackup = false;
-        try
-        {
-            if (File.Exists(_playlistFile))
-                File.Copy(_playlistFile, _playlistFile + ".v1.bak", overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to keep v1 playlist backup before writing v2");
-        }
     }
 
     private async Task PlayOnlineAsync(OnlineTrack track)
@@ -491,8 +495,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(track.SourceId))
             return false;
 
-        return string.Equals(track.SourceId, online.Id, StringComparison.Ordinal) ||
-               MusicIdentity.IsSameSongLoose(track.Title, track.Artist, online.Title, online.Artist);
+        return MusicIdentity.IsSameSource(track.SourceId, online.Id) ||
+               (MusicIdentity.IsSameSongLoose(track.Title, track.Artist, online.Title, online.Artist) &&
+                AreDurationsCompatible(track.Duration, TimeSpan.FromMilliseconds(online.DurationMs)));
     }
 
     private Task<List<OnlineTrack>> SearchMusicAsync(string keyword, int limit)
@@ -594,9 +599,21 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     internal Track? FindMatchingTrack(Track track)
     {
         return Tracks.FirstOrDefault(t =>
-            (!string.IsNullOrWhiteSpace(track.SourceId) && t.SourceId == track.SourceId) ||
+            MusicIdentity.IsSameSource(t.SourceId, track.SourceId) ||
             (!string.IsNullOrWhiteSpace(track.FilePath) && t.FilePath == track.FilePath) ||
-            (!string.IsNullOrWhiteSpace(track.Id) && t.Id == track.Id));
+            (!string.IsNullOrWhiteSpace(track.Id) && t.Id == track.Id) ||
+            (!string.IsNullOrWhiteSpace(t.SourceId) &&
+             !string.IsNullOrWhiteSpace(track.SourceId) &&
+             MusicIdentity.IsSameSongLoose(t.Title, t.Artist, track.Title, track.Artist) &&
+             AreDurationsCompatible(t.Duration, track.Duration)));
+    }
+
+    private static bool AreDurationsCompatible(TimeSpan left, TimeSpan right)
+    {
+        if (left <= TimeSpan.Zero || right <= TimeSpan.Zero)
+            return true;
+
+        return Math.Abs((left - right).TotalSeconds) <= 8;
     }
 
     public void AddFiles(string[] filePaths)

@@ -108,7 +108,7 @@ public class YtdlpManagerTests : IDisposable
         Assert.Matches(@"^\d{4}\.\d{2}\.\d{2}", YtdlpManager.PinnedVersion);
         Assert.Equal(64, YtdlpManager.PinnedSha256.Length);
         Assert.DoesNotContain("REPLACE", YtdlpManager.PinnedSha256, StringComparison.OrdinalIgnoreCase);
-        // 固定版本必须满足最低安全版本
-        Assert.True(YtdlpManager.CompareVersions(YtdlpManager.PinnedVersion, YtdlpManager.MinimumSecureVersion) >= 0);
+        // 固定版本必须满足最低支持版本
+        Assert.True(YtdlpManager.CompareVersions(YtdlpManager.PinnedVersion, YtdlpManager.MinimumSupportedVersion) >= 0);
     }
 }

@@ -45,8 +45,9 @@ public class KugouMusicService : IMusicSearchService
         try
         {
             var url = $"{ProxyBase}/search?keywords={Uri.EscapeDataString(keyword)}&pagesize={limit}";
-            var response = await _httpClient.SendAsync(
-                BuildRequest(url, cookie), cancellationToken);
+            using var request = BuildRequest(url, cookie);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
@@ -128,8 +129,9 @@ public class KugouMusicService : IMusicSearchService
             // timestamp 破缓存：播放地址可能带时效签名，AudioService 断流重刷时不能拿到 2 分钟内的旧缓存
             var url = $"{ProxyBase}/song/url?hash={Uri.EscapeDataString(hash)}" +
                       $"&quality=128&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-            var response = await _httpClient.SendAsync(
-                BuildRequest(url, cookie), cancellationToken);
+            using var request = BuildRequest(url, cookie);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
