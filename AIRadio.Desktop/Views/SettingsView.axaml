@@ -5,25 +5,25 @@
              x:DataType="vm:SettingsViewModel">
 
     <StackPanel Spacing="20">
-        <TextBlock Text="设置" FontSize="20" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}"/>
+        <TextBlock Text="{DynamicResource S_Settings}" FontSize="20" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}"/>
 
         <!-- LLM -->
         <StackPanel Spacing="6">
-            <TextBlock Text="AI 服务" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <TextBlock Text="{DynamicResource S_AiService}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
             <ComboBox SelectedValue="{Binding SelectedProvider}"
                       ItemsSource="{Binding LlmProviders}"
                       SelectedValueBinding="{Binding Id}"
                       DisplayMemberBinding="{Binding DisplayName}"
                       HorizontalAlignment="Stretch"/>
-            <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="输入你的 API Key" PasswordChar="•"/>
-            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="Base URL；留空使用该格式默认地址"/>
-            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="输入模型名称，例如 gpt-4o-mini / deepseek-chat"/>
+            <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="{DynamicResource S_ApiKeyWatermark}" PasswordChar="•"/>
+            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{DynamicResource S_BaseUrlWatermark}"/>
+            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="{DynamicResource S_ModelWatermark}"/>
             <Button Command="{Binding TestConnectionCommand}"
                     Content="{Binding TestConnectionButtonText}"
                     IsEnabled="{Binding !IsTesting}"
                     HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
                     Foreground="{DynamicResource C_FF000000}"/>
-            <TextBlock Text="连接测试成功后会自动保存服务、模型、地址和 API Key"
+            <TextBlock Text="{DynamicResource S_AutoSaveHint}"
                        Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
             <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource C_FFFFC86B}"
                        TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0"/>
@@ -31,48 +31,48 @@
 
         <!-- Music source accounts -->
         <StackPanel Spacing="6">
-            <TextBlock Text="音源账号" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <TextBlock Text="{DynamicResource S_Accounts}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
 
             <StackPanel Spacing="4">
-                <TextBlock Text="网易云音乐（扫码登录）" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource S_NeteaseTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Command="{Binding NeteaseQrLoginCommand}" Content="扫码登录"
+                    <Button Command="{Binding NeteaseQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
                             Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
                             Foreground="{DynamicResource C_FF000000}"/>
-                    <Button Command="{Binding NeteaseLogoutCommand}" Content="退出登录"
+                    <Button Command="{Binding NeteaseLogoutCommand}" Content="{DynamicResource S_Logout}"
                             Padding="14,6" FontSize="12"/>
                 </StackPanel>
                 <TextBlock Text="{Binding NeteaseAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
                            TextWrapping="Wrap"/>
                 <Image Source="{Binding NeteaseQrImage}" IsVisible="{Binding IsNeteaseQrVisible}"
                        Width="180" Height="180" Stretch="Uniform"/>
-                <TextBlock Text="登录后免费账号仍只能试听 VIP 歌曲的片段，黑胶会员可完整播放" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Text="{DynamicResource S_NeteaseHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
 
             <StackPanel Spacing="4" Margin="0,6,0,0">
-                <TextBlock Text="酷狗音乐（扫码登录）" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource S_KugouTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Command="{Binding KugouQrLoginCommand}" Content="扫码登录"
+                    <Button Command="{Binding KugouQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
                             Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
                             Foreground="{DynamicResource C_FF000000}"/>
-                    <Button Command="{Binding KugouLogoutCommand}" Content="退出登录"
+                    <Button Command="{Binding KugouLogoutCommand}" Content="{DynamicResource S_Logout}"
                             Padding="14,6" FontSize="12"/>
                 </StackPanel>
                 <TextBlock Text="{Binding KugouAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
                            TextWrapping="Wrap"/>
                 <Image Source="{Binding KugouQrImage}" IsVisible="{Binding IsKugouQrVisible}"
                        Width="180" Height="180" Stretch="Uniform"/>
-                <TextBlock Text="酷狗音源必须登录后才能播放；在官方 App 每日看广告领到的会员在这里同样有效" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Text="{DynamicResource S_KugouHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
 
             <StackPanel Spacing="4" Margin="0,6,0,0">
-                <TextBlock Text="YouTube 音源（yt-dlp 登录态）" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
                           ItemsSource="{Binding YtdlpBrowsers}"
                           SelectedValueBinding="{Binding Id}"
                           DisplayMemberBinding="{Binding DisplayName}"
                           HorizontalAlignment="Stretch"/>
-                <TextBlock Text="YouTube 会拦截未登录请求（not a bot 风控）；选择已登录过 YouTube 的浏览器可复用其 Cookies" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Text="{DynamicResource S_YtdlpHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
                 <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
                            Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
@@ -80,23 +80,23 @@
 
         <!-- Language selection -->
         <StackPanel Spacing="6">
-            <TextBlock Text="AI 回复语言" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <TextBlock Text="{DynamicResource S_LanguageTitle}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
             <ComboBox SelectedValue="{Binding SelectedLanguage}"
                       ItemsSource="{Binding Languages}"
                       SelectedValueBinding="{Binding Id}"
                       DisplayMemberBinding="{Binding DisplayName}"
                       HorizontalAlignment="Stretch"/>
-            <TextBlock Text="选择 AI 主播回复使用的语言，可用于英语听力练习" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+            <TextBlock Text="{DynamicResource S_LanguageHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
         </StackPanel>
 
         <!-- TTS -->
         <StackPanel Spacing="6">
-            <TextBlock Text="语音播报" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <TextBlock Text="{DynamicResource S_TtsGroup}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
             <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="AI 回复自动语音播报" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                <TextBlock Grid.Column="0" Text="{DynamicResource S_TtsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
-                              OnContent="开" OffContent="关"/>
+                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
             </Grid>
             <ComboBox SelectedValue="{Binding SpeechMixMode}"
                       ItemsSource="{Binding SpeechMixModes}"
@@ -107,24 +107,24 @@
 
         <!-- Visual effects -->
         <StackPanel Spacing="6">
-            <TextBlock Text="视觉效果" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <TextBlock Text="{DynamicResource S_Visuals}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
             <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="星光背景随音乐呼吸" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                <TextBlock Grid.Column="0" Text="{DynamicResource S_Starfield}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
-                              OnContent="开" OffContent="关"/>
+                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
             </Grid>
             <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="简洁模式窗口置顶" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                <TextBlock Grid.Column="0" Text="{DynamicResource S_TopMostToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactModeTopmost, Mode=TwoWay}"
-                              OnContent="开" OffContent="关"/>
+                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
             </Grid>
         </StackPanel>
 
         <!-- Character customization -->
         <StackPanel Spacing="8">
-            <TextBlock Text="数字人设置" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <TextBlock Text="{DynamicResource S_CharSettings}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
 
             <ComboBox SelectedItem="{Binding SelectedCharacter}"
                       ItemsSource="{Binding Characters}"
@@ -132,7 +132,7 @@
                       HorizontalAlignment="Stretch"/>
 
             <StackPanel Spacing="4" Margin="0,4,0,0">
-                <TextBlock Text="音色" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
+                <TextBlock Text="{DynamicResource S_Voice}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
                 <ComboBox SelectedItem="{Binding CharacterVoice}"
                           ItemsSource="{Binding Voices}"
                           DisplayMemberBinding="{Binding DisplayName}"
@@ -140,7 +140,7 @@
             </StackPanel>
 
             <StackPanel Spacing="4">
-                <TextBlock Text="人格提示词" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
+                <TextBlock Text="{DynamicResource S_Personality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
                 <TextBox Text="{Binding CharacterPersonality, Mode=TwoWay}"
                          AcceptsReturn="True" Height="80" CornerRadius="8"
                          TextWrapping="Wrap"/>
@@ -148,7 +148,7 @@
         </StackPanel>
 
         <!-- Save -->
-        <Button Command="{Binding SaveCommand}" Content="保存设置"
+        <Button Command="{Binding SaveCommand}" Content="{DynamicResource S_Save}"
                 HorizontalAlignment="Stretch" Padding="18,12" FontSize="14"
                 Background="{DynamicResource C_FF9B59B0}" Foreground="{DynamicResource C_FF000000}"/>
 

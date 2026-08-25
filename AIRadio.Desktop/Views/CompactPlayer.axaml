@@ -39,7 +39,7 @@
                 </DockPanel>
 
                 <Button Grid.Column="2" Width="26" Height="24" Padding="0"
-                        Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="收藏" AutomationProperties.Name="Favorite">
+                        Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="Favorite">
                     <Grid>
                         <PathIcon Width="14" Height="14" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
                                   Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
@@ -49,7 +49,7 @@
                 </Button>
                 <Button Grid.Column="3" Width="26" Height="24" Padding="0"
                         Command="{Binding ToggleCompactTopmostCommand}"
-                        ToolTip.Tip="置顶" AutomationProperties.Name="Always on top">
+                        ToolTip.Tip="{DynamicResource S_TopMost}" AutomationProperties.Name="Always on top">
                     <Grid>
                         <PathIcon Width="14" Height="14" Foreground="{DynamicResource C_FF8A8A96}"
                                   IsVisible="{Binding SettingsVM.CompactModeTopmost, Converter={StaticResource InverseBoolConverter}}"
@@ -60,17 +60,17 @@
                     </Grid>
                 </Button>
                 <Button Grid.Column="4" Width="26" Height="24" Padding="0" Click="OnMinimizeClicked"
-                        ToolTip.Tip="最小化" AutomationProperties.Name="Minimize">
+                        ToolTip.Tip="{DynamicResource S_Minimize}" AutomationProperties.Name="Minimize">
                     <Rectangle Width="12" Height="2" RadiusX="1" RadiusY="1" Fill="{DynamicResource C_FF8A8A96}"/>
                 </Button>
                 <Button Grid.Column="5" Width="26" Height="24" Padding="0" Click="OnCloseClicked"
-                        ToolTip.Tip="关闭" AutomationProperties.Name="Close">
+                        ToolTip.Tip="{DynamicResource S_Close}" AutomationProperties.Name="Close">
                     <Path Width="13" Height="13" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
                           Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
                 </Button>
                 <Button Grid.Column="6" Width="26" Height="24" Padding="0"
                         Command="{Binding ToggleCompactModeCommand}"
-                        ToolTip.Tip="展开" AutomationProperties.Name="Expand">
+                        ToolTip.Tip="{DynamicResource S_Expand}" AutomationProperties.Name="Expand">
                     <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
                           Data="M15,3 L21,3 L21,9 M9,21 L3,21 L3,15 M21,3 L14,10 M3,21 L10,14" Fill="Transparent" StrokeLineCap="Round"/>
                 </Button>
@@ -79,11 +79,11 @@
             <!-- 行2：上一首/播放/下一首 + 时间 + 进度 + 迷你频谱 -->
             <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="0,2,0,0">
                 <Button Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.PreviousCommand}"
-                        ToolTip.Tip="上一首" AutomationProperties.Name="Previous">
+                        ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="Previous">
                     <PathIcon Width="14" Height="14" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
                 </Button>
                 <Button Grid.Column="1" Width="32" Height="28" Padding="0" Command="{Binding PlayerVM.PlayCommand}"
-                        ToolTip.Tip="播放/暂停" AutomationProperties.Name="Play/Pause">
+                        ToolTip.Tip="{DynamicResource S_PlayPause}" AutomationProperties.Name="Play/Pause">
                     <Grid>
                         <PathIcon Width="13" Height="13" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
                                   Data="M8,5 L19,12 L8,19 Z"/>
@@ -92,7 +92,7 @@
                     </Grid>
                 </Button>
                 <Button Grid.Column="2" Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.NextCommand}"
-                        ToolTip.Tip="下一首" AutomationProperties.Name="Next">
+                        ToolTip.Tip="{DynamicResource S_Next}" AutomationProperties.Name="Next">
                     <PathIcon Width="14" Height="14" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                 </Button>
                 <TextBlock Grid.Column="3" Text="{Binding PlayerVM.PositionText}" FontSize="10" FontFamily="Consolas"

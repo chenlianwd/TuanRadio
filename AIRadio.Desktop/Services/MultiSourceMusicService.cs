@@ -109,8 +109,8 @@ public class MultiSourceMusicService : IMusicSearchService
                     // 搜到结果但整组不可播（典型：版权受限只剩试听片段）时在报告注明，
                     // 否则 UI 只显示"成功N条"却没有任何结果，用户无法判断原因
                     AnnotateReport(primary.Name, probe == PrimaryProbeResult.ProbeTimeout
-                        ? "可播性检查超时，已跳过"
-                        : "试听或失效片段，已过滤");
+                        ? AppLanguage.T("可播性检查超时，已跳过", "playability check timed out, skipped")
+                        : AppLanguage.T("试听或失效片段，已过滤", "preview or stale clips only, filtered"));
                     Log.Warning("Primary source {Source} returned no playable result for '{Keyword}'; trying fallback sources", primary.Name, keyword);
                 }
             }
@@ -335,13 +335,13 @@ public class MultiSourceMusicService : IMusicSearchService
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
-            AddSearchReport(new SourceSearchStatus(source.Name, "timeout", 0, $"超时({timeout.TotalSeconds}s)"));
+            AddSearchReport(new SourceSearchStatus(source.Name, "timeout", 0, AppLanguage.T($"超时({timeout.TotalSeconds}s)", $"timed out ({timeout.TotalSeconds}s)")));
             Log.Warning("Source {Name} search timed out after {Seconds}s", source.Name, timeout.TotalSeconds);
             return new List<OnlineTrack>();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            AddSearchReport(new SourceSearchStatus(source.Name, "timeout", 0, $"超时({timeout.TotalSeconds}s)"));
+            AddSearchReport(new SourceSearchStatus(source.Name, "timeout", 0, AppLanguage.T($"超时({timeout.TotalSeconds}s)", $"timed out ({timeout.TotalSeconds}s)")));
             Log.Warning("Source {Name} search timed out after {Seconds}s", source.Name, timeout.TotalSeconds);
             return new List<OnlineTrack>();
         }
