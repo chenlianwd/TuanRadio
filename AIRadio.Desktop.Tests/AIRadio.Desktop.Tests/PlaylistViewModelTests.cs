@@ -142,11 +142,17 @@ public class PlaylistViewModelTests
         var saved = await File.ReadAllTextAsync(playlistFile);
         Assert.Contains("\"FavoriteIds\"", saved);
         Assert.Contains("netease:ugly", saved);
-        Assert.Contains("http://example.com/ugly.mp3", saved);
+        // v2：在线曲目持久化稳定 Provider 身份，不落盘临时播放直链
+        using var doc = JsonDocument.Parse(saved);
+        Assert.Equal(2, doc.RootElement.GetProperty("Version").GetInt32());
+        var savedTrack = doc.RootElement.GetProperty("Tracks")[0];
+        Assert.Equal("netease", savedTrack.GetProperty("Provider").GetProperty("ProviderId").GetString());
+        Assert.Equal("ugly", savedTrack.GetProperty("Provider").GetProperty("TrackId").GetString());
+        Assert.DoesNotContain("http://example.com/ugly.mp3", saved);
     }
 
     [Fact]
-    public async Task LoadAsync_KeepsPersistedUrlUntilRefreshOnlineUrlsAsync()
+    public async Task LoadAsync_V1OnlineTrack_DropsStaleUrlAndKeepsIdentity()
     {
         var playlistFile = CreateTempPlaylistFile();
         await File.WriteAllTextAsync(playlistFile,
@@ -170,19 +176,68 @@ public class PlaylistViewModelTests
             """);
 
         var (vm, audioMock, searchMock) = CreateVm(playlistFile);
-        searchMock.Setup(x => x.GetPlayUrlAsync("netease:stale"))
-            .ReturnsAsync("http://fresh.example/a.mp3");
 
         await vm.LoadAsync();
 
-        // 本地加载阶段不碰音源：保留磁盘上的旧链接，等代理就绪后再刷新
+        // v1 的在线 FilePath 可能是过期签名直链：读取时丢弃，播放前由 AudioService 懒解析
         searchMock.Verify(x => x.GetPlayUrlAsync(It.IsAny<string>()), Times.Never);
-        Assert.Equal("http://old-expired.example/a.mp3", vm.Tracks[0].FilePath);
+        Assert.Single(vm.Tracks);
+        Assert.Equal(string.Empty, vm.Tracks[0].FilePath);
+        Assert.Equal("netease:stale", vm.Tracks[0].SourceId);
+    }
 
-        await vm.RefreshOnlineUrlsAsync();
+    [Fact]
+    public async Task LoadAsync_V1Migration_WritesV2WithBackupAndIsIdempotent()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var v1Json = """
+            {
+              "Tracks": [
+                {
+                  "Id": "kuwo:9",
+                  "Title": "歌",
+                  "Artist": "手",
+                  "Album": "",
+                  "DurationMs": 100000,
+                  "FilePath": "http://stale.example/x.mp3",
+                  "SourceId": "kuwo:9",
+                  "IsOnline": true,
+                  "IsFavorite": true
+                }
+              ],
+              "FavoriteIds": [ "kuwo:9" ]
+            }
+            """;
+        await File.WriteAllTextAsync(playlistFile, v1Json);
 
-        searchMock.Verify(x => x.GetPlayUrlAsync("netease:stale"), Times.Once);
-        Assert.Equal("http://fresh.example/a.mp3", vm.Tracks[0].FilePath);
+        var (vm, _, _) = CreateVm(playlistFile);
+        await vm.LoadAsync();
+        await Task.Delay(200); // 加载完成后的自动回写
+
+        var backupPath = playlistFile + ".v1.bak";
+        Assert.True(File.Exists(backupPath));
+        Assert.Equal(v1Json, await File.ReadAllTextAsync(backupPath));
+
+        var migrated = await File.ReadAllTextAsync(playlistFile);
+        using (var doc = JsonDocument.Parse(migrated))
+        {
+            Assert.Equal(2, doc.RootElement.GetProperty("Version").GetInt32());
+            var track = doc.RootElement.GetProperty("Tracks")[0];
+            Assert.Equal("kuwo", track.GetProperty("Provider").GetProperty("ProviderId").GetString());
+            Assert.Equal("9", track.GetProperty("Provider").GetProperty("TrackId").GetString());
+            Assert.True(track.GetProperty("IsFavorite").GetBoolean());
+        }
+        Assert.DoesNotContain("http://stale.example", migrated);
+        Assert.True(vm.Tracks[0].IsFavorite);
+
+        // 重复加载/保存幂等：已是 v2，不再重写备份
+        await vm.LoadAsync();
+        await vm.SaveAsync();
+        await Task.Delay(100);
+
+        Assert.Equal(v1Json, await File.ReadAllTextAsync(backupPath));
+        using var doc2 = JsonDocument.Parse(await File.ReadAllTextAsync(playlistFile));
+        Assert.Equal(2, doc2.RootElement.GetProperty("Version").GetInt32());
     }
 
     [Fact]
@@ -210,8 +265,6 @@ public class PlaylistViewModelTests
             """);
 
         var (vm, audioMock, searchMock) = CreateVm(playlistFile);
-        searchMock.Setup(x => x.GetPlayUrlAsync("netease:ugly"))
-            .ReturnsAsync((string?)null);
 
         await vm.LoadAsync();
         await Task.Delay(150);
@@ -223,7 +276,8 @@ public class PlaylistViewModelTests
             tracks.Any(t => t.Id == "netease:ugly" && t.IsFavorite))), Times.Once);
 
         var saved = await File.ReadAllTextAsync(playlistFile);
-        Assert.Contains("netease:ugly", saved);
+        Assert.Contains("ugly", saved);
+        Assert.Contains("netease", saved);
         Assert.Contains("\"FavoriteIds\"", saved);
     }
 
@@ -268,7 +322,56 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public Task AddOnlineCommand_AddsTrackToPlaylist()
+    public async Task AddOnlineCommand_DoesNotDuplicateWhenUrlChanged()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var (vm, _, searchMock) = CreateVm(playlistFile);
+        // 已存在同源同曲：仅临时 URL 因刷新而不同，不得视为新歌
+        searchMock.Setup(x => x.GetPlayUrlAsync("track1"))
+            .ReturnsAsync("http://refreshed.example/track1.mp3");
+
+        var existing = new Track
+        {
+            Id = "track1",
+            Title = "Online Song",
+            Artist = "Artist",
+            FilePath = "http://existing.com/track1.mp3",
+            SourceId = "track1"
+        };
+        vm.Tracks.Add(existing);
+
+        var onlineTrack = new OnlineTrack { Id = "track1", Title = "Online Song", Artist = "Artist" };
+        await vm.AddOnlineCommand.Execute(onlineTrack);
+
+        Assert.Single(vm.Tracks);
+    }
+
+    [Fact]
+    public async Task AddOnlineCommand_DoesNotDuplicateAcrossSourcesForSameSong()
+    {
+        var (vm, _, searchMock) = CreateVm();
+        searchMock.Setup(x => x.GetPlayUrlAsync("kuwo:456"))
+            .ReturnsAsync("http://kuwo.example/song.mp3");
+
+        var existing = new Track
+        {
+            Id = "netease:123",
+            Title = "晴天",
+            Artist = "周杰伦",
+            FilePath = string.Empty,
+            SourceId = "netease:123"
+        };
+        vm.Tracks.Add(existing);
+
+        var onlineTrack = new OnlineTrack { Id = "kuwo:456", Title = "晴天", Artist = "周杰伦" };
+        await vm.AddOnlineCommand.Execute(onlineTrack);
+
+        // 跨源同曲按标准化身份判定为同一首，不再重复入列
+        Assert.Single(vm.Tracks);
+    }
+
+    [Fact]
+    public async Task AddOnlineCommand_AddsTrackToPlaylist()
     {
         var (vm, audioMock, searchMock) = CreateVm();
         searchMock.Setup(x => x.GetPlayUrlAsync("track1"))
@@ -276,29 +379,11 @@ public class PlaylistViewModelTests
 
         var onlineTrack = new OnlineTrack { Id = "track1", Title = "Online Song", Artist = "Artist" };
 
-        vm.AddOnlineCommand.Execute(onlineTrack).Subscribe();
+        await vm.AddOnlineCommand.Execute(onlineTrack);
 
         Assert.Single(vm.Tracks);
         Assert.Equal("Online Song", vm.Tracks[0].Title);
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Once);
-        return Task.CompletedTask;
-    }
-
-    [Fact]
-    public Task AddOnlineCommand_DoesNotDuplicateExistingUrl()
-    {
-        var (vm, audioMock, searchMock) = CreateVm();
-        searchMock.Setup(x => x.GetPlayUrlAsync("track1"))
-            .ReturnsAsync("http://existing.com/track1.mp3");
-
-        var existing = new Track { Title = "Existing", FilePath = "http://existing.com/track1.mp3" };
-        vm.Tracks.Add(existing);
-
-        var onlineTrack = new OnlineTrack { Id = "track1", Title = "Online Song", Artist = "Artist" };
-        vm.AddOnlineCommand.Execute(onlineTrack).Subscribe();
-
-        Assert.Single(vm.Tracks);
-        return Task.CompletedTask;
     }
 
     [Fact]

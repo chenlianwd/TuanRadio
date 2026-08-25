@@ -407,9 +407,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         await SettingsVM.RefreshAccountStatusAsync();
 
-        // 恢复的在线曲目带着磁盘上的过期链接，趁代理已就绪先刷新，再播欢迎语避免首播 403
-        await PlaylistVM.RefreshOnlineUrlsAsync(cancellationToken);
-
+        // 在线曲目 v2 歌单不再持久化临时直链：播放前由 AudioService 懒解析，
+        // 启动无需批量刷新 URL，避免可播前的额外等待
         await AnnounceWelcomeAsync(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
