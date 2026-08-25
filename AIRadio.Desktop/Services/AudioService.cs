@@ -52,6 +52,8 @@ public class AudioService : IAudioService, IDisposable
     private int _playbackErrorRetryCount;
     // 恢复总预算截止时刻（TickCount64）；0 表示当前曲目尚未进入恢复流程
     private long _recoveryDeadlineMs;
+    // 恢复后的播放开始时刻；稳定播放达到阈值后，下一次独立故障才获得新预算
+    private long _recoveryPlaybackStartedAtMs;
     private int _playRequestId;
     private int _recoveryScheduled;
     private int _disposed;
@@ -82,6 +84,7 @@ public class AudioService : IAudioService, IDisposable
     // 0.4：单曲恢复总预算（刷新当前源 + 替代源共享）；到期后明确进入下一首，
     // 避免"内层每步 8s、多步叠加"突破 12s 的整体恢复门禁
     private static readonly TimeSpan RecoveryTotalBudget = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan RecoverySuccessStability = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan NativeCleanupTimeout = TimeSpan.FromSeconds(2);
     // 推荐链路（LLM+多源搜索）挂起时的硬超时兜底，避免 _nextGate 被长期占用导致电台静默停播
     private static readonly TimeSpan NextCallbackTimeout = TimeSpan.FromSeconds(60);
@@ -422,7 +425,11 @@ public class AudioService : IAudioService, IDisposable
         _nativeCallbacksDrained.Dispose();
     }
 
-    private void OnPlayerPlaying(object? sender, EventArgs e) => SetState(PlaybackState.Playing);
+    private void OnPlayerPlaying(object? sender, EventArgs e)
+    {
+        SetState(PlaybackState.Playing);
+        MarkRecoveryPlaybackStarted();
+    }
 
     private void OnPlayerPaused(object? sender, EventArgs e) => SetState(PlaybackState.Paused);
 
@@ -868,6 +875,7 @@ public class AudioService : IAudioService, IDisposable
             _playbackErrorRetryCount = 0;
             // 新曲目正常开播：清零上一首的恢复预算锚点
             Volatile.Write(ref _recoveryDeadlineMs, 0);
+            Volatile.Write(ref _recoveryPlaybackStartedAtMs, 0);
         }
         Media? newMedia = null;
         var mediaAssigned = false;
@@ -1029,9 +1037,11 @@ public class AudioService : IAudioService, IDisposable
     /// <summary>首次恢复动作触发时锚定总预算；PlayTrackCore(!isRetry) 重置。</summary>
     internal void EnsureRecoveryDeadline()
     {
+        TryCompleteRecoveryAfterStablePlayback();
         if (Volatile.Read(ref _recoveryDeadlineMs) != 0)
             return;
 
+        Volatile.Write(ref _recoveryPlaybackStartedAtMs, 0);
         var deadline = Environment.TickCount64 + (long)RecoveryTotalBudget.TotalMilliseconds;
         Interlocked.CompareExchange(ref _recoveryDeadlineMs, deadline, 0);
     }
@@ -1055,6 +1065,31 @@ public class AudioService : IAudioService, IDisposable
         return remaining < timeout.TotalMilliseconds
             ? TimeSpan.FromMilliseconds(remaining)
             : timeout;
+    }
+
+    /// <summary>
+    /// LibVLC 已确认重新进入 Playing，开始记录恢复后的稳定播放时间。
+    /// 不能立即清空 deadline，否则几百毫秒内再次失败会错误获得一整轮新预算。
+    /// </summary>
+    internal void MarkRecoveryPlaybackStarted(long? nowMs = null)
+    {
+        if (Volatile.Read(ref _recoveryDeadlineMs) != 0)
+            Volatile.Write(ref _recoveryPlaybackStartedAtMs, nowMs ?? Environment.TickCount64);
+    }
+
+    /// <summary>稳定播放达到阈值后结束旧恢复会话；下一次故障可重新锚定总预算。</summary>
+    internal bool TryCompleteRecoveryAfterStablePlayback(long? nowMs = null)
+    {
+        var startedAt = Volatile.Read(ref _recoveryPlaybackStartedAtMs);
+        if (startedAt == 0 ||
+            (nowMs ?? Environment.TickCount64) - startedAt < RecoverySuccessStability.TotalMilliseconds)
+        {
+            return false;
+        }
+
+        Interlocked.Exchange(ref _recoveryDeadlineMs, 0);
+        Volatile.Write(ref _recoveryPlaybackStartedAtMs, 0);
+        return true;
     }
 
     private bool LooksLikeEarlyEnd(Track track)

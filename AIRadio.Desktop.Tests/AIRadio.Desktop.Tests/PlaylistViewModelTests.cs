@@ -241,6 +241,64 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
+    public async Task LoadAsync_V1Migration_BackupFailureDoesNotOverwriteOriginal()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var v1Json = """
+            {
+              "Tracks": [
+                {
+                  "Id": "netease:1",
+                  "Title": "歌",
+                  "Artist": "手",
+                  "FilePath": "https://stale.invalid/a.mp3",
+                  "SourceId": "netease:1",
+                  "IsOnline": true
+                }
+              ]
+            }
+            """;
+        await File.WriteAllTextAsync(playlistFile, v1Json);
+        Directory.CreateDirectory(playlistFile + ".v1.bak"); // 让 File.Copy 稳定失败
+
+        var (vm, _, _) = CreateVm(playlistFile);
+        await vm.LoadAsync();
+        await vm.SaveAsync();
+
+        Assert.Equal(v1Json, await File.ReadAllTextAsync(playlistFile));
+    }
+
+    [Fact]
+    public async Task LoadAsync_FutureVersion_DoesNotLoadOrDowngradeFile()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var futureJson = """
+            {
+              "Version": 99,
+              "FutureField": "must survive",
+              "Tracks": [
+                {
+                  "Id": "future:1",
+                  "Title": "未来歌曲",
+                  "Artist": "未来歌手",
+                  "Provider": { "ProviderId": "future", "TrackId": "1" },
+                  "IsOnline": true
+                }
+              ]
+            }
+            """;
+        await File.WriteAllTextAsync(playlistFile, futureJson);
+
+        var (vm, audioMock, _) = CreateVm(playlistFile);
+        await vm.LoadAsync();
+        await Task.Delay(100);
+
+        Assert.Empty(vm.Tracks);
+        Assert.Equal(futureJson, await File.ReadAllTextAsync(playlistFile));
+        audioMock.Verify(x => x.LoadTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
+    }
+
+    [Fact]
     public async Task LoadAsync_PreservesOnlineFavoriteWhenUrlRefreshFails()
     {
         var playlistFile = CreateTempPlaylistFile();
@@ -368,6 +426,58 @@ public class PlaylistViewModelTests
 
         // 跨源同曲按标准化身份判定为同一首，不再重复入列
         Assert.Single(vm.Tracks);
+    }
+
+    [Fact]
+    public async Task AddOnlineCommand_AllowsSameTitleArtistWhenDurationDiffersSignificantly()
+    {
+        var (vm, _, searchMock) = CreateVm();
+        searchMock.Setup(x => x.GetPlayUrlAsync("kuwo:live"))
+            .ReturnsAsync("http://kuwo.example/live.mp3");
+        vm.Tracks.Add(new Track
+        {
+            Id = "netease:studio",
+            Title = "同名歌曲",
+            Artist = "同一歌手",
+            Duration = TimeSpan.FromSeconds(180),
+            SourceId = "netease:studio"
+        });
+
+        await vm.AddOnlineCommand.Execute(new OnlineTrack
+        {
+            Id = "kuwo:live",
+            Title = "同名歌曲",
+            Artist = "同一歌手",
+            DurationMs = 240_000
+        });
+
+        Assert.Equal(2, vm.Tracks.Count);
+    }
+
+    [Fact]
+    public void AddExternalTrack_DoesNotDuplicateSameSongFromAnotherProvider()
+    {
+        var (vm, audioMock, _) = CreateVm();
+        vm.Tracks.Add(new Track
+        {
+            Id = "netease:123",
+            Title = "晴天",
+            Artist = "周杰伦",
+            Duration = TimeSpan.FromSeconds(269),
+            SourceId = "netease:123"
+        });
+
+        vm.AddExternalTrack(new Track
+        {
+            Id = "kuwo:456",
+            Title = "晴天",
+            Artist = "周杰伦",
+            Duration = TimeSpan.FromSeconds(270),
+            SourceId = "kuwo:456"
+        });
+
+        Assert.Single(vm.Tracks);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
     }
 
     [Fact]

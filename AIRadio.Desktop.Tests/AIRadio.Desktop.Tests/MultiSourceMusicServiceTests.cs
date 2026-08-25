@@ -252,20 +252,26 @@ public class MultiSourceMusicServiceTests
     }
 
     [Fact]
-    public async Task SearchAsync_OverallDeadlineCutoff_DoesNotSurfaceAsCallerCancellation()
+    public async Task SearchAsync_OverallDeadlineIncludesSlowSourceAndDoesNotSurfaceAsCallerCancellation()
     {
-        // 各源遵守取消但整体拖延：8s 整体 deadline 到点时 fastPathCts 触发的取消
-        // 必须按"无结果"收口，不得伪装成调用方取消抛出（否则 UI 误报"搜索失败"）
-        using var client = new HttpClient(new DelegateHandler(async (_, cancellationToken) =>
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        }));
-        var service = new MultiSourceMusicService(client);
+        // 快速源立即空结果，慢源挂起：慢源只能吃整个 8s 操作的剩余预算，
+        // 不能在快速路径之后再叠加 30s。
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var slowSource = new HangingSlowMusicService();
+        var service = new MultiSourceMusicService(client, slowSource);
 
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var results = await service.SearchAsync("测试", 5, CancellationToken.None);
+        stopwatch.Stop();
 
         Assert.Empty(results);
+        Assert.True(slowSource.Started);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+            $"slow source escaped the overall search deadline (elapsed {stopwatch.Elapsed})");
     }
 
     private sealed class FallbackMusicService : IMusicSearchService
@@ -312,6 +318,29 @@ public class MultiSourceMusicServiceTests
 
         public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
             => _neverCompletes.Task;
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>(null);
+    }
+
+    private sealed class HangingSlowMusicService : IMusicSearchService
+    {
+        public string Name => "挂起慢源";
+        public bool IsSlowSource => true;
+        public bool Started { get; private set; }
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => SearchAsync(keyword, limit, CancellationToken.None);
+
+        public async Task<List<OnlineTrack>> SearchAsync(
+            string keyword,
+            int limit,
+            CancellationToken cancellationToken)
+        {
+            Started = true;
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new List<OnlineTrack>();
+        }
 
         public Task<string?> GetPlayUrlAsync(string trackId)
             => Task.FromResult<string?>(null);

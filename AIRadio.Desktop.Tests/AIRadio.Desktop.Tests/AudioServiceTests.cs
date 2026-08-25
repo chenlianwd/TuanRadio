@@ -477,4 +477,33 @@ public class AudioServiceTests
             svc.Dispose();
         }
     }
+
+    [Fact]
+    public void RecoveryBudget_SuccessfulPlaybackStartsFreshRecoveryWindow()
+    {
+        var svc = new AudioService();
+        try
+        {
+            svc.EnsureRecoveryDeadline();
+            var firstWindow = svc.CapByRecoveryBudget(TimeSpan.FromSeconds(60));
+            Assert.True(firstWindow > TimeSpan.Zero && firstWindow <= TimeSpan.FromSeconds(12));
+
+            svc.MarkRecoveryPlaybackStarted(nowMs: 1_000);
+            Assert.False(svc.TryCompleteRecoveryAfterStablePlayback(nowMs: 3_999));
+            Assert.True(svc.CapByRecoveryBudget(TimeSpan.FromSeconds(60)) <= firstWindow,
+                "an immediate repeat failure must stay in the original recovery window");
+
+            Assert.True(svc.TryCompleteRecoveryAfterStablePlayback(nowMs: 4_000));
+            Assert.Equal(TimeSpan.FromSeconds(60), svc.CapByRecoveryBudget(TimeSpan.FromSeconds(60)));
+
+            svc.EnsureRecoveryDeadline();
+            var secondWindow = svc.CapByRecoveryBudget(TimeSpan.FromSeconds(60));
+            Assert.True(secondWindow > TimeSpan.FromSeconds(11),
+                $"a later independent failure should receive a fresh recovery window, got {secondWindow}");
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
 }

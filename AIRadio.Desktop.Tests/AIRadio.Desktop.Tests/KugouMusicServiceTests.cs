@@ -83,6 +83,23 @@ public class KugouMusicServiceTests
         await Assert.ThrowsAsync<MusicSourceBusinessException>(() => service.SearchAsync("测试", 5));
     }
 
+    [Fact]
+    public async Task SearchAsync_HttpFailureDoesNotAcceptSuccessShapedBody()
+    {
+        var handler = new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent(
+                "{\"status\":1,\"data\":{\"info\":[{\"hash\":\"abc\",\"OriSongName\":\"歌\",\"SingerName\":\"手\"}]}}")
+        }));
+        using var client = new HttpClient(handler);
+        var accounts = await CreateLoggedInStoreAsync();
+        var service = new KugouMusicService(client, accounts);
+
+        var results = await service.SearchAsync("测试", 5);
+
+        Assert.Empty(results);
+    }
+
     private sealed class RequestCapture
     {
         public HttpRequestMessage? Last { get; private set; }

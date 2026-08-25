@@ -12,7 +12,7 @@ namespace AIRadio.Desktop.Services;
 /// <summary>
 /// 管理 yt-dlp 可执行文件的下载、版本治理和路径。
 /// 安装策略：固定官方 release 版本 + SHA256 校验（不追随 latest），
-/// 低于最低安全版本的安装禁用 YouTube 音源并给出可理解诊断。
+/// 低于最低支持版本的安装禁用 YouTube 音源并给出可理解诊断。
 /// </summary>
 public static class YtdlpManager
 {
@@ -21,9 +21,9 @@ public static class YtdlpManager
     public const string PinnedVersion = "2026.08.19";
     public const string PinnedSha256 = "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a";
 
-    // 低于该版本的安装视为不安全并禁用 YouTube 音源；
-    // 阈值应跟随官方安全公告调整，当前策略为固定版本往前一年
-    public const string MinimumSecureVersion = "2025.08.19";
+    // 低于该版本不再进入兼容支持范围并禁用 YouTube 音源。
+    // 这不是安全公告推导出的漏洞边界；已知漏洞版本应另行按官方公告显式封禁。
+    public const string MinimumSupportedVersion = "2025.08.19";
 
     private static readonly string AppDataDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -36,13 +36,13 @@ public static class YtdlpManager
 
     public static bool IsInstalled() => File.Exists(YtdlpExe);
 
-    public sealed record YtdlpStatus(bool Installed, string? Version, bool MeetsMinimumSecureVersion)
+    public sealed record YtdlpStatus(bool Installed, string? Version, bool MeetsMinimumSupportedVersion)
     {
         /// <summary>禁用 YouTube 音源时的用户可理解原因；可用时为 null。</summary>
-        public string? DisableReason => Installed && MeetsMinimumSecureVersion
+        public string? DisableReason => Installed && MeetsMinimumSupportedVersion
             ? null
             : Installed
-                ? $"yt-dlp 版本过旧（{Version ?? "未知"}），低于最低安全版本 {MinimumSecureVersion}，请联网后重启应用以自动更新"
+                ? $"yt-dlp 版本过旧（{Version ?? "未知"}），低于最低支持版本 {MinimumSupportedVersion}，请联网后重启应用以自动更新"
                 : "yt-dlp 未安装";
     }
 
@@ -58,7 +58,7 @@ public static class YtdlpManager
 
         var meets = installed &&
                     !string.IsNullOrEmpty(version) &&
-                    CompareVersions(version, MinimumSecureVersion) >= 0;
+                    CompareVersions(version, MinimumSupportedVersion) >= 0;
         return new YtdlpStatus(installed, version, meets);
     }
 
@@ -273,7 +273,7 @@ public sealed class YtdlpVerificationException : Exception
     }
 }
 
-/// <summary>yt-dlp 缺失或低于最低安全版本：YouTube 音源不可用。</summary>
+/// <summary>yt-dlp 缺失或低于最低支持版本：YouTube 音源不可用。</summary>
 public sealed class YtdlpUnavailableException : Exception
 {
     public YtdlpUnavailableException(string message) : base(message)

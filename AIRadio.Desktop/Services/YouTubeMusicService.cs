@@ -20,6 +20,7 @@ public class YouTubeMusicService : IMusicSearchService
     private readonly MusicAccountStore? _accounts;
 
     public string Name => "YouTube";
+    public bool IsSlowSource => true;
 
     // ytdlpPath 参数保留以兼容现有调用方；yt-dlp 的安装与版本治理统一由 YtdlpManager 受管路径负责
     public YouTubeMusicService(string ytdlpPath, MusicAccountStore? accounts = null)
@@ -208,7 +209,7 @@ public class YouTubeMusicService : IMusicSearchService
     }
 
     /// <summary>
-    /// 获取可用的 yt-dlp 路径：低于最低安全版本的安装禁用本源；
+    /// 获取可用的 yt-dlp 路径：低于最低支持版本的安装禁用本源；
     /// 更新失败（如离线）时保留满足最低版本的现有安装。
     /// </summary>
     private async Task<string> EnsureUsableYtdlpAsync(CancellationToken cancellationToken)
@@ -227,7 +228,7 @@ public class YouTubeMusicService : IMusicSearchService
         }
 
         var status = YtdlpManager.GetStatus();
-        if (!status.Installed || !status.MeetsMinimumSecureVersion)
+        if (!status.Installed || !status.MeetsMinimumSupportedVersion)
         {
             Log.Warning("YouTube source disabled: {Reason}", status.DisableReason);
             throw new YtdlpUnavailableException(status.DisableReason ?? "yt-dlp 不可用");
