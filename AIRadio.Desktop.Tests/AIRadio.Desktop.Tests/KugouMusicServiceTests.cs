@@ -1,0 +1,134 @@
+using System;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using AIRadio.Desktop.Services;
+using Moq;
+using Xunit;
+
+namespace AIRadio.Desktop.Tests;
+
+/// <summary>
+/// 酷狗本地代理交互的安全边界：登录 Cookie 必须走 Authorization 头，
+/// 不得进入 URL 查询串（会随 URL 泄露到日志、缓存键与诊断输出）。
+/// </summary>
+public class KugouMusicServiceTests
+{
+    private static (HttpClient client, RequestCapture capture) CreateClient(Func<HttpRequestMessage, string> respond)
+    {
+        var capture = new RequestCapture();
+        var handler = new DelegateHandler((request, _) =>
+        {
+            capture.Record(request);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(respond(request))
+            });
+        });
+        return (new HttpClient(handler), capture);
+    }
+
+    private static async Task<MusicAccountStore> CreateLoggedInStoreAsync()
+    {
+        var storage = new Mock<ISecureStorage>();
+        var store = new MusicAccountStore(storage.Object);
+        await store.SetKugouCookieAsync("token=SECRET;userid=42;dfid=DF");
+        return store;
+    }
+
+    [Fact]
+    public async Task SearchAsync_SendsCookieInAuthorizationHeaderNotQuery()
+    {
+        var (client, capture) = CreateClient(_ =>
+            "{\"status\":1,\"data\":{\"info\":[{\"hash\":\"abc\",\"OriSongName\":\"歌\",\"SingerName\":\"手\",\"Duration\":100}]}}");
+        var accounts = await CreateLoggedInStoreAsync();
+        var service = new KugouMusicService(client, accounts);
+
+        var results = await service.SearchAsync("测试", 5);
+
+        Assert.Single(results);
+        var url = capture.Last!.RequestUri!.AbsoluteUri;
+        Assert.DoesNotContain("SECRET", url);
+        Assert.DoesNotContain("cookie=", url, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("token=SECRET;userid=42;dfid=DF", capture.Last.Headers.GetValues("Authorization").Single());
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_SendsCookieInAuthorizationHeaderNotQuery()
+    {
+        var (client, capture) = CreateClient(request =>
+            request.RequestUri!.AbsoluteUri.Contains("/song/url", StringComparison.Ordinal)
+                ? "{\"status\":1,\"data\":[{\"url\":\"https://cdn.example/a.mp3\"}]}"
+                : "{\"status\":1,\"data\":{\"info\":[]}}");
+        var accounts = await CreateLoggedInStoreAsync();
+        var service = new KugouMusicService(client, accounts);
+
+        var playUrl = await service.GetPlayUrlAsync("kugou:abc");
+
+        Assert.Equal("https://cdn.example/a.mp3", playUrl);
+        var url = capture.Last!.RequestUri!.AbsoluteUri;
+        Assert.DoesNotContain("SECRET", url);
+        Assert.DoesNotContain("cookie=", url, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("token=SECRET;userid=42;dfid=DF", capture.Last.Headers.GetValues("Authorization").Single());
+    }
+
+    [Fact]
+    public async Task SearchAsync_NotLoggedIn_ThrowsBusinessException()
+    {
+        var (client, _) = CreateClient(_ => "{\"status\":1}");
+        var service = new KugouMusicService(client, accounts: null);
+
+        await Assert.ThrowsAsync<MusicSourceBusinessException>(() => service.SearchAsync("测试", 5));
+    }
+
+    private sealed class RequestCapture
+    {
+        public HttpRequestMessage? Last { get; private set; }
+
+        public void Record(HttpRequestMessage request) => Last = request;
+    }
+
+    private sealed class DelegateHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _handler;
+
+        public DelegateHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
+        {
+            _handler = handler;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => _handler(request, cancellationToken);
+    }
+}
+
+public class SensitiveDataSanitizerTests
+{
+    [Theory]
+    [InlineData(
+        "https://a.example/x?token=abc123&userid=42",
+        "https://a.example/x?token=<redacted>&userid=<redacted>")]
+    [InlineData(
+        "token=abc; userid=42; dfid=zzz",
+        "token=<redacted>; userid=<redacted>; dfid=<redacted>")]
+    [InlineData(
+        "https://a.example/x?signature=deadbeef&cookie=tok",
+        "https://a.example/x?signature=<redacted>&cookie=<redacted>")]
+    [InlineData("https://a.example/x?sign=1", "https://a.example/x?sign=<redacted>")]
+    [InlineData("https://a.example/x?author=jane", "https://a.example/x?author=jane")]
+    public void Sanitize_MasksSensitiveQueryAndCookieValues(string input, string expected)
+    {
+        Assert.Equal(expected, AIRadio.Desktop.Services.SensitiveDataSanitizer.Sanitize(input));
+    }
+
+    [Fact]
+    public void Sanitize_LeavesPlainMessagesAndNullUntouched()
+    {
+        Assert.Null(SensitiveDataSanitizer.Sanitize(null));
+        Assert.Equal(string.Empty, SensitiveDataSanitizer.Sanitize(string.Empty));
+        Assert.Equal("连接被拒绝", SensitiveDataSanitizer.Sanitize("连接被拒绝"));
+    }
+}
