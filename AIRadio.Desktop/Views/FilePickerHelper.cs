@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
+using AIRadio.Desktop.Services;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 
@@ -10,18 +11,18 @@ namespace AIRadio.Desktop.Views;
 /// </summary>
 public static class FilePickerHelper
 {
-    private static readonly FilePickerFileType AudioFilter = new("音频文件")
-    {
-        Patterns = ["*.mp3", "*.flac", "*.wav", "*.ogg", "*.m4a", "*.wma", "*.aac"]
-    };
-
     public static async Task<string[]> PickAudioFilesAsync(TopLevel topLevel)
     {
+        var audioFilter = new FilePickerFileType(AppLanguage.T("音频文件", "Audio files"))
+        {
+            Patterns = ["*.mp3", "*.flac", "*.wav", "*.ogg", "*.m4a", "*.wma", "*.aac"]
+        };
+
         var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "选择音频文件",
+            Title = AppLanguage.T("选择音频文件", "Select audio files"),
             AllowMultiple = true,
-            FileTypeFilter = [AudioFilter]
+            FileTypeFilter = [audioFilter]
         });
 
         return files

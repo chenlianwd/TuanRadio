@@ -149,9 +149,9 @@ public class EdgeTtsService : ITtsService, IDisposable
             Log.Warning(ex, "Failed to fetch Edge TTS voice list");
             return new List<VoiceOption>
             {
-                new() { Id = "zh-CN-XiaoxiaoNeural", DisplayName = "晓晓（女声）" },
-                new() { Id = "zh-CN-YunxiNeural", DisplayName = "云希（男声）" },
-                new() { Id = "zh-CN-YunjianNeural", DisplayName = "云健（男声）" }
+                new() { Id = "zh-CN-XiaoxiaoNeural", DisplayName = AppLanguage.T("晓晓（女声）", "Xiaoxiao (female)") },
+                new() { Id = "zh-CN-YunxiNeural", DisplayName = AppLanguage.T("云希（男声）", "Yunxi (male)") },
+                new() { Id = "zh-CN-YunjianNeural", DisplayName = AppLanguage.T("云健（男声）", "Yunjian (male)") }
             };
         }
         finally

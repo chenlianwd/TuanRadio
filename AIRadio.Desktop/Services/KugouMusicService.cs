@@ -39,7 +39,9 @@ public class KugouMusicService : IMusicSearchService
         if (string.IsNullOrEmpty(cookie))
         {
             // 播放接口同样要求登录，未登录时搜索结果必然不可播，直接透传原因避免误导
-            throw new MusicSourceBusinessException("酷狗未登录，请在设置的音源账号中扫码登录");
+            throw new MusicSourceBusinessException(AppLanguage.T(
+                "酷狗未登录，请在设置的音源账号中扫码登录",
+                "Kugou is not signed in. Scan the QR code under Music accounts in Settings."));
         }
 
         try
@@ -60,7 +62,9 @@ public class KugouMusicService : IMusicSearchService
                                 errEl.ValueKind == JsonValueKind.Number
                     ? errEl.GetInt32()
                     : -1;
-                throw new MusicSourceBusinessException($"酷狗接口业务状态异常(status={statusEl.GetInt32()},error={errorCode})，登录态或本地代理可能失效");
+                throw new MusicSourceBusinessException(AppLanguage.T(
+                    $"酷狗接口业务状态异常(status={statusEl.GetInt32()},error={errorCode})，登录态或本地代理可能失效",
+                    $"Kugou returned an unexpected status (status={statusEl.GetInt32()}, error={errorCode}); the sign-in or local proxy may be invalid"));
             }
 
             var tracks = new List<OnlineTrack>();

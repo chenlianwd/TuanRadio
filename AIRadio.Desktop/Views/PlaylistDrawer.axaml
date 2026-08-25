@@ -71,7 +71,7 @@
                                         <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
                                                    FontFamily="Consolas, Microsoft YaHei UI"
                                                    Foreground="{DynamicResource C_FFFFFFFF}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Artist}" FontSize="11"
+                                        <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
                                                    FontFamily="Consolas, Microsoft YaHei UI"
                                                    Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
@@ -114,7 +114,7 @@
                                         <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
                                                    FontFamily="Consolas, Microsoft YaHei UI"
                                                    Foreground="{DynamicResource C_FFFFFFFF}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Artist}" FontSize="11"
+                                        <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
                                                    FontFamily="Consolas, Microsoft YaHei UI"
                                                    Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
@@ -185,7 +185,7 @@
                                                     <TextBlock Text="{Binding Track.Title}" FontSize="13" FontWeight="700"
                                                                FontFamily="Consolas, Microsoft YaHei UI"
                                                                Foreground="{DynamicResource C_FFFFFFFF}" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding Track.Artist}" FontSize="11"
+                                                    <TextBlock Text="{Binding Track.DisplayArtist}" FontSize="11"
                                                                FontFamily="Consolas, Microsoft YaHei UI"
                                                                Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
                                                 </StackPanel>

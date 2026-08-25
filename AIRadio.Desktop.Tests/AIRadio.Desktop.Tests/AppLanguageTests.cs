@@ -95,6 +95,18 @@ public class AppLanguageTests : IDisposable
 
         AppLanguage.Apply("en");
 
-        Assert.Equal("酷我音乐: 20 result(s)", PlaylistViewModel.FormatSourceStatus(status));
+        Assert.Equal("Kuwo Music: 20 result(s)", PlaylistViewModel.FormatSourceStatus(status));
+    }
+
+    [Fact]
+    public void ApiFailureLocalization_UsesCurrentLanguage()
+    {
+        var failure = ApiFailureInfo.FromException(new TimeoutException());
+
+        AppLanguage.Apply("en");
+        var localized = ApiFailureLocalization.ForCurrentLanguage(failure);
+
+        Assert.Equal("AI response timed out", localized.Title);
+        Assert.DoesNotContain(localized.Detail, character => character is >= '\u4e00' and <= '\u9fff');
     }
 }

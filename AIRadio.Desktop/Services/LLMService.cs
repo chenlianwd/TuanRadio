@@ -64,7 +64,7 @@ public class LLMService : ILLMService
         CancellationToken cancellationToken)
     {
         if (!IsConfigured())
-            return "请先在设置中配置 AI 服务。";
+            return AppLanguage.T("请先在设置中配置 AI 服务。", "Configure the AI service in Settings first.");
 
         try
         {
@@ -96,18 +96,17 @@ public class LLMService : ILLMService
         CancellationToken cancellationToken)
     {
         if (!IsConfigured())
-            return $"接下来播放 {next.Title}。";
+            return AppLanguage.T($"接下来播放 {next.Title}。", $"Up next: {next.Title}.");
 
         try
         {
-            var prompt = $"你现在是 AI 电台 DJ。上一首歌是《{current.Title}》（{current.Artist}），" +
-                         $"下一首是《{next.Title}》（{next.Artist}）。" +
-                         $"请用一句话自然地衔接两首歌，像电台 DJ 一样。不要超过30字。" +
-                         $"末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。";
+            var prompt = AppLanguage.T(
+                $"你现在是 AI 电台 DJ。上一首歌是《{current.Title}》（{current.Artist}），下一首是《{next.Title}》（{next.Artist}）。请用一句话自然地衔接两首歌，像电台 DJ 一样。不要超过30字。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。",
+                $"You are an AI radio DJ. The previous track was '{current.Title}' by {current.Artist}; the next is '{next.Title}' by {next.Artist}. Connect them naturally in one short sentence and end with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].");
 
             var messages = new List<object>
             {
-                new { role = "system", content = "你是一个中文电台 DJ，用自然的口语衔接歌曲。" },
+                new { role = "system", content = AppLanguage.T("你是一个中文电台 DJ，用自然的口语衔接歌曲。", "You are an English-speaking radio DJ who connects songs naturally.") },
                 new { role = "user", content = prompt }
             };
 
@@ -120,7 +119,7 @@ public class LLMService : ILLMService
         catch (Exception ex)
         {
             Log.Warning(ex, "Track introduction generation failed");
-            return $"接下来播放 {next.Title}。";
+            return AppLanguage.T($"接下来播放 {next.Title}。", $"Up next: {next.Title}.");
         }
     }
 
@@ -128,7 +127,7 @@ public class LLMService : ILLMService
     {
         var messages = new List<object>
         {
-            new { role = "system", content = "你是一个中文电台 DJ，名叫小音。用温暖自然的语气和听众交流。" }
+            new { role = "system", content = AppLanguage.T("你是一个中文电台 DJ，名叫小音。用温暖自然的语气和听众交流。", "You are an English-speaking AI radio DJ. Talk to listeners in a warm, natural tone.") }
         };
 
         foreach (var msg in history.TakeLast(20))

@@ -1,7 +1,9 @@
 using AIRadio.Desktop.Models;
+using AIRadio.Desktop.Services;
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 
 namespace AIRadio.Desktop.Tests;
 
@@ -21,6 +23,53 @@ public class ModelCleanupTests
         // Verify the default case returns empty string
         var msg = new ChatMessage { Role = (MessageRole)999 };
         Assert.Equal(string.Empty, msg.SenderName);
+    }
+
+    [Fact]
+    public void ChatMessage_AndBuiltInPersonality_FollowEnglishLanguage()
+    {
+        try
+        {
+            AppLanguage.Apply("en");
+            CharacterProfile.RefreshLocalizedPresets();
+
+            Assert.Equal("Me", new ChatMessage { Role = MessageRole.User }.SenderName);
+            Assert.Equal("AI DJ", new ChatMessage { Role = MessageRole.Assistant }.SenderName);
+            Assert.StartsWith("You are Lumen", CharacterProfile.Presets[0].PersonalityPrompt);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            CharacterProfile.RefreshLocalizedPresets();
+        }
+    }
+
+    [Fact]
+    public void TrackUnknownMetadata_UsesCurrentDisplayLanguage()
+    {
+        var track = new Track { Artist = "未知艺术家", Album = "未知专辑" };
+        try
+        {
+            AppLanguage.Apply("en");
+            track.RefreshLocalization();
+
+            Assert.Equal("Unknown artist", track.DisplayArtist);
+            Assert.Equal("Unknown album", track.DisplayAlbum);
+            Assert.Equal("未知艺术家", track.Artist);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public void TrackDisplayMetadata_IsNotPersisted()
+    {
+        var json = JsonSerializer.Serialize(new Track());
+
+        Assert.DoesNotContain("DisplayArtist", json);
+        Assert.DoesNotContain("DisplayAlbum", json);
     }
 
     [Fact]

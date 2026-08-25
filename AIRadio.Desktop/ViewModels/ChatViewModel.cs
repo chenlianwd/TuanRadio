@@ -32,6 +32,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _ttsCommandSub;
     private readonly IDisposable _ttsErrorSub;
     private readonly IDisposable _stateSub;
+    private readonly Action _onLanguageChanged;
     private string? _pendingCommand;
     private Track? _pendingRecommendedTrack;
 
@@ -146,6 +147,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
                     StartListening();
                 }
             });
+
+        _onLanguageChanged = () =>
+        {
+            foreach (var message in Messages)
+                message.RefreshLocalization();
+            RefreshStatus();
+        };
+        AppLanguage.Changed += _onLanguageChanged;
     }
 
     public void AddAssistantMessage(string text)
@@ -449,7 +458,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
             }
 
             // LLM not configured — show setup prompt instead of raw message
-            if (response.StartsWith("请先在设置中配置"))
+            if (response.StartsWith("请先在设置中配置", StringComparison.Ordinal) ||
+                response.StartsWith("Configure the AI service", StringComparison.OrdinalIgnoreCase))
             {
                 Messages.Add(new ChatMessage
                 {
@@ -473,7 +483,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            var failure = ApiFailureInfo.FromException(ex);
+            var failure = ApiFailureLocalization.ForCurrentLanguage(ApiFailureInfo.FromException(ex));
             Messages.Add(new ChatMessage
             {
                 Role = MessageRole.Assistant,
@@ -614,6 +624,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void SetFailureNotice(ApiFailureInfo failure)
     {
+        failure = ApiFailureLocalization.ForCurrentLanguage(failure);
         HasFailure = true;
         _isStatusNoticeDismissed = false;
         _failureStatusText = failure.Kind switch
@@ -668,10 +679,13 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void AddFailureMessage(string prefix, ApiFailureInfo failure)
     {
+        failure = ApiFailureLocalization.ForCurrentLanguage(failure);
         Messages.Add(new ChatMessage
         {
             Role = MessageRole.Assistant,
-            Content = $"{prefix}：{failure.Title}。{failure.RecoveryHint}"
+            Content = AppLanguage.T(
+                $"{prefix}：{failure.Title}。{failure.RecoveryHint}",
+                $"{prefix}: {failure.Title}. {failure.RecoveryHint}")
         });
     }
 
@@ -826,7 +840,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         var recentlyPlayed = GetRecentlyPlayedSnapshot();
         var request = new RecommendationRequest
         {
-            UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
+            UserIntentKey = RecommendationIntentKeys.ContinueStation,
             CurrentTrack = current,
             Favorites = _audioService.Playlist.Where(t => t.IsFavorite).ToList(),
             Playlist = _audioService.Playlist.ToList(),
@@ -1222,6 +1236,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         _ttsCommandSub.Dispose();
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
+        AppLanguage.Changed -= _onLanguageChanged;
         _statusAutoDismissSub?.Dispose();
 
         try { _waveIn?.StopRecording(); } catch (Exception ex) { Log.Debug(ex, "Failed to stop recording during shutdown"); }

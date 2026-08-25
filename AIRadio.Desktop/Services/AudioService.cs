@@ -1758,7 +1758,9 @@ public class AudioService : IAudioService, IDisposable
             if (!IsDisposed)
             {
                 _ttsStateSubject.OnNext(false);
-                _ttsErrorSubject.OnNext("语音播放设备不可用，请检查 Windows 默认输出设备或关闭语音播报。");
+                _ttsErrorSubject.OnNext(AppLanguage.T(
+                    "语音播放设备不可用，请检查 Windows 默认输出设备或关闭语音播报。",
+                    "The voice playback device is unavailable. Check the default Windows output device or turn off voice playback."));
             }
             Log.Warning(ex, "Failed to play TTS audio");
         }

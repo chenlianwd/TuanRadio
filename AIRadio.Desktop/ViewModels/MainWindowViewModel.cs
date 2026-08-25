@@ -4,6 +4,7 @@ using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
@@ -33,6 +34,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _spectrumStyleSub;
     private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
+    private readonly Action _onLanguageChanged;
     private int _autoRadioAdvancing;
     private int _disposed;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
@@ -70,6 +72,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
     [Reactive] public DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
+    [Reactive] public string LocalizedDayOfWeek { get; private set; } = string.Empty;
+    [Reactive] public string LocalizedDate { get; private set; } = string.Empty;
 
     /// <summary>统一电台状态，由子 VM flags 派生（spec §5.2）。</summary>
     [ObservableAsProperty] public RadioState CurrentState { get; }
@@ -212,6 +216,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(mode => _audioService.SetSpeechMixMode(mode));
         _spectrumStyleSub = SettingsVM.WhenAnyValue(x => x.SelectedSpectrumStyle)
             .Subscribe(style => SpectrumVM.SelectedStyle = style);
+        _onLanguageChanged = RefreshLocalizedProgramText;
+        AppLanguage.Changed += _onLanguageChanged;
+        RefreshLocalizedClockText();
 
         // Sync STT language with settings
         if (_sttService is WhisperSttService whisper)
@@ -258,7 +265,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         // 1s 时钟推进（spec §5.5）
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(_ => Now = DateTimeOffset.Now);
+            .Subscribe(_ =>
+            {
+                Now = DateTimeOffset.Now;
+                RefreshLocalizedClockText();
+            });
     }
 
     private async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
@@ -382,7 +393,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         var recentlyPlayed = GetRecentlyPlayedSnapshot();
         return new RecommendationRequest
         {
-            UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
+            UserIntentKey = RecommendationIntentKeys.ContinueStation,
             CurrentTrack = current,
             Favorites = PlaylistVM.Favorites.ToList(),
             Playlist = PlaylistVM.Tracks.ToList(),
@@ -399,6 +410,43 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         CurrentRadioProgram = program;
         HasCurrentRadioProgram = program?.Tracks.Any(track => track.IsPlayable) == true;
     }
+
+    private void RefreshLocalizedProgramText()
+    {
+        RefreshLocalizedClockText();
+        if (CurrentRadioProgram != null)
+        {
+            RecommendationService.ApplyLocalization(CurrentRadioProgram);
+            this.RaisePropertyChanged(nameof(CurrentRadioProgram));
+        }
+
+        ProgramStatusText = IsProgramLoading
+            ? AppLanguage.T("DJ 正在编排节目单…", "The DJ is curating your program...")
+            : HasCurrentRadioProgram
+                ? string.Empty
+                : IsProgramFailureText(ProgramStatusText)
+                    ? AppLanguage.T("节目单生成失败，请检查 AI 与音源连接后重试。", "Program generation failed. Check the AI and music source connections and try again.")
+                    : IsProgramEmptyText(ProgramStatusText)
+                        ? AppLanguage.T("暂时没有找到可播放的候选歌曲，请稍后重新编排。", "No playable candidates were found. Try refreshing the program later.")
+                        : AppLanguage.T(
+                            "打开节目单时，DJ 会按当前收听风格生成下一组候选歌曲。",
+                            "Open Program and the DJ will curate the next set from your current listening style.");
+    }
+
+    private void RefreshLocalizedClockText()
+    {
+        var culture = CultureInfo.GetCultureInfo(AppLanguage.Current == "en" ? "en-US" : "zh-CN");
+        LocalizedDayOfWeek = Now.ToString("dddd", culture);
+        LocalizedDate = Now.ToString("dd-MMM-yyyy", culture);
+    }
+
+    private static bool IsProgramFailureText(string value)
+        => value.StartsWith("节目单生成失败", StringComparison.Ordinal) ||
+           value.StartsWith("Program generation failed", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsProgramEmptyText(string value)
+        => value.StartsWith("暂时没有找到可播放", StringComparison.Ordinal) ||
+           value.StartsWith("No playable candidates", StringComparison.OrdinalIgnoreCase);
 
     private async Task TellSongStoryAsync()
     {
@@ -1027,6 +1075,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();
         _spectrumStyleSub?.Dispose();
+        AppLanguage.Changed -= _onLanguageChanged;
         _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;

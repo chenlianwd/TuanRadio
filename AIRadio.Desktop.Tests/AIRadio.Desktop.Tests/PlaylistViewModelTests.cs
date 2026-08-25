@@ -61,6 +61,37 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
+    public async Task LanguageChange_RelocalizesExistingActionStatus()
+    {
+        var (vm, _, search) = CreateVm();
+        using (vm)
+        {
+            var online = new OnlineTrack
+            {
+                Id = "source:status-localization",
+                Title = "Test Track",
+                Artist = "Artist"
+            };
+            search.Setup(x => x.GetPlayUrlAsync(online.Id))
+                .ReturnsAsync("https://example.com/test.mp3");
+
+            try
+            {
+                await vm.AddOnlineCommand.Execute(online);
+                Assert.Contains("已添加", vm.SearchStatusMessage);
+
+                AppLanguage.Apply("en");
+
+                Assert.Equal("Added \"Test Track\".", vm.SearchStatusMessage);
+            }
+            finally
+            {
+                AppLanguage.Apply("zh");
+            }
+        }
+    }
+
+    [Fact]
     public void InitialTabIndex_IsZero()
     {
         var (vm, _, _) = CreateVm();

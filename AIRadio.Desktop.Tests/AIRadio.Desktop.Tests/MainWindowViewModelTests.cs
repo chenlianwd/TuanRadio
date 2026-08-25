@@ -444,4 +444,36 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void EnglishLanguage_LocalizesClockDateImmediately()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var audio = CreateAudioMock(new List<Track>(), () => null);
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            new Mock<IDJService>().Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile());
+
+        try
+        {
+            vm.SettingsVM.SelectedLanguage = "en";
+
+            Assert.DoesNotMatch("[\\u4e00-\\u9fff]", vm.LocalizedDayOfWeek);
+            Assert.DoesNotMatch("[\\u4e00-\\u9fff]", vm.LocalizedDate);
+            Assert.Contains("-", vm.LocalizedDate);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply("zh");
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }
