@@ -154,15 +154,33 @@
                     </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <!-- 当前节目单（CurrentRadioProgram）：显示推荐理由 + 标签（子项目 2） -->
-                        <ListBox ItemsSource="{Binding CurrentRadioProgram.Tracks}"
-                                 IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=3}">
+                        <!-- 节目单是当前会话的下一组 DJ 候选，首次打开会主动生成。 -->
+                        <Grid IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=3}"
+                              RowDefinitions="Auto,*" RowSpacing="10">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{Binding CurrentRadioProgram.Title}" FontSize="14" FontWeight="700"
+                                               Foreground="{DynamicResource C_FFFFFFFF}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{DynamicResource S_ProgramDescription}" FontSize="10"
+                                               Foreground="{DynamicResource C_FF9B9BA8}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="{DynamicResource S_RefreshProgram}"
+                                        IsEnabled="{Binding IsProgramLoading, Converter={StaticResource InverseBoolConverter}}"
+                                        Command="{Binding RefreshProgramCommand}"/>
+                            </Grid>
+                            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                        IsVisible="{Binding HasCurrentRadioProgram, Converter={StaticResource InverseBoolConverter}}">
+                                <TextBlock Text="{Binding ProgramStatusText}" MaxWidth="320" TextAlignment="Center"
+                                           TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                            </StackPanel>
+                            <ListBox Grid.Row="1" ItemsSource="{Binding CurrentRadioProgram.Tracks}"
+                                     IsVisible="{Binding HasCurrentRadioProgram}">
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="models:RecommendedTrack">
                                     <Border Background="{DynamicResource C_CC202126}" BorderBrush="{DynamicResource C_253D3D4A}"
                                             BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
                                         <StackPanel Spacing="3">
-                                            <Grid ColumnDefinitions="*,Auto">
+                                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding Track.Title}" FontSize="13" FontWeight="700"
                                                                FontFamily="Consolas, Microsoft YaHei UI"
@@ -173,7 +191,14 @@
                                                 </StackPanel>
                                                 <TextBlock Grid.Column="1" Text="{Binding Source}" FontSize="9"
                                                            FontFamily="Consolas" Foreground="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="2" Content="{DynamicResource S_Play}"
+                                                        ToolTip.Tip="{DynamicResource S_PlayProgramTrack}"
+                                                        IsEnabled="{Binding IsPlayable}"
+                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlayProgramTrackCommand}"
+                                                        CommandParameter="{Binding}"/>
                                             </Grid>
+                                            <TextBlock Text="{Binding Reason}" FontSize="10" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource C_FF9A9AA6}"/>
                                             <ItemsControl ItemsSource="{Binding Tags}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
@@ -192,7 +217,8 @@
                                     </Border>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
-                        </ListBox>
+                            </ListBox>
+                        </Grid>
                     </Grid>
                 </Grid>
             </Border>

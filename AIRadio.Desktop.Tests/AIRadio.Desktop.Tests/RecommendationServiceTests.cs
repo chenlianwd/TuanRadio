@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -176,5 +177,90 @@ public class RecommendationServiceTests
 
         Assert.Equal("neutral", program.Context.Mood); // 回退正则检测
         Assert.DoesNotContain(prompts, p => p.Contains("氛围偏好"));
+    }
+
+    [Fact]
+    public async Task CreateProgramAsync_UsesRecentPlaybackHistoryAsStyleContext()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("英伦摇滚");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        await service.CreateProgramAsync(new RecommendationRequest
+        {
+            UserIntent = "继续当前电台",
+            CurrentTrack = new Track { Title = "Yellow", Artist = "Coldplay" },
+            RecentlyPlayed = new[]
+            {
+                new Track { Title = "Creep", Artist = "Radiohead" },
+                new Track { Title = "Don't Look Back in Anger", Artist = "Oasis" }
+            }
+        });
+
+        var prompt = Assert.Single(prompts);
+        Assert.Contains("最近已播放", prompt);
+        Assert.Contains("Creep - Radiohead", prompt);
+        Assert.Contains("Don't Look Back in Anger - Oasis", prompt);
+        Assert.Contains("共同风格", prompt);
+    }
+
+    [Fact]
+    public async Task RecordPlayedTrack_DeduplicatesAndFeedsFutureRecommendationContext()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("英伦摇滚");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        var creep = new Track { Id = "creep", Title = "Creep", Artist = "Radiohead" };
+        var oasis = new Track { Id = "oasis", Title = "Wonderwall", Artist = "Oasis" };
+        service.RecordPlayedTrack(creep);
+        service.RecordPlayedTrack(oasis);
+        service.RecordPlayedTrack(creep);
+
+        await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "继续当前电台" });
+
+        Assert.Equal(new[] { "Wonderwall", "Creep" }, service.RecentlyPlayed.Select(track => track.Title));
+        var prompt = Assert.Single(prompts);
+        Assert.Contains("Creep - Radiohead", prompt);
+        Assert.Contains("Wonderwall - Oasis", prompt);
+    }
+
+    [Fact]
+    public async Task CreateProgramAsync_SerializesConcurrentProgramMutations()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+        var concurrentCalls = 0;
+        var maxConcurrentCalls = 0;
+        var sync = new object();
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Returns(async () =>
+            {
+                var active = Interlocked.Increment(ref concurrentCalls);
+                lock (sync)
+                    maxConcurrentCalls = System.Math.Max(maxConcurrentCalls, active);
+                await Task.Delay(40);
+                Interlocked.Decrement(ref concurrentCalls);
+                return "ambient";
+            });
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        await Task.WhenAll(
+            service.CreateProgramAsync(new RecommendationRequest { UserIntent = "first" }),
+            service.CreateProgramAsync(new RecommendationRequest { UserIntent = "second" }));
+
+        Assert.Equal(1, maxConcurrentCalls);
     }
 }

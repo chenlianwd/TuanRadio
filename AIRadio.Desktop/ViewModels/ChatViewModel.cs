@@ -751,12 +751,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private async Task RecommendFreshTrackAsync()
     {
         var current = _audioService.CurrentTrack ?? _audioService.Playlist.LastOrDefault();
+        var recentlyPlayed = GetRecentlyPlayedSnapshot();
         if (current != null)
         {
             current.Tag = new RecommendationContext
             {
                 Favorites = _audioService.Playlist.Where(t => t.IsFavorite).ToList(),
-                ExcludedTracks = _audioService.Playlist.ToList()
+                RecentlyPlayed = recentlyPlayed,
+                ExcludedTracks = _audioService.Playlist.Concat(recentlyPlayed).ToList()
             };
         }
 
@@ -821,19 +823,24 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (_recommendationService == null)
             return Task.FromResult<Track?>(null);
 
+        var recentlyPlayed = GetRecentlyPlayedSnapshot();
         var request = new RecommendationRequest
         {
             UserIntent = AppLanguage.T("继续当前电台", "Continue current station"),
             CurrentTrack = current,
             Favorites = _audioService.Playlist.Where(t => t.IsFavorite).ToList(),
             Playlist = _audioService.Playlist.ToList(),
-            ExcludedTracks = _audioService.Playlist.ToList()
+            RecentlyPlayed = recentlyPlayed,
+            ExcludedTracks = _audioService.Playlist.Concat(recentlyPlayed).ToList()
         };
 
         return _recommendationService is RecommendationService recommendationService
             ? recommendationService.GetNextTrackAsync(request, cancellationToken)
             : _recommendationService.GetNextTrackAsync(request).WaitAsync(cancellationToken);
     }
+
+    private List<Track> GetRecentlyPlayedSnapshot()
+        => _recommendationService?.RecentlyPlayed?.ToList() ?? new List<Track>();
 
     private static bool IsFreshRecommendationRequest(string text)
     {

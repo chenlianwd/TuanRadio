@@ -595,5 +595,29 @@ public class SettingsViewModelTests
             try { Directory.Delete(dir, true); } catch { }
         }
     }
-}
 
+    [Fact]
+    public async Task SaveAndLoad_PersistsSpectrumStyle()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                SelectedSpectrumStyle = "wave"
+            };
+            await vm.SaveCommand.Execute();
+
+            var reloaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await reloaded.LoadAsync();
+
+            Assert.Equal("wave", reloaded.SelectedSpectrumStyle);
+            Assert.Equal(4, reloaded.SpectrumStyles.Count);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+}

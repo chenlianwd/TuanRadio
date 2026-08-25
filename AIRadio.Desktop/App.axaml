@@ -17,6 +17,12 @@
     </Application.DataTemplates>
   
     <Application.Styles>
-        <FluentTheme />
+        <FluentTheme>
+            <FluentTheme.Palettes>
+                <!-- 让 Slider 等 Fluent 控件的系统强调色与应用青色主题保持一致。 -->
+                <ColorPaletteResources x:Key="Dark" Accent="#FF56F5C4"/>
+                <ColorPaletteResources x:Key="Light" Accent="#FF178A65"/>
+            </FluentTheme.Palettes>
+        </FluentTheme>
     </Application.Styles>
 </Application>

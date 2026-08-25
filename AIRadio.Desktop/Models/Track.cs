@@ -72,6 +72,7 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
 public class RecommendationContext
 {
     public IReadOnlyCollection<Track> Favorites { get; init; } = Array.Empty<Track>();
+    public IReadOnlyCollection<Track> RecentlyPlayed { get; init; } = Array.Empty<Track>();
     public IReadOnlyCollection<Track> ExcludedTracks { get; init; } = Array.Empty<Track>();
 }
 
@@ -108,6 +109,7 @@ public class RecommendationRequest
     public Track? CurrentTrack { get; set; }
     public IReadOnlyCollection<Track> Favorites { get; init; } = Array.Empty<Track>();
     public IReadOnlyCollection<Track> Playlist { get; init; } = Array.Empty<Track>();
+    public IReadOnlyCollection<Track> RecentlyPlayed { get; init; } = Array.Empty<Track>();
     public IReadOnlyCollection<Track> ExcludedTracks { get; init; } = Array.Empty<Track>();
 }
 

@@ -1,29 +1,20 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:local="using:AIRadio.Desktop.Views"
              x:Class="AIRadio.Desktop.Views.SpectrumView"
              ClipToBounds="True"
              x:DataType="vm:SpectrumViewModel">
 
     <UserControl.Resources>
-        <LinearGradientBrush x:Key="SpotifyBar" StartPoint="0%,0%" EndPoint="0%,100%">
-            <GradientStop Offset="0" Color="{DynamicResource C_FF9B59B0}"/>
-            <GradientStop Offset="1" Color="{DynamicResource C_FF169C46}"/>
+        <LinearGradientBrush x:Key="SpectrumPrimary" StartPoint="0%,0%" EndPoint="0%,100%">
+            <GradientStop Offset="0" Color="{DynamicResource C_FFB9FFE8}"/>
+            <GradientStop Offset="1" Color="{DynamicResource C_FF56F5C4}"/>
         </LinearGradientBrush>
     </UserControl.Resources>
 
-    <ItemsControl ItemsSource="{Binding Bands}">
-        <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-                <StackPanel Orientation="Horizontal" Spacing="1" VerticalAlignment="Bottom"/>
-            </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="x:Single">
-                <Border Width="5" CornerRadius="2,2,0,0"
-                        Height="{Binding Converter={StaticResource SpectrumBarConverter}}"
-                        Background="{StaticResource SpotifyBar}"/>
-            </DataTemplate>
-        </ItemsControl.ItemTemplate>
-    </ItemsControl>
+    <local:SpectrumRenderer x:Name="Renderer"
+                            StyleName="{Binding SelectedStyle}"
+                            PrimaryBrush="{StaticResource SpectrumPrimary}"
+                            SecondaryBrush="{DynamicResource C_FFA783FF}"/>
 </UserControl>

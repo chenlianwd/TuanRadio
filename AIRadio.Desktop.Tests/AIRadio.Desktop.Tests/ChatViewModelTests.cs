@@ -255,6 +255,64 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public async Task SendMessage_GenericRecommendation_PassesSharedPlaybackHistoryToProgramService()
+    {
+        var current = new Track { Id = "current", Title = "Yellow", Artist = "Coldplay" };
+        var history = new[]
+        {
+            new Track { Id = "history-1", Title = "Creep", Artist = "Radiohead" },
+            new Track { Id = "history-2", Title = "Wonderwall", Artist = "Oasis" }
+        };
+        var recommended = new Track
+        {
+            Id = "fresh",
+            SourceId = "netease:fresh",
+            Title = "Fresh Song",
+            Artist = "New Artist",
+            FilePath = "http://example.com/fresh.mp3"
+        };
+        var playlist = new List<Track> { current };
+        var audio = new Mock<IAudioService>();
+        audio.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audio.Setup(x => x.TtsError).Returns(new Subject<string>());
+        audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.SetupGet(x => x.CurrentTrack).Returns(current);
+        audio.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
+        audio.Setup(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()))
+            .Callback<IEnumerable<Track>>(tracks => playlist.AddRange(tracks));
+        var dj = new Mock<IDJService>();
+        dj.SetupGet(x => x.TtsEnabled).Returns(false);
+        dj.SetupGet(x => x.CurrentEmotion).Returns("neutral");
+        var recommendations = new Mock<IRecommendationService>();
+        recommendations.SetupGet(x => x.RecentlyPlayed).Returns(history);
+        RecommendationRequest? capturedRequest = null;
+        recommendations.Setup(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()))
+            .Callback<RecommendationRequest>(request => capturedRequest = request)
+            .ReturnsAsync(recommended);
+        var vm = new ChatViewModel(
+            dj.Object,
+            audio.Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            recommendationService: recommendations.Object);
+
+        try
+        {
+            vm.InputText = "再推荐点同类型的歌";
+            await vm.SendMessageCommand.Execute().FirstAsync();
+
+            Assert.NotNull(capturedRequest);
+            Assert.Equal(history.Select(track => track.Id), capturedRequest!.RecentlyPlayed.Select(track => track.Id));
+            var context = Assert.IsType<RecommendationContext>(current.Tag);
+            Assert.Equal(history.Select(track => track.Id), context.RecentlyPlayed.Select(track => track.Id));
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task SendMessage_WithTrackAddedCallback_DoesNotAddTrackTwice()
     {
         var playlist = new List<Track>();

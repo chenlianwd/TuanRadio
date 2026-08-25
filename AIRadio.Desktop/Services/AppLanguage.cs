@@ -98,6 +98,7 @@ public static class AppLanguage
         ["S_Prev"] = "上一首",
         ["S_PlayPause"] = "播放/暂停",
         ["S_Next"] = "下一首",
+        ["S_Volume"] = "音量",
         // 标题栏
         ["S_CompactMode"] = "简洁模式",
         // 播放控制区
@@ -116,6 +117,9 @@ public static class AppLanguage
         ["S_FavoritesTab"] = "收藏",
         ["S_SearchTab"] = "搜索",
         ["S_ProgramTab"] = "节目单",
+        ["S_ProgramDescription"] = "DJ 根据当前收听风格临时编排的下一组候选歌曲",
+        ["S_RefreshProgram"] = "重新编排",
+        ["S_PlayProgramTrack"] = "播放候选歌曲",
         ["S_Import"] = "导入本地文件",
         ["S_Play"] = "播放",
         ["S_Add"] = "加入",
@@ -148,6 +152,7 @@ public static class AppLanguage
         ["S_TtsLabel"] = "AI 回复自动语音播报",
         ["S_Visuals"] = "视觉效果",
         ["S_Starfield"] = "星光背景随音乐呼吸",
+        ["S_SpectrumStyle"] = "频谱样式",
         ["S_TopMostToggle"] = "简洁模式窗口置顶",
         ["S_CharSettings"] = "数字人设置",
         ["S_Voice"] = "音色",
@@ -173,6 +178,7 @@ public static class AppLanguage
         ["S_Prev"] = "Previous",
         ["S_PlayPause"] = "Play/Pause",
         ["S_Next"] = "Next",
+        ["S_Volume"] = "Volume",
         // Title bar
         ["S_CompactMode"] = "Compact mode",
         // Player deck
@@ -191,6 +197,9 @@ public static class AppLanguage
         ["S_FavoritesTab"] = "Favorites",
         ["S_SearchTab"] = "Search",
         ["S_ProgramTab"] = "Program",
+        ["S_ProgramDescription"] = "The next set of tracks curated by the DJ from your current listening style",
+        ["S_RefreshProgram"] = "Refresh program",
+        ["S_PlayProgramTrack"] = "Play this candidate",
         ["S_Import"] = "Import files",
         ["S_Play"] = "Play",
         ["S_Add"] = "Add",
@@ -223,6 +232,7 @@ public static class AppLanguage
         ["S_TtsLabel"] = "Auto speak AI replies",
         ["S_Visuals"] = "Visuals",
         ["S_Starfield"] = "Starfield breathes with the music",
+        ["S_SpectrumStyle"] = "Spectrum style",
         ["S_TopMostToggle"] = "Keep compact player on top",
         ["S_CharSettings"] = "Host settings",
         ["S_Voice"] = "Voice",

@@ -69,8 +69,11 @@
                 </Button>
                 <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF8A8A96}" VerticalAlignment="Center"/>
-                <Slider Width="90" MinWidth="0" Margin="0,0,12,0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
+                <Slider Width="90" MinWidth="0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
                         PointerReleased="OnVolumeSliderReleased"/>
+                <TextBlock Width="34" Text="{Binding PlayerVM.Volume, StringFormat={}{0:P0}}"
+                           FontSize="10" FontFamily="Consolas" TextAlignment="Right"
+                           Foreground="{DynamicResource AccentGreen}" VerticalAlignment="Center"/>
             </StackPanel>
 
             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
@@ -93,6 +96,7 @@
                 <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}" FontSize="11"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"/>
                 <Slider x:Name="ProgressSlider" Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
+                        Foreground="{DynamicResource AccentGreen}"
                         Value="{Binding PlayerVM.CurrentSeconds}"/>
                 <TextBlock Grid.Column="2" Text="{Binding PlayerVM.DurationText}" FontSize="11"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FF9A9AA6}" HorizontalAlignment="Right"/>

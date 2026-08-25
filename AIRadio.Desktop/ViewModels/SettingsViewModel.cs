@@ -67,6 +67,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool TtsEnabled { get; set; } = true;
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool EnableStarfield { get; set; } = true;
+    [Reactive] public string SelectedSpectrumStyle { get; set; } = "bars";
     [Reactive] public bool CompactModeTopmost { get; set; } = true;
     [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
@@ -103,6 +104,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public List<VoiceOption> LlmProviders { get; } = new();
 
     public List<VoiceOption> SpeechMixModes { get; } = new();
+
+    public List<VoiceOption> SpectrumStyles { get; } = new();
 
     public List<VoiceOption> YtdlpBrowsers { get; } = new();
 
@@ -220,6 +223,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             new VoiceOption { Id = "pause", DisplayName = AppLanguage.T("说话时暂停音乐", "Pause music while speaking") },
         });
 
+        SpectrumStyles.Clear();
+        SpectrumStyles.AddRange(new[]
+        {
+            new VoiceOption { Id = "bars", DisplayName = AppLanguage.T("经典柱状", "Classic bars") },
+            new VoiceOption { Id = "mirror", DisplayName = AppLanguage.T("镜像脉冲", "Mirrored pulse") },
+            new VoiceOption { Id = "wave", DisplayName = AppLanguage.T("霓虹波形", "Neon wave") },
+            new VoiceOption { Id = "particles", DisplayName = AppLanguage.T("星点粒子", "Star particles") },
+        });
+
         var browserId = SelectedYtdlpBrowser?.Id;
         _loadingYtdlpBrowser = true;
         try
@@ -320,6 +332,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("enable_starfield", out var starfield))
                     EnableStarfield = starfield.GetBoolean();
+
+                if (root.TryGetProperty("spectrum_style", out var spectrumStyle))
+                    SelectedSpectrumStyle = NormalizeSpectrumStyle(spectrumStyle.GetString());
 
                 if (root.TryGetProperty("compact_mode_topmost", out var compactTopmost))
                     CompactModeTopmost = compactTopmost.GetBoolean();
@@ -702,6 +717,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 tts_enabled = TtsEnabled,
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
+                spectrum_style = NormalizeSpectrumStyle(SelectedSpectrumStyle),
                 compact_mode_topmost = CompactModeTopmost,
                 start_in_compact_mode = StartInCompactMode,
                 speech_mix_mode = SpeechMixMode,
@@ -813,6 +829,14 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         "claude" or "anthropic" => "anthropic",
         "ollama" or "local" => "local",
         _ => "openai"
+    };
+
+    private static string NormalizeSpectrumStyle(string? style) => style?.ToLowerInvariant() switch
+    {
+        "mirror" => "mirror",
+        "wave" => "wave",
+        "particles" => "particles",
+        _ => "bars"
     };
 
     private static bool RequiresApiKey(string provider)
