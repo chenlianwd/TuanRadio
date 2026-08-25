@@ -50,6 +50,8 @@ public class AudioService : IAudioService, IDisposable
     private long _trackStartedAtMs;
     private int _earlyEndRetryCount;
     private int _playbackErrorRetryCount;
+    // 恢复总预算截止时刻（TickCount64）；0 表示当前曲目尚未进入恢复流程
+    private long _recoveryDeadlineMs;
     private int _playRequestId;
     private int _recoveryScheduled;
     private int _disposed;
@@ -77,6 +79,9 @@ public class AudioService : IAudioService, IDisposable
     private const float TtsDuckVolumeRatio = 0.35f;
     private static readonly TimeSpan PlaybackCallbackReleaseDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan UrlRefreshTimeout = TimeSpan.FromSeconds(8);
+    // 0.4：单曲恢复总预算（刷新当前源 + 替代源共享）；到期后明确进入下一首，
+    // 避免"内层每步 8s、多步叠加"突破 12s 的整体恢复门禁
+    private static readonly TimeSpan RecoveryTotalBudget = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan NativeCleanupTimeout = TimeSpan.FromSeconds(2);
     // 推荐链路（LLM+多源搜索）挂起时的硬超时兜底，避免 _nextGate 被长期占用导致电台静默停播
     private static readonly TimeSpan NextCallbackTimeout = TimeSpan.FromSeconds(60);
@@ -435,6 +440,7 @@ public class AudioService : IAudioService, IDisposable
         if (CurrentTrack != null && index >= 0 && _playbackErrorRetryCount == 0)
         {
             _playbackErrorRetryCount++;
+            EnsureRecoveryDeadline();
             SchedulePlaybackRetry(index, requestId, "playback error");
         }
     }
@@ -860,6 +866,8 @@ public class AudioService : IAudioService, IDisposable
         {
             _earlyEndRetryCount = 0;
             _playbackErrorRetryCount = 0;
+            // 新曲目正常开播：清零上一首的恢复预算锚点
+            Volatile.Write(ref _recoveryDeadlineMs, 0);
         }
         Media? newMedia = null;
         var mediaAssigned = false;
@@ -957,6 +965,18 @@ public class AudioService : IAudioService, IDisposable
         if (_currentIndex < 0)
             return true;
 
+        EnsureRecoveryDeadline();
+        if (IsRecoveryBudgetExhausted())
+        {
+            Log.Warning(
+                "Recovery budget exhausted for {Track}; advancing to next track",
+                track.Title);
+            ScheduleNextTrack(
+                Volatile.Read(ref _playRequestId),
+                "recovery budget exhausted");
+            return true;
+        }
+
         var recoveryAction = GetEarlyEndRecoveryAction(_earlyEndRetryCount);
         _earlyEndRetryCount++;
         if (recoveryAction == EarlyEndRecoveryAction.RefreshCurrentSource)
@@ -1005,6 +1025,37 @@ public class AudioService : IAudioService, IDisposable
             1 => EarlyEndRecoveryAction.TryAlternativeSource,
             _ => EarlyEndRecoveryAction.Advance
         };
+
+    /// <summary>首次恢复动作触发时锚定总预算；PlayTrackCore(!isRetry) 重置。</summary>
+    internal void EnsureRecoveryDeadline()
+    {
+        if (Volatile.Read(ref _recoveryDeadlineMs) != 0)
+            return;
+
+        var deadline = Environment.TickCount64 + (long)RecoveryTotalBudget.TotalMilliseconds;
+        Interlocked.CompareExchange(ref _recoveryDeadlineMs, deadline, 0);
+    }
+
+    internal bool IsRecoveryBudgetExhausted()
+    {
+        var deadline = Volatile.Read(ref _recoveryDeadlineMs);
+        return deadline > 0 && deadline - Environment.TickCount64 <= 0;
+    }
+
+    /// <summary>未进入恢复流程（0）时不收紧；恢复流程中按剩余总预算截断单步超时。</summary>
+    internal TimeSpan CapByRecoveryBudget(TimeSpan timeout)
+    {
+        var deadline = Volatile.Read(ref _recoveryDeadlineMs);
+        if (deadline <= 0)
+            return timeout;
+
+        var remaining = deadline - Environment.TickCount64;
+        if (remaining <= 0)
+            return TimeSpan.Zero;
+        return remaining < timeout.TotalMilliseconds
+            ? TimeSpan.FromMilliseconds(remaining)
+            : timeout;
+    }
 
     private bool LooksLikeEarlyEnd(Track track)
     {
@@ -1084,18 +1135,25 @@ public class AudioService : IAudioService, IDisposable
     private async Task<TrackUrlResolution?> ResolveUrlWithTimeoutAsync(Track track)
     {
         using var resolverCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        var timeout = CapByRecoveryBudget(UrlRefreshTimeout);
+        if (timeout <= TimeSpan.Zero)
+        {
+            Log.Warning("Recovery budget exhausted before refreshing URL for {SourceId}", track.SourceId);
+            return null;
+        }
+
         try
         {
             var cancellationToken = _lifetimeCts.Token;
             if (_trackUrlResolver != null)
             {
                 return await _trackUrlResolver(track, resolverCts.Token)
-                    .WaitAsync(UrlRefreshTimeout, cancellationToken)
+                    .WaitAsync(timeout, cancellationToken)
                     .ConfigureAwait(false);
             }
 
             var url = await _urlResolver!(track.SourceId!)
-                .WaitAsync(UrlRefreshTimeout, cancellationToken)
+                .WaitAsync(timeout, cancellationToken)
                 .ConfigureAwait(false);
             return string.IsNullOrWhiteSpace(url)
                 ? null
@@ -1110,7 +1168,7 @@ public class AudioService : IAudioService, IDisposable
             resolverCts.Cancel();
             Log.Warning(
                 "Refreshing play URL timed out after {Seconds}s for {SourceId}",
-                UrlRefreshTimeout.TotalSeconds,
+                timeout.TotalSeconds,
                 track.SourceId);
             return null;
         }
@@ -1123,10 +1181,17 @@ public class AudioService : IAudioService, IDisposable
             return null;
 
         using var resolverCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        var timeout = CapByRecoveryBudget(UrlRefreshTimeout);
+        if (timeout <= TimeSpan.Zero)
+        {
+            Log.Warning("Recovery budget exhausted before resolving alternative URL for {SourceId}", track.SourceId);
+            return null;
+        }
+
         try
         {
             return await resolver(track, resolverCts.Token)
-                .WaitAsync(UrlRefreshTimeout, _lifetimeCts.Token)
+                .WaitAsync(timeout, _lifetimeCts.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (IsDisposed)
@@ -1138,7 +1203,7 @@ public class AudioService : IAudioService, IDisposable
             resolverCts.Cancel();
             Log.Warning(
                 "Resolving alternative play URL timed out after {Seconds}s for {SourceId}",
-                UrlRefreshTimeout.TotalSeconds,
+                timeout.TotalSeconds,
                 track.SourceId);
             return null;
         }

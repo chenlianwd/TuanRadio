@@ -450,4 +450,31 @@ public class AudioServiceTests
             svc.Dispose();
         }
     }
+
+    [Fact]
+    public void RecoveryBudget_AnchorsOnceAndCapsSubsequentSteps()
+    {
+        var svc = new AudioService();
+        try
+        {
+            // 未进入恢复流程：单步超时不受收紧
+            Assert.Equal(TimeSpan.FromSeconds(8), svc.CapByRecoveryBudget(TimeSpan.FromSeconds(8)));
+
+            svc.EnsureRecoveryDeadline();
+            var firstCap = svc.CapByRecoveryBudget(TimeSpan.FromSeconds(60));
+            Assert.True(firstCap > TimeSpan.Zero && firstCap <= TimeSpan.FromSeconds(12),
+                $"cap should stay within total budget, got {firstCap}");
+
+            // 重复锚定不得顺延预算：恢复流程中多次早停/错误共享同一窗口
+            System.Threading.Thread.Sleep(50);
+            svc.EnsureRecoveryDeadline();
+            var secondCap = svc.CapByRecoveryBudget(TimeSpan.FromSeconds(60));
+            Assert.True(secondCap <= firstCap, "re-anchoring must not extend the recovery budget");
+            Assert.False(svc.IsRecoveryBudgetExhausted());
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
 }

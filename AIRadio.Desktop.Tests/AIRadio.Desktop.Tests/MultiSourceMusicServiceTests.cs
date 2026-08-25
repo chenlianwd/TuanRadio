@@ -220,6 +220,54 @@ public class MultiSourceMusicServiceTests
         Assert.Equal("试听或失效片段，已过滤", primary.Note);
     }
 
+    [Fact]
+    public async Task GetAlternativePlayUrlAsync_BoundedByOverallDeadlineWhenSourcesHang()
+    {
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        // 内置快速源立即空结果；3 个挂起源各吃满逐源预算。
+        // 无整体 deadline 时串行累计 15s+；有 8s deadline 时第二个挂起源只能吃剩余预算
+        var service = new MultiSourceMusicService(
+            client,
+            new HangingMusicService(),
+            new HangingMusicService(),
+            new HangingMusicService());
+        var track = new OnlineTrack
+        {
+            Id = "hanging:1",
+            Title = "测试歌曲",
+            Artist = "测试歌手"
+        };
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
+        stopwatch.Stop();
+
+        Assert.Null(url);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+            $"Overall deadline did not bound hanging sources (elapsed {stopwatch.Elapsed})");
+    }
+
+    [Fact]
+    public async Task SearchAsync_OverallDeadlineCutoff_DoesNotSurfaceAsCallerCancellation()
+    {
+        // 各源遵守取消但整体拖延：8s 整体 deadline 到点时 fastPathCts 触发的取消
+        // 必须按"无结果"收口，不得伪装成调用方取消抛出（否则 UI 误报"搜索失败"）
+        using var client = new HttpClient(new DelegateHandler(async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }));
+        var service = new MultiSourceMusicService(client);
+
+        var results = await service.SearchAsync("测试", 5, CancellationToken.None);
+
+        Assert.Empty(results);
+    }
+
     private sealed class FallbackMusicService : IMusicSearchService
     {
         public string Name => "备用音源";
@@ -252,6 +300,21 @@ public class MultiSourceMusicServiceTests
 
         public Task<string?> GetPlayUrlAsync(string trackId)
             => _neverCompletes.Task;
+    }
+
+    /// <summary>搜索请求永不返回且忽略取消令牌：模拟最坏情况的故障源。</summary>
+    private sealed class HangingMusicService : IMusicSearchService
+    {
+        private readonly TaskCompletionSource<List<OnlineTrack>> _neverCompletes = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string Name => "挂起音源";
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => _neverCompletes.Task;
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>(null);
     }
 
     private sealed class DelegateHandler : HttpMessageHandler
