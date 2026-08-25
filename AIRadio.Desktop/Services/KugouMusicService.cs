@@ -44,10 +44,11 @@ public class KugouMusicService : IMusicSearchService
 
         try
         {
-            var url = $"{ProxyBase}/search?keywords={Uri.EscapeDataString(keyword)}" +
-                      $"&pagesize={limit}&cookie={Uri.EscapeDataString(cookie)}";
-            var response = await _httpClient.GetStringAsync(url, cancellationToken);
-            using var doc = JsonDocument.Parse(response);
+            var url = $"{ProxyBase}/search?keywords={Uri.EscapeDataString(keyword)}&pagesize={limit}";
+            var response = await _httpClient.SendAsync(
+                BuildRequest(url, cookie), cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
 
             if (!root.TryGetProperty("status", out var statusEl) ||
@@ -126,9 +127,11 @@ public class KugouMusicService : IMusicSearchService
         {
             // timestamp 破缓存：播放地址可能带时效签名，AudioService 断流重刷时不能拿到 2 分钟内的旧缓存
             var url = $"{ProxyBase}/song/url?hash={Uri.EscapeDataString(hash)}" +
-                      $"&quality=128&cookie={Uri.EscapeDataString(cookie)}&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-            var response = await _httpClient.GetStringAsync(url, cancellationToken);
-            using var doc = JsonDocument.Parse(response);
+                      $"&quality=128&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            var response = await _httpClient.SendAsync(
+                BuildRequest(url, cookie), cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
 
             if (!root.TryGetProperty("status", out var statusEl) ||
@@ -170,6 +173,17 @@ public class KugouMusicService : IMusicSearchService
             Log.Warning(ex, "Kugou get play url failed for {Hash}", hash);
             return null;
         }
+    }
+
+    /// <summary>
+    /// 酷狗登录态不进 URL：代理 server.js 会把 Authorization 头按 cookie 解析合并，
+    /// Cookie 走 header 可避免进入日志、URL 缓存键与诊断输出。
+    /// </summary>
+    private static HttpRequestMessage BuildRequest(string url, string cookie)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("Authorization", cookie);
+        return request;
     }
 
     private static OnlineTrack? ParseTrack(JsonElement item)
