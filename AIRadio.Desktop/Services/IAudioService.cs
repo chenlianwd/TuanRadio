@@ -33,9 +33,16 @@ public interface IAudioService
     void Shuffle();
     void SetRepeatMode(string mode);
     void PlayAtIndex(int index);
+    void PlayTrack(Track track);
+    void StartPlaybackContext(IEnumerable<Track> tracks, int startIndex = 0, bool shuffle = false, string? contextName = null);
+    void PlayNextInQueue(Track track);
+    void AddToQueue(Track track);
+    void ClearPlaybackContext();
 
     bool IsShuffled { get; }
     string RepeatMode { get; }
+    IReadOnlyList<Track> PlaybackQueue { get; }
+    string PlaybackContextName { get; }
 
     void AddTracks(IEnumerable<Track> tracks);
     void RemoveTrack(Track track);

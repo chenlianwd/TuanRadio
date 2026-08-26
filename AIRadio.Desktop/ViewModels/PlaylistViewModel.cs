@@ -21,6 +21,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 {
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
+    private readonly IKugouPlaylistService? _kugouPlaylistService;
     private readonly string _playlistDir;
     private readonly string _playlistFile;
     private readonly Func<string, string, Task> _writeAllTextAsync;
@@ -32,8 +33,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private bool _isPlayingOnline;
     private bool _isLoading;
     private Func<string>? _searchStatusFactory;
+    private Func<string>? _kugouStatusFactory;
     private readonly IDisposable _selectedTrackSub;
+    private readonly IDisposable _selectedKugouPlaylistSub;
+    private readonly IDisposable _kugouFilterSub;
+    private readonly IDisposable _selectedSyncedPlaylistSub;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly SemaphoreSlim _kugouGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
     // 读取到 v1 歌单时置位：首次成功写入 v2 前保留一代旧格式备份，之后清零保证幂等
     private bool _pendingLegacyBackup;
@@ -46,6 +52,11 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<Track> Tracks { get; } = new();
     public ObservableCollection<Track> Favorites { get; } = new();
     public ObservableCollection<OnlineTrack> SearchResults { get; } = new();
+    public ObservableCollection<KugouPlaylistInfo> KugouPlaylists { get; } = new();
+    public ObservableCollection<OnlineTrack> KugouPlaylistTracks { get; } = new();
+    public ObservableCollection<OnlineTrack> FilteredKugouPlaylistTracks { get; } = new();
+    public ObservableCollection<SyncedPlaylistInfo> SyncedPlaylists { get; } = new();
+    public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
 
     [Reactive] public Track? SelectedTrack { get; set; }
     [Reactive] public string SearchText { get; set; } = string.Empty;
@@ -53,7 +64,18 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public bool HasSearchStatus { get; set; }
     [Reactive] public string SearchStatusMessage { get; set; } = string.Empty;
     [Reactive] public string SearchButtonText { get; set; } = AppLanguage.T("搜索", "Search");
-    [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单
+    [Reactive] public KugouPlaylistInfo? SelectedKugouPlaylist { get; set; }
+    [Reactive] public bool IsKugouLoading { get; set; }
+    [Reactive] public bool HasKugouPlaylists { get; set; }
+    [Reactive] public bool HasKugouPlaylistTracks { get; set; }
+    [Reactive] public bool HasKugouStatus { get; set; }
+    [Reactive] public string KugouStatusMessage { get; set; } = string.Empty;
+    [Reactive] public OnlineTrack? SelectedKugouTrack { get; set; }
+    [Reactive] public int KugouImportedCount { get; set; }
+    [Reactive] public string KugouFilterText { get; set; } = string.Empty;
+    [Reactive] public SyncedPlaylistInfo? SelectedSyncedPlaylist { get; set; }
+    [Reactive] public bool HasSyncedPlaylists { get; set; }
+    [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearPlaylistCommand { get; }
@@ -65,15 +87,25 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<OnlineTrack, Unit> AddOnlineCommand { get; }
     public ReactiveCommand<Track, Unit> ToggleFavoriteCommand { get; }
     public ReactiveCommand<Track, Unit> PlayFavoriteCommand { get; }
+    public ReactiveCommand<Unit, Unit> RefreshKugouPlaylistsCommand { get; }
+    public ReactiveCommand<Unit, Unit> ImportKugouPlaylistCommand { get; }
+    public ReactiveCommand<Unit, Unit> PlayKugouPlaylistCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShuffleKugouPlaylistCommand { get; }
+    public ReactiveCommand<OnlineTrack, Unit> PlayKugouTrackCommand { get; }
+    public ReactiveCommand<OnlineTrack, Unit> PlayKugouNextCommand { get; }
+    public ReactiveCommand<OnlineTrack, Unit> AddKugouToQueueCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowAllLibraryTracksCommand { get; }
 
     public PlaylistViewModel(
         IAudioService audioService,
         IMusicSearchService musicSearchService,
         string? playlistFile = null,
-        Func<string, string, Task>? writeAllTextAsync = null)
+        Func<string, string, Task>? writeAllTextAsync = null,
+        IKugouPlaylistService? kugouPlaylistService = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
+        _kugouPlaylistService = kugouPlaylistService;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
         _customWriter = writeAllTextAsync != null;
@@ -87,6 +119,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (Favorites.Contains(track))
                 Favorites.Remove(track);
             _favoriteIds.Remove(track.Id);
+            RemoveTrackFromSyncedPlaylists(track);
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
@@ -97,6 +130,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             // 收藏从属于播放列表：清空后重载时收藏本来就会随之消失，这里同步清理避免幽灵条目和脏持久化
             Favorites.Clear();
             _favoriteIds.Clear();
+            SyncedPlaylists.Clear();
+            SelectedSyncedPlaylist = null;
+            HasSyncedPlaylists = false;
+            ApplyLibraryPlaylistFilter();
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
@@ -116,6 +153,27 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         });
 
         SearchCommand = ReactiveCommand.CreateFromTask(SearchAsync);
+        RefreshKugouPlaylistsCommand = ReactiveCommand.CreateFromTask(
+            () => LoadKugouPlaylistsAsync(force: true));
+        ImportKugouPlaylistCommand = ReactiveCommand.CreateFromTask(ImportSelectedKugouPlaylistAsync);
+        PlayKugouPlaylistCommand = ReactiveCommand.Create(() => StartKugouPlayback(0, shuffle: false));
+        ShuffleKugouPlaylistCommand = ReactiveCommand.Create(() => StartKugouPlayback(0, shuffle: true));
+        PlayKugouTrackCommand = ReactiveCommand.Create<OnlineTrack>(track =>
+        {
+            var index = KugouPlaylistTracks.IndexOf(track);
+            if (index >= 0) StartKugouPlayback(index, shuffle: false);
+        });
+        PlayKugouNextCommand = ReactiveCommand.Create<OnlineTrack>(track =>
+        {
+            _audioService.PlayNextInQueue(track.ToTrack(string.Empty));
+            SetKugouStatus(() => AppLanguage.T($"《{track.Title}》将在下一首播放。", $"\"{track.Title}\" will play next."));
+        });
+        AddKugouToQueueCommand = ReactiveCommand.Create<OnlineTrack>(track =>
+        {
+            _audioService.AddToQueue(track.ToTrack(string.Empty));
+            SetKugouStatus(() => AppLanguage.T($"已将《{track.Title}》加入队列末尾。", $"Added \"{track.Title}\" to the end of the queue."));
+        });
+        ShowAllLibraryTracksCommand = ReactiveCommand.Create(() => { SelectedSyncedPlaylist = null; });
 
         PlayOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(PlayOnlineAsync);
 
@@ -182,21 +240,31 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         PlayFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
-            var index = Tracks.IndexOf(track);
-            if (index >= 0)
-                _audioService.PlayAtIndex(index);
+            if (Tracks.Contains(track))
+                _audioService.PlayTrack(track);
         });
 
         _selectedTrackSub = this.WhenAnyValue(x => x.SelectedTrack)
             .WhereNotNull()
             .Subscribe(track =>
             {
-                var index = Tracks.IndexOf(track);
-                if (index >= 0)
-                {
-                    _audioService.PlayAtIndex(index);
-                }
+                if (Tracks.Contains(track))
+                    _audioService.PlayTrack(track);
             });
+
+        // 选择云端歌单后按需读取曲目；Switch 会取消仍在进行的上一个选择，避免旧响应覆盖新选择。
+        _selectedKugouPlaylistSub = this.WhenAnyValue(x => x.SelectedKugouPlaylist)
+            .WhereNotNull()
+            .Select(playlist => Observable.FromAsync(cancellationToken =>
+                LoadKugouPlaylistTracksAsync(playlist, cancellationToken)))
+            .Switch()
+            .Subscribe(_ => { }, ex => Log.Warning(ex, "Kugou playlist selection stream failed"));
+
+        _kugouFilterSub = this.WhenAnyValue(x => x.KugouFilterText)
+            .Throttle(TimeSpan.FromMilliseconds(120), RxApp.MainThreadScheduler)
+            .Subscribe(_ => ApplyKugouFilter());
+        _selectedSyncedPlaylistSub = this.WhenAnyValue(x => x.SelectedSyncedPlaylist)
+            .Subscribe(_ => ApplyLibraryPlaylistFilter());
 
         // Auto-save when tracks change (skip during initial load)
         Tracks.CollectionChanged += OnTracksChanged;
@@ -210,12 +278,15 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 SearchButtonText = AppLanguage.T("搜索", "Search");
             if (_searchStatusFactory != null)
                 SearchStatusMessage = _searchStatusFactory();
+            if (_kugouStatusFactory != null)
+                KugouStatusMessage = _kugouStatusFactory();
         };
         AppLanguage.Changed += _onLanguageChanged;
     }
 
     private void OnTracksChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
+        ApplyLibraryPlaylistFilter();
         if (Volatile.Read(ref _disposed) == 0 && !_isLoading)
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
@@ -271,6 +342,26 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
             Tracks.Clear();
             Favorites.Clear();
+            SyncedPlaylists.Clear();
+
+            foreach (var playlist in data.SyncedPlaylists ?? new List<SyncedPlaylistData>())
+            {
+                if (string.IsNullOrWhiteSpace(playlist.ProviderId) ||
+                    string.IsNullOrWhiteSpace(playlist.RemoteId))
+                    continue;
+                SyncedPlaylists.Add(new SyncedPlaylistInfo
+                {
+                    Id = playlist.Id,
+                    ProviderId = playlist.ProviderId,
+                    RemoteId = playlist.RemoteId,
+                    Name = playlist.Name,
+                    TrackSourceIds = (playlist.TrackSourceIds ?? new List<string>())
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
+                    LastSyncedAt = playlist.LastSyncedAt
+                });
+            }
 
             foreach (var item in data.Tracks)
             {
@@ -311,6 +402,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 }
             }
 
+            HasSyncedPlaylists = SyncedPlaylists.Count > 0;
+            ApplyLibraryPlaylistFilter();
+
             if (Tracks.Count > 0)
             {
                 _audioService.LoadTracks(Tracks);
@@ -350,8 +444,14 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
     internal async Task SaveAsync()
     {
+        await TrySaveAsync();
+    }
+
+    /// <summary>保存当前播放列表并返回是否真正落盘，供需要向用户反馈结果的操作使用。</summary>
+    private async Task<bool> TrySaveAsync()
+    {
         if (Volatile.Read(ref _disposed) != 0)
-            return;
+            return false;
 
         var gateHeld = false;
         try
@@ -359,7 +459,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             await _saveGate.WaitAsync(_lifetimeCts.Token);
             gateHeld = true;
             if (Volatile.Read(ref _disposed) != 0)
-                return;
+                return false;
 
             // 快照必须在保存 gate 内生成：SemaphoreSlim 不保证 FIFO 唤醒，
             // gate 外生成的快照可能以"旧数据后写"覆盖新一次保存
@@ -367,7 +467,16 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             {
                 Version = PlaylistData.CurrentVersion,
                 Tracks = Tracks.Select(ToPlaylistTrack).ToList(),
-                FavoriteIds = _favoriteIds.ToList()
+                FavoriteIds = _favoriteIds.ToList(),
+                SyncedPlaylists = SyncedPlaylists.Select(playlist => new SyncedPlaylistData
+                {
+                    Id = playlist.Id,
+                    ProviderId = playlist.ProviderId,
+                    RemoteId = playlist.RemoteId,
+                    Name = playlist.Name,
+                    TrackSourceIds = playlist.TrackSourceIds.ToList(),
+                    LastSyncedAt = playlist.LastSyncedAt
+                }).ToList()
             };
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
 
@@ -386,14 +495,17 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             }
 
             Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", data.Tracks.Count, data.FavoriteIds.Count);
+            return true;
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
             // 关闭时取消排队保存，避免 Dispose 后继续写盘。
+            return false;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to save playlist");
+            return false;
         }
         finally
         {
@@ -462,10 +574,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             }
 
             // Check if track already in playlist (stable identity, not the temporary URL)
-            var existingIndex = Tracks.FindIndex(t => MatchesOnlineTrack(t, track));
-            if (existingIndex >= 0)
+            var existing = Tracks.FirstOrDefault(t => MatchesOnlineTrack(t, track));
+            if (existing != null)
             {
-                _audioService.PlayAtIndex(existingIndex);
+                _audioService.PlayTrack(existing);
                 TabIndex = 0;
                 SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
                 return;
@@ -474,8 +586,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             var t = track.ToTrack(url);
             Tracks.Add(t);
             _audioService.AddTracks(new[] { t });
-            var index = Tracks.Count - 1;
-            _audioService.PlayAtIndex(index);
+            _audioService.PlayTrack(t);
             TabIndex = 0;
             await SaveAsync();
             SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
@@ -514,6 +625,317 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         => _musicSearchService is Services.MultiSourceMusicService multi
             ? multi.GetPlayUrlAsync(track, _lifetimeCts.Token)
             : _musicSearchService.GetPlayUrlAsync(track.Id);
+
+    public async Task LoadKugouPlaylistsAsync(bool force = false)
+    {
+        if (_kugouPlaylistService == null)
+        {
+            SetKugouStatus(() => AppLanguage.T(
+                "酷狗歌单服务未启用。",
+                "Kugou playlists are not available."));
+            return;
+        }
+
+        if (!_kugouPlaylistService.IsLoggedIn)
+        {
+            KugouPlaylists.Clear();
+            KugouPlaylistTracks.Clear();
+            FilteredKugouPlaylistTracks.Clear();
+            SelectedKugouPlaylist = null;
+            HasKugouPlaylists = false;
+            HasKugouPlaylistTracks = false;
+            SetKugouStatus(() => AppLanguage.T(
+                "请先在设置的音源账号中登录酷狗。",
+                "Sign in to Kugou under Music accounts in Settings first."));
+            return;
+        }
+
+        if (!force && KugouPlaylists.Count > 0)
+            return;
+
+        var gateHeld = false;
+        try
+        {
+            await _kugouGate.WaitAsync(_lifetimeCts.Token);
+            gateHeld = true;
+            IsKugouLoading = true;
+            SetKugouStatus(() => AppLanguage.T("正在同步酷狗歌单...", "Syncing Kugou playlists..."));
+
+            var playlists = await _kugouPlaylistService.GetUserPlaylistsAsync(_lifetimeCts.Token);
+            SelectedKugouPlaylist = null;
+            KugouPlaylistTracks.Clear();
+            FilteredKugouPlaylistTracks.Clear();
+            KugouPlaylists.Clear();
+            foreach (var playlist in playlists)
+                KugouPlaylists.Add(playlist);
+
+            HasKugouPlaylists = KugouPlaylists.Count > 0;
+            HasKugouPlaylistTracks = false;
+            if (KugouPlaylists.Count == 0)
+            {
+                SetKugouStatus(() => AppLanguage.T(
+                    "该酷狗账号暂时没有可同步的歌单。",
+                    "This Kugou account has no playlists to sync."));
+                return;
+            }
+
+            SetKugouStatus(() => AppLanguage.T(
+                $"已同步 {KugouPlaylists.Count} 个酷狗歌单。",
+                $"Synced {KugouPlaylists.Count} Kugou playlist(s)."));
+            SelectedKugouPlaylist = KugouPlaylists[0];
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load Kugou playlists");
+            SetKugouStatus(() => AppLanguage.T(
+                "同步酷狗歌单失败，请检查登录状态和网络后重试。",
+                "Couldn't sync Kugou playlists. Check the sign-in and network, then retry."));
+        }
+        finally
+        {
+            IsKugouLoading = false;
+            if (gateHeld)
+                _kugouGate.Release();
+        }
+    }
+
+    private async Task LoadKugouPlaylistTracksAsync(
+        KugouPlaylistInfo playlist,
+        CancellationToken selectionCancellationToken)
+    {
+        if (_kugouPlaylistService == null)
+            return;
+
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetimeCts.Token,
+            selectionCancellationToken);
+        var cancellationToken = linkedCts.Token;
+        var gateHeld = false;
+        try
+        {
+            await _kugouGate.WaitAsync(cancellationToken);
+            gateHeld = true;
+            IsKugouLoading = true;
+            KugouPlaylistTracks.Clear();
+            FilteredKugouPlaylistTracks.Clear();
+            HasKugouPlaylistTracks = false;
+            SetKugouStatus(() => AppLanguage.T(
+                $"正在读取《{playlist.Name}》...",
+                $"Loading \"{playlist.Name}\"..."));
+
+            var tracks = await _kugouPlaylistService.GetPlaylistTracksAsync(playlist.Id, cancellationToken);
+            if (!string.Equals(SelectedKugouPlaylist?.Id, playlist.Id, StringComparison.Ordinal))
+                return;
+
+            KugouPlaylistTracks.Clear();
+            foreach (var track in tracks)
+                KugouPlaylistTracks.Add(track);
+            ApplyKugouFilter();
+            RefreshKugouImportedCount();
+            HasKugouPlaylistTracks = KugouPlaylistTracks.Count > 0;
+            var unavailable = Math.Max(0, playlist.TrackCount - KugouPlaylistTracks.Count);
+            SetKugouStatus(() => KugouPlaylistTracks.Count == 0
+                ? AppLanguage.T("这个歌单里没有可导入的歌曲。", "This playlist has no importable tracks.")
+                : AppLanguage.T(
+                    unavailable == 0
+                        ? $"《{playlist.Name}》共读取 {KugouPlaylistTracks.Count} 首，其中 {KugouImportedCount} 首已导入。"
+                        : $"《{playlist.Name}》读取 {KugouPlaylistTracks.Count}/{playlist.TrackCount} 首，{unavailable} 首暂不可用，其中 {KugouImportedCount} 首已导入。",
+                    unavailable == 0
+                        ? $"Loaded {KugouPlaylistTracks.Count} track(s) from \"{playlist.Name}\"; {KugouImportedCount} already imported."
+                        : $"Loaded {KugouPlaylistTracks.Count}/{playlist.TrackCount} from \"{playlist.Name}\"; {unavailable} unavailable, {KugouImportedCount} already imported."));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load Kugou playlist tracks for {PlaylistId}", playlist.Id);
+            SetKugouStatus(() => AppLanguage.T(
+                $"读取《{playlist.Name}》失败，请稍后重试。",
+                $"Couldn't load \"{playlist.Name}\"; try again later."));
+        }
+        finally
+        {
+            IsKugouLoading = false;
+            if (gateHeld)
+                _kugouGate.Release();
+        }
+    }
+
+    private async Task ImportSelectedKugouPlaylistAsync()
+    {
+        var playlist = SelectedKugouPlaylist;
+        if (playlist == null || KugouPlaylistTracks.Count == 0)
+        {
+            SetKugouStatus(() => AppLanguage.T(
+                "请先选择一个包含歌曲的酷狗歌单。",
+                "Choose a Kugou playlist that contains tracks first."));
+            return;
+        }
+
+        var gateHeld = false;
+        try
+        {
+            await _kugouGate.WaitAsync(_lifetimeCts.Token);
+            gateHeld = true;
+            IsKugouLoading = true;
+            var imported = KugouPlaylistTracks
+                .Where(online => !Tracks.Any(track => MatchesOnlineTrack(track, online)))
+                .Select(online => online.ToTrack(string.Empty))
+                .ToList();
+            var skipped = KugouPlaylistTracks.Count - imported.Count;
+
+            if (imported.Count > 0)
+            {
+                // 批量导入只保存一次；在线地址保持为空，首次播放时由现有解析器按 kugou:hash 获取。
+                Tracks.CollectionChanged -= OnTracksChanged;
+                try
+                {
+                    foreach (var track in imported)
+                        Tracks.Add(track);
+                }
+                finally
+                {
+                    Tracks.CollectionChanged += OnTracksChanged;
+                }
+
+                _audioService.AddTracks(imported);
+            }
+
+            UpsertSyncedKugouPlaylist(playlist, KugouPlaylistTracks);
+            ApplyLibraryPlaylistFilter();
+
+            // 即使本轮全部判为重复也要重试落盘：上一轮可能已经加入内存，但写盘失败。
+            var saveSucceeded = await TrySaveAsync();
+            if (!saveSucceeded)
+            {
+                if (_lifetimeCts.IsCancellationRequested)
+                    return;
+
+                SetKugouStatus(() => AppLanguage.T(
+                    $"已导入 {imported.Count} 首到当前会话，但保存失败；请重试导入。",
+                    $"Imported {imported.Count} track(s) for this session, but saving failed; retry the import."));
+                return;
+            }
+
+            RefreshKugouImportedCount();
+
+            SetKugouStatus(() => skipped == 0
+                ? AppLanguage.T(
+                    $"已将《{playlist.Name}》同步为本地歌单，新增 {imported.Count} 首。",
+                    $"Synced \"{playlist.Name}\" as a local playlist; added {imported.Count} track(s).")
+                : AppLanguage.T(
+                    $"已同步本地歌单《{playlist.Name}》：新增 {imported.Count} 首，保留 {skipped} 首已有歌曲。",
+                    $"Synced local playlist \"{playlist.Name}\": added {imported.Count}, kept {skipped} existing track(s)."));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to import Kugou playlist {PlaylistId}", playlist.Id);
+            SetKugouStatus(() => AppLanguage.T(
+                $"导入《{playlist.Name}》失败，请稍后重试。",
+                $"Couldn't import \"{playlist.Name}\"; try again later."));
+        }
+        finally
+        {
+            IsKugouLoading = false;
+            if (gateHeld)
+                _kugouGate.Release();
+        }
+    }
+
+    private void StartKugouPlayback(int startIndex, bool shuffle)
+    {
+        var playlist = SelectedKugouPlaylist;
+        if (playlist == null || KugouPlaylistTracks.Count == 0) return;
+
+        var tracks = KugouPlaylistTracks.Select(track => track.ToTrack(string.Empty)).ToList();
+        _audioService.StartPlaybackContext(tracks, startIndex, shuffle, $"酷狗 · {playlist.Name}");
+        var current = shuffle ? null : KugouPlaylistTracks[Math.Clamp(startIndex, 0, KugouPlaylistTracks.Count - 1)];
+        SetKugouStatus(() => shuffle
+            ? AppLanguage.T($"正在随机播放《{playlist.Name}》。", $"Shuffling \"{playlist.Name}\".")
+            : AppLanguage.T($"正在播放《{current!.Title}》，后续按歌单顺序播放。", $"Playing \"{current!.Title}\" and continuing in playlist order."));
+    }
+
+    private void RefreshKugouImportedCount()
+    {
+        KugouImportedCount = KugouPlaylistTracks.Count(online =>
+            Tracks.Any(track => MatchesOnlineTrack(track, online)));
+    }
+
+    private void UpsertSyncedKugouPlaylist(
+        KugouPlaylistInfo remote,
+        IEnumerable<OnlineTrack> remoteTracks)
+    {
+        var mapping = SyncedPlaylists.FirstOrDefault(item =>
+            string.Equals(item.ProviderId, "kugou", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(item.RemoteId, remote.Id, StringComparison.Ordinal));
+        if (mapping == null)
+        {
+            mapping = new SyncedPlaylistInfo
+            {
+                Id = $"kugou-playlist:{remote.Id}",
+                ProviderId = "kugou",
+                RemoteId = remote.Id
+            };
+            SyncedPlaylists.Add(mapping);
+        }
+
+        mapping.Name = remote.Name;
+        var known = new HashSet<string>(mapping.TrackSourceIds, StringComparer.OrdinalIgnoreCase);
+        foreach (var sourceId in remoteTracks.Select(track => track.Id))
+        {
+            if (known.Add(sourceId))
+                mapping.TrackSourceIds.Add(sourceId);
+        }
+        mapping.LastSyncedAt = DateTimeOffset.UtcNow;
+        mapping.RefreshTrackCount();
+        HasSyncedPlaylists = SyncedPlaylists.Count > 0;
+    }
+
+    private void RemoveTrackFromSyncedPlaylists(Track track)
+    {
+        if (string.IsNullOrWhiteSpace(track.SourceId)) return;
+        foreach (var playlist in SyncedPlaylists)
+        {
+            if (playlist.TrackSourceIds.RemoveAll(id =>
+                    string.Equals(id, track.SourceId, StringComparison.OrdinalIgnoreCase)) > 0)
+                playlist.RefreshTrackCount();
+        }
+    }
+
+    private void ApplyLibraryPlaylistFilter()
+    {
+        var sourceIds = SelectedSyncedPlaylist == null
+            ? null
+            : new HashSet<string>(SelectedSyncedPlaylist.TrackSourceIds, StringComparer.OrdinalIgnoreCase);
+        VisibleLibraryTracks.Clear();
+        foreach (var track in Tracks)
+        {
+            if (sourceIds == null ||
+                (!string.IsNullOrWhiteSpace(track.SourceId) && sourceIds.Contains(track.SourceId)))
+                VisibleLibraryTracks.Add(track);
+        }
+    }
+
+    private void ApplyKugouFilter()
+    {
+        var keyword = KugouFilterText.Trim();
+        FilteredKugouPlaylistTracks.Clear();
+        foreach (var track in KugouPlaylistTracks)
+        {
+            if (keyword.Length == 0 ||
+                track.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                track.Artist.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                track.Album.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                FilteredKugouPlaylistTracks.Add(track);
+        }
+    }
 
     private async Task SearchAsync()
     {
@@ -576,6 +998,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         _searchStatusFactory = messageFactory;
         SearchStatusMessage = messageFactory();
         HasSearchStatus = !string.IsNullOrWhiteSpace(SearchStatusMessage);
+    }
+
+    private void SetKugouStatus(Func<string> messageFactory)
+    {
+        _kugouStatusFactory = messageFactory;
+        KugouStatusMessage = messageFactory();
+        HasKugouStatus = !string.IsNullOrWhiteSpace(KugouStatusMessage);
     }
 
     public void AddExternalTrack(Track track)
@@ -649,6 +1078,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         _lifetimeCts.Cancel();
         _selectedTrackSub.Dispose();
+        _selectedKugouPlaylistSub.Dispose();
+        _kugouFilterSub.Dispose();
+        _selectedSyncedPlaylistSub.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
         AppLanguage.Changed -= _onLanguageChanged;
     }
@@ -676,6 +1108,43 @@ internal class PlaylistData
     public int Version { get; set; }
     public List<PlaylistTrack> Tracks { get; set; } = new();
     public List<string> FavoriteIds { get; set; } = new();
+    public List<SyncedPlaylistData> SyncedPlaylists { get; set; } = new();
+}
+
+public sealed class SyncedPlaylistInfo : System.ComponentModel.INotifyPropertyChanged
+{
+    private string _name = string.Empty;
+    public string Id { get; set; } = string.Empty;
+    public string ProviderId { get; set; } = string.Empty;
+    public string RemoteId { get; set; } = string.Empty;
+    public string Name
+    {
+        get => _name;
+        set
+        {
+            if (value == _name) return;
+            _name = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Name)));
+        }
+    }
+    public List<string> TrackSourceIds { get; set; } = new();
+    public DateTimeOffset LastSyncedAt { get; set; }
+    public int TrackCount => TrackSourceIds.Count;
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    internal void RefreshTrackCount()
+        => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(TrackCount)));
+}
+
+internal sealed class SyncedPlaylistData
+{
+    public string Id { get; set; } = string.Empty;
+    public string ProviderId { get; set; } = string.Empty;
+    public string RemoteId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public List<string> TrackSourceIds { get; set; } = new();
+    public DateTimeOffset LastSyncedAt { get; set; }
 }
 
 internal class PlaylistTrack

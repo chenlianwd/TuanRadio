@@ -26,7 +26,7 @@
                 </Button>
             </Grid>
 
-            <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
+            <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button Width="32" Height="28" Padding="0" Command="{Binding OpenPlaylistCommand}" ToolTip.Tip="{DynamicResource S_PlaylistTab}">
                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M8,6 L21,6 M8,12 L21,12 M8,18 L21,18 M3,6 L3.01,6 M3,12 L3.01,12 M3,18 L3.01,18"/>
@@ -40,6 +40,9 @@
                             <Button Width="32" Height="28" Padding="0" Command="{Binding OpenProgramCommand}" ToolTip.Tip="{DynamicResource S_ProgramTab}">
                                 <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L14,18"/>
                             </Button>
+                            <Button Width="32" Height="28" Padding="0" Command="{Binding OpenKugouPlaylistsCommand}"
+                                    ToolTip.Tip="{DynamicResource S_KugouPlaylistsTab}" FontFamily="Consolas" FontSize="10" FontWeight="700"
+                                    Content="KG"/>
                             <Button Width="32" Height="28" Padding="0" Click="OnImportFiles" ToolTip.Tip="{DynamicResource S_Import}">
                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,3 L12,15 M7,10 L12,15 L17,10 M5,21 L19,21"/>
                     </Button>
@@ -52,14 +55,67 @@
                             IsEnabled="{Binding PlaylistVM.IsSearching, Converter={StaticResource InverseBoolConverter}}"
                             Command="{Binding PlaylistVM.SearchCommand}"/>
                 </Grid>
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8"
+                      IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
+                    <ComboBox ItemsSource="{Binding PlaylistVM.SyncedPlaylists}"
+                              SelectedItem="{Binding PlaylistVM.SelectedSyncedPlaylist, Mode=TwoWay}"
+                              ToolTip.Tip="{DynamicResource S_LocalSyncedPlaylists}"
+                              IsVisible="{Binding PlaylistVM.HasSyncedPlaylists}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate DataType="vm:SyncedPlaylistInfo">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding TrackCount}" Opacity="0.65"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Grid.Column="1" Content="{DynamicResource S_ShowAllTracks}"
+                            IsVisible="{Binding PlaylistVM.HasSyncedPlaylists}"
+                            Command="{Binding PlaylistVM.ShowAllLibraryTracksCommand}"/>
+                </Grid>
+                <TextBox Grid.Row="2" Text="{Binding PlaylistVM.KugouFilterText, Mode=TwoWay}"
+                         Watermark="{DynamicResource S_SearchKugouPlaylist}"
+                         IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}"/>
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="6"
+                      IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}">
+                    <ComboBox ItemsSource="{Binding PlaylistVM.KugouPlaylists}"
+                              SelectedItem="{Binding PlaylistVM.SelectedKugouPlaylist, Mode=TwoWay}"
+                              IsEnabled="{Binding PlaylistVM.IsKugouLoading, Converter={StaticResource InverseBoolConverter}}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate DataType="services:KugouPlaylistInfo">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding TrackCount}" Opacity="0.65"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Grid.Column="1" Width="32" Content="▶" ToolTip.Tip="{DynamicResource S_PlayAll}"
+                            IsEnabled="{Binding PlaylistVM.HasKugouPlaylistTracks}"
+                            Command="{Binding PlaylistVM.PlayKugouPlaylistCommand}"/>
+                    <Button Grid.Column="2" Width="32" Content="⤨" ToolTip.Tip="{DynamicResource S_ShufflePlay}"
+                            IsEnabled="{Binding PlaylistVM.HasKugouPlaylistTracks}"
+                            Command="{Binding PlaylistVM.ShuffleKugouPlaylistCommand}"/>
+                    <Button Grid.Column="3" Content="{DynamicResource S_Refresh}"
+                            IsEnabled="{Binding PlaylistVM.IsKugouLoading, Converter={StaticResource InverseBoolConverter}}"
+                            Command="{Binding PlaylistVM.RefreshKugouPlaylistsCommand}"/>
+                    <Button Grid.Column="4" Content="{DynamicResource S_ImportPlaylist}"
+                            IsEnabled="{Binding PlaylistVM.HasKugouPlaylistTracks}"
+                            Command="{Binding PlaylistVM.ImportKugouPlaylistCommand}"/>
+                </Grid>
                 <TextBlock Grid.Row="2" Text="{Binding PlaylistVM.SearchStatusMessage}"
-                           IsVisible="{Binding PlaylistVM.HasSearchStatus}"
+                           IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}"
+                           Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
+                           FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Grid.Row="3" Text="{Binding PlaylistVM.KugouStatusMessage}"
+                           IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}"
                            Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
                            FontSize="11" TextWrapping="Wrap"/>
             </Grid>
 
             <Grid Grid.Row="2">
-                <ListBox ItemsSource="{Binding PlaylistVM.Tracks}"
+                <ListBox ItemsSource="{Binding PlaylistVM.VisibleLibraryTracks}"
                          SelectedItem="{Binding PlaylistVM.SelectedTrack}"
                          IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
                     <ListBox.ItemTemplate>
@@ -217,6 +273,45 @@
                                     </Border>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+
+                        <Grid IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}">
+                            <ListBox ItemsSource="{Binding PlaylistVM.FilteredKugouPlaylistTracks}"
+                                     SelectedItem="{Binding PlaylistVM.SelectedKugouTrack, Mode=TwoWay}"
+                                     IsVisible="{Binding PlaylistVM.HasKugouPlaylistTracks}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="services:OnlineTrack">
+                                        <Border Background="{DynamicResource C_CC202126}" BorderBrush="{DynamicResource C_253D3D4A}"
+                                                BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="6">
+                                                <Button Grid.Column="0" Width="30" Height="28" Padding="0" Content="▶"
+                                                        ToolTip.Tip="{DynamicResource S_PlayFromHere}"
+                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayKugouTrackCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
+                                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                                               Foreground="{DynamicResource C_FFFFFFFF}" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Artist}" FontSize="11"
+                                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                                               Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding DisplayDuration}"
+                                                           FontSize="10" FontFamily="Consolas"
+                                                           Foreground="{DynamicResource C_FF8E8E9C}" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="3" Width="30" Height="28" Padding="0" Content="+1"
+                                                        ToolTip.Tip="{DynamicResource S_PlayNext}"
+                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayKugouNextCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                                <Button Grid.Column="4" Width="30" Height="28" Padding="0" Content="+"
+                                                        ToolTip.Tip="{DynamicResource S_AddToQueue}"
+                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.AddKugouToQueueCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
                             </ListBox>
                         </Grid>
                     </Grid>

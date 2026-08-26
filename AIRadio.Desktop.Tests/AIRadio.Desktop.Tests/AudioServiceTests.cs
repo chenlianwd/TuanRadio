@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -136,6 +137,106 @@ public class AudioServiceTests
         svc.SetRepeatMode("single");
         Assert.Equal("single", svc.RepeatMode);
         svc.Dispose();
+    }
+
+    [Fact]
+    public void PlaybackContext_PreservesOrderAndSelectedPosition()
+    {
+        using var svc = new AudioService();
+        var tracks = new[]
+        {
+            new Track { SourceId = "kugou:a", Title = "A" },
+            new Track { SourceId = "kugou:b", Title = "B" },
+            new Track { SourceId = "kugou:c", Title = "C" }
+        };
+
+        svc.StartPlaybackContext(tracks, startIndex: 1, contextName: "酷狗 · 通勤");
+        Assert.Equal("酷狗 · 通勤", svc.PlaybackContextName);
+        Assert.Equal(new[] { "A", "B", "C" }, svc.PlaybackQueue.Select(track => track.Title));
+    }
+
+    [Fact]
+    public void DirectLibraryPlayback_ClearsRemotePlaybackContext()
+    {
+        using var svc = new AudioService();
+        var local = new Track { SourceId = "local:a", Title = "Local" };
+        svc.LoadTracks(new[] { local });
+        svc.StartPlaybackContext(new[] { new Track { SourceId = "kugou:a", Title = "Remote" } });
+
+        svc.PlayTrack(local);
+
+        Assert.Empty(svc.PlaybackQueue);
+        Assert.Equal(string.Empty, svc.PlaybackContextName);
+        Assert.DoesNotContain(svc.Playlist, track => track.SourceId == "kugou:a");
+    }
+
+    [Fact]
+    public void PlayNext_CreatesQueueAroundCurrentTrack()
+    {
+        using var svc = new AudioService();
+        var current = new Track { SourceId = "local:a", Title = "Current" };
+        svc.LoadTracks(new[] { current });
+        svc.PlayNextInQueue(new Track { SourceId = "kugou:b", Title = "Next" });
+
+        Assert.Equal(new[] { "Current", "Next" }, svc.PlaybackQueue.Select(track => track.Title));
+    }
+
+    [Fact]
+    public void QueueWithoutCurrentTrack_CanAdvanceToFirstQueuedTrack()
+    {
+        using var svc = new AudioService();
+        svc.AddToQueue(new Track
+        {
+            SourceId = "kugou:first",
+            Title = "First",
+            FilePath = "http://example.com/first.mp3"
+        });
+        var method = typeof(AudioService).GetMethod(
+            "TryAdvancePlaybackContext",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var args = new object[] { false, false };
+
+        var advanced = (bool)method.Invoke(svc, args)!;
+
+        Assert.True(advanced);
+        Assert.True((bool)args[1]);
+        Assert.Equal("First", svc.CurrentTrack?.Title);
+    }
+
+    [Fact]
+    public async Task PendingRadioNext_DoesNotOverrideNewPlaybackContext()
+    {
+        using var svc = new AudioService();
+        svc.LoadTracks(new[]
+        {
+            new Track { SourceId = "local:current", Title = "Current", FilePath = "http://example.com/current.mp3" }
+        });
+        var callbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recommendation = new TaskCompletionSource<Track?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        svc.SetRepeatMode("radio");
+        svc.SetNextCallback(() =>
+        {
+            callbackStarted.TrySetResult();
+            return recommendation.Task;
+        });
+
+        svc.Next();
+        await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        svc.StartPlaybackContext(new[]
+        {
+            new Track { SourceId = "kugou:new", Title = "New context", FilePath = "http://example.com/new.mp3" }
+        }, contextName: "酷狗 · 新歌单");
+        recommendation.TrySetResult(new Track
+        {
+            SourceId = "radio:stale",
+            Title = "Stale recommendation",
+            FilePath = "http://example.com/stale.mp3"
+        });
+
+        await Task.Delay(150);
+
+        Assert.Equal("酷狗 · 新歌单", svc.PlaybackContextName);
+        Assert.Equal("New context", svc.CurrentTrack?.Title);
     }
 
     [Fact]

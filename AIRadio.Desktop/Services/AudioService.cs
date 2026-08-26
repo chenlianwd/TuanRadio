@@ -34,6 +34,13 @@ public class AudioService : IAudioService, IDisposable
     // UI 线程（增删/清空）与后台续播线程（NextAsync 追加）并发访问 _playlist/_currentIndex，
     // 无同步的检查-使用间隙会抛越界异常
     private readonly object _playlistGate = new();
+    private readonly object _contextGate = new();
+    private readonly object _playbackIntentGate = new();
+    private readonly List<Track> _playbackQueue = new();
+    private readonly HashSet<Track> _transientContextTracks = new();
+    private int _playbackQueueIndex = -1;
+    private string _playbackContextName = string.Empty;
+    private long _playbackIntentVersion;
     private int _currentIndex = -1;
     private bool _shuffle;
     private string _repeatMode = "radio";
@@ -92,6 +99,16 @@ public class AudioService : IAudioService, IDisposable
     private readonly System.Threading.Timer _fadeTimer;
     private Func<Task<Track?>>? _nextCallback;
     private EventHandler<StoppedEventArgs>? _ttsPlaybackStoppedHandler;
+
+    public IReadOnlyList<Track> PlaybackQueue
+    {
+        get { lock (_contextGate) return _playbackQueue.ToArray(); }
+    }
+
+    public string PlaybackContextName
+    {
+        get { lock (_contextGate) return _playbackContextName; }
+    }
 
     internal enum EarlyEndRecoveryAction
     {
@@ -467,8 +484,14 @@ public class AudioService : IAudioService, IDisposable
             if (IsDisposed)
                 return;
 
-            if (_repeatMode == "radio")
+            if (_repeatMode == "single" && CurrentTrack != null)
+                PlayTrack(_currentIndex);
+            else if (TryAdvancePlaybackContext(allowWrap: _repeatMode == "list", out var hadContext))
+                return;
+            else if (_repeatMode == "radio")
                 _trackEndedSubject.OnNext(CurrentTrack);
+            else if (_repeatMode == "list" && !hadContext)
+                Next();
             else
                 OnTrackEndReached();
         });
@@ -501,14 +524,7 @@ public class AudioService : IAudioService, IDisposable
         // Notify subscribers (auto-radio handler) BEFORE repeat-mode logic
         _trackEndedSubject.OnNext(CurrentTrack);
 
-        if (_repeatMode == "single" && CurrentTrack != null)
-        {
-            PlayTrack(_currentIndex);
-        }
-        else if (_repeatMode == "list")
-        {
-            Next();
-        }
+        // 单曲循环和列表循环已在 EndReached 回调的播放上下文分支处理。
         // "radio" and "none" mode: emit TrackEnded for handler to manage.
         // Auto-radio handler fires and selects/plays the next track.
         // If no handler is active, player naturally stays at end.
@@ -520,9 +536,11 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         CancelPendingPlayback();
+        ClearPlaybackContext();
         lock (_playlistGate)
         {
             _playlist.Clear();
+            _transientContextTracks.Clear();
             _playlist.AddRange(tracks);
             _currentIndex = _playlist.Count > 0 ? 0 : -1;
         }
@@ -535,6 +553,7 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         CancelPendingPlayback();
+        ClearPlaybackContext();
         var tracks = new List<Track>();
         foreach (var path in filePaths)
         {
@@ -543,6 +562,7 @@ public class AudioService : IAudioService, IDisposable
         lock (_playlistGate)
         {
             _playlist.Clear();
+            _transientContextTracks.Clear();
             _playlist.AddRange(tracks);
             _currentIndex = _playlist.Count > 0 ? 0 : -1;
         }
@@ -557,7 +577,23 @@ public class AudioService : IAudioService, IDisposable
         var shouldNotify = false;
         lock (_playlistGate)
         {
-            _playlist.AddRange(tracks);
+            foreach (var track in tracks)
+            {
+                var transientIndex = _playlist.FindIndex(item =>
+                    _transientContextTracks.Contains(item) && IsSameTrackIdentity(item, track));
+                if (transientIndex >= 0)
+                {
+                    var transient = _playlist[transientIndex];
+                    if (string.IsNullOrWhiteSpace(track.FilePath))
+                        track.FilePath = transient.FilePath;
+                    _playlist[transientIndex] = track;
+                    _transientContextTracks.Remove(transient);
+                }
+                else
+                {
+                    _playlist.Add(track);
+                }
+            }
             if (_currentIndex < 0 && _playlist.Count > 0)
             {
                 _currentIndex = 0;
@@ -581,6 +617,7 @@ public class AudioService : IAudioService, IDisposable
             if (index < 0) return;
 
             _playlist.RemoveAt(index);
+            _transientContextTracks.Remove(track);
             if (index < _currentIndex) _currentIndex--;
             else if (index == _currentIndex)
             {
@@ -602,9 +639,11 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         Stop();
+        ClearPlaybackContext();
         lock (_playlistGate)
         {
             _playlist.Clear();
+            _transientContextTracks.Clear();
             _currentIndex = -1;
         }
         NotifyTrackChanged();
@@ -690,6 +729,15 @@ public class AudioService : IAudioService, IDisposable
 
         try
         {
+            long intentVersion;
+            bool hadContext;
+            lock (_playbackIntentGate)
+            {
+                intentVersion = ++_playbackIntentVersion;
+                if (TryAdvancePlaybackContext(allowWrap: _repeatMode == "list", out hadContext))
+                    return;
+            }
+
             var nextCallback = _nextCallback;
             if (_repeatMode == "radio" && nextCallback != null)
             {
@@ -707,8 +755,7 @@ public class AudioService : IAudioService, IDisposable
                     Serilog.Log.Warning("Radio next callback timed out after {Seconds}s; falling back to playlist rotation", NextCallbackTimeout.TotalSeconds);
                 }
 
-                if (IsDisposed)
-                    return;
+                if (IsDisposed || !IsCurrentPlaybackIntent(intentVersion)) return;
 
                 if (track != null)
                 {
@@ -730,35 +777,33 @@ public class AudioService : IAudioService, IDisposable
                             track = retry;
                     }
 
-                    if (IsDisposed)
-                        return;
-
-                    var index = FindTrackIndex(track);
-                    if (index < 0)
-                        index = AddTracksAndReturnLastIndex(new[] { track });
-                    PlayAtIndex(index);
+                    lock (_playbackIntentGate)
+                    {
+                        if (IsDisposed || intentVersion != _playbackIntentVersion) return;
+                        ClearPlaybackContextCore();
+                        PlayTrackInstance(track, isContextTrack: false);
+                    }
                 }
                 else
                 {
-                    var (count, currentIndex) = SnapshotPlaylist();
-                    if (count > 1 && currentIndex >= 0)
+                    lock (_playbackIntentGate)
                     {
-                        // 推荐服务暂时不可用时，仍保持在线电台连续播放，
-                        // 回退到当前歌单中的下一首，而不是静默停在 Stopped。
-                        var fallbackIndex = (currentIndex + 1) % count;
-                        PlayTrack(fallbackIndex);
+                        if (intentVersion != _playbackIntentVersion) return;
+                        PlayNextCanonicalTrack();
                     }
                 }
                 return;
             }
 
-            var (playlistCount, currentIndexSnapshot) = SnapshotPlaylist();
-            if (playlistCount == 0) return;
+            // 会话队列已经播放到末尾时，关闭/单曲模式不应意外跳进全局资料库。
+            if (hadContext)
+                return;
 
-            var nextIndex = _shuffle
-                ? _rng.Next(playlistCount)
-                : (currentIndexSnapshot + 1) % playlistCount;
-            PlayTrack(nextIndex);
+            lock (_playbackIntentGate)
+            {
+                if (intentVersion != _playbackIntentVersion) return;
+                PlayNextCanonicalTrack();
+            }
         }
         catch (Exception ex)
         {
@@ -775,30 +820,288 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
-        try
+        lock (_playbackIntentGate)
         {
-            var (count, currentIndex) = SnapshotPlaylist();
-            if (count == 0) return;
-
-            if (GetLastKnownPositionMs() > 3000)
+            _playbackIntentVersion++;
+            try
             {
-                Seek(TimeSpan.Zero);
-                return;
-            }
+                var (count, currentIndex) = SnapshotPlaylist();
+                if (count == 0) return;
 
-            var previousIndex = (currentIndex - 1 + count) % count;
-            PlayTrack(previousIndex);
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Previous failed");
+                if (GetLastKnownPositionMs() > 3000)
+                {
+                    Seek(TimeSpan.Zero);
+                    return;
+                }
+
+                if (TryMovePlaybackContext(-1))
+                    return;
+
+                PlayPreviousCanonicalTrack();
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Previous failed");
+            }
         }
     }
 
     public void PlayAtIndex(int index)
     {
-        if (!IsDisposed)
-            PlayTrack(index, isRetry: false);
+        if (IsDisposed) return;
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+            Track? target;
+            lock (_playlistGate)
+                target = index >= 0 && index < _playlist.Count ? _playlist[index] : null;
+            if (target == null) return;
+            ClearPlaybackContextCore();
+            PlayTrackInstance(target, isContextTrack: false);
+        }
+    }
+
+    public void PlayTrack(Track track)
+    {
+        if (IsDisposed || track == null) return;
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+            ClearPlaybackContextCore();
+            PlayTrackInstance(track, isContextTrack: false);
+        }
+    }
+
+    public void StartPlaybackContext(IEnumerable<Track> tracks, int startIndex = 0, bool shuffle = false, string? contextName = null)
+    {
+        if (IsDisposed) return;
+        var items = tracks.Where(track => track != null).ToList();
+        if (items.Count == 0) return;
+
+        startIndex = Math.Clamp(startIndex, 0, items.Count - 1);
+        if (shuffle)
+        {
+            items = items.OrderBy(_ => _rng.Next()).ToList();
+            startIndex = 0;
+        }
+
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+            ClearPlaybackContextCore();
+            lock (_contextGate)
+            {
+                _playbackQueue.AddRange(items);
+                _playbackQueueIndex = startIndex;
+                _playbackContextName = contextName ?? string.Empty;
+            }
+            PlayTrackInstance(items[startIndex], isContextTrack: true);
+        }
+    }
+
+    public void PlayNextInQueue(Track track)
+    {
+        if (IsDisposed || track == null) return;
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+            lock (_contextGate)
+            {
+                if (_playbackQueue.Count == 0)
+                {
+                    var current = CurrentTrack;
+                    if (current != null)
+                    {
+                        _playbackQueue.Add(current);
+                        _playbackQueueIndex = 0;
+                    }
+                }
+                var insertAt = Math.Clamp(_playbackQueueIndex + 1, 0, _playbackQueue.Count);
+                _playbackQueue.Insert(insertAt, track);
+            }
+        }
+    }
+
+    public void AddToQueue(Track track)
+    {
+        if (IsDisposed || track == null) return;
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+            lock (_contextGate)
+            {
+                if (_playbackQueue.Count == 0)
+                {
+                    var current = CurrentTrack;
+                    if (current != null)
+                    {
+                        _playbackQueue.Add(current);
+                        _playbackQueueIndex = 0;
+                    }
+                }
+                _playbackQueue.Add(track);
+            }
+        }
+    }
+
+    public void ClearPlaybackContext()
+    {
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+            ClearPlaybackContextCore();
+        }
+    }
+
+    private void ClearPlaybackContextCore()
+    {
+        lock (_contextGate)
+        {
+            _playbackQueue.Clear();
+            _playbackQueueIndex = -1;
+            _playbackContextName = string.Empty;
+        }
+        RemoveInactiveTransientTracks(keep: CurrentTrack);
+    }
+
+    private bool TryAdvancePlaybackContext(bool allowWrap, out bool hadContext)
+    {
+        Track? next = null;
+        lock (_contextGate)
+        {
+            hadContext = _playbackQueue.Count > 0;
+            if (!hadContext) return false;
+
+            var nextIndex = _playbackQueueIndex + 1;
+            if (nextIndex >= _playbackQueue.Count)
+            {
+                if (!allowWrap)
+                {
+                    _playbackQueue.Clear();
+                    _playbackQueueIndex = -1;
+                    _playbackContextName = string.Empty;
+                    return false;
+                }
+                nextIndex = 0;
+            }
+
+            _playbackQueueIndex = nextIndex;
+            next = _playbackQueue[nextIndex];
+        }
+        PlayTrackInstance(next, isContextTrack: true);
+        return true;
+    }
+
+    private bool TryMovePlaybackContext(int offset)
+    {
+        Track? target = null;
+        lock (_contextGate)
+        {
+            if (_playbackQueue.Count == 0 || _playbackQueueIndex < 0) return false;
+            var index = Math.Clamp(_playbackQueueIndex + offset, 0, _playbackQueue.Count - 1);
+            if (index == _playbackQueueIndex && offset < 0)
+            {
+                target = _playbackQueue[index];
+            }
+            else
+            {
+                _playbackQueueIndex = index;
+                target = _playbackQueue[index];
+            }
+        }
+        PlayTrackInstance(target, isContextTrack: true);
+        return true;
+    }
+
+    private void PlayTrackInstance(Track track, bool isContextTrack)
+    {
+        RemoveInactiveTransientTracks(keep: track);
+        var index = FindTrackIndex(track);
+        if (index < 0)
+        {
+            index = AddTracksAndReturnLastIndex(new[] { track });
+            if (isContextTrack)
+            {
+                lock (_playlistGate)
+                    _transientContextTracks.Add(track);
+            }
+        }
+        PlayTrack(index, isRetry: false);
+    }
+
+    private bool IsCurrentPlaybackIntent(long intentVersion)
+    {
+        lock (_playbackIntentGate)
+            return intentVersion == _playbackIntentVersion;
+    }
+
+    private void PlayNextCanonicalTrack()
+    {
+        Track? target;
+        lock (_playlistGate)
+        {
+            var canonical = _playlist.Where(track => !_transientContextTracks.Contains(track)).ToList();
+            if (canonical.Count == 0) return;
+            var current = CurrentTrackUnsafe();
+            var currentIndex = current == null ? -1 : canonical.FindIndex(track => IsSameTrackIdentity(track, current));
+            var nextIndex = _shuffle
+                ? _rng.Next(canonical.Count)
+                : (currentIndex + 1 + canonical.Count) % canonical.Count;
+            target = canonical[nextIndex];
+        }
+        ClearPlaybackContextCore();
+        PlayTrackInstance(target, isContextTrack: false);
+    }
+
+    private void PlayPreviousCanonicalTrack()
+    {
+        Track? target;
+        lock (_playlistGate)
+        {
+            var canonical = _playlist.Where(track => !_transientContextTracks.Contains(track)).ToList();
+            if (canonical.Count == 0) return;
+            var current = CurrentTrackUnsafe();
+            var currentIndex = current == null ? 0 : canonical.FindIndex(track => IsSameTrackIdentity(track, current));
+            if (currentIndex < 0) currentIndex = 0;
+            target = canonical[(currentIndex - 1 + canonical.Count) % canonical.Count];
+        }
+        ClearPlaybackContextCore();
+        PlayTrackInstance(target, isContextTrack: false);
+    }
+
+    private void RemoveInactiveTransientTracks(Track? keep)
+    {
+        lock (_playlistGate)
+        {
+            for (var index = _playlist.Count - 1; index >= 0; index--)
+            {
+                var item = _playlist[index];
+                if (!_transientContextTracks.Contains(item) || ReferenceEquals(item, keep))
+                    continue;
+
+                _playlist.RemoveAt(index);
+                _transientContextTracks.Remove(item);
+                if (index < _currentIndex)
+                    _currentIndex--;
+                else if (index == _currentIndex)
+                    _currentIndex = -1;
+            }
+        }
+    }
+
+    private Track? CurrentTrackUnsafe()
+        => _currentIndex >= 0 && _currentIndex < _playlist.Count ? _playlist[_currentIndex] : null;
+
+    private static bool IsSameTrackIdentity(Track left, Track right)
+    {
+        if (!string.IsNullOrWhiteSpace(left.SourceId) &&
+            string.Equals(left.SourceId, right.SourceId, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(left.FilePath) &&
+            string.Equals(left.FilePath, right.FilePath, StringComparison.Ordinal))
+            return true;
+        return !string.IsNullOrWhiteSpace(left.Id) &&
+               string.Equals(left.Id, right.Id, StringComparison.Ordinal);
     }
 
     private (int Count, int CurrentIndex) SnapshotPlaylist()
