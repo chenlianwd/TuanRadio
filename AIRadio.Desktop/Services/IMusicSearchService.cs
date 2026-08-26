@@ -34,6 +34,10 @@ public class OnlineTrack
     public string Album { get; set; } = string.Empty;
     public long DurationMs { get; set; }
     public string Source { get; set; } = string.Empty;
+    public string DisplayDuration => DurationMs <= 0
+        ? string.Empty
+        : System.TimeSpan.FromMilliseconds(DurationMs).ToString(
+            DurationMs >= 3_600_000 ? @"h\:mm\:ss" : @"m\:ss");
 
     public Track ToTrack(string playUrl) => new()
     {

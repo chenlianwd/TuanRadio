@@ -93,6 +93,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> OpenFavoritesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenSearchCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenProgramCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenKugouPlaylistsCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshProgramCommand { get; }
     public ReactiveCommand<RecommendedTrack, Unit> PlayProgramTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
@@ -133,7 +134,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SelectedCharacter = Characters[0];
 
         PlayerVM = new PlayerViewModel(_audioService);
-        PlaylistVM = new PlaylistViewModel(_audioService, musicSearchService, playlistFile);
+        var kugouPlaylistService = accountStore != null && httpClient != null
+            ? new KugouPlaylistService(httpClient, accountStore)
+            : null;
+        PlaylistVM = new PlaylistViewModel(
+            _audioService,
+            musicSearchService,
+            playlistFile,
+            kugouPlaylistService: kugouPlaylistService);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient);
@@ -168,6 +176,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             IsLibraryOpen = true;
         });
         OpenProgramCommand = ReactiveCommand.CreateFromTask(OpenProgramAsync);
+        OpenKugouPlaylistsCommand = ReactiveCommand.CreateFromTask(async () =>
+        {
+            PlaylistVM.TabIndex = 4;
+            IsLibraryOpen = true;
+            await PlaylistVM.LoadKugouPlaylistsAsync();
+        });
         RefreshProgramCommand = ReactiveCommand.CreateFromTask(() => LoadProgramAsync(force: true));
         PlayProgramTrackCommand = ReactiveCommand.Create<RecommendedTrack>(PlayProgramTrack);
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
@@ -383,9 +397,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             existing = PlaylistVM.FindMatchingTrack(item.Track) ?? item.Track;
         }
 
-        var index = PlaylistVM.Tracks.FindIndex(track => IsSameTrackIdentity(track, existing));
-        if (index >= 0)
-            _audioService.PlayAtIndex(index);
+        if (PlaylistVM.Tracks.Any(track => IsSameTrackIdentity(track, existing)))
+            _audioService.PlayTrack(existing);
     }
 
     private RecommendationRequest CreateRecommendationRequest(Track? current)
@@ -816,9 +829,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         DjVisualCue?.Invoke(script.Expression, script.Motion);
         await SpeakDjTextAsync(script.Text);
 
-        var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrackIdentity(t, recommended));
-        if (playIndex >= 0 && IsSameTrack(_audioService.CurrentTrack, current))
-            _audioService.PlayAtIndex(playIndex);
+        var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended));
+        if (playable != null && IsSameTrack(_audioService.CurrentTrack, current))
+            _audioService.PlayTrack(playable);
         return true;
     }
 
@@ -849,9 +862,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         await SpeakDjTextAsync(script.Text);
 
         // 串场期间列表可能被增删，旧索引会指向错误曲目，播放前必须重查
-        var playIndex = PlaylistVM.Tracks.FindIndex(t => IsSameTrack(t, next));
-        if (playIndex >= 0 && !IsDisposed && IsSameTrack(_audioService.CurrentTrack, current))
-            _audioService.PlayAtIndex(playIndex);
+        var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrack(t, next));
+        if (playable != null && !IsDisposed && IsSameTrack(_audioService.CurrentTrack, current))
+            _audioService.PlayTrack(playable);
     }
 
     private void AttachRecommendationContext(Track? current)
@@ -960,7 +973,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             var current = _audioService.CurrentTrack;
             AttachRecommendationContext(current);
             var recommended = await GetRecommendedTrackAsync(current);
-            if (!IsDisposed && recommended != null &&
+            if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current))
+                return null;
+
+            if (recommended != null &&
                 !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
             {
                 PlaylistVM.AddExternalTrack(recommended);

@@ -385,7 +385,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public void PlayFavoriteCommand_PlaysTrackAtIndex()
+    public void PlayFavoriteCommand_PlaysMatchingTrack()
     {
         var (vm, audioMock, _) = CreateVm();
         var track1 = new Track { Title = "A", FilePath = "" };
@@ -395,7 +395,7 @@ public class PlaylistViewModelTests
 
         vm.PlayFavoriteCommand.Execute(track1).Subscribe();
 
-        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+        audioMock.Verify(x => x.PlayTrack(track1), Times.Once);
     }
 
     [Fact]
@@ -407,7 +407,7 @@ public class PlaylistViewModelTests
 
         vm.PlayFavoriteCommand.Execute(track).Subscribe();
 
-        audioMock.Verify(x => x.PlayAtIndex(It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
     }
 
     [Fact]
