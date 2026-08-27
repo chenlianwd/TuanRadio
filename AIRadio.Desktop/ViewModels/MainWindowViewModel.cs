@@ -43,6 +43,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly SemaphoreSlim _advanceGate = new(1, 1);
     private readonly SemaphoreSlim _programLoadGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly MusicAccountStore? _accountStore;
+    private readonly KugouVerificationService? _kugouVerification;
 
     public PlayerViewModel PlayerVM { get; }
     public PlaylistViewModel PlaylistVM { get; }
@@ -122,7 +124,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         string settingsFile,
         IRecommendationService? recommendationService = null,
         MusicAccountStore? accountStore = null,
-        System.Net.Http.HttpClient? httpClient = null)
+        System.Net.Http.HttpClient? httpClient = null,
+        KugouVerificationService? kugouVerification = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -130,6 +133,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _llmService = llmService;
         _musicSearchService = musicSearchService;
         _recommendationService = recommendationService ?? new RecommendationService(llmService, musicSearchService);
+        _accountStore = accountStore;
+        _kugouVerification = kugouVerification;
 
         SelectedCharacter = Characters[0];
 
@@ -144,8 +149,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             kugouPlaylistService: kugouPlaylistService);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService);
-        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient);
+        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification);
         SpectrumVM = new SpectrumViewModel(_audioService);
+
+        // 酷狗 20028 风控：命中挑战时自动弹浏览器滑块验证（冷却限频），完成后播放自然恢复
+        if (_kugouVerification != null)
+            _kugouVerification.ChallengeDetected += OnKugouChallengeDetected;
 
         // Set URL resolver for re-fresh of online track URLs (prevents 403 from expired links)
         if (_audioService is Services.AudioService audioSvc)
@@ -1101,12 +1110,41 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// 酷狗 20028 风控挑战回调：冷却与互斥通过后，后台运行验证流程
+    /// （打开浏览器滑块页 + 轮询恢复）。不阻塞当前曲目的跳过/回退逻辑；
+    /// 验证通过后后续曲目自然恢复播放。
+    /// </summary>
+    private void OnKugouChallengeDetected(KugouChallenge challenge)
+    {
+        var verification = _kugouVerification;
+        if (verification == null || !verification.TryBeginAutoTrigger())
+            return;
+
+        var cookie = _accountStore?.KugouCookie;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var outcome = await verification.RunVerificationAsync(cookie, challenge.Hash, _lifetimeCts.Token);
+                Log.Information("Kugou risk-control verification finished: {Outcome} (hash {Hash})",
+                    outcome, challenge.Hash);
+            }
+            finally
+            {
+                verification.EndVerification();
+            }
+        });
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
         _lifetimeCts.Cancel();
+        if (_kugouVerification != null)
+            _kugouVerification.ChallengeDetected -= OnKugouChallengeDetected;
         // AudioService 由 DI 容器持有并在随后统一释放。这里不能在 Avalonia
         // 关闭线程同步 Stop NAudio，否则设备线程异常时会再次把窗口关闭卡住。
         _trackEndedSub?.Dispose();

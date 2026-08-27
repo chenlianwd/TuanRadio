@@ -21,13 +21,16 @@ public class KugouMusicService : IMusicSearchService
     private readonly HttpClient _httpClient;
     private readonly MusicAccountStore? _accounts;
     private readonly KugouAccountService _accountService;
+    private readonly KugouVerificationService? _verification;
 
     public string Name => "酷狗音乐";
 
-    public KugouMusicService(HttpClient httpClient, MusicAccountStore? accounts = null)
+    public KugouMusicService(HttpClient httpClient, MusicAccountStore? accounts = null,
+        KugouVerificationService? verification = null)
     {
         _httpClient = httpClient;
         _accounts = accounts;
+        _verification = verification;
         _accountService = new KugouAccountService(httpClient, ProxyBase);
     }
 
@@ -151,8 +154,25 @@ public class KugouMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             var status = TryGetInt32(root, "status") ?? -1;
-            var errorCode = TryGetInt32(root, "error_code", "code");
+            var errorCode = TryGetInt32(root, "error_code", "errcode", "code");
             var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
+
+            // 20028 风控挑战：代理在上游返回 ssa-code 头时会在响应体附加 ssaCode/sid/edt；
+            // 命中即上报验证服务（触发自动/手动滑块流程），errcode=20028 但无事件 ID 时仅记日志
+            var shape = KugouVerificationService.ClassifyPlayUrlResponse(root, out var challengeEventId, out _);
+            if (shape == KugouVerificationService.KugouPlayUrlShape.Challenge)
+            {
+                if (challengeEventId != null)
+                {
+                    _verification?.RecordChallenge(new KugouChallenge(challengeEventId, hash));
+                }
+                else
+                {
+                    Log.Information(
+                        "Kugou play url suspected risk-control challenge for {Hash}: errcode={Errcode} error={Error}",
+                        hash, errorCode ?? -1, SensitiveDataSanitizer.Sanitize(error) ?? error);
+                }
+            }
 
             if (status != 1 || !response.IsSuccessStatusCode)
             {
@@ -416,7 +436,7 @@ public class KugouMusicService : IMusicSearchService
         return 0;
     }
 
-    private static string? ExtractPlayUrl(JsonElement item)
+    internal static string? ExtractPlayUrl(JsonElement item)
     {
         if (item.ValueKind != JsonValueKind.Object)
             return null;

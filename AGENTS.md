@@ -28,6 +28,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 播放与退出稳定性加固：LibVLC/NAudio 生命周期串行化，多音源硬超时与元数据跨源回退，应用关闭取消推荐/LLM/TTS/STT/搜索，频谱 dB 映射与缓冲区复用。
 - 全量代码审查集中修复：麦克风按钮崩溃、进度条拖动失效、YouTube 源解析、Anthropic 历史裁剪、播放列表跨线程锁、EdgeTTS 无声重连、逐源业务失败透传等高危与中危缺陷。
 - 简洁播放模式：CompactPlayer 两行紧凑卡（播放控制/进度/收藏/迷你频谱），标题栏收缩、拖动/双击/Esc 还原、模式记忆与置顶设置。
+- 酷狗 20028 风控滑块验证：server-kugou 新增会话桥（verify/bridge/*，token 不进 URL）+ verify_auto.html 自动验证页 + WEBGL 指纹进程级稳定化；C# 端 KugouVerificationService 负责挑战检测（四形状分类）、自动弹浏览器验证（10 分钟冷却）与恢复轮询，设置页提供手动「滑块验证」入口。
 
 ## Architecture Notes
 

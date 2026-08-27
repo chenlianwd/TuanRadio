@@ -55,6 +55,8 @@
                     <Button Command="{Binding KugouQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
                             Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
                             Foreground="{DynamicResource C_FF000000}"/>
+                    <Button Command="{Binding KugouVerifyCommand}" Content="{DynamicResource S_KugouVerify}"
+                            Padding="14,6" FontSize="12"/>
                     <Button Command="{Binding KugouLogoutCommand}" Content="{DynamicResource S_Logout}"
                             Padding="14,6" FontSize="12"/>
                 </StackPanel>

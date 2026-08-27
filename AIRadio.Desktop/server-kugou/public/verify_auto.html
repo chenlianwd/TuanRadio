@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <title>酷狗安全验证 / Kugou Verification</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #e0ecff 0%, #f5f0ff 50%, #fce4ec 100%);
+      }
+      .card {
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        border-radius: 20px;
+        padding: 40px 36px;
+        width: 100%;
+        max-width: 420px;
+        box-shadow: 0 8px 32px rgba(100, 120, 180, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 24px;
+      }
+      .header h1 {
+        font-size: 24px;
+        font-weight: 600;
+        color: #1a1a2e;
+      }
+      .header p {
+        font-size: 13px;
+        color: #7c8db5;
+        margin-top: 8px;
+        line-height: 1.6;
+      }
+      .status {
+        padding: 12px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 14px;
+        margin-top: 16px;
+        line-height: 1.6;
+      }
+      .status.info {
+        background: #eef3ff;
+        color: #4a5db0;
+      }
+      .status.ok {
+        background: #f6ffed;
+        color: #389e0d;
+        border: 1px solid #b7eb8f;
+      }
+      .status.err {
+        background: #fff2f0;
+        color: #cf1322;
+        border: 1px solid #ffccc7;
+      }
+      .btn {
+        width: 100%;
+        padding: 13px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        background: linear-gradient(135deg, #6c8cff 0%, #a78bfa 100%);
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-top: 16px;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(108, 140, 255, 0.35);
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+      .sms-group {
+        display: none;
+        margin-top: 16px;
+      }
+      .sms-group input {
+        width: 100%;
+        padding: 13px 15px;
+        font-size: 16px;
+        letter-spacing: 6px;
+        color: #1a1a2e;
+        background: #f7f9fc;
+        border: 1.5px solid #e2e8f0;
+        border-radius: 12px;
+        outline: none;
+        text-align: center;
+      }
+      .sms-group input:focus {
+        border-color: #6c8cff;
+        background: #fff;
+      }
+      .meta {
+        margin-top: 20px;
+        font-size: 11px;
+        color: #a0aec0;
+        text-align: center;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="header">
+        <h1>酷狗安全验证</h1>
+        <p>
+          酷狗要求完成安全验证后才能继续播放<br />
+          Complete the security check to resume playback
+        </p>
+      </div>
+
+      <div class="status info" id="status">
+        正在获取验证信息...<br />Fetching verification info...
+      </div>
+
+      <!-- v_type=32 短信验证码输入（默认隐藏） -->
+      <div class="sms-group" id="smsGroup">
+        <input type="text" id="smsCode" placeholder="6 位验证码 / SMS code" maxlength="6" autocomplete="off" />
+      </div>
+
+      <button class="btn" id="retryBtn" style="display: none">重试 / Retry</button>
+
+      <div class="meta" id="meta"></div>
+    </div>
+
+    <script>
+      /**
+       * ============================================================
+       * 酷狗滑块验证页（应用自动触发，经代理会话桥）
+       * ============================================================
+       * 桌面应用检测到 20028 风控后：
+       * 1. 携完整登录态（Authorization 头）调 /verify/bridge/start 换取一次性 sessionId
+       * 2. 打开本页（URL 仅含 sessionId，登录态不进 URL）
+       * 3. 本页凭 sessionId：
+       *    /verify/bridge/info   → v_type（23 腾讯滑块 / 32 短信 / 38 需重新登录）
+       *    /verify/bridge/submit → 提交滑块 ticket 或短信码（sid/edt 由代理现场生成）
+       */
+
+      var params = new URLSearchParams(window.location.search);
+      var sessionId = params.get('session') || '';
+
+      var statusEl = document.getElementById('status');
+      var retryBtn = document.getElementById('retryBtn');
+      var smsGroup = document.getElementById('smsGroup');
+      var smsCode = document.getElementById('smsCode');
+      var metaEl = document.getElementById('meta');
+
+      var txappid = '';
+      var vType = 0;
+      var verified = false;
+
+      function setStatus(kind, zh, en) {
+        statusEl.className = 'status ' + kind;
+        statusEl.innerHTML = zh + (en ? '<br />' + en : '');
+      }
+
+      function bridgeUrl(path, extra) {
+        var query = extra || '';
+        return path + (query ? '&' : '?') + 'timestamp=' + Date.now();
+      }
+
+      function loadScript(url, cb) {
+        var s = document.createElement('script');
+        s.src = url;
+        s.onload = function () {
+          cb(null);
+        };
+        s.onerror = function () {
+          cb(new Error('load failed: ' + url));
+        };
+        document.head.appendChild(s);
+      }
+
+      /**
+       * 提交验证结果到 /verify/bridge/submit 并展示结果。
+       */
+      function submitVerify(verifycode) {
+        var url = bridgeUrl(
+          '/verify/bridge/submit',
+          'sessionId=' + encodeURIComponent(sessionId) + '&v_type=' + vType +
+            '&verifycode=' + encodeURIComponent(verifycode)
+        );
+        setStatus('info', '正在提交验证...', 'Submitting...');
+        fetch(url, { method: 'GET' })
+          .then(function (r) {
+            return r.json().then(function (body) {
+              return { httpOk: r.ok, body: body || {} };
+            });
+          })
+          .then(function (result) {
+            console.log('verify result:', result);
+            var ok = result.httpOk && result.body.status !== 0;
+            if (ok) {
+              verified = true;
+              retryBtn.style.display = 'none';
+              smsGroup.style.display = 'none';
+              setStatus('ok', '验证成功，可以关闭此页面返回应用。', 'Verified! Close this page and return to the app.');
+              setTimeout(function () {
+                window.close();
+              }, 3000);
+            } else {
+              var reason = result.body.error_msg || result.body.error || result.body.error_code ||
+                ('status=' + result.body.status);
+              setStatus('err', '验证未通过：' + reason, 'Verification failed. Click retry.');
+              retryBtn.style.display = 'block';
+            }
+          })
+          .catch(function (err) {
+            console.error('verify request failed:', err);
+            setStatus('err', '验证请求失败：' + err.message, 'Request failed. Click retry.');
+            retryBtn.style.display = 'block';
+          });
+      }
+
+      /**
+       * v_type=23：加载腾讯滑块并在回调里提交。
+       */
+      function startTxCaptcha() {
+        setStatus('info', '请在弹出的验证框中完成滑块验证。', 'Please complete the slider in the popup.');
+        retryBtn.style.display = 'none';
+        loadScript('https://turing.captcha.qcloud.com/TCaptcha.js', function (err) {
+          if (err || typeof TencentCaptcha === 'undefined') {
+            setStatus('err', '腾讯验证码组件加载失败，请检查网络后重试。', 'Failed to load captcha component.');
+            retryBtn.style.display = 'block';
+            return;
+          }
+          var captcha = new TencentCaptcha(
+            txappid,
+            function (res) {
+              if (res.ret === 0) {
+                var verifycode =
+                  'KGCodeTX|' + JSON.stringify({ ticket: res.ticket, randstr: res.randstr, txappid: txappid });
+                submitVerify(verifycode);
+              } else {
+                setStatus('err', '验证已取消（ret=' + res.ret + '），点击重试。', 'Cancelled. Click retry.');
+                retryBtn.style.display = 'block';
+              }
+            },
+            { type: '', showHeader: false }
+          );
+          captcha.show();
+        });
+      }
+
+      /**
+       * v_type=32：短信验证码输入。
+       */
+      function startSmsCaptcha() {
+        setStatus('info', '请输入酷狗下发的 6 位短信验证码。', 'Enter the 6-digit SMS code from Kugou.');
+        smsGroup.style.display = 'block';
+        retryBtn.textContent = '提交 / Submit';
+        retryBtn.style.display = 'block';
+        smsCode.value = '';
+        smsCode.focus();
+        smsCode.onkeydown = function (e) {
+          if (e.key === 'Enter') submitSms();
+        };
+      }
+
+      function submitSms() {
+        var code = smsCode.value.trim();
+        if (!/^\d{4,8}$/.test(code)) {
+          setStatus('err', '请输入有效的验证码。', 'Invalid code.');
+          return;
+        }
+        submitVerify(code);
+      }
+
+      /**
+       * 第一步：经会话桥获取验证信息并按 v_type 分发。
+       */
+      function fetchVerifyInfo() {
+        setStatus('info', '正在获取验证信息...', 'Fetching verification info...');
+        fetch(bridgeUrl('/verify/bridge/info', 'sessionId=' + encodeURIComponent(sessionId)))
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (data) {
+            console.log('verify info:', data);
+            var info = data && data.data;
+            if (!info) {
+              var reason = (data && (data.error || data.error_msg)) || '会话可能已过期';
+              setStatus('err', '获取验证信息失败：' + reason, 'Failed to get verification info. Re-trigger from the app.');
+              retryBtn.style.display = 'block';
+              return;
+            }
+            txappid = info.txappid || '';
+            vType = info.v_type || 0;
+            metaEl.textContent = 'v_type: ' + vType;
+            if (vType === 23) {
+              startTxCaptcha();
+            } else if (vType === 32) {
+              startSmsCaptcha();
+            } else if (vType === 38) {
+              // 服务端要求登录确认：滑块解决不了，引导回应用重新扫码登录
+              setStatus('err', '酷狗要求重新确认登录身份，请回到应用的设置页重新扫码登录酷狗账号。', 'Kugou asks to re-confirm your identity. Please re-login from the app Settings.');
+            } else {
+              setStatus('err', '未知验证类型：' + vType, 'Unknown verification type: ' + vType);
+              retryBtn.style.display = 'block';
+            }
+          })
+          .catch(function (err) {
+            console.error('verify info failed:', err);
+            setStatus('err', '请求失败：' + err.message, 'Request failed.');
+            retryBtn.style.display = 'block';
+          });
+      }
+
+      retryBtn.addEventListener('click', function () {
+        if (verified) return;
+        if (!sessionId) {
+          setStatus('err', '缺少验证会话，请回到应用重新触发验证。', 'Missing session. Re-trigger from the app.');
+          return;
+        }
+        if (vType === 32) {
+          submitSms();
+        } else if (vType === 23) {
+          retryBtn.textContent = '重试 / Retry';
+          startTxCaptcha();
+        } else {
+          fetchVerifyInfo();
+        }
+      });
+
+      // ========== 启动：校验参数后自动进入验证流程 ==========
+      (function () {
+        if (!sessionId) {
+          setStatus('err', '缺少验证会话，请回到应用重新触发验证。', 'Missing session. Re-trigger from the app.');
+          return;
+        }
+        fetchVerifyInfo();
+      })();
+    </script>
+  </body>
+</html>
