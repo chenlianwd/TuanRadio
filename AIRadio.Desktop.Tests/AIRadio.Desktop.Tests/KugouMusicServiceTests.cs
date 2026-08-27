@@ -75,6 +75,37 @@ public class KugouMusicServiceTests
     }
 
     [Fact]
+    public async Task GetPlayUrlAsync_RepairsLegacyCookieByRegisteringDfid()
+    {
+        var storage = new Mock<ISecureStorage>();
+        storage.Setup(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        var accounts = new MusicAccountStore(storage.Object);
+        await accounts.SetKugouCookieAsync("token=SECRET;userid=42");
+
+        var (client, capture) = CreateClient(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/register/dev" => "{\"status\":1,\"data\":{\"dfid\":\"NEW_DFID\"}}",
+            "/song/url" => "{\"status\":1,\"data\":[{\"url\":\"https://cdn.example/legacy.mp3\"}]}",
+            _ => "{\"status\":1}"
+        });
+        var service = new KugouMusicService(client, accounts);
+
+        var playUrl = await service.GetPlayUrlAsync("kugou:abc");
+
+        Assert.Equal("https://cdn.example/legacy.mp3", playUrl);
+        Assert.Equal(new[] { "/register/dev", "/song/url" },
+            capture.Requests.Select(request => request.RequestUri!.AbsolutePath));
+        Assert.Equal("token=SECRET;userid=42",
+            capture.Requests[0].Headers.GetValues("Authorization").Single());
+        Assert.Equal("token=SECRET;userid=42;dfid=NEW_DFID",
+            capture.Requests[1].Headers.GetValues("Authorization").Single());
+        storage.Verify(x => x.SaveApiKeyAsync(
+            MusicAccountStore.KugouCredentialService,
+            "token=SECRET;userid=42;dfid=NEW_DFID"), Times.Once);
+    }
+
+    [Fact]
     public async Task SearchAsync_NotLoggedIn_ThrowsBusinessException()
     {
         var (client, _) = CreateClient(_ => "{\"status\":1}");
@@ -102,9 +133,16 @@ public class KugouMusicServiceTests
 
     private sealed class RequestCapture
     {
-        public HttpRequestMessage? Last { get; private set; }
+        private readonly List<HttpRequestMessage> _requests = new();
 
-        public void Record(HttpRequestMessage request) => Last = request;
+        public IReadOnlyList<HttpRequestMessage> Requests => _requests;
+        public HttpRequestMessage? Last => _requests.LastOrDefault();
+
+        public void Record(HttpRequestMessage request)
+        {
+            lock (_requests)
+                _requests.Add(request);
+        }
     }
 
     private sealed class DelegateHandler : HttpMessageHandler

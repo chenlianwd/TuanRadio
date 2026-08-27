@@ -16,8 +16,11 @@ namespace AIRadio.Desktop.Services;
 public class KugouMusicService : IMusicSearchService
 {
     private const string ProxyBase = "http://127.0.0.1:37251";
+    private const int MaxTransientRetries = 10;
+    private readonly SemaphoreSlim _dfidGate = new(1, 1);
     private readonly HttpClient _httpClient;
     private readonly MusicAccountStore? _accounts;
+    private readonly KugouAccountService _accountService;
 
     public string Name => "酷狗音乐";
 
@@ -25,6 +28,7 @@ public class KugouMusicService : IMusicSearchService
     {
         _httpClient = httpClient;
         _accounts = accounts;
+        _accountService = new KugouAccountService(httpClient, ProxyBase);
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
@@ -46,26 +50,29 @@ public class KugouMusicService : IMusicSearchService
 
         try
         {
+            cookie = await EnsureDfidCookieAsync(cookie, cancellationToken);
             var url = $"{ProxyBase}/search?keywords={Uri.EscapeDataString(keyword)}&pagesize={limit}";
-            using var request = BuildRequest(url, cookie);
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
+            using var response = await SendWithTransientRetryAsync(
+                () => BuildRequest(url, cookie), cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
+            var status = TryGetInt32(root, "status") ?? -1;
 
-            if (!root.TryGetProperty("status", out var statusEl) ||
-                statusEl.ValueKind != JsonValueKind.Number ||
-                statusEl.GetInt32() != 1)
+            if (status != 1)
             {
-                var errorCode = root.TryGetProperty("error_code", out var errEl) &&
-                                errEl.ValueKind == JsonValueKind.Number
-                    ? errEl.GetInt32()
-                    : -1;
+                var errorCode = TryGetInt32(root, "error_code", "code") ?? -1;
+                var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
+                var safeError = SensitiveDataSanitizer.Sanitize(error) ?? error;
                 throw new MusicSourceBusinessException(AppLanguage.T(
-                    $"酷狗接口业务状态异常(status={statusEl.GetInt32()},error={errorCode})，登录态或本地代理可能失效",
-                    $"Kugou returned an unexpected status (status={statusEl.GetInt32()}, error={errorCode}); the sign-in or local proxy may be invalid"));
+                    $"酷狗接口业务状态异常(status={status},error={errorCode})：{safeError ?? "未知错误"}，登录态或本地代理可能失效",
+                    $"Kugou returned an unexpected status (status={status}, error={errorCode}): {safeError ?? "unknown error"}; the sign-in or local proxy may be invalid"));
             }
+
+            // HTTP 失败即使响应体看起来像成功，也不能当作有效搜索结果；
+            // 让 HttpRequestException 进入现有的“空结果”降级路径。
+            if (!response.IsSuccessStatusCode)
+                response.EnsureSuccessStatusCode();
 
             var tracks = new List<OnlineTrack>();
             if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
@@ -120,9 +127,10 @@ public class KugouMusicService : IMusicSearchService
 
     public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
     {
-        var hash = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
-        var cookie = _accounts?.KugouCookie;
-        if (string.IsNullOrEmpty(cookie))
+        var separator = trackId.IndexOf(':');
+        var hash = separator >= 0 ? trackId[(separator + 1)..] : trackId;
+        var storedCookie = _accounts?.KugouCookie;
+        if (string.IsNullOrEmpty(storedCookie))
         {
             Log.Information("Kugou play url skipped: not logged in ({Hash})", hash);
             return null;
@@ -130,28 +138,40 @@ public class KugouMusicService : IMusicSearchService
 
         try
         {
+            // 旧版本保存的登录态可能没有 dfid。播放前惰性补齐并持久化，
+            // 避免用户必须重新扫码才能恢复历史登录态。
+            var cookie = await EnsureDfidCookieAsync(storedCookie, cancellationToken);
+
             // timestamp 破缓存：播放地址可能带时效签名，AudioService 断流重刷时不能拿到 2 分钟内的旧缓存
             var url = $"{ProxyBase}/song/url?hash={Uri.EscapeDataString(hash)}" +
                       $"&quality=128&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-            using var request = BuildRequest(url, cookie);
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
+            using var response = await SendWithTransientRetryAsync(
+                () => BuildRequest(url, cookie), cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
+            var status = TryGetInt32(root, "status") ?? -1;
+            var errorCode = TryGetInt32(root, "error_code", "code");
+            var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
 
-            if (!root.TryGetProperty("status", out var statusEl) ||
-                statusEl.ValueKind != JsonValueKind.Number ||
-                statusEl.GetInt32() != 1)
+            if (status != 1 || !response.IsSuccessStatusCode)
             {
-                var error = root.TryGetProperty("error", out var errEl) ? errEl.GetString() : null;
-                Log.Information("Kugou play url rejected for {Hash}: status={Status} error={Error}",
-                    hash, statusEl.ValueKind == JsonValueKind.Number ? statusEl.GetInt32() : -1, error);
+                Log.Information(
+                    "Kugou play url rejected for {Hash}: http={HttpStatus} status={Status} errorCode={ErrorCode} error={Error} data={Data}",
+                    hash,
+                    (int)response.StatusCode,
+                    status,
+                    errorCode ?? -1,
+                    SensitiveDataSanitizer.Sanitize(error) ?? error,
+                    DescribeData(root));
                 return null;
             }
 
             if (!root.TryGetProperty("data", out var data))
+            {
+                Log.Information("Kugou play url returned no data for {Hash}", hash);
                 return null;
+            }
 
             // v5/url 成功响应的 data 为数组（或单对象），条目内 url/url_backup 为 CDN 链接
             if (data.ValueKind == JsonValueKind.Array)
@@ -165,9 +185,13 @@ public class KugouMusicService : IMusicSearchService
             }
             else if (data.ValueKind == JsonValueKind.Object)
             {
-                return ExtractPlayUrl(data);
+                var playUrl = ExtractPlayUrl(data);
+                if (playUrl != null)
+                    return playUrl;
             }
 
+            Log.Information("Kugou play url response contains no usable URL for {Hash}: data={Data}",
+                hash, DescribeData(root));
             return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -190,6 +214,126 @@ public class KugouMusicService : IMusicSearchService
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("Authorization", cookie);
         return request;
+    }
+
+    private async Task<string> EnsureDfidCookieAsync(
+        string storedCookie,
+        CancellationToken cancellationToken)
+    {
+        if (HasUsableDfid(storedCookie) || _accounts == null)
+            return storedCookie;
+
+        await _dfidGate.WaitAsync(cancellationToken);
+        try
+        {
+            // 可能已有另一个播放请求完成了补齐。
+            var current = _accounts.KugouCookie ?? storedCookie;
+            if (HasUsableDfid(current))
+                return current;
+
+            var enriched = await _accountService.EnsureDfidCookieAsync(current, cancellationToken);
+            if (string.IsNullOrWhiteSpace(enriched))
+                return current;
+
+            try
+            {
+                await _accounts.SetKugouCookieAsync(enriched);
+            }
+            catch (Exception ex)
+            {
+                // 播放不应因凭据持久化失败而被阻断；本次请求仍使用已补齐的 Cookie。
+                Log.Warning(ex, "Failed to persist refreshed Kugou device credential");
+            }
+
+            return enriched;
+        }
+        finally
+        {
+            _dfidGate.Release();
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendWithTransientRetryAsync(
+        Func<HttpRequestMessage> requestFactory,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                using var request = requestFactory();
+                return await _httpClient.SendAsync(request, cancellationToken);
+            }
+            catch (HttpRequestException ex) when (
+                attempt < MaxTransientRetries &&
+                ex.StatusCode == null)
+            {
+                // 本地 Node 代理启动期间可能暂时拒绝连接；等待后重建请求。
+            }
+
+            await Task.Delay(GetRetryDelay(attempt), cancellationToken);
+        }
+    }
+
+    private static TimeSpan GetRetryDelay(int attempt)
+        => TimeSpan.FromMilliseconds(Math.Min(3000, 500 * (attempt + 1)));
+
+    private static bool HasUsableDfid(string cookie)
+    {
+        var dfid = ExtractCookieValue(cookie, "dfid");
+        return !string.IsNullOrWhiteSpace(dfid) &&
+               !string.Equals(dfid, "-", StringComparison.Ordinal) &&
+               !string.Equals(dfid, "0", StringComparison.Ordinal);
+    }
+
+    private static string? ExtractCookieValue(string cookie, string name)
+    {
+        foreach (var part in cookie.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pair = part.Split('=', 2);
+            if (pair.Length == 2 && pair[0].Trim().Equals(name, StringComparison.OrdinalIgnoreCase))
+                return pair[1].Trim();
+        }
+
+        return null;
+    }
+
+    private static int? TryGetInt32(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var value) &&
+                value.ValueKind == JsonValueKind.Number &&
+                value.TryGetInt32(out var number))
+                return number;
+        }
+
+        return null;
+    }
+
+    private static string? GetFlexibleText(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!element.TryGetProperty(name, out var value))
+                continue;
+
+            if (value.ValueKind == JsonValueKind.String)
+                return value.GetString();
+            if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+                return value.ToString();
+        }
+
+        return null;
+    }
+
+    private static string DescribeData(JsonElement root)
+    {
+        if (!root.TryGetProperty("data", out var data))
+            return "missing";
+        if (data.ValueKind == JsonValueKind.Array)
+            return $"array[{data.GetArrayLength()}]";
+        return data.ValueKind.ToString().ToLowerInvariant();
     }
 
     private static OnlineTrack? ParseTrack(JsonElement item)

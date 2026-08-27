@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Serilog;
 
 namespace AIRadio.Desktop.Services;
 
@@ -26,14 +28,29 @@ public interface IKugouPlaylistService
 }
 
 /// <summary>
+/// 可利用远端歌单声明的歌曲总数优化分页的实现。单纯实现
+/// <see cref="IKugouPlaylistService"/> 的插件仍走原有串行兼容路径。
+/// </summary>
+public interface IKugouPlaylistTrackPageLoader
+{
+    Task<IReadOnlyList<OnlineTrack>> GetPlaylistTracksAsync(
+        string playlistId,
+        int expectedTrackCount,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// 读取已登录账号的酷狗歌单。Cookie 只通过 Authorization 头交给本地代理，
 /// 不进入 URL、普通日志或本地播放列表文件。
 /// </summary>
-public sealed class KugouPlaylistService : IKugouPlaylistService
+public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylistTrackPageLoader
 {
     private const int PlaylistPageSize = 30;
     private const int TrackPageSize = 30;
     private const int MaxPages = 200;
+    private const int TrackPageConcurrency = 4;
+    private const int SequentialPageThreshold = 4;
+    private const int MaxTransientRetries = 10;
     private readonly HttpClient _httpClient;
     private readonly MusicAccountStore _accounts;
     private readonly string _baseUrl;
@@ -101,58 +118,77 @@ public sealed class KugouPlaylistService : IKugouPlaylistService
         string playlistId,
         CancellationToken cancellationToken = default)
     {
+        return await GetPlaylistTracksCoreAsync(playlistId, expectedTrackCount: 0, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OnlineTrack>> GetPlaylistTracksAsync(
+        string playlistId,
+        int expectedTrackCount,
+        CancellationToken cancellationToken = default)
+    {
+        return await GetPlaylistTracksCoreAsync(playlistId, expectedTrackCount, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<OnlineTrack>> GetPlaylistTracksCoreAsync(
+        string playlistId,
+        int expectedTrackCount,
+        CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(playlistId))
             throw new ArgumentException("Playlist id is required.", nameof(playlistId));
 
         var cookie = RequireCookie();
+        var firstRoot = await GetTrackPageAsync(playlistId, 1, cookie, cancellationToken);
+        var firstItems = FindItems(firstRoot, "info", "songs", "files", "list", "records");
+        var pageRoots = new List<(int Page, JsonElement Root)> { (1, firstRoot) };
+
+        // 优先使用接口返回的 total；打开歌单时再用摘要中的 TrackCount 作为兜底。
+        // 首页实际返回条数可以识别上游对 pagesize 的限制（例如 30 被压成 20）。
+        var total = TryGetTotal(firstRoot, out var reportedTotal)
+            ? reportedTotal
+            : Math.Max(0, expectedTrackCount);
+        if (expectedTrackCount > total)
+            total = expectedTrackCount;
+
+        if (firstItems.Count > 0 && total > firstItems.Count)
+        {
+            // 以首页实际条数为准，而不是盲信响应里的 pagesize：上游可能把
+            // 请求的 30 条压成 20 条，按声明值计算会漏掉最后一页。
+            var effectivePageSize = firstItems.Count;
+            if (effectivePageSize <= 0)
+                effectivePageSize = TrackPageSize;
+
+            var pageCount = (int)Math.Min(
+                MaxPages,
+                (total - 1) / effectivePageSize + 1);
+            if (pageCount > 1)
+            {
+                var remaining = await FetchTrackPagesAsync(
+                    playlistId,
+                    cookie,
+                    firstPage: 2,
+                    lastPage: pageCount,
+                    cancellationToken);
+                pageRoots.AddRange(remaining);
+            }
+        }
+        else if (total <= 0 && firstItems.Count >= TrackPageSize)
+        {
+            // 没有 total 且没有摘要提示时保留原来的短页终止规则。
+            for (var page = 2; page <= MaxPages; page++)
+            {
+                var root = await GetTrackPageAsync(playlistId, page, cookie, cancellationToken);
+                var items = FindItems(root, "info", "songs", "files", "list", "records");
+                pageRoots.Add((page, root));
+                if (items.Count == 0 || items.Count < TrackPageSize)
+                    break;
+            }
+        }
+
         var results = new List<OnlineTrack>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        long fetchedItems = 0;
-
-        for (var page = 1; page <= MaxPages; page++)
-        {
-            var root = await GetRootAsync(
-                $"/playlist/track/all/new?listid={Uri.EscapeDataString(playlistId)}" +
-                $"&page={page}&pagesize={TrackPageSize}&timestamp={ClockStamp()}",
-                cookie,
-                cancellationToken);
-            var items = FindItems(root, "info", "songs", "files", "list", "records");
-            fetchedItems += items.Count;
-
-            foreach (var item in items)
-            {
-                var hash = GetNestedFlexibleString(item,
-                    "hash", "FileHash", "filehash", "hash_128", "hash_std");
-                if (string.IsNullOrWhiteSpace(hash) || !seen.Add(hash))
-                    continue;
-
-                var fileName = GetNestedString(item, "filename", "FileName", "file_name");
-                var title = NormalizeTrackTitle(GetNestedString(item,
-                                "songname", "SongName", "OriSongName", "audio_name", "name", "title"))
-                            ?? ParseTitleFromFileName(fileName);
-                if (string.IsNullOrWhiteSpace(title))
-                    continue;
-
-                var durationMs = GetDurationMilliseconds(item);
-                results.Add(new OnlineTrack
-                {
-                    Id = "kugou:" + hash,
-                    Title = title,
-                    Artist = GetNestedString(item,
-                        "singername", "SingerName", "singer_name", "author_name", "artist") ?? string.Empty,
-                    Album = GetNestedString(item,
-                        "album_name", "AlbumName", "albumname", "album") ?? string.Empty,
-                    DurationMs = durationMs,
-                    Source = "酷狗"
-                });
-            }
-
-            var hasTotal = TryGetTotal(root, out var total);
-            if (items.Count == 0 ||
-                (hasTotal && fetchedItems >= total) ||
-                (!hasTotal && items.Count < TrackPageSize))
-                break;
-        }
+        foreach (var (_, root) in pageRoots.OrderBy(item => item.Page))
+            AppendTracks(root, results, seen);
 
         return results;
     }
@@ -167,26 +203,163 @@ public sealed class KugouPlaylistService : IKugouPlaylistService
         string cookie,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, _baseUrl + relativeUrl);
-        request.Headers.TryAddWithoutValidation("Authorization", cookie);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var document = JsonDocument.Parse(body);
-        var root = document.RootElement;
-
-        if (root.TryGetProperty("status", out var status) &&
-            status.ValueKind == JsonValueKind.Number &&
-            status.TryGetInt32(out var statusValue) &&
-            statusValue != 1)
+        for (var attempt = 0; ; attempt++)
         {
-            var error = GetString(root, "error", "message", "msg") ?? statusValue.ToString();
-            throw new MusicSourceBusinessException(AppLanguage.T(
-                $"酷狗歌单接口返回异常：{error}",
-                $"Kugou playlist request failed: {error}"));
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, _baseUrl + relativeUrl);
+                request.Headers.TryAddWithoutValidation("Authorization", cookie);
+                using var response = await _httpClient.SendAsync(request, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                JsonElement root;
+                try
+                {
+                    using var document = JsonDocument.Parse(body);
+                    root = document.RootElement.Clone();
+                }
+                catch (JsonException)
+                {
+                    // 非 JSON 的 5xx 仍按瞬时代理故障重试；最终由 EnsureSuccessStatusCode
+                    // 保留原始 HTTP 错误，便于上层诊断。
+                    response.EnsureSuccessStatusCode();
+                    throw;
+                }
+
+                var statusValue = TryGetInt32(root, "status");
+                if (statusValue.HasValue && statusValue.Value != 1)
+                {
+                    var errorCode = TryGetInt32(root, "error_code", "code");
+                    var error = GetString(root, "error", "error_msg", "message", "msg")
+                                ?? errorCode?.ToString()
+                                ?? statusValue.Value.ToString();
+                    error = SensitiveDataSanitizer.Sanitize(error) ?? error;
+                    throw new MusicSourceBusinessException(AppLanguage.T(
+                        $"酷狗歌单接口返回异常：{error}",
+                        $"Kugou playlist request failed: {error}"));
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (attempt < MaxTransientRetries && IsTransientStatus(response.StatusCode))
+                    {
+                        Log.Debug(
+                            "Kugou playlist request retry {Attempt}/{MaxAttempts} for {Path}: HTTP {Status}",
+                            attempt + 1,
+                            MaxTransientRetries,
+                            relativeUrl.Split('?', 2)[0],
+                            (int)response.StatusCode);
+                        await Task.Delay(GetRetryDelay(attempt), cancellationToken);
+                        continue;
+                    }
+
+                    response.EnsureSuccessStatusCode();
+                }
+
+                return root;
+            }
+            catch (MusicSourceBusinessException)
+            {
+                throw;
+            }
+            catch (HttpRequestException ex) when (
+                attempt < MaxTransientRetries &&
+                (ex.StatusCode == null || IsTransientStatus(ex.StatusCode.Value)))
+            {
+                Log.Debug(
+                    "Kugou playlist request retry {Attempt}/{MaxAttempts} for {Path}: {Message}",
+                    attempt + 1,
+                    MaxTransientRetries,
+                    relativeUrl.Split('?', 2)[0],
+                    ex.Message);
+                await Task.Delay(GetRetryDelay(attempt), cancellationToken);
+            }
+        }
+    }
+
+    private async Task<JsonElement> GetTrackPageAsync(
+        string playlistId,
+        int page,
+        string cookie,
+        CancellationToken cancellationToken)
+        => await GetRootAsync(
+            $"/playlist/track/all/new?listid={Uri.EscapeDataString(playlistId)}" +
+            $"&page={page}&pagesize={TrackPageSize}&timestamp={ClockStamp()}",
+            cookie,
+            cancellationToken);
+
+    private async Task<IReadOnlyList<(int Page, JsonElement Root)>> FetchTrackPagesAsync(
+        string playlistId,
+        string cookie,
+        int firstPage,
+        int lastPage,
+        CancellationToken cancellationToken)
+    {
+        if (lastPage < firstPage)
+            return Array.Empty<(int Page, JsonElement Root)>();
+
+        var pageCount = lastPage - firstPage + 1;
+        if (pageCount <= SequentialPageThreshold)
+        {
+            var sequential = new List<(int Page, JsonElement Root)>(pageCount);
+            for (var page = firstPage; page <= lastPage; page++)
+                sequential.Add((page, await GetTrackPageAsync(playlistId, page, cookie, cancellationToken)));
+            return sequential;
         }
 
-        return root.Clone();
+        using var limiter = new SemaphoreSlim(TrackPageConcurrency, TrackPageConcurrency);
+        var tasks = Enumerable.Range(firstPage, pageCount)
+            .Select(async page =>
+            {
+                await limiter.WaitAsync(cancellationToken);
+                try
+                {
+                    var root = await GetTrackPageAsync(playlistId, page, cookie, cancellationToken);
+                    return (Page: page, Root: root);
+                }
+                finally
+                {
+                    limiter.Release();
+                }
+            })
+            .ToArray();
+
+        var results = await Task.WhenAll(tasks);
+        return results.OrderBy(item => item.Page).ToArray();
+    }
+
+    private static void AppendTracks(
+        JsonElement root,
+        ICollection<OnlineTrack> results,
+        ISet<string> seen)
+    {
+        var items = FindItems(root, "info", "songs", "files", "list", "records");
+        foreach (var item in items)
+        {
+            var hash = GetNestedFlexibleString(item,
+                "hash", "FileHash", "filehash", "hash_128", "hash_std");
+            if (string.IsNullOrWhiteSpace(hash) || !seen.Add(hash))
+                continue;
+
+            var fileName = GetNestedString(item, "filename", "FileName", "file_name");
+            var title = NormalizeTrackTitle(GetNestedString(item,
+                            "songname", "SongName", "OriSongName", "audio_name", "name", "title"))
+                        ?? ParseTitleFromFileName(fileName);
+            if (string.IsNullOrWhiteSpace(title))
+                continue;
+
+            results.Add(new OnlineTrack
+            {
+                Id = "kugou:" + hash,
+                Title = title,
+                Artist = GetNestedString(item,
+                    "singername", "SingerName", "singer_name", "author_name", "artist") ?? string.Empty,
+                Album = GetNestedString(item,
+                    "album_name", "AlbumName", "albumname", "album") ?? string.Empty,
+                DurationMs = GetDurationMilliseconds(item),
+                Source = "酷狗"
+            });
+        }
     }
 
     private static IReadOnlyList<JsonElement> FindItems(JsonElement root, params string[] names)
@@ -232,6 +405,30 @@ public sealed class KugouPlaylistService : IKugouPlaylistService
         total = GetInt64(data, "total", "total_count");
         return total > 0;
     }
+
+    private static int? TryGetInt32(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
+                continue;
+
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+                return number;
+            if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out number))
+                return number;
+        }
+
+        return null;
+    }
+
+    private static bool IsTransientStatus(HttpStatusCode statusCode)
+        => statusCode == HttpStatusCode.RequestTimeout ||
+           statusCode == (HttpStatusCode)429 ||
+           (int)statusCode >= 500;
+
+    private static TimeSpan GetRetryDelay(int attempt)
+        => TimeSpan.FromMilliseconds(Math.Min(3000, 500 * (attempt + 1)));
 
     private static string? GetNestedString(JsonElement item, params string[] names)
     {

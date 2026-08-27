@@ -726,7 +726,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 $"正在读取《{playlist.Name}》...",
                 $"Loading \"{playlist.Name}\"..."));
 
-            var tracks = await _kugouPlaylistService.GetPlaylistTracksAsync(playlist.Id, cancellationToken);
+            var tracks = _kugouPlaylistService is IKugouPlaylistTrackPageLoader pageLoader
+                ? await pageLoader.GetPlaylistTracksAsync(playlist.Id, playlist.TrackCount, cancellationToken)
+                : await _kugouPlaylistService.GetPlaylistTracksAsync(playlist.Id, cancellationToken);
             if (!string.Equals(SelectedKugouPlaylist?.Id, playlist.Id, StringComparison.Ordinal))
                 return;
 

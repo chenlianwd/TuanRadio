@@ -136,25 +136,13 @@ public partial class App : Application
                 }
             }
 
-            if (_musicApiServer != null)
-                await _musicApiServer.StartAsync(cancellationToken);
-
-            // 酷狗代理失败不阻断主流程：未登录时该源本就不可用，报业务异常透传即可
-            if (_kugouApiServer != null)
-            {
-                try
-                {
-                    await _kugouApiServer.StartAsync(cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "Kugou API server startup failed");
-                }
-            }
+            // 两个本地代理彼此独立并行启动：网易健康检查可能因外网响应较慢，
+            // 不应把酷狗歌单请求留在端口尚未监听的窗口中。歌单服务自身仍有
+            // 有限重试，覆盖 Node 进程刚创建但尚未开始监听的极短竞态。
+            var musicServerTask = _musicApiServer?.StartAsync(cancellationToken)
+                                  ?? Task.CompletedTask;
+            var kugouServerTask = StartKugouApiAsync(cancellationToken);
+            await Task.WhenAll(musicServerTask, kugouServerTask);
 
             cancellationToken.ThrowIfCancellationRequested();
             // 会话开场（欢迎语/开播推荐/账号昵称）依赖音源代理就绪，放在代理之后
@@ -184,6 +172,26 @@ public partial class App : Application
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to initialize AI Radio services");
+        }
+    }
+
+    private async Task StartKugouApiAsync(CancellationToken cancellationToken)
+    {
+        if (_kugouApiServer == null)
+            return;
+
+        try
+        {
+            await _kugouApiServer.StartAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // 酷狗代理失败不阻断主流程：未登录时该源本就不可用，歌单 UI 会给出重试提示。
+            Log.Warning(ex, "Kugou API server startup failed");
         }
     }
 
