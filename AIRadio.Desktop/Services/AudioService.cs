@@ -1139,6 +1139,10 @@ public class AudioService : IAudioService, IDisposable
             for (int i = 0; i < _playlist.Count; i++)
             {
                 var item = _playlist[i];
+                // 引用优先：列表存在同一曲目多份时，定位到用户实际点的那一份，
+                // 而不是 SourceId/FilePath 全表首个匹配
+                if (ReferenceEquals(item, track))
+                    return i;
                 if (!string.IsNullOrWhiteSpace(track.SourceId) && item.SourceId == track.SourceId)
                     return i;
                 if (!string.IsNullOrWhiteSpace(track.FilePath) && item.FilePath == track.FilePath)
@@ -1220,7 +1224,9 @@ public class AudioService : IAudioService, IDisposable
                           (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
             {
                 Log.Warning("Invalid or unsupported URL for track {Track}: {Url}", track.Title, filePath);
-                Next();
+                // 不能在持有 _playerOperationGate 时同步 Next()：NextAsync 会取 _playbackIntentGate，
+                // 与播放入口"先 intent 后 playerOp"的顺序构成 AB-BA 死锁。
+                ScheduleNextTrack(requestId, "invalid or unsupported track URL");
                 return;
             }
 
@@ -1260,7 +1266,8 @@ public class AudioService : IAudioService, IDisposable
                 try { newMedia?.Dispose(); } catch { }
             }
             Log.Error(ex, "Failed to play track: {Track}", track);
-            Next();
+            // 同上：锁外延迟派发，避免与播放入口形成反向锁序。
+            ScheduleNextTrack(requestId, "play track failed");
         }
     }
 

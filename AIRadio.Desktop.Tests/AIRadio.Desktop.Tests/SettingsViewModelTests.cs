@@ -58,6 +58,35 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void LanguageChange_ReplacesOptionListInstances()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        try
+        {
+            var oldVoices = vm.Voices;
+            var oldProviders = vm.LlmProviders;
+            try
+            {
+                AppLanguage.Apply("en");
+
+                // 必须整体换新实例：同实例重推会被绑定按相等性去重，下拉项停留旧语言
+                Assert.NotSame(oldVoices, vm.Voices);
+                Assert.NotSame(oldProviders, vm.LlmProviders);
+                Assert.Contains(vm.Voices, v => v.DisplayName == "Soft male");
+                Assert.Contains(vm.LlmProviders, v => v.DisplayName == "OpenAI-compatible");
+            }
+            finally
+            {
+                AppLanguage.Apply("zh");
+            }
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
     public void Languages_ListContainsZhAndEn()
     {
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());

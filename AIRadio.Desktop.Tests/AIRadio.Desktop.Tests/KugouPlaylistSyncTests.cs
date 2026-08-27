@@ -74,7 +74,8 @@ public class KugouPlaylistServiceTests
         Assert.DoesNotContain("SECRET", lastRequest!.RequestUri!.AbsoluteUri);
         Assert.Equal("token=SECRET;userid=42;dfid=DF",
             lastRequest.Headers.GetValues("Authorization").Single());
-        Assert.Equal(2, requestCount);
+        // 无 total 的 1 参重载会多探一页确认是否到底：user/playlist + 曲目页 x2
+        Assert.Equal(3, requestCount);
     }
 
     [Fact]
@@ -107,6 +108,39 @@ public class KugouPlaylistServiceTests
         var tracks = await service.GetPlaylistTracksAsync("99");
 
         Assert.Equal(41, tracks.Count);
+        Assert.Equal(new[] { 1, 2, 3 }, requestedPages);
+    }
+
+    [Fact]
+    public async Task TrackPaging_FallbackWithoutTotal_KeepsFetchingWhenServerCapsPageSize()
+    {
+        var requestedPages = new List<int>();
+        var handler = new DelegateHandler((request, _) =>
+        {
+            var page = GetQueryInt(request.RequestUri!, "page");
+            requestedPages.Add(page);
+            // 无 total、无摘要 TrackCount；上游把请求的 pagesize=30 压成 20，共 45 首
+            var count = page < 3 ? 20 : 5;
+            var offset = (page - 1) * 20;
+            var songs = Enumerable.Range(offset, count).Select(i => new
+            {
+                hash = $"H{i}",
+                songname = $"Song {i}",
+                singername = "Artist",
+                duration = 180
+            });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { status = 1, data = new { songs } }))
+            });
+        });
+        using var client = new HttpClient(handler);
+        var service = new KugouPlaylistService(client, await CreateLoggedInStoreAsync(), "http://localhost");
+
+        var tracks = await service.GetPlaylistTracksAsync("99");
+
+        // 短页判定必须以首页实际条数(20)为基准：按固定 30 判会把首页当成末页，静默截断成 20 首
+        Assert.Equal(45, tracks.Count);
         Assert.Equal(new[] { 1, 2, 3 }, requestedPages);
     }
 

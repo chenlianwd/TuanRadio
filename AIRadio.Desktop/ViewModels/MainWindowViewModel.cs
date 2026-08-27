@@ -420,6 +420,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private void UpdateCurrentProgram(RadioProgram? program)
     {
+        // 服务侧持有的节目单可能停留在旧语言（语言切换只重译了 VM 副本），
+        // 进入 VM 前按当前语言统一重译，避免旧语言节目单经自动续播回灌并触发错误语言的 DJ 开场白
+        if (program != null)
+            RecommendationService.ApplyLocalization(program);
         CurrentRadioProgram = program;
         HasCurrentRadioProgram = program?.Tracks.Any(track => track.IsPlayable) == true;
     }
@@ -430,7 +434,28 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (CurrentRadioProgram != null)
         {
             RecommendationService.ApplyLocalization(CurrentRadioProgram);
-            this.RaisePropertyChanged(nameof(CurrentRadioProgram));
+            // 链式绑定与 ItemsSource 都会对"同实例"短路，就地改字段不会重绘；
+            // 换一份新 RadioProgram/新列表让标题与行容器整体重绑（RecommendedTrack 无 INPC）。
+            CurrentRadioProgram = new RadioProgram
+            {
+                Title = CurrentRadioProgram.Title,
+                Context = CurrentRadioProgram.Context,
+                DjOpening = CurrentRadioProgram.DjOpening,
+                Tracks = CurrentRadioProgram.Tracks
+                    .Select(item => new RecommendedTrack
+                    {
+                        Track = item.Track,
+                        Reason = item.Reason,
+                        Tags = item.Tags.ToList(),
+                        Score = item.Score,
+                        Source = item.Source,
+                        IsPlayable = item.IsPlayable,
+                        PlayUrl = item.PlayUrl
+                    })
+                    .ToList()
+            };
+            foreach (var item in CurrentRadioProgram.Tracks)
+                item.Track.RefreshLocalization();
         }
 
         ProgramStatusText = IsProgramLoading

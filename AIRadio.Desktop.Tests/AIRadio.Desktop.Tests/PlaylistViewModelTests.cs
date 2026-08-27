@@ -91,6 +91,26 @@ public class PlaylistViewModelTests
         }
     }
 
+    [Theory]
+    [InlineData("Unknown")]
+    [InlineData("未知")]
+    [InlineData("Unknown artist")]
+    [InlineData("未知艺术家")]
+    [InlineData("")]
+    public void DisplayArtist_TreatsLegacyPlaceholdersAsLocalized(string stored)
+    {
+        var track = new Track { Id = "placeholder-artist", Title = "T", Artist = stored };
+        try
+        {
+            AppLanguage.Apply("en");
+            Assert.Equal("Unknown artist", track.DisplayArtist);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
     [Fact]
     public void InitialTabIndex_IsZero()
     {
@@ -272,7 +292,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public async Task LoadAsync_V1Migration_BackupFailureDoesNotOverwriteOriginal()
+    public async Task LoadAsync_V1Migration_BackupFailureFallsBackToTimestampedBackup()
     {
         var playlistFile = CreateTempPlaylistFile();
         var v1Json = """
@@ -290,13 +310,51 @@ public class PlaylistViewModelTests
             }
             """;
         await File.WriteAllTextAsync(playlistFile, v1Json);
-        Directory.CreateDirectory(playlistFile + ".v1.bak"); // 让 File.Copy 稳定失败
+        Directory.CreateDirectory(playlistFile + ".v1.bak"); // 让首选备份路径稳定失败
 
         var (vm, _, _) = CreateVm(playlistFile);
         await vm.LoadAsync();
+        vm.Tracks.Add(new Track { Id = "local:new", Title = "新歌", Artist = "歌手", FilePath = @"X:\不存在.mp3" });
         await vm.SaveAsync();
 
-        Assert.Equal(v1Json, await File.ReadAllTextAsync(playlistFile));
+        // 首选 .v1.bak 不可写时回退时间戳备份：保存不再被静默阻断，v1 内容仍被保留
+        var migrated = await File.ReadAllTextAsync(playlistFile);
+        using var doc = JsonDocument.Parse(migrated);
+        Assert.Equal(2, doc.RootElement.GetProperty("Version").GetInt32());
+        var dir = Path.GetDirectoryName(playlistFile)!;
+        var fallback = Directory.GetFiles(dir, "playlist.json.v1.*.bak").Single();
+        Assert.Equal(v1Json, await File.ReadAllTextAsync(fallback));
+    }
+
+    [Fact]
+    public async Task LoadAsync_FutureVersion_RejectsSubsequentSaves()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var futureJson = """
+            {
+              "Version": 99,
+              "FutureField": "must survive",
+              "Tracks": [
+                {
+                  "Id": "future:1",
+                  "Title": "未来歌曲",
+                  "Artist": "未来歌手",
+                  "Provider": { "ProviderId": "future", "TrackId": "1" },
+                  "IsOnline": true
+                }
+              ]
+            }
+            """;
+        await File.WriteAllTextAsync(playlistFile, futureJson);
+
+        var (vm, _, _) = CreateVm(playlistFile);
+        await vm.LoadAsync();
+        // 会话内后续的任何保存（含列表变更触发的自动保存）都必须拒绝回写，
+        // 否则首个列表操作就会用只含新内容的 v2 覆盖未来格式文件
+        vm.Tracks.Add(new Track { Id = "local:new", Title = "新歌", Artist = "歌手", FilePath = @"X:\不存在.mp3" });
+        await vm.SaveAsync();
+
+        Assert.Equal(futureJson, await File.ReadAllTextAsync(playlistFile));
     }
 
     [Fact]

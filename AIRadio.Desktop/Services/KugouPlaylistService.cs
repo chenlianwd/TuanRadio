@@ -172,15 +172,24 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
                 pageRoots.AddRange(remaining);
             }
         }
-        else if (total <= 0 && firstItems.Count >= TrackPageSize)
+        else if (total <= 0 && firstItems.Count > 0)
         {
-            // 没有 total 且没有摘要提示时保留原来的短页终止规则。
+            // 没有 total 且没有摘要提示时用短页终止规则，
+            // 但以首页实际条数为基准：上游可能把 pagesize 压小（如 30→20），
+            // 按固定 30 判定会把首页当成末页或直接漏掉后续页，静默截断歌单。
+            // 上游对越界页重复返回满页（而不是空页/短页）时，按"无新增曲目"终止兜底。
+            var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            CollectTrackHashes(firstRoot, seenHashes);
             for (var page = 2; page <= MaxPages; page++)
             {
                 var root = await GetTrackPageAsync(playlistId, page, cookie, cancellationToken);
                 var items = FindItems(root, "info", "songs", "files", "list", "records");
                 pageRoots.Add((page, root));
-                if (items.Count == 0 || items.Count < TrackPageSize)
+                if (items.Count == 0)
+                    break;
+                var before = seenHashes.Count;
+                CollectTrackHashes(root, seenHashes);
+                if (seenHashes.Count == before || items.Count < firstItems.Count)
                     break;
             }
         }
@@ -359,6 +368,19 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
                 DurationMs = GetDurationMilliseconds(item),
                 Source = "酷狗"
             });
+        }
+    }
+
+    /// <summary>收集一页曲目去重用的 hash 集合，与 AppendTracks 的身份提取保持同一口径。</summary>
+    private static void CollectTrackHashes(JsonElement root, ISet<string> seen)
+    {
+        var items = FindItems(root, "info", "songs", "files", "list", "records");
+        foreach (var item in items)
+        {
+            var hash = GetNestedFlexibleString(item,
+                "hash", "FileHash", "filehash", "hash_128", "hash_std");
+            if (!string.IsNullOrWhiteSpace(hash))
+                seen.Add(hash);
         }
     }
 

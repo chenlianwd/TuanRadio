@@ -46,6 +46,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
     [Reactive] public bool HasFailure { get; set; }
     private bool _isStatusNoticeDismissed;
     private string _failureStatusText = "AI ERROR";
+    // 保留未本地化的原始失败信息，语言切换时按当前语言重译常驻/可召回通知
+    private ApiFailureInfo? _failureInfo;
     private IDisposable? _statusAutoDismissSub;
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
@@ -152,6 +154,13 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             foreach (var message in Messages)
                 message.RefreshLocalization();
+            if (HasFailure && _failureInfo != null)
+            {
+                var localized = ApiFailureLocalization.ForCurrentLanguage(_failureInfo);
+                StatusHeadline = localized.Title;
+                StatusDetail = localized.Detail;
+                StatusRecoveryHint = localized.RecoveryHint;
+            }
             RefreshStatus();
         };
         AppLanguage.Changed += _onLanguageChanged;
@@ -614,6 +623,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private void SetWorkingNotice(string headline, string detail)
     {
         HasFailure = false;
+        _failureInfo = null;
         _isStatusNoticeDismissed = false;
         StatusHeadline = headline;
         StatusDetail = detail;
@@ -624,6 +634,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private void SetFailureNotice(ApiFailureInfo failure)
     {
+        _failureInfo = failure;
         failure = ApiFailureLocalization.ForCurrentLanguage(failure);
         HasFailure = true;
         _isStatusNoticeDismissed = false;
@@ -814,7 +825,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         // 经 pending 机制在 TTS 播完后切歌，与 play: 指令的行为一致
         _pendingRecommendedTrack = recommended;
-        var displayText = AppLanguage.T($"给你推荐《{recommended.Title}》 - {recommended.Artist}。", $"Here's a pick for you: \"{recommended.Title}\" - {recommended.Artist}.");
+        var displayText = AppLanguage.T($"给你推荐《{recommended.Title}》 - {recommended.DisplayArtist}。", $"Here's a pick for you: \"{recommended.Title}\" - {recommended.DisplayArtist}.");
         await RespondWithCommandAsync(displayText, "play_recommended", "happy");
     }
 

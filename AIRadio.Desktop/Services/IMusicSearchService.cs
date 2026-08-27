@@ -34,6 +34,10 @@ public class OnlineTrack
     public string Album { get; set; } = string.Empty;
     public long DurationMs { get; set; }
     public string Source { get; set; } = string.Empty;
+    // 数据层不写语言相关占位值（持久化发生在 Track 侧），展示层统一本地化，避免空白或错误语言
+    public string DisplayArtist => string.IsNullOrWhiteSpace(Artist) || Artist is "未知艺术家" or "Unknown artist" or "未知" or "Unknown"
+        ? AppLanguage.T("未知艺术家", "Unknown artist")
+        : Artist;
     public string DisplayDuration => DurationMs <= 0
         ? string.Empty
         : System.TimeSpan.FromMilliseconds(DurationMs).ToString(

@@ -69,7 +69,7 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     }
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public string DisplayArtist => string.IsNullOrWhiteSpace(Artist) || Artist is "未知艺术家" or "Unknown artist"
+    public string DisplayArtist => string.IsNullOrWhiteSpace(Artist) || Artist is "未知艺术家" or "Unknown artist" or "未知" or "Unknown"
         ? AppLanguage.T("未知艺术家", "Unknown artist")
         : Artist;
 

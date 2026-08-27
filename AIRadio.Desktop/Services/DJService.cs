@@ -115,8 +115,8 @@ Response rules:
             return new DJScript
             {
                 Text = _profile.Language == "en"
-                    ? $"Up next is “{next.Title}” by {next.Artist}. Let's settle into its mood."
-                    : $"接下来为你带来《{next.Title}》 - {next.Artist}，一起听听这段情绪。",
+                    ? $"Up next is “{next.Title}” by {next.DisplayArtist}. Let's settle into its mood."
+                    : $"接下来为你带来《{next.Title}》 - {next.DisplayArtist}，一起听听这段情绪。",
                 Emotion = "happy",
                 Expression = "smile",
                 Motion = "wave"

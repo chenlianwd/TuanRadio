@@ -131,6 +131,44 @@ public class KugouMusicServiceTests
         Assert.Empty(results);
     }
 
+    [Fact]
+    public async Task GetPlayUrlAsync_DfidEnrichmentDoesNotOverwriteConcurrentRelogin()
+    {
+        var storage = new Mock<ISecureStorage>();
+        storage.Setup(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        var accounts = new MusicAccountStore(storage.Object);
+        await accounts.SetKugouCookieAsync("token=SECRET;userid=42");
+
+        var handler = new DelegateHandler(async (request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/register/dev")
+            {
+                // 模拟补齐网络请求期间用户重新扫码登录，store 被写入新登录态
+                await accounts.SetKugouCookieAsync("token=NEWLOGIN;userid=99;dfid=DF2");
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"status\":1,\"data\":{\"dfid\":\"NEW_DFID\"}}")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":1,\"data\":[{\"url\":\"https://cdn.example/a.mp3\"}]}")
+            };
+        });
+        using var client = new HttpClient(handler);
+        var service = new KugouMusicService(client, accounts);
+
+        var playUrl = await service.GetPlayUrlAsync("kugou:abc");
+
+        Assert.Equal("https://cdn.example/a.mp3", playUrl);
+        // 旧 token+dfid 不得覆盖并发写入的新登录态
+        Assert.Equal("token=NEWLOGIN;userid=99;dfid=DF2", accounts.KugouCookie);
+        storage.Verify(x => x.SaveApiKeyAsync(
+            MusicAccountStore.KugouCredentialService,
+            "token=SECRET;userid=42;dfid=NEW_DFID"), Times.Never);
+    }
+
     private sealed class RequestCapture
     {
         private readonly List<HttpRequestMessage> _requests = new();
