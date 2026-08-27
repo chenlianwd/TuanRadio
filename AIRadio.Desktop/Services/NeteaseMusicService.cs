@@ -66,12 +66,14 @@ public class NeteaseMusicService : IMusicSearchService
             {
                 try
                 {
-                    var artistName = AppLanguage.T("未知", "Unknown");
+                    // 占位艺人存空串交给 DisplayArtist 本地化：写死语言值会被持久化，
+                    // 切回另一语言后白名单不认，永远显示错误语言的"Unknown/未知"
+                    var artistName = string.Empty;
                     if (song.TryGetProperty("artists", out var artists) &&
                         artists.GetArrayLength() > 0 &&
                         artists[0].TryGetProperty("name", out var nameEl))
                     {
-                        artistName = nameEl.GetString() ?? AppLanguage.T("未知", "Unknown");
+                        artistName = nameEl.GetString() ?? string.Empty;
                     }
 
                     var albumName = "";

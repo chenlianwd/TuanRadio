@@ -162,6 +162,9 @@ public class MultiSourceMusicService : IMusicSearchService
                 if (slowBudget < MinSourceBudget || searchCts.IsCancellationRequested)
                 {
                     Log.Debug("Slow source {Source} skipped for '{Keyword}': overall search deadline exhausted", slowSource.Name, keyword);
+                    // 逐源状态面板也要能看到慢源因总预算耗尽被跳过，而不是整行消失
+                    AddSearchReport(new SourceSearchStatus(slowSource.Name, "timeout", 0,
+                        AppLanguage.T($"超时({slowBudget.TotalSeconds:0}s)", $"timed out ({slowBudget.TotalSeconds:0}s)")));
                     break;
                 }
 
@@ -178,6 +181,8 @@ public class MultiSourceMusicService : IMusicSearchService
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     Log.Debug("Slow source {Source} cut off by overall deadline for '{Keyword}'", slowSource.Name, keyword);
+                    AddSearchReport(new SourceSearchStatus(slowSource.Name, "timeout", 0,
+                        AppLanguage.T($"超时({slowBudget.TotalSeconds:0}s)", $"timed out ({slowBudget.TotalSeconds:0}s)")));
                     break;
                 }
                 if (slowResults.Count > 0)

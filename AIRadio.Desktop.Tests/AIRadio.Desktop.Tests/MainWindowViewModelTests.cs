@@ -476,4 +476,133 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void LanguageChange_ReplacesProgramInstanceForFullRebind()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => null);
+        var dj = new Mock<IDJService>();
+        var minimax = new Mock<ILLMService>();
+        var storage = new Mock<ISecureStorage>();
+        var search = new Mock<IMusicSearchService>();
+        var stt = new Mock<ISttService>();
+
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            dj.Object,
+            minimax.Object,
+            storage.Object,
+            search.Object,
+            stt.Object,
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile());
+
+        try
+        {
+            vm.CurrentRadioProgram = new RadioProgram
+            {
+                Title = "节目单",
+                Tracks =
+                {
+                    new RecommendedTrack
+                    {
+                        Track = new Track { Id = "p1", Title = "T", Artist = "A" },
+                        IsPlayable = true,
+                        Source = "网易云音乐"
+                    }
+                }
+            };
+            var original = vm.CurrentRadioProgram;
+
+            try
+            {
+                AppLanguage.Apply("en");
+
+                // 链式绑定与 ItemsSource 对同实例短路：必须换新实例(含新行对象)才能整体重绘
+                Assert.NotSame(original, vm.CurrentRadioProgram);
+                Assert.NotSame(original.Tracks[0], vm.CurrentRadioProgram!.Tracks[0]);
+                // 共享的 Track 实例只刷新本地化属性，不复制
+                Assert.Same(original.Tracks[0].Track, vm.CurrentRadioProgram.Tracks[0].Track);
+                Assert.Equal("NetEase Cloud Music", vm.CurrentRadioProgram.Tracks[0].Source);
+            }
+            finally
+            {
+                AppLanguage.Apply("zh");
+            }
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public void UpdateCurrentProgram_RelocalizesStaleProgramBeforeDisplay()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => null);
+        var dj = new Mock<IDJService>();
+        var minimax = new Mock<ILLMService>();
+        var storage = new Mock<ISecureStorage>();
+        var search = new Mock<IMusicSearchService>();
+        var stt = new Mock<ISttService>();
+
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            dj.Object,
+            minimax.Object,
+            storage.Object,
+            search.Object,
+            stt.Object,
+            CreateTempPlaylistFile(),
+            settingsFile: CreateTempSettingsFile());
+
+        try
+        {
+            var program = new RadioProgram
+            {
+                Tracks =
+                {
+                    new RecommendedTrack
+                    {
+                        Track = new Track { Id = "stale", Title = "T", Artist = "A" },
+                        IsPlayable = true
+                    }
+                }
+            };
+            try
+            {
+                // 服务侧节目单停留在英文：模拟语言翻转后未重建的旧节目单
+                AppLanguage.Apply("en");
+                RecommendationService.ApplyLocalization(program);
+                Assert.Equal("Today's Radio", program.Title);
+
+                AppLanguage.Apply("zh");
+
+                // 自动续播把服务侧旧节目单回灌 VM 前必须按当前语言重译
+                var method = typeof(MainWindowViewModel).GetMethod("UpdateCurrentProgram", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.NotNull(method);
+                method!.Invoke(vm, new object?[] { program });
+
+                Assert.Equal("今日电台", vm.CurrentRadioProgram!.Title);
+            }
+            finally
+            {
+                AppLanguage.Apply("zh");
+            }
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

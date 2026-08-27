@@ -43,6 +43,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly HashSet<string> _favoriteIds = new();
     // 读取到 v1 歌单时置位：首次成功写入 v2 前保留一代旧格式备份，之后清零保证幂等
     private bool _pendingLegacyBackup;
+    // 读取到未来版本歌单时置位：拒绝本会话内任何回写，防止未知字段被旧版格式静默删除
+    private bool _futureFormatSkipped;
     private static readonly string DefaultPlaylistDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
 
@@ -298,6 +300,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         _isLoading = true;
         var loadCompleted = false;
+        _futureFormatSkipped = false;
         Tracks.CollectionChanged -= OnTracksChanged;
         try
         {
@@ -315,10 +318,12 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (data.Version > PlaylistData.CurrentVersion)
             {
                 // 未来格式不能由旧版应用降级回写，否则未知字段会被静默删除。
+                // 本会话内随后的任何自动保存也必须拒绝，否则首个列表操作就会覆盖未来格式文件。
                 Log.Warning(
-                    "Playlist version {Version} is newer than supported version {CurrentVersion}; loading skipped without modifying the file",
+                    "Playlist version {Version} is newer than supported version {CurrentVersion}; loading skipped and saves disabled for this session",
                     data.Version,
                     PlaylistData.CurrentVersion);
+                _futureFormatSkipped = true;
                 return;
             }
 
@@ -461,6 +466,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return false;
 
+            // 加载到未来版本歌单的会话：任何回写都会把未知字段静默删掉，必须整会话拒绝保存
+            if (_futureFormatSkipped)
+            {
+                Log.Warning("Playlist save skipped: file uses a newer format than this app supports");
+                return false;
+            }
+
             // 快照必须在保存 gate 内生成：SemaphoreSlim 不保证 FIFO 唤醒，
             // gate 外生成的快照可能以"旧数据后写"覆盖新一次保存
             var data = new PlaylistData
@@ -545,7 +557,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// v1 → v2 首次回写前保留一代旧格式备份（供手动降级旧版本时恢复）。
-    /// 只有备份成功后才清零标记；备份失败必须中止本次 v2 写入，避免失去降级恢复点。
+    /// 只有备份成功后才清零标记；首选路径不可写时回退到带时间戳的备份名，
+    /// 避免 .v1.bak 持续失败导致整个会话的保存被静默阻断。
     /// </summary>
     private void KeepLegacyBackupOrThrow()
     {
@@ -553,7 +566,18 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             return;
 
         if (File.Exists(_playlistFile))
-            File.Copy(_playlistFile, _playlistFile + ".v1.bak", overwrite: true);
+        {
+            try
+            {
+                File.Copy(_playlistFile, _playlistFile + ".v1.bak", overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                var fallbackPath = $"{_playlistFile}.v1.{DateTime.Now:yyyyMMddHHmmss}.bak";
+                File.Copy(_playlistFile, fallbackPath, overwrite: true);
+                Log.Warning(ex, "Primary v1 backup path failed; wrote timestamped backup {Path}", fallbackPath);
+            }
+        }
 
         _pendingLegacyBackup = false;
     }

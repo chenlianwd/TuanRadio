@@ -227,13 +227,23 @@ public class KugouMusicService : IMusicSearchService
         try
         {
             // 可能已有另一个播放请求完成了补齐。
-            var current = _accounts.KugouCookie ?? storedCookie;
+            var baseline = _accounts.KugouCookie;
+            var current = baseline ?? storedCookie;
             if (HasUsableDfid(current))
                 return current;
 
             var enriched = await _accountService.EnsureDfidCookieAsync(current, cancellationToken);
             if (string.IsNullOrWhiteSpace(enriched))
                 return current;
+
+            // 网络补齐期间用户可能重新扫码登录：store 值一旦变化就不再回写旧 token+dfid，
+            // 否则会把刚写入的新登录态整个覆盖掉。
+            var latest = _accounts.KugouCookie;
+            if (!string.Equals(latest, baseline, StringComparison.Ordinal))
+            {
+                Log.Information("Kugou credential changed during dfid enrichment; keeping the newer stored value");
+                return latest ?? current;
+            }
 
             try
             {

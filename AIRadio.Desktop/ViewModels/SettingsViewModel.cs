@@ -94,8 +94,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public VoiceOption? CharacterVoice { get; set; }
     [Reactive] public string CharacterPersonality { get; set; } = string.Empty;
 
-    // 依赖语言的选项列表：构造与语言切换时由 RebuildLocalizedOptionLists 就地填充
-    public List<VoiceOption> Voices { get; } = new();
+    // 依赖语言的选项列表：语言切换时整体换新实例。
+    // 不能就地 Clear+AddRange：绑定重读到同一 List 实例会被 Avalonia 按相等性去重，
+    // ItemsSource 不会重新赋值，下拉项将停留旧语言。
+    [Reactive] public List<VoiceOption> Voices { get; set; } = new();
 
     // 语言名按 i18n 惯例保留母语写法，不随界面语言重建
     public List<VoiceOption> Languages { get; } = new()
@@ -104,13 +106,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         new() { Id = "en", DisplayName = "English" },
     };
 
-    public List<VoiceOption> LlmProviders { get; } = new();
+    [Reactive] public List<VoiceOption> LlmProviders { get; set; } = new();
 
-    public List<VoiceOption> SpeechMixModes { get; } = new();
+    [Reactive] public List<VoiceOption> SpeechMixModes { get; set; } = new();
 
-    public List<VoiceOption> SpectrumStyles { get; } = new();
+    [Reactive] public List<VoiceOption> SpectrumStyles { get; set; } = new();
 
-    public List<VoiceOption> YtdlpBrowsers { get; } = new();
+    [Reactive] public List<VoiceOption> YtdlpBrowsers { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -207,76 +209,64 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         SelectedCharacter = Characters[0];
     }
 
-    /// <summary>就地重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
+    /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
     private void RebuildLocalizedOptionLists()
     {
         var voiceId = CharacterVoice?.Id;
-        Voices.Clear();
-        Voices.AddRange(new[]
+        Voices = new List<VoiceOption>
         {
-            new VoiceOption { Id = "male-qn-qingse", DisplayName = AppLanguage.T("青涩男声", "Soft male") },
-            new VoiceOption { Id = "male-qn-jingying", DisplayName = AppLanguage.T("精英男声", "Elite male") },
-            new VoiceOption { Id = "male-qn-badao", DisplayName = AppLanguage.T("霸道男声", "Bold male") },
-            new VoiceOption { Id = "female-shaonv", DisplayName = AppLanguage.T("少女音", "Girl voice") },
-            new VoiceOption { Id = "female-yujie", DisplayName = AppLanguage.T("御姐音", "Mature female") },
-            new VoiceOption { Id = "female-chengshu", DisplayName = AppLanguage.T("成熟女声", "Grown female") },
-        });
+            new() { Id = "male-qn-qingse", DisplayName = AppLanguage.T("青涩男声", "Soft male") },
+            new() { Id = "male-qn-jingying", DisplayName = AppLanguage.T("精英男声", "Elite male") },
+            new() { Id = "male-qn-badao", DisplayName = AppLanguage.T("霸道男声", "Bold male") },
+            new() { Id = "female-shaonv", DisplayName = AppLanguage.T("少女音", "Girl voice") },
+            new() { Id = "female-yujie", DisplayName = AppLanguage.T("御姐音", "Mature female") },
+            new() { Id = "female-chengshu", DisplayName = AppLanguage.T("成熟女声", "Grown female") },
+        };
         if (voiceId != null)
             CharacterVoice = Voices.FirstOrDefault(v => v.Id == voiceId) ?? Voices[0];
 
-        LlmProviders.Clear();
-        LlmProviders.AddRange(new[]
+        LlmProviders = new List<VoiceOption>
         {
-            new VoiceOption { Id = "openai", DisplayName = AppLanguage.T("OpenAI 兼容格式", "OpenAI-compatible") },
-            new VoiceOption { Id = "anthropic", DisplayName = AppLanguage.T("Anthropic 兼容格式", "Anthropic-compatible") },
-            new VoiceOption { Id = "local", DisplayName = AppLanguage.T("本地模型", "Local model") },
-        });
+            new() { Id = "openai", DisplayName = AppLanguage.T("OpenAI 兼容格式", "OpenAI-compatible") },
+            new() { Id = "anthropic", DisplayName = AppLanguage.T("Anthropic 兼容格式", "Anthropic-compatible") },
+            new() { Id = "local", DisplayName = AppLanguage.T("本地模型", "Local model") },
+        };
 
-        SpeechMixModes.Clear();
-        SpeechMixModes.AddRange(new[]
+        SpeechMixModes = new List<VoiceOption>
         {
-            new VoiceOption { Id = "duck", DisplayName = AppLanguage.T("说话时降低音乐音量", "Duck volume while speaking") },
-            new VoiceOption { Id = "pause", DisplayName = AppLanguage.T("说话时暂停音乐", "Pause music while speaking") },
-        });
+            new() { Id = "duck", DisplayName = AppLanguage.T("说话时降低音乐音量", "Duck volume while speaking") },
+            new() { Id = "pause", DisplayName = AppLanguage.T("说话时暂停音乐", "Pause music while speaking") },
+        };
 
-        SpectrumStyles.Clear();
-        SpectrumStyles.AddRange(new[]
+        SpectrumStyles = new List<VoiceOption>
         {
-            new VoiceOption { Id = "bars", DisplayName = AppLanguage.T("经典柱状", "Classic bars") },
-            new VoiceOption { Id = "mirror", DisplayName = AppLanguage.T("镜像脉冲", "Mirrored pulse") },
-            new VoiceOption { Id = "wave", DisplayName = AppLanguage.T("霓虹波形", "Neon wave") },
-            new VoiceOption { Id = "particles", DisplayName = AppLanguage.T("星点粒子", "Star particles") },
-        });
+            new() { Id = "bars", DisplayName = AppLanguage.T("经典柱状", "Classic bars") },
+            new() { Id = "mirror", DisplayName = AppLanguage.T("镜像脉冲", "Mirrored pulse") },
+            new() { Id = "wave", DisplayName = AppLanguage.T("霓虹波形", "Neon wave") },
+            new() { Id = "particles", DisplayName = AppLanguage.T("星点粒子", "Star particles") },
+        };
 
         var browserId = SelectedYtdlpBrowser?.Id;
         _loadingYtdlpBrowser = true;
         try
         {
-            YtdlpBrowsers.Clear();
-            YtdlpBrowsers.AddRange(new[]
+            YtdlpBrowsers = new List<VoiceOption>
             {
-                new VoiceOption { Id = "", DisplayName = AppLanguage.T("不使用", "Don't use") },
-                new VoiceOption { Id = "chrome", DisplayName = "Chrome" },
-                new VoiceOption { Id = "edge", DisplayName = "Edge" },
-                new VoiceOption { Id = "firefox", DisplayName = "Firefox" },
-                new VoiceOption { Id = "brave", DisplayName = "Brave" },
-                new VoiceOption { Id = "chromium", DisplayName = "Chromium" },
-                new VoiceOption { Id = "opera", DisplayName = "Opera" },
-                new VoiceOption { Id = "vivaldi", DisplayName = "Vivaldi" },
-            });
+                new() { Id = "", DisplayName = AppLanguage.T("不使用", "Don't use") },
+                new() { Id = "chrome", DisplayName = "Chrome" },
+                new() { Id = "edge", DisplayName = "Edge" },
+                new() { Id = "firefox", DisplayName = "Firefox" },
+                new() { Id = "brave", DisplayName = "Brave" },
+                new() { Id = "chromium", DisplayName = "Chromium" },
+                new() { Id = "opera", DisplayName = "Opera" },
+                new() { Id = "vivaldi", DisplayName = "Vivaldi" },
+            };
             SelectedYtdlpBrowser = YtdlpBrowsers.FirstOrDefault(b => b.Id == browserId) ?? YtdlpBrowsers[0];
         }
         finally
         {
             _loadingYtdlpBrowser = false;
         }
-
-        // ItemsSource 持有普通 List；显式通知 Avalonia 重新枚举，避免语言切换后下拉项仍显示旧语言。
-        this.RaisePropertyChanged(nameof(Voices));
-        this.RaisePropertyChanged(nameof(LlmProviders));
-        this.RaisePropertyChanged(nameof(SpeechMixModes));
-        this.RaisePropertyChanged(nameof(SpectrumStyles));
-        this.RaisePropertyChanged(nameof(YtdlpBrowsers));
     }
 
     /// <summary>

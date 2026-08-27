@@ -18,6 +18,10 @@ public sealed class SpectrumRenderer : Control
         AvaloniaProperty.Register<SpectrumRenderer, IBrush?>(nameof(SecondaryBrush));
 
     private float[] _bands = Array.Empty<float>();
+    private IBrush? _wavePrimaryBrush;
+    private IBrush? _waveSecondaryBrush;
+    private Pen? _wavePrimaryPen;
+    private Pen? _waveGlowPen;
 
     static SpectrumRenderer()
     {
@@ -102,8 +106,18 @@ public sealed class SpectrumRenderer : Control
     {
         if (_bands.Length < 2)
             return;
-        var primaryPen = new Pen(PrimaryBrush, 2);
-        var glowPen = new Pen(SecondaryBrush ?? PrimaryBrush, 5);
+        // Pen 缓存：渲染热路径不分配，画刷引用变化时才重建
+        if (_wavePrimaryPen == null ||
+            !ReferenceEquals(_wavePrimaryBrush, PrimaryBrush) ||
+            !ReferenceEquals(_waveSecondaryBrush, SecondaryBrush))
+        {
+            _wavePrimaryBrush = PrimaryBrush;
+            _waveSecondaryBrush = SecondaryBrush;
+            _wavePrimaryPen = new Pen(PrimaryBrush, 2);
+            _waveGlowPen = new Pen(SecondaryBrush ?? PrimaryBrush, 5);
+        }
+        var primaryPen = _wavePrimaryPen;
+        var glowPen = _waveGlowPen!;
         var previous = WavePoint(0);
         for (var i = 1; i < _bands.Length; i++)
         {
