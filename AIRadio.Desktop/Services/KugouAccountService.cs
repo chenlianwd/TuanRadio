@@ -137,9 +137,34 @@ public sealed class KugouAccountService
         if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(userid))
             return null;
 
-        var dfid = await GetOrCreateDfidAsync(cancellationToken);
-        return string.IsNullOrEmpty(dfid)
+        var dfid = await GetOrCreateDfidAsync(token, userid, cancellationToken);
+        return string.IsNullOrWhiteSpace(dfid)
             ? $"token={token};userid={userid}"
+            : $"token={token};userid={userid};dfid={dfid}";
+    }
+
+    /// <summary>
+    /// 为历史登录态补齐设备标识。旧版本保存的 Cookie 可能只有 token/userid，
+    /// 而酷狗播放接口要求 dfid；成功后返回可直接替换保存的组合 Cookie。
+    /// </summary>
+    public async Task<string?> EnsureDfidCookieAsync(
+        string cookie,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(cookie))
+            return null;
+
+        if (HasUsableDfid(cookie))
+            return cookie;
+
+        var token = ExtractCookieValue(cookie, "token");
+        var userid = ExtractCookieValue(cookie, "userid");
+        if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(userid))
+            return null;
+
+        var dfid = await GetOrCreateDfidAsync(token, userid, cancellationToken);
+        return string.IsNullOrWhiteSpace(dfid)
+            ? null
             : $"token={token};userid={userid};dfid={dfid}";
     }
 
@@ -156,16 +181,27 @@ public sealed class KugouAccountService
     }
 
     /// <summary>获取 dfid；酷狗播放接口没有它会返回"本次请求需要验证"。</summary>
-    private async Task<string?> GetOrCreateDfidAsync(CancellationToken cancellationToken)
+    private async Task<string?> GetOrCreateDfidAsync(
+        string token,
+        string userid,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var json = await _httpClient.GetStringAsync(
-                $"{_baseUrl}/register/dev?timestamp={ClockStamp()}", cancellationToken);
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{_baseUrl}/register/dev?timestamp={ClockStamp()}");
+            // register/dev 需要登录身份参与设备注册；不能把凭据放进 URL，
+            // 通过 Authorization 让本地代理合并成酷狗请求 Cookie。
+            request.Headers.TryAddWithoutValidation(
+                "Authorization",
+                $"token={token};userid={userid}");
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty("data", out var data) &&
-                   data.TryGetProperty("dfid", out var dfidEl)
-                ? dfidEl.GetString()
+            return doc.RootElement.TryGetProperty("data", out var data)
+                ? GetFlexibleString(data, "dfid")
                 : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -193,5 +229,13 @@ public sealed class KugouAccountService
                 return kv[1].Trim();
         }
         return string.Empty;
+    }
+
+    private static bool HasUsableDfid(string cookie)
+    {
+        var dfid = ExtractCookieValue(cookie, "dfid");
+        return !string.IsNullOrWhiteSpace(dfid) &&
+               !string.Equals(dfid, "-", StringComparison.Ordinal) &&
+               !string.Equals(dfid, "0", StringComparison.Ordinal);
     }
 }

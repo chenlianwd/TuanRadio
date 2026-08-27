@@ -111,6 +111,81 @@ public class KugouPlaylistServiceTests
     }
 
     [Fact]
+    public async Task PlaylistRequest_RetriesWhileLocalProxyIsStarting()
+    {
+        var calls = 0;
+        var handler = new DelegateHandler((request, _) =>
+        {
+            if (Interlocked.Increment(ref calls) <= 2)
+                throw new HttpRequestException("connection refused");
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":1,\"data\":{\"info\":[]}}")
+            });
+        });
+        using var client = new HttpClient(handler);
+        var service = new KugouPlaylistService(client, await CreateLoggedInStoreAsync(), "http://localhost");
+
+        var playlists = await service.GetUserPlaylistsAsync();
+
+        Assert.Empty(playlists);
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
+    public async Task PlaylistRequest_DoesNotRetryExplicitBusinessFailure()
+    {
+        var calls = 0;
+        var handler = new DelegateHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway)
+            {
+                Content = new StringContent("{\"status\":0,\"error_code\":152,\"error_msg\":\"Parameter Error\"}")
+            });
+        });
+        using var client = new HttpClient(handler);
+        var service = new KugouPlaylistService(client, await CreateLoggedInStoreAsync(), "http://localhost");
+
+        var exception = await Assert.ThrowsAsync<MusicSourceBusinessException>(
+            () => service.GetUserPlaylistsAsync());
+
+        Assert.Contains("Parameter Error", exception.Message);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task TrackPaging_UsesPlaylistTrackCountAndPreservesPageOrder()
+    {
+        var requestedPages = new System.Collections.Concurrent.ConcurrentBag<int>();
+        var handler = new DelegateHandler(async (request, _) =>
+        {
+            var page = GetQueryInt(request.RequestUri!, "page");
+            requestedPages.Add(page);
+            await Task.Delay(10);
+            var start = (page - 1) * 30;
+            var songs = Enumerable.Range(start, page == 1 ? 30 : 1)
+                .Select(i => new { hash = $"H{i}", songname = $"Song {i}", duration = 180 });
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    status = 1,
+                    data = new { songs }
+                }))
+            };
+        });
+        using var client = new HttpClient(handler);
+        var service = new KugouPlaylistService(client, await CreateLoggedInStoreAsync(), "http://localhost");
+
+        var tracks = await service.GetPlaylistTracksAsync("99", expectedTrackCount: 150);
+
+        Assert.Equal(34, tracks.Count);
+        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, requestedPages.OrderBy(page => page));
+    }
+
+    [Fact]
     public async Task NotLoggedIn_RejectsBeforeSendingRequest()
     {
         var calls = 0;
