@@ -38,6 +38,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly MusicAccountStore _accounts;
     private readonly NeteaseAccountService _neteaseAccount;
     private readonly KugouAccountService _kugouAccount;
+    private readonly KugouVerificationService? _kugouVerification;
+    private bool _kugouVerifyRunning;
     private bool _neteaseQrRunning;
     private bool _kugouQrRunning;
     private bool _loadingYtdlpBrowser;
@@ -120,6 +122,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouLogoutCommand { get; }
+    public ReactiveCommand<Unit, Unit> KugouVerifyCommand { get; }
 
     // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
     // 磁盘上已有的 llm_* 字段原样保留
@@ -133,7 +136,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         ISecureStorage secureStorage,
         string settingsFile,
         MusicAccountStore? accountStore = null,
-        System.Net.Http.HttpClient? httpClient = null)
+        System.Net.Http.HttpClient? httpClient = null,
+        KugouVerificationService? kugouVerification = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -143,6 +147,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         var http = httpClient ?? new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _neteaseAccount = new NeteaseAccountService(http);
         _kugouAccount = new KugouAccountService(http);
+        _kugouVerification = kugouVerification;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
@@ -156,6 +161,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
         KugouQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunKugouQrLoginAsync());
         KugouLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutKugouAsync());
+        KugouVerifyCommand = ReactiveCommand.CreateFromTask(() => RunKugouVerifyAsync());
 
         // When character selection changes, load its overrides
         _selectedCharacterSub = this.WhenAnyValue(x => x.SelectedCharacter)
@@ -677,6 +683,98 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         IsNeteaseQrVisible = false;
         NeteaseQrImage = null;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
+    }
+
+    /// <summary>
+    /// 酷狗滑块验证（手动入口）：先校验登录态（token 过期时滑块解决不了），
+    /// 再探测风控状态；命中挑战则经会话桥打开浏览器验证页并轮询等待恢复。
+    /// </summary>
+    private async Task RunKugouVerifyAsync()
+    {
+        var verification = _kugouVerification;
+        if (verification == null || _kugouVerifyRunning)
+            return;
+        _kugouVerifyRunning = true;
+        try
+        {
+            var cookie = _accounts.KugouCookie;
+            if (string.IsNullOrEmpty(cookie))
+            {
+                SetKugouAccountStatus(() => AppLanguage.T("酷狗未登录，请先扫码登录", "Kugou is not signed in; scan the QR code first"));
+                return;
+            }
+
+            if (!verification.TryBeginManual())
+            {
+                SetKugouAccountStatus(() => AppLanguage.T("已有验证进行中，请稍候", "A verification is already running; wait a moment"));
+                return;
+            }
+
+            try
+            {
+                // token 有效性预检：过期（如 20018）时昵称拿不到，滑块也无法恢复播放
+                var nickname = await _kugouAccount.GetNicknameAsync(cookie, _lifetimeCts.Token);
+                if (string.IsNullOrEmpty(nickname))
+                {
+                    SetKugouAccountStatus(() => AppLanguage.T(
+                        "登录态校验失败，请重新扫码登录",
+                        "Sign-in check failed; please scan the QR code again"));
+                    return;
+                }
+
+                var probeHash = verification.LastChallenge?.Hash;
+                var probe = await verification.DetectChallengeAsync(cookie, probeHash, _lifetimeCts.Token);
+                if (probe.Status == KugouProbeStatus.Playable)
+                {
+                    SetKugouAccountStatus(() => AppLanguage.T("无需验证，酷狗当前可正常获取播放地址", "No verification needed; Kugou playback URLs work"));
+                    return;
+                }
+                if (probe.Challenge?.EventId == null)
+                {
+                    SetKugouAccountStatus(() => AppLanguage.T(
+                        "未能获取验证会话（可能需重新登录或稍后再试）",
+                        "Could not obtain a verification session; re-login or retry later"));
+                    return;
+                }
+
+                var outcome = await verification.RunVerificationAsync(
+                    cookie,
+                    probe.Challenge.Hash,
+                    _lifetimeCts.Token,
+                    () => SetKugouAccountStatus(() => AppLanguage.T(
+                        "已打开验证页面，请在浏览器完成滑块验证…",
+                        "Verification page opened; complete the slider in your browser...")));
+
+                SetKugouAccountStatus(outcome switch
+                {
+                    KugouVerifyOutcome.Verified => () => AppLanguage.T("验证成功，酷狗播放已恢复", "Verified; Kugou playback recovered"),
+                    KugouVerifyOutcome.VerifiedButUnavailable => () => AppLanguage.T(
+                        "验证已完成；若歌曲仍不可播，可能需要 VIP 或重新登录",
+                        "Verification done; if tracks stay unplayable, VIP or re-login may be required"),
+                    KugouVerifyOutcome.NeedsRelogin => () => AppLanguage.T(
+                        "酷狗要求重新确认登录身份，请重新扫码登录",
+                        "Kugou asks to re-confirm your identity; please scan the QR code again"),
+                    KugouVerifyOutcome.Timeout => () => AppLanguage.T("等待验证超时，可重试", "Timed out waiting for verification; retry"),
+                    _ => () => AppLanguage.T("验证未完成，可重试", "Verification not completed; retry"),
+                });
+            }
+            finally
+            {
+                verification.EndVerification();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Kugou verification failed");
+            SetKugouAccountStatus(() => AppLanguage.T($"验证失败：{ex.Message}", $"Verification failed: {ex.Message}"));
+        }
+        finally
+        {
+            _kugouVerifyRunning = false;
+        }
     }
 
     private async Task LogoutKugouAsync()

@@ -205,12 +205,18 @@ public partial class App : Application
         services.AddSingleton<ISecureStorage, WindowsSecureStorage>();
         services.AddSingleton<MusicAccountStore>(sp =>
             new MusicAccountStore(sp.GetRequiredService<ISecureStorage>()));
+        services.AddSingleton(sp =>
+            new KugouVerificationService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         services.AddSingleton<IMusicSearchService>(sp =>
         {
             var accounts = sp.GetRequiredService<MusicAccountStore>();
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
             var ytSource = new YouTubeMusicService(ytdlpPath, accounts);
-            return new MultiSourceMusicService(sp.GetRequiredService<System.Net.Http.HttpClient>(), accounts, ytSource);
+            return new MultiSourceMusicService(
+                sp.GetRequiredService<System.Net.Http.HttpClient>(),
+                accounts,
+                sp.GetRequiredService<KugouVerificationService>(),
+                ytSource);
         });
         services.AddSingleton<IDJService>(sp =>
             new DJService(
@@ -233,7 +239,8 @@ public partial class App : Application
             PlaylistViewModel.DefaultPlaylistFile,
             SettingsViewModel.DefaultSettingsFile,
             accountStore: sp.GetRequiredService<MusicAccountStore>(),
-            httpClient: sp.GetRequiredService<System.Net.Http.HttpClient>()));
+            httpClient: sp.GetRequiredService<System.Net.Http.HttpClient>(),
+            kugouVerification: sp.GetRequiredService<KugouVerificationService>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)

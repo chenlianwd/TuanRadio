@@ -60,6 +60,15 @@ const guid = cryptoMd5(getGuid());
 const serverDev = randomString(10).toUpperCase();
 
 /**
+ * 默认的 WebGL 指纹哈希（进程级常量）
+ * 无 Cookie 的 API 客户端（桌面应用）每次请求都会被中间件补写该值；
+ * 若按请求随机生成，同一设备的指纹会不断漂移，容易被酷狗风控识别为异常设备。
+ * @type {string}
+ * @constant
+ */
+const serverWebgl = generateWebGLHash();
+
+/**
  * .env 环境变量配置文件路径
  * 优先从项目根目录加载，如果文件存在则通过 dotenv 读取其中的环境变量
  * @type {string}
@@ -265,7 +274,7 @@ async function consturctServer(moduleDefs) {
     ensureCookie('KUGOU_API_GUID', env_guid ?? guid);
     ensureCookie('KUGOU_API_DEV', (process.env.KUGOU_API_DEV ?? serverDev).toUpperCase());
     ensureCookie('KUGOU_API_MAC', (process.env.KUGOU_API_MAC ?? '02:00:00:00:00:00').toUpperCase());
-    ensureCookie('KUGOU_API_WEBGL', process.env.KUGOU_API_WEBGL ?? generateWebGLHash());
+    ensureCookie('KUGOU_API_WEBGL', process.env.KUGOU_API_WEBGL ?? serverWebgl);
 
     // 将注入后的 cookies 回写到 req 对象上，供后续中间件和路由处理器使用
     req.cookies = cookies;

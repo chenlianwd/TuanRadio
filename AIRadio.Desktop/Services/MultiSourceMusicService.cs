@@ -52,13 +52,19 @@ public class MultiSourceMusicService : IMusicSearchService
     }
 
     public MultiSourceMusicService(HttpClient httpClient, MusicAccountStore? accounts, params IMusicSearchService[] extraSources)
+        : this(httpClient, accounts, kugouVerification: null, extraSources)
+    {
+    }
+
+    public MultiSourceMusicService(HttpClient httpClient, MusicAccountStore? accounts,
+        KugouVerificationService? kugouVerification, params IMusicSearchService[] extraSources)
     {
         _httpClient = httpClient;
         _sources = new List<IMusicSearchService>
         {
             new NeteaseMusicService(httpClient, accounts),
             new KuwoMusicService(httpClient),
-            new KugouMusicService(httpClient, accounts),
+            new KugouMusicService(httpClient, accounts, kugouVerification),
             new MiguMusicService(httpClient)
         };
         _sources.AddRange(extraSources); // YouTube 等额外源作为最低优先级
