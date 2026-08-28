@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -221,6 +223,20 @@ public class DJServiceTests
         Assert.NotNull(result);
         Assert.Equal("netease:new", result!.SourceId);
         search.Verify(x => x.GetPlayUrlAsync("netease:old"), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateSongStoryAsync_UnconfiguredLlm_ReturnsEmptyStory()
+    {
+        // 未配置的 LLMService.ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
+        // 故事路径必须直接返回空故事，不能把提示文案当故事朗读
+        var service = new DJService(new LLMService(new HttpClient()));
+
+        var story = await service.GenerateSongStoryAsync(
+            new Track { Title = "晴天", Artist = "周杰伦" }, CancellationToken.None);
+
+        Assert.Empty(story.Lines);
+        Assert.Equal("晴天", story.Title);
     }
 
     [Fact]

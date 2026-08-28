@@ -157,21 +157,18 @@ public class KugouMusicService : IMusicSearchService
             var errorCode = TryGetInt32(root, "error_code", "errcode", "code");
             var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
 
-            // 20028 风控挑战：代理在上游返回 ssa-code 头时会在响应体附加 ssaCode/sid/edt；
-            // 命中即上报验证服务（触发自动/手动滑块流程），errcode=20028 但无事件 ID 时仅记日志
+            // 20028 风控挑战：代理在上游返回 ssa-code 头时会在响应体附加 ssaCode/sid/edt。
+            // 命中即上报验证服务（触发自动/手动滑块流程）；裸 status=2 等疑似形状没有
+            // 事件 ID 也同样上报——探测拿到事件 ID 才会真正进入滑块流程，拿不到则快速
+            // 失败并靠自动触发冷却防刷，否则整张歌单只会被无限跳过
             var shape = KugouVerificationService.ClassifyPlayUrlResponse(root, out var challengeEventId, out _);
             if (shape == KugouVerificationService.KugouPlayUrlShape.Challenge)
             {
-                if (challengeEventId != null)
-                {
-                    _verification?.RecordChallenge(new KugouChallenge(challengeEventId, hash));
-                }
-                else
-                {
+                if (challengeEventId == null)
                     Log.Information(
                         "Kugou play url suspected risk-control challenge for {Hash}: errcode={Errcode} error={Error}",
                         hash, errorCode ?? -1, SensitiveDataSanitizer.Sanitize(error) ?? error);
-                }
+                _verification?.RecordChallenge(new KugouChallenge(challengeEventId, hash));
             }
 
             if (status != 1 || !response.IsSuccessStatusCode)

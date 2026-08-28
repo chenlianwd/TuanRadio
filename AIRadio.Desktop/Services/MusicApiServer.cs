@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -108,7 +109,10 @@ public class MusicApiServer : IDisposable
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
-                        RedirectStandardError = true
+                        RedirectStandardError = true,
+                        // Node 进程固定输出 UTF-8；不声明则按系统 ANSI 代码页解码出乱码
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8
                     },
                     EnableRaisingEvents = true
                 };

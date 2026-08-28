@@ -319,7 +319,7 @@ public class LLMService : ILLMService
         }, timeoutCts.Token, maxRetries: 2);
     }
 
-    private bool IsConfigured()
+    public bool IsConfigured()
     {
         var provider = _config.Provider;
         if (provider is null)

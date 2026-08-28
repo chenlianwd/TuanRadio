@@ -129,6 +129,11 @@ Response rules:
 
     public async Task<SongStory> GenerateSongStoryAsync(Track track, CancellationToken cancellationToken)
     {
+        // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
+        // 不能当歌单故事朗读；返回空故事走与生成失败一致的静默跳过路径
+        if (_llm is LLMService llmService && !llmService.IsConfigured())
+            return new SongStory { Title = track.Title, Track = track, Lines = new() };
+
         try
         {
             var prompt = _profile.Language == "en"
@@ -227,6 +232,10 @@ Response rules:
         CancellationToken cancellationToken)
     {
         if (_musicSearch == null) return null;
+
+        // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
+        // 不能当歌名解析去搜索；返回 null 让调用方走歌单轮播兜底
+        if (_llm is LLMService llmService && !llmService.IsConfigured()) return null;
 
         try
         {

@@ -289,6 +289,10 @@ public class RecommendationService : IRecommendationService
     {
         var recentHistory = BuildRecentHistory(request);
         var fallback = BuildFallbackQueries(request, context, recentHistory);
+        // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
+        // 直接走本地兜底关键词，避免把提示文案当搜索词发给音源
+        if (_llm is LLMService llmService && !llmService.IsConfigured())
+            return fallback;
         try
         {
             var userIntent = GetLocalizedUserIntent(request.UserIntentKey, request.UserIntent);
