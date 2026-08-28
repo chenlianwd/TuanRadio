@@ -200,6 +200,20 @@ public class KugouVerificationServiceTests
     // ========== 验证页 URL：登录态绝不进 URL ==========
 
     [Fact]
+    public async Task RunVerificationAsync_SuspectChallengeWithoutEventId_FailsAfterSingleProbe()
+    {
+        // 裸 status=2 疑似形状：探测拿不到事件 ID 时必须快速失败，
+        // 不得进入会话桥/验证页/轮询（单次请求即返回）
+        var (client, probeCount) = CreateChallengeProbeClient("{\"status\":2}");
+        var service = new KugouVerificationService(client);
+
+        var outcome = await service.RunVerificationAsync("token=T;userid=1;dfid=D", "HASHS", CancellationToken.None);
+
+        Assert.Equal(KugouVerifyOutcome.Failed, outcome);
+        Assert.Equal(1, probeCount());
+    }
+
+    [Fact]
     public void VerifyPageUrl_ContainsOnlySessionId()
     {
         var url = KugouVerificationService.VerifyPageUrl("abc123");
@@ -301,6 +315,52 @@ public class KugouChallengeReportingTests
         Assert.NotNull(reported);
         Assert.Equal("gz_tx_event_report", reported!.EventId);
         Assert.Equal("HASHR", reported.Hash);
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_BareStatusTwo_ReportsSuspectChallengeWithoutEventId()
+    {
+        // 日志实测形状：http=200、status=2、无 errcode/无 error/无 data。
+        // 不上报会导致整张酷狗歌单被无限跳过且滑块流程永不触发
+        var handler = new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"status\":2}")
+        }));
+        using var client = new HttpClient(handler);
+        var accounts = await CreateLoggedInStoreAsync();
+        var verification = new KugouVerificationService(client);
+        KugouChallenge? reported = null;
+        verification.ChallengeDetected += c => reported = c;
+        var service = new KugouMusicService(client, accounts, verification);
+
+        var url = await service.GetPlayUrlAsync("kugou:HASHBARE");
+
+        Assert.Null(url);
+        Assert.NotNull(reported);
+        Assert.Null(reported!.EventId);
+        Assert.Equal("HASHBARE", reported.Hash);
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_ErrCode20028WithoutSsaCode_ReportsSuspectChallenge()
+    {
+        var handler = new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"errcode\":20028,\"status\":2,\"error\":\"本次请求需要验证\"}")
+        }));
+        using var client = new HttpClient(handler);
+        var accounts = await CreateLoggedInStoreAsync();
+        var verification = new KugouVerificationService(client);
+        KugouChallenge? reported = null;
+        verification.ChallengeDetected += c => reported = c;
+        var service = new KugouMusicService(client, accounts, verification);
+
+        var url = await service.GetPlayUrlAsync("kugou:HASH20028");
+
+        Assert.Null(url);
+        Assert.NotNull(reported);
+        Assert.Null(reported!.EventId);
+        Assert.Equal("HASH20028", reported.Hash);
     }
 
     [Fact]

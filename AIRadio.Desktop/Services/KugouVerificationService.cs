@@ -9,9 +9,9 @@ using Serilog;
 namespace AIRadio.Desktop.Services;
 
 /// <summary>酷狗 20028 风控挑战（本地代理在响应体附加 ssaCode 等字段）。</summary>
-/// <param name="EventId">验证事件 ID（ssaCode），用于开启会话桥。</param>
+/// <param name="EventId">验证事件 ID（ssaCode），用于开启会话桥；裸 status=2 等疑似形状拿不到，为 null，交由探测确认。</param>
 /// <param name="Hash">触发挑战的曲目 hash，验证后按它探测恢复。</param>
-public sealed record KugouChallenge(string EventId, string Hash);
+public sealed record KugouChallenge(string? EventId, string Hash);
 
 /// <summary>/song/url 探测结果。</summary>
 public enum KugouProbeStatus
@@ -217,7 +217,14 @@ public sealed class KugouVerificationService
             if (probe.Status == KugouProbeStatus.Playable)
                 return KugouVerifyOutcome.Verified;
             if (probe.Challenge?.EventId == null)
+            {
+                // 疑似形状（裸 status=2 等）探测后仍拿不到事件 ID：滑块流程无从开启，
+                // 快速失败交回冷却；日志写明原因，避免被当成可修复的验证故障排查
+                Log.Information(
+                    "Kugou verification aborted: probe status {Status} carries no challenge event id",
+                    probe.Status);
                 return KugouVerifyOutcome.Failed;
+            }
 
             var eventId = probe.Challenge.EventId;
             var sessionId = await StartBridgeSessionAsync(cookie, eventId, cancellationToken);
