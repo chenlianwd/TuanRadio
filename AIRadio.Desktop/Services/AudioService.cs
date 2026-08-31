@@ -458,14 +458,37 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         var index = _currentIndex;
+        var track = CurrentTrack;
         var requestId = Volatile.Read(ref _playRequestId);
-        Log.Warning("Playback error on track: {Track}", CurrentTrack?.Title);
+        Log.Warning("Playback error on track: {Track}", track?.Title);
         SetState(PlaybackState.Stopped);
-        if (CurrentTrack != null && index >= 0 && _playbackErrorRetryCount == 0)
+        if (track == null || index < 0)
+            return;
+
+        // 与早停恢复同构的三级阶梯：刷新当前源 → 替代音源 → 推进下一首。
+        // 缺少 Advance 出口时，第二次错误后既不重试也不推进，电台会静默停摆。
+        EnsureRecoveryDeadline();
+        if (IsRecoveryBudgetExhausted())
         {
-            _playbackErrorRetryCount++;
-            EnsureRecoveryDeadline();
+            Log.Warning("Recovery budget exhausted after playback error on {Track}; advancing", track.Title);
+            ScheduleNextTrack(requestId, "recovery budget exhausted after playback error");
+            return;
+        }
+
+        var recoveryAction = GetEarlyEndRecoveryAction(_playbackErrorRetryCount);
+        _playbackErrorRetryCount++;
+        if (recoveryAction == EarlyEndRecoveryAction.RefreshCurrentSource)
+        {
             SchedulePlaybackRetry(index, requestId, "playback error");
+        }
+        else if (recoveryAction == EarlyEndRecoveryAction.TryAlternativeSource)
+        {
+            ScheduleAlternativeSourceRetry(index, track, requestId);
+        }
+        else
+        {
+            Log.Warning("Repeated playback error on {Track}; advancing to next track", track.Title);
+            ScheduleNextTrack(requestId, "repeated playback error");
         }
     }
 
@@ -830,8 +853,23 @@ public class AudioService : IAudioService, IDisposable
 
                 if (GetLastKnownPositionMs() > 3000)
                 {
-                    Seek(TimeSpan.Zero);
-                    return;
+                    if (_currentState == PlaybackState.Playing || _currentState == PlaybackState.Paused)
+                    {
+                        Seek(TimeSpan.Zero);
+                        return;
+                    }
+
+                    // Stopped/Ended 态下 Seek 的状态门禁不放行：退化为重播当前曲目，
+                    // 保证“上一首 >3s 回开头”在这两个状态（自然播完/停止后）仍然生效。
+                    if (TryMovePlaybackContext(0))
+                        return;
+
+                    var currentTrack = CurrentTrack;
+                    if (currentTrack != null)
+                    {
+                        PlayTrackInstance(currentTrack, isContextTrack: false);
+                        return;
+                    }
                 }
 
                 if (TryMovePlaybackContext(-1))
@@ -1418,6 +1456,21 @@ public class AudioService : IAudioService, IDisposable
                durationMs - elapsedMs > 30_000;
     }
 
+    /// <summary>
+    /// 后台恢复路径的守护检查。必须持 _playlistGate 快照访问列表：
+    /// 在 Task.Run/await 之后的线程池线程上无锁读 _playlist，会与 UI 增删竞态抛
+    /// ArgumentOutOfRangeException，并把“继续播当前曲”错误放大成“跳过当前曲”。
+    /// </summary>
+    private bool IsPlaylistEntryAt(int index, Track track)
+    {
+        lock (_playlistGate)
+        {
+            return index >= 0 &&
+                   index < _playlist.Count &&
+                   ReferenceEquals(_playlist[index], track);
+        }
+    }
+
     private async System.Threading.Tasks.Task RefreshTrackUrlAsync(Track track, int requestId)
     {
         try
@@ -1425,9 +1478,7 @@ public class AudioService : IAudioService, IDisposable
             var resolution = await ResolveUrlWithTimeoutAsync(track);
             if (resolution != null &&
                 requestId == Volatile.Read(ref _playRequestId) &&
-                _currentIndex >= 0 &&
-                _currentIndex < _playlist.Count &&
-                ReferenceEquals(_playlist[_currentIndex], track))
+                IsPlaylistEntryAt(_currentIndex, track))
             {
                 var changed = ApplyTrackUrlResolution(track, resolution);
                 if (changed)
@@ -1455,8 +1506,7 @@ public class AudioService : IAudioService, IDisposable
             var resolution = await ResolveUrlWithTimeoutAsync(track);
             if (resolution != null &&
                 requestId == Volatile.Read(ref _playRequestId) &&
-                index >= 0 && index < _playlist.Count &&
-                ReferenceEquals(_playlist[index], track))
+                IsPlaylistEntryAt(index, track))
             {
                 if (ApplyTrackUrlResolution(track, resolution))
                     Log.Debug("Refreshed URL before play for track {Track}", track.Title);
@@ -1612,9 +1662,7 @@ public class AudioService : IAudioService, IDisposable
                     IsDisposed ||
                     requestId != Volatile.Read(ref _playRequestId) ||
                     index != Volatile.Read(ref _currentIndex) ||
-                    index < 0 ||
-                    index >= _playlist.Count ||
-                    !ReferenceEquals(_playlist[index], track))
+                    !IsPlaylistEntryAt(index, track))
                 {
                     return;
                 }
@@ -1626,9 +1674,7 @@ public class AudioService : IAudioService, IDisposable
                     IsDisposed ||
                     requestId != Volatile.Read(ref _playRequestId) ||
                     index != Volatile.Read(ref _currentIndex) ||
-                    index < 0 ||
-                    index >= _playlist.Count ||
-                    !ReferenceEquals(_playlist[index], track))
+                    !IsPlaylistEntryAt(index, track))
                 {
                     return;
                 }

@@ -123,14 +123,27 @@ public class LLMService : ILLMService
         }
     }
 
-    private List<object> BuildMessages(List<ChatMessage> history, string userMessage)
+    internal List<object> BuildMessages(List<ChatMessage> history, string userMessage)
     {
         var messages = new List<object>
         {
             new { role = "system", content = AppLanguage.T("你是一个中文电台 DJ，名叫小音。用温暖自然的语气和听众交流。", "You are an English-speaking AI radio DJ. Talk to listeners in a warm, natural tone.") }
         };
 
-        foreach (var msg in history.TakeLast(20))
+        // 历史满 21 条（DJService 裁剪上限 = system + 10 对）时，直接 TakeLast(20) 会丢掉
+        // history[0] 的 DJ 人设/指令规则，长对话后角色静默退化为通用小音。
+        // 取人设 + 最近 18 条（9 个完整对话轮），并防御性丢弃以 assistant 开头的尾部：
+        // Anthropic 要求首条非 system 消息必须是 user，否则整个请求 400。
+        IEnumerable<ChatMessage> recent = history;
+        if (history.Count > 20)
+        {
+            var tail = history.Skip(history.Count - 18).ToList();
+            while (tail.Count > 0 && tail[0].Role != MessageRole.User && tail[0].Role != MessageRole.System)
+                tail.RemoveAt(0);
+            recent = history.Take(1).Concat(tail);
+        }
+
+        foreach (var msg in recent)
         {
             var role = msg.Role switch
             {
@@ -300,6 +313,15 @@ public class LLMService : ILLMService
                             block.TryGetProperty("text", out var text) &&
                             !string.IsNullOrWhiteSpace(text.GetString()))
                         {
+                            // 部分 Anthropic 兼容服务以 {"type":"thinking","text":...} 形态输出推理过程，
+                            // 思考文本不是播报正文，不能拼进 DJ 台词
+                            var blockType = block.TryGetProperty("type", out var typeEl) &&
+                                            typeEl.ValueKind == JsonValueKind.String
+                                ? typeEl.GetString()
+                                : null;
+                            if (blockType is "thinking" or "redacted_thinking")
+                                continue;
+
                             textParts.Add(text.GetString()!);
                         }
                     }

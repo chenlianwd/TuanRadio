@@ -77,8 +77,11 @@ Response rules:
 4. 只有需要控制音乐时，才在情绪标签后追加 JSON 控制块。";
         }
 
-        _chatHistory.Clear();
-        _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
+        lock (_chatHistory)
+        {
+            _chatHistory.Clear();
+            _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
+        }
     }
 
     public Task<DJScript> GenerateTrackIntroductionAsync(Track current, Track next)
@@ -151,6 +154,10 @@ Response rules:
                              .ToList();
             return new SongStory { Title = track.Title, Track = track, Lines = lines };
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to generate song story for {Track}", track.Title);
@@ -158,27 +165,60 @@ Response rules:
         }
     }
 
-    public async Task<string> GenerateChatResponseAsync(string userMessage)
+    public Task<string> GenerateChatResponseAsync(string userMessage)
+        => GenerateChatResponseAsync(userMessage, CancellationToken.None);
+
+    public async Task<string> GenerateChatResponseAsync(string userMessage, CancellationToken cancellationToken)
     {
-        LastFailure = null;
+        // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，不能当 DJ 台词播报
+        // （角色问候路径会直接朗读该文案）；按失败口径上报，让调用方走设置引导分支
+        if (_llm is LLMService llmService && !llmService.IsConfigured())
+        {
+            LastFailure = ApiFailureInfo.MissingApiKey();
+            return AppLanguage.T("请先在设置中配置 AI 服务。", "Configure the AI service in Settings first.");
+        }
+
         try
         {
-            var response = await _llm.ChatAsync(userMessage, _chatHistory);
-            _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
-            _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
-
-            // Trim history to avoid unbounded growth (keep system prompt + last N messages)。
-            // 必须按 user/assistant 成对删除：Anthropic 要求首条非 system 消息必须是 user，
-            // 逐条 RemoveAt(1) 会让序列以 assistant 开头，长对话后请求被 400 拒绝
-            const int maxHistoryMessages = 20;
-            while (_chatHistory.Count > maxHistoryMessages + 1)
+            // 传给 LLM 的历史用快照：角色问候（fire-and-forget）与聊天可能并发进入，
+            // 直接共享 _chatHistory 会在 BuildMessages 遍历与 Add 之间竞态
+            List<ChatMessage> snapshot;
+            lock (_chatHistory)
             {
-                _chatHistory.RemoveAt(1);
-                if (_chatHistory.Count > 1)
-                    _chatHistory.RemoveAt(1);
+                snapshot = _chatHistory.ToList();
             }
+
+            var response = _llm is LLMService llm
+                ? await llm.ChatAsync(userMessage, snapshot, cancellationToken)
+                : await _llm.ChatAsync(userMessage, snapshot)
+                    .WaitAsync(cancellationToken);
+
+            lock (_chatHistory)
+            {
+                _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
+                _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
+
+                // Trim history to avoid unbounded growth (keep system prompt + last N messages)。
+                // 必须按 user/assistant 成对删除：Anthropic 要求首条非 system 消息必须是 user，
+                // 逐条 RemoveAt(1) 会让序列以 assistant 开头，长对话后请求被 400 拒绝
+                const int maxHistoryMessages = 20;
+                while (_chatHistory.Count > maxHistoryMessages + 1)
+                {
+                    _chatHistory.RemoveAt(1);
+                    if (_chatHistory.Count > 1)
+                        _chatHistory.RemoveAt(1);
+                }
+            }
+
             _currentEmotion = DetectEmotion(response);
+            // 在成功返回前才清空失败标记：方法开头就清会让并发路径（如 TTS 失败）写入的
+            // 状态在长 await 期间无法与本调用结果区分，角色问候会因此误判为聊天失败
+            LastFailure = null;
             return response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

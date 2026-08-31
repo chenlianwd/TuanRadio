@@ -43,20 +43,34 @@ public sealed class MusicAccountStore
 
     public async Task SetNeteaseCookieAsync(string? cookie)
     {
-        NeteaseCookie = Sanitize(cookie);
-        if (NeteaseCookie == null)
+        var sanitized = Sanitize(cookie);
+        if (sanitized == null)
+        {
             _storage.DeleteApiKey(NeteaseCredentialService);
+            NeteaseCookie = null;
+        }
         else
-            await _storage.SaveApiKeyAsync(NeteaseCredentialService, NeteaseCookie);
+        {
+            // 先持久化再更新内存副本：持久化失败时异常上抛、内存保持旧值，
+            // 避免“界面显示已登录、重启后登录态丢失”的不一致状态
+            await _storage.SaveApiKeyAsync(NeteaseCredentialService, sanitized);
+            NeteaseCookie = sanitized;
+        }
     }
 
     public async Task SetKugouCookieAsync(string? cookie)
     {
-        KugouCookie = Sanitize(cookie);
-        if (KugouCookie == null)
+        var sanitized = Sanitize(cookie);
+        if (sanitized == null)
+        {
             _storage.DeleteApiKey(KugouCredentialService);
+            KugouCookie = null;
+        }
         else
-            await _storage.SaveApiKeyAsync(KugouCredentialService, KugouCookie);
+        {
+            await _storage.SaveApiKeyAsync(KugouCredentialService, sanitized);
+            KugouCookie = sanitized;
+        }
     }
 
     private static string? Sanitize(string? cookie)

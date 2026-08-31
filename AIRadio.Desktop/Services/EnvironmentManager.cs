@@ -77,6 +77,9 @@ public static class EnvironmentManager
         Directory.CreateDirectory(NodeDir);
 
         var url = "https://nodejs.org/dist/v20.18.3/node-v20.18.3-win-x64.zip";
+        // 官方 SHASUMS256.txt (https://nodejs.org/dist/v20.18.3/SHASUMS256.txt) 中
+        // node-v20.18.3-win-x64.zip 的校验值：下载产物必须完全一致才允许落盘解压
+        const string expectedSha256 = "11D483DFBA711BC7C9BCB513E80A2941BE0C2E7CBF62753755785B9A6E80A731";
         var zipPath = Path.Combine(NodeDir, "node.zip.tmp");
 
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
@@ -89,21 +92,25 @@ public static class EnvironmentManager
         await using (var downloadStream = await response.Content.ReadAsStreamAsync(cancellationToken))
         {
             await downloadStream.CopyToAsync(fileStream, cancellationToken);
-            Log.Information("Node.js downloaded ({Size}MB), extracting...", fileStream.Length / 1024 / 1024);
+            Log.Information("Node.js downloaded ({Size}MB), verifying...", fileStream.Length / 1024 / 1024);
         }
 
-        // 计算 SHA256 供审计（完整校验需对照 Node.js 官方 SHASUMS256.txt，子项目 5）
-        try
+        // 对照官方 SHASUMS256 校验，fail-closed：读不出哈希同样拒绝落盘（供应链防护不允许静默跳过）
+        string actualSha256;
+        await using (var hashStream = File.OpenRead(zipPath))
         {
-            await using var hashStream = File.OpenRead(zipPath);
             var hashBytes = await System.Security.Cryptography.SHA256.HashDataAsync(hashStream, cancellationToken);
-            Log.Information("Node.js zip SHA256: {Hash}", Convert.ToHexString(hashBytes));
+            actualSha256 = Convert.ToHexString(hashBytes);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+
+        if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
         {
-            throw;
+            try { File.Delete(zipPath); } catch { }
+            throw new InvalidDataException(
+                $"Node.js download integrity check failed: expected {expectedSha256}, got {actualSha256}");
         }
-        catch (Exception ex) { Log.Warning(ex, "Failed to compute Node.js SHA256"); }
+
+        Log.Information("Node.js zip SHA256 verified: {Hash}", actualSha256);
 
         var extracted = false;
         using var archive = ZipFile.OpenRead(zipPath);

@@ -1,4 +1,4 @@
-const { getSession } = require('../util/verify_bridge_sessions');
+const { getSession, removeSession } = require('../util/verify_bridge_sessions');
 const verifyUserInfo = require('./verify_user_info');
 const { generateSimulate } = require('../util/generate_simulate');
 
@@ -9,7 +9,7 @@ const { generateSimulate } = require('../util/generate_simulate');
  * sid/edt 由代理按应用完整身份（mid/userid/dfid/webgl）现场生成，
  * 页面无需引入行为指纹库。
  */
-module.exports = (params, useAxios) => {
+module.exports = async (params, useAxios) => {
   const session = getSession(params?.sessionId);
   if (!session) {
     return {
@@ -35,7 +35,8 @@ module.exports = (params, useAxios) => {
     cookie.KUGOU_API_WEBGL
   );
 
-  return verifyUserInfo(
+  // verifyUserInfo 经 createRequest 返回 Promise，必须 await 后才能读 body
+  const result = await verifyUserInfo(
     {
       eventid: session.eventid,
       v_type: params?.v_type,
@@ -46,4 +47,8 @@ module.exports = (params, useAxios) => {
     },
     useAxios
   );
+
+  // 验证成功即消费会话：sessionId 一次性使用，TTL 内不可重放提交
+  if (result?.body?.status) removeSession(params.sessionId);
+  return result;
 };

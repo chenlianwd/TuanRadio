@@ -51,6 +51,9 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
     private const int TrackPageConcurrency = 4;
     private const int SequentialPageThreshold = 4;
     private const int MaxTransientRetries = 10;
+    /// <summary>歌单同步整体预算：分页 × 重试退避最坏可放大到数十分钟，必须有全局上限；
+    /// 超限以取消形式抛出，调用方（用户取消/应用退出）语义不变。</summary>
+    private static readonly TimeSpan SyncTotalBudget = TimeSpan.FromMinutes(3);
     private readonly HttpClient _httpClient;
     private readonly MusicAccountStore _accounts;
     private readonly string _baseUrl;
@@ -70,6 +73,10 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
     public async Task<IReadOnlyList<KugouPlaylistInfo>> GetUserPlaylistsAsync(
         CancellationToken cancellationToken = default)
     {
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budgetCts.CancelAfter(SyncTotalBudget);
+        var token = budgetCts.Token;
+
         var cookie = RequireCookie();
         var results = new List<KugouPlaylistInfo>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -80,7 +87,7 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
             var root = await GetRootAsync(
                 $"/user/playlist?page={page}&pagesize={PlaylistPageSize}&timestamp={ClockStamp()}",
                 cookie,
-                cancellationToken);
+                token);
             var items = FindItems(root, "info", "lists", "list", "records");
             fetchedItems += items.Count;
 
@@ -118,7 +125,9 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
         string playlistId,
         CancellationToken cancellationToken = default)
     {
-        return await GetPlaylistTracksCoreAsync(playlistId, expectedTrackCount: 0, cancellationToken);
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budgetCts.CancelAfter(SyncTotalBudget);
+        return await GetPlaylistTracksCoreAsync(playlistId, expectedTrackCount: 0, budgetCts.Token);
     }
 
     public async Task<IReadOnlyList<OnlineTrack>> GetPlaylistTracksAsync(
@@ -126,7 +135,9 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
         int expectedTrackCount,
         CancellationToken cancellationToken = default)
     {
-        return await GetPlaylistTracksCoreAsync(playlistId, expectedTrackCount, cancellationToken);
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budgetCts.CancelAfter(SyncTotalBudget);
+        return await GetPlaylistTracksCoreAsync(playlistId, expectedTrackCount, budgetCts.Token);
     }
 
     private async Task<IReadOnlyList<OnlineTrack>> GetPlaylistTracksCoreAsync(
@@ -229,8 +240,24 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
                 }
                 catch (JsonException)
                 {
-                    // 非 JSON 的 5xx 仍按瞬时代理故障重试；最终由 EnsureSuccessStatusCode
-                    // 保留原始 HTTP 错误，便于上层诊断。
+                    // 非 JSON 的 5xx 按瞬时代理故障重试（Node 半启动时常返回 HTML 错误页）。
+                    // catch 块内 EnsureSuccessStatusCode 抛出的新异常不会被同级
+                    // catch (HttpRequestException) 捕获，必须在此显式走重试路径。
+                    if (!response.IsSuccessStatusCode &&
+                        attempt < MaxTransientRetries &&
+                        IsTransientStatus(response.StatusCode))
+                    {
+                        Log.Debug(
+                            "Kugou playlist request retry {Attempt}/{MaxAttempts} for {Path}: non-JSON HTTP {Status}",
+                            attempt + 1,
+                            MaxTransientRetries,
+                            relativeUrl.Split('?', 2)[0],
+                            (int)response.StatusCode);
+                        await Task.Delay(GetRetryDelay(attempt), cancellationToken);
+                        continue;
+                    }
+
+                    // 重试耗尽或非瞬时状态：保留原始 HTTP 错误，便于上层诊断
                     response.EnsureSuccessStatusCode();
                     throw;
                 }

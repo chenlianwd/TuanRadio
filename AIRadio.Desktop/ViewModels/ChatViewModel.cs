@@ -34,6 +34,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _stateSub;
     private readonly Action _onLanguageChanged;
     private string? _pendingCommand;
+    // 指令挂起后、对应 TTS 真实开播（PlayTtsAudio 同步发出 true）前置位；
+    // 只有见过本次开播的 false 才允许消费指令，防陈旧结束通知提前切歌
+    private bool _pendingCommandSpeechStarted;
     private Track? _pendingRecommendedTrack;
 
     private WaveInEvent? _waveIn;
@@ -104,14 +107,17 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 RefreshStatus();
             });
 
-        // Handle pending command after TTS ends (separate subscription to avoid async void)
+        // Handle pending command after TTS ends (separate subscription to avoid async void).
+        // pending 在语音生成的网络等待期间就已挂上，期间任何别的 TTS 结束通知（如上一段
+        // DJ 串场播完、StopTts 收尾）都不得提前触发切歌：必须等本次播报真实开播过
         _ttsCommandSub = _audioService.TtsStateChanged
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Where(playing => !playing && _pendingCommand != null)
+            .Where(playing => !playing && _pendingCommand != null && _pendingCommandSpeechStarted)
             .Select(_ =>
             {
                 var cmd = _pendingCommand!;
                 _pendingCommand = null;
+                _pendingCommandSpeechStarted = false;
                 return cmd;
             })
             .SelectMany(cmd => Observable.FromAsync(() => ExecuteCommandAsync(cmd)))
@@ -127,11 +133,13 @@ public class ChatViewModel : ViewModelBase, IDisposable
                     message,
                     AppLanguage.T("可以在设置里暂时关闭语音播报，或检查系统默认音频输出设备。", "You can turn off voice playback in Settings for now, or check the default audio output device.")));
 
-                // TTS failed — still execute pending command so user action is not lost
-                if (_pendingCommand != null)
+                // TTS failed — still execute pending command so user action is not lost.
+                // 与消费订阅同门：只处理"本次播报已开播"的失败，避免陈旧错误吞掉挂起指令
+                if (_pendingCommand != null && _pendingCommandSpeechStarted)
                 {
                     var cmd = _pendingCommand;
                     _pendingCommand = null;
+                    _pendingCommandSpeechStarted = false;
                     _ = ExecuteCommandAsync(cmd).ContinueWith(
                         t => Log.Warning(t.Exception, "ExecuteCommand failed after TTS error"),
                         TaskContinuationOptions.OnlyOnFaulted);
@@ -223,6 +231,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private void StartListening()
     {
         if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        // 识别进行中不允许重启录音：旧识别完成回调会按旧结果覆盖输入框并可能重复自动发送
+        if (IsRecognizing)
             return;
 
         WaveInEvent? waveIn = null;
@@ -435,6 +447,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
         SetWorkingNotice(AppLanguage.T("AI 正在回复", "AI is replying"), AppLanguage.T("正在请求 AI 服务，最多等待 30 秒。", "Requesting the AI service; waiting up to 30 seconds."));
         _pendingCommand = null;
         _pendingRecommendedTrack = null;
+        // 上一轮播报未结束就发新消息时，门会残留 true：不在新一轮开头复位会让
+        // "先见 true"门失效，语音生成窗口内的陈旧 TTS 结束通知又会提前消费新指令
+        _pendingCommandSpeechStarted = false;
 
         try
         {
@@ -458,7 +473,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var response = await _djService.GenerateChatResponseAsync(text);
+            var response = await _djService.GenerateChatResponseAsync(text, _lifetimeCts.Token);
             if (_djService.LastFailure is { } chatFailure)
             {
                 AddFailureMessage(AppLanguage.T("AI 回复失败", "AI reply failed"), chatFailure);
@@ -520,19 +535,26 @@ public class ChatViewModel : ViewModelBase, IDisposable
         DjEmotion = emotion;
         DjVisualCue?.Invoke(MapExpression(DjEmotion), MapMotion(DjEmotion));
 
-        if (command != null && !_djService.TtsEnabled)
+        // 先判定“是否真的会播报”：指令只在确实会播报时挂到 TTS 结束后执行，否则立即执行。
+        // 否则空白文案（如纯 emoji 回复）会让 _pendingCommand 悬挂，直到稍后任意一次
+        // TTS 结束被陈旧消费（在错误时机切歌）。
+        var ttsText = StripEmoji(displayText);
+        var willSpeak = _djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText);
+
+        if (command != null && !willSpeak)
             await ExecuteCommandAsync(command);
-        else if (command != null && _djService.TtsEnabled)
+        else if (command != null)
             _pendingCommand = command;
 
-        var ttsText = StripEmoji(displayText);
-        if (_djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText))
+        if (willSpeak)
         {
             StatusText = "VOICE...";
             SetWorkingNotice(AppLanguage.T("正在生成语音", "Generating voice"), AppLanguage.T("AI 文字已返回，正在调用语音服务。", "AI text is back; calling the voice service."));
             var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
             if (speechData is { Length: > 0 })
             {
+                // PlayTtsAudio 全同步：此刻 true 已发出，置位后消费订阅只会接受本次播报的结束
+                _pendingCommandSpeechStarted = true;
                 _audioService.PlayTtsAudio(speechData);
             }
             else
@@ -550,6 +572,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 {
                     var cmd = _pendingCommand;
                     _pendingCommand = null;
+                    _pendingCommandSpeechStarted = false;
                     await ExecuteCommandAsync(cmd);
                 }
             }
@@ -867,7 +890,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private List<Track> GetRecentlyPlayedSnapshot()
         => _recommendationService?.RecentlyPlayed?.ToList() ?? new List<Track>();
 
-    private static bool IsFreshRecommendationRequest(string text)
+    internal static bool IsFreshRecommendationRequest(string text)
     {
         var normalized = NormalizeSongQuery(text);
         if (string.IsNullOrWhiteSpace(normalized))
@@ -875,10 +898,13 @@ public class ChatViewModel : ViewModelBase, IDisposable
         if (Regex.IsMatch(normalized, @"^(?:请|麻烦|帮我|给我)?\s*(?:播放|放|听|我想听|想听)\s+"))
             return false;
 
-        return Regex.IsMatch(
-            normalized,
-            @"(推荐|推歌|换一首|来一首|来首|下一首|同类型|类似|相似|新歌|没听过|别的).*(歌|歌曲|音乐)?",
-            RegexOptions.IgnoreCase);
+        // 强意图关键词单独出现即视为推荐请求；
+        // 弱意图词（类似/相似/新歌/没听过/别的）在日常对话中极常见（“我们聊点别的”），
+        // 必须后随歌/歌曲/音乐才算数，否则普通聊天会被劫持为换歌。
+        if (Regex.IsMatch(normalized, @"推荐|推歌|换一首|来一首|来首|下一首|同类型", RegexOptions.IgnoreCase))
+            return true;
+
+        return Regex.IsMatch(normalized, @"(类似|相似|新歌|没听过|别的).{0,12}(歌|歌曲|音乐)", RegexOptions.IgnoreCase);
     }
 
     private static bool TryParseSongRequest(
@@ -1195,9 +1221,12 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private int FindAudioTrackIndex(string sourceId, string filePath)
     {
-        for (int i = 0; i < _audioService.Playlist.Count; i++)
+        // 单次快照后遍历：Playlist 每次访问都会加锁复制数组，
+        // 循环里 Count 与 [i] 可能来自不同快照，并发增删时会越界
+        var playlist = _audioService.Playlist;
+        for (int i = 0; i < playlist.Count; i++)
         {
-            var item = _audioService.Playlist[i];
+            var item = playlist[i];
             if (!string.IsNullOrWhiteSpace(sourceId) && item.SourceId == sourceId)
                 return i;
             if (!string.IsNullOrWhiteSpace(filePath) && item.FilePath == filePath)

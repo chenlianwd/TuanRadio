@@ -156,6 +156,7 @@ const createRequest = (options) => {
       headers: Object.assign({}, options?.headers || {}, headers),
       withCredentials: true,               // 携带 Cookie
       responseType: options.responseType,  // 响应类型（如 'arraybuffer'）
+      timeout: 15000,                      // 上游挂起时兜底超时，防代理请求无限等待
     };
 
     // ========== 代理配置 ==========

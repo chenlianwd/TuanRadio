@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Subjects;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -138,7 +139,7 @@ public class ChatViewModelTests
         vm.InputText = "丑八怪";
         await vm.SendMessageCommand.Execute().FirstAsync();
 
-        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
             tracks.Any(t => t.Title == "丑八怪" && t.SourceId == "netease:ugly"))), Times.Once);
         audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
@@ -168,7 +169,7 @@ public class ChatViewModelTests
         vm.InputText = "播放李荣浩的歌";
         await vm.SendMessageCommand.Execute().FirstAsync();
 
-        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.SearchAsync("李荣浩", 5), Times.Once);
         searchMock.Verify(x => x.SearchAsync("李荣浩的歌", 5), Times.Never);
         audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
@@ -203,7 +204,7 @@ public class ChatViewModelTests
         vm.InputText = "王菲";
         await vm.SendMessageCommand.Execute().FirstAsync();
 
-        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.GetPlayUrlAsync("netease:title-match"), Times.Once);
         searchMock.Verify(x => x.GetPlayUrlAsync("netease:artist-match"), Times.Never);
         audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
@@ -217,13 +218,13 @@ public class ChatViewModelTests
         var (vm, djMock, audioMock, searchMock) = CreateVm();
         searchMock.Setup(x => x.SearchAsync("好累", 3))
             .ReturnsAsync(new List<OnlineTrack>());
-        djMock.Setup(x => x.GenerateChatResponseAsync("好累"))
+        djMock.Setup(x => x.GenerateChatResponseAsync("好累", It.IsAny<CancellationToken>()))
             .ReturnsAsync("听起来有点累，先缓一缓。");
 
         vm.InputText = "好累";
         await vm.SendMessageCommand.Execute().FirstAsync();
 
-        djMock.Verify(x => x.GenerateChatResponseAsync("好累"), Times.Once);
+        djMock.Verify(x => x.GenerateChatResponseAsync("好累", It.IsAny<CancellationToken>()), Times.Once);
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
         audioMock.Verify(x => x.PlayAtIndex(It.IsAny<int>()), Times.Never);
     }
@@ -247,7 +248,7 @@ public class ChatViewModelTests
         await vm.SendMessageCommand.Execute().FirstAsync();
 
         djMock.Verify(x => x.RecommendNextTrackAsync(It.IsAny<Track?>()), Times.Once);
-        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>()), Times.Never);
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
         audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
             tracks.Any(t => t.SourceId == "netease:fresh"))), Times.Once);
@@ -454,4 +455,18 @@ public class ChatViewModelTests
         vm.HasFailure = true;
         Assert.True(vm.HasFailure);
     }
+
+    [Theory]
+    [InlineData("我们聊点别的", false)]          // 弱意图词单独出现：日常聊天，不得劫持为换歌
+    [InlineData("有类似的软件吗", false)]
+    [InlineData("新歌这个词我不太懂", false)]
+    [InlineData("放一首歌", false)]              // 显式播放意图走歌曲解析分支
+    [InlineData("推荐一首歌", true)]
+    [InlineData("有什么推荐", true)]             // 强意图词单独出现仍视为推荐（既有语义）
+    [InlineData("换一首", true)]
+    [InlineData("来首", true)]
+    [InlineData("来点别的歌", true)]             // 弱意图词 + 歌曲名词 → 推荐
+    [InlineData("有没有类似的音乐", true)]
+    public void IsFreshRecommendationRequest_DoesNotHijackDailyChat(string text, bool expected)
+        => Assert.Equal(expected, ChatViewModel.IsFreshRecommendationRequest(text));
 }

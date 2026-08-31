@@ -106,13 +106,15 @@ public static class YtdlpManager
                 cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await InstallVerifiedAsync(
+            var installed = await InstallVerifiedAsync(
                 input,
                 YtdlpExe,
                 VersionFile,
                 PinnedSha256,
                 PinnedVersion,
                 cancellationToken);
+            if (!installed)
+                return YtdlpExe; // 目标被占用跳过更新：旧版继续可用，避免误报“已安装新版”
         }
         finally
         {
@@ -126,8 +128,9 @@ public static class YtdlpManager
     /// <summary>
     /// 把下载流写入临时文件、校验 SHA256 后原子替换目标文件并记录版本。
     /// 校验失败或取消时清理半成品临时文件，绝不替换现有可执行文件。
+    /// 返回是否实际完成替换（目标文件被占用时跳过更新并返回 false，保留旧版可用）。
     /// </summary>
-    internal static async Task InstallVerifiedAsync(
+    internal static async Task<bool> InstallVerifiedAsync(
         Stream input,
         string targetPath,
         string versionFilePath,
@@ -139,8 +142,19 @@ public static class YtdlpManager
         try
         {
             await WriteVerifiedFileAsync(tempPath, input, expectedSha256, cancellationToken);
-            File.Move(tempPath, targetPath, overwrite: true);
+            try
+            {
+                File.Move(tempPath, targetPath, overwrite: true);
+            }
+            catch (IOException) when (File.Exists(targetPath))
+            {
+                // Windows 不允许覆盖正在运行的可执行文件：更新恰逢旧版 yt-dlp 正在播放时，
+                // 保留旧版并跳过本次更新（版本文件不写，状态判定维持旧版可用，下次启动再更）
+                Log.Warning("yt-dlp update skipped: target executable is currently in use");
+                return false;
+            }
             File.WriteAllText(versionFilePath, version);
+            return true;
         }
         catch
         {

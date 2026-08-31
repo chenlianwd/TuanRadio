@@ -43,8 +43,19 @@ public class WindowsSecureStorage : ISecureStorage
         Generic = 1
     }
 
+    // CRED_MAX_CREDENTIAL_BLOB_SIZE：通用凭据 blob 上限 2560 字节（Unicode 下约 1280 字符），
+    // 超限时 CredWrite 必败；提前给出明确错误而不是裸 Win32 错误码
+    private const int MaxCredentialBlobBytes = 2560;
+
     public Task SaveApiKeyAsync(string service, string apiKey)
     {
+        if (Encoding.Unicode.GetByteCount(apiKey) > MaxCredentialBlobBytes)
+        {
+            throw new InvalidOperationException(AppLanguage.T(
+                $"凭据过长（{apiKey.Length} 字符），超出 Windows 凭据管理器单条上限，无法保存。",
+                $"The credential ({apiKey.Length} chars) exceeds the Windows Credential Manager per-entry limit and cannot be saved."));
+        }
+
         var targetName = Prefix + service;
         var blobPtr = Marshal.StringToCoTaskMemUni(apiKey);
         var credential = new CREDENTIAL

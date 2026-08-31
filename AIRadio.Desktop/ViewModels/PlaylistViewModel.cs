@@ -32,6 +32,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private int _disposed;
     private bool _isPlayingOnline;
     private bool _isLoading;
+    private bool _isSearching;
     private Func<string>? _searchStatusFactory;
     private Func<string>? _kugouStatusFactory;
     private readonly IDisposable _selectedTrackSub;
@@ -275,6 +276,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         {
             foreach (var track in Tracks)
                 track.RefreshLocalization();
+            // OnlineTrack 无 INPC：搜索结果与酷狗曲目列表按新语言重绑（语言切换是低频操作）
+            RebindOnlineTracks(SearchResults);
+            RebindOnlineTracks(FilteredKugouPlaylistTracks);
             // 搜索进行中保留"搜索中..."文案，结束后由 finally 按新语言复位
             if (!IsSearching)
                 SearchButtonText = AppLanguage.T("搜索", "Search");
@@ -284,6 +288,18 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 KugouStatusMessage = _kugouStatusFactory();
         };
         AppLanguage.Changed += _onLanguageChanged;
+    }
+
+    /// <summary>清空并重添同一批 OnlineTrack：触发集合通知让行模板重新读取计算型显示属性。</summary>
+    private static void RebindOnlineTracks(System.Collections.ObjectModel.ObservableCollection<OnlineTrack> collection)
+    {
+        if (collection.Count == 0)
+            return;
+
+        var snapshot = collection.ToList();
+        collection.Clear();
+        foreach (var item in snapshot)
+            collection.Add(item);
     }
 
     private void OnTracksChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -615,6 +631,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             await SaveAsync();
             SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
         }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // 应用关闭/生命周期取消不算播放失败，不弹失败文案
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Play online failed for {Track}", track.Title);
@@ -640,10 +660,20 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 AreDurationsCompatible(track.Duration, TimeSpan.FromMilliseconds(online.DurationMs)));
     }
 
-    private Task<List<OnlineTrack>> SearchMusicAsync(string keyword, int limit)
-        => _musicSearchService is Services.MultiSourceMusicService multi
-            ? multi.SearchAsync(keyword, limit, _lifetimeCts.Token)
-            : _musicSearchService.SearchAsync(keyword, limit);
+    private async Task<(List<OnlineTrack> Tracks, IReadOnlyList<Services.SourceSearchStatus> Report)> SearchMusicAsync(
+        string keyword,
+        int limit)
+    {
+        if (_musicSearchService is Services.MultiSourceMusicService multi)
+        {
+            // 用作用域报告：并发搜索（电台推荐/DJ 点歌）不会覆盖本次搜索的逐源状态
+            var outcome = await multi.SearchWithReportAsync(keyword, limit, _lifetimeCts.Token);
+            return (outcome.Tracks, outcome.Report);
+        }
+
+        var tracks = await _musicSearchService.SearchAsync(keyword, limit);
+        return (tracks, Array.Empty<Services.SourceSearchStatus>());
+    }
 
     private Task<string?> ResolvePlayUrlAsync(OnlineTrack track)
         => _musicSearchService is Services.MultiSourceMusicService multi
@@ -711,6 +741,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
         }
+        catch (OperationCanceledException)
+        {
+            // 服务内部 3 分钟总预算到点（非用户取消）：给出超时专属提示而不是通用失败
+            SetKugouStatus(() => AppLanguage.T(
+                "同步超时（超过 3 分钟总预算），请稍后重试。",
+                "Sync timed out (3-minute budget). Please retry later."));
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load Kugou playlists");
@@ -775,6 +812,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (OperationCanceledException)
+        {
+            // 服务内部 3 分钟总预算到点（非用户切换/取消）：给出超时专属提示
+            SetKugouStatus(() => AppLanguage.T(
+                $"读取《{playlist.Name}》超时（超过 3 分钟总预算），请稍后重试。",
+                $"Timed out loading \"{playlist.Name}\" (3-minute budget). Try again later."));
         }
         catch (Exception ex)
         {
@@ -966,21 +1010,28 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private async Task SearchAsync()
     {
         if (string.IsNullOrWhiteSpace(SearchText)) return;
+        // 防重入：双击并发搜索时后完成者会互相覆盖结果与状态
+        if (_isSearching) return;
 
+        _isSearching = true;
         IsSearching = true;
         SearchButtonText = AppLanguage.T("搜索中...", "Searching...");
         SetSearchStatus(() => AppLanguage.T($"正在搜索“{SearchText}”...", $"Searching \"{SearchText}\"..."));
         try
         {
-            var results = await SearchMusicAsync(SearchText, 20);
+            var (results, report) = await SearchMusicAsync(SearchText, 20);
             SearchResults.Clear();
             foreach (var track in results)
             {
                 SearchResults.Add(track);
             }
             TabIndex = 2; // auto-switch to search results
-            SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count));
+            SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count, report));
             Log.Information("Search '{Query}' returned {Count} results", SearchText, results.Count);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // 应用关闭/生命周期取消不是业务失败，不弹误导性失败文案
         }
         catch (Exception ex)
         {
@@ -989,22 +1040,23 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            _isSearching = false;
             IsSearching = false;
             SearchButtonText = AppLanguage.T("搜索", "Search");
         }
     }
 
     /// <summary>构造搜索状态消息：透传各音源成功/超时/失败（子项目 5）。</summary>
-    private string BuildSearchStatusMessage(int totalCount)
+    private string BuildSearchStatusMessage(int totalCount, IReadOnlyList<Services.SourceSearchStatus> report)
     {
-        if (_musicSearchService is not Services.MultiSourceMusicService multi || multi.LastSearchReport.Count == 0)
+        if (report.Count == 0)
             return totalCount == 0
                 ? AppLanguage.T(
                     "没有找到可用结果。可以换个关键词，或检查网络/音乐 API 服务。",
                     "No results found. Try another keyword or check the network / music API service.")
                 : AppLanguage.T($"找到 {totalCount} 个结果。", $"Found {totalCount} result(s).");
 
-        var perSource = string.Join(AppLanguage.T("；", "; "), multi.LastSearchReport.Select(FormatSourceStatus));
+        var perSource = string.Join(AppLanguage.T("；", "; "), report.Select(FormatSourceStatus));
         return totalCount == 0
             ? AppLanguage.T($"未找到结果。{perSource}", $"No results. {perSource}")
             : AppLanguage.T($"找到 {totalCount} 个结果。{perSource}", $"Found {totalCount} result(s). {perSource}");

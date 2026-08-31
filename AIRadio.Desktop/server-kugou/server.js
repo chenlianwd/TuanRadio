@@ -190,7 +190,9 @@ async function consturctServer(moduleDefs) {
    * 对 OPTIONS 预检请求直接返回 204 No Content
    */
   app.use((req, res, next) => {
-    if (req.path !== '/' && !req.path.includes('.')) {
+    // 会话桥端点（/verify/bridge/*）仅供同源验证页调用：
+    // 不反射跨域 Origin、不下发 CORS 凭证头，防任意站点携 Cookie 跨站调用
+    if (req.path !== '/' && !req.path.includes('.') && !req.path.startsWith('/verify/bridge')) {
       res.set({
         'Access-Control-Allow-Credentials': true,
         'Access-Control-Allow-Origin': CORS_ALLOW_ORIGIN || req.headers.origin || '*',
@@ -336,6 +338,13 @@ async function consturctServer(moduleDefs) {
    */
   const moduleDefinitions = moduleDefs || (await getModulesDefinitions(path.join(__dirname, 'module'), {}));
 
+  /** 日志脱敏：会话凭证/验证票据，以及任何经 URL 携带的登录态参数（token 族、cookie 串），
+   * 键集与桌面端 SensitiveDataSanitizer 对齐，前缀放宽到路径段。 */
+  const redactUrl = (url) =>
+    url.replace(
+      /([?&/])(session(?:Id)?|verifycode|ticket|token|userid|dfid|mid|kg_mid|kg_dfid|cookie|sign|signature|authorization|access_token|accesstoken|music_u)=([^&]*)/gi,
+      '$1$2=***');
+
   for (const moduleDef of moduleDefinitions) {
     /**
      * 为每个 API 模块注册路由处理器
@@ -360,12 +369,26 @@ async function consturctServer(moduleDefs) {
       // Step 2: 从 query 中分离出 cookie 参数和其余参数
       const { cookie, ...params } = req.query;
 
+      // 会话桥端点服务端强制约束：登录态只认 Authorization 头与请求 Cookie，
+      // query/body 中携带的 cookie（token 等）一律忽略，防凭据经 URL 落日志/缓存键
+      const isBridgeRoute = moduleDef.route.startsWith('/verify/bridge');
+      const body = Buffer.isBuffer(req.body) ? { data: req.body } : req.body;
+      let bodyParams = body;
+      if (isBridgeRoute && body && typeof body === 'object') {
+        const { cookie: _bodyCookie, ...rest } = body;
+        bodyParams = rest;
+      }
+
       // Step 3: 构建统一的 query 对象
       //   - cookie: 合并请求 Cookie 和 query 中传入的 cookie 参数
       //   - params: query 中除 cookie 外的其余参数
       //   - body: 请求体（POST 数据）
-      const body = Buffer.isBuffer(req.body) ? { data: req.body } : req.body;
-      const query = Object.assign({}, { cookie: Object.assign({}, req.cookies, cookie) }, params, body);
+      const query = Object.assign(
+        {},
+        { cookie: Object.assign({}, req.cookies, isBridgeRoute ? null : cookie) },
+        params,
+        bodyParams
+      );
 
       // Step 4: 如果请求携带了 Authorization 头，将其解析为 Cookie 并合并
       // 这样客户端可以通过 Authorization 头传递认证信息，例如: token=xxx;userid=xxx
@@ -398,7 +421,7 @@ async function consturctServer(moduleDefs) {
         });
 
         // 请求成功日志
-        console.log('[OK]', decode(req.originalUrl));
+        console.log('[OK]', redactUrl(decode(req.originalUrl)));
 
         // Step 6: 处理模块返回的 Cookie
         // 将模块设置的 Cookie 通过 Set-Cookie 响应头写回客户端
@@ -432,7 +455,7 @@ async function consturctServer(moduleDefs) {
         const moduleResponse = e;
 
         // 错误日志
-        console.log('[ERR]', decode(req.originalUrl), {
+        console.log('[ERR]', redactUrl(decode(req.originalUrl)), {
           status: moduleResponse.status,
           body: moduleResponse.body,
         });
