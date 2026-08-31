@@ -146,8 +146,9 @@ public class NeteaseMusicService : IMusicSearchService
 
                 if (first.TryGetProperty("url", out var urlEl))
                 {
+                    // 与酷狗/YouTube 同口径：非 http(s) 值不得流入 LibVLC
                     var playUrl = urlEl.GetString();
-                    return string.IsNullOrEmpty(playUrl) ? null : playUrl;
+                    return IsHttpUrl(playUrl) ? playUrl : null;
                 }
             }
 
@@ -172,6 +173,11 @@ public class NeteaseMusicService : IMusicSearchService
         if (!string.IsNullOrEmpty(cookie))
             request.Headers.TryAddWithoutValidation("Cookie", cookie);
     }
+
+    private static bool IsHttpUrl(string? url)
+        => url is not null &&
+           (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsTrialOrRestricted(JsonElement item)
     {

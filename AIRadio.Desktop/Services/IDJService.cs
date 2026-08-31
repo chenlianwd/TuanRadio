@@ -13,6 +13,8 @@ public interface IDJService
         => GenerateSongStoryAsync(track);
     Task<Track?> RecommendNextTrackAsync(Track? current);
     Task<string> GenerateChatResponseAsync(string userMessage);
+    Task<string> GenerateChatResponseAsync(string userMessage, CancellationToken cancellationToken)
+        => GenerateChatResponseAsync(userMessage);
     Task<byte[]?> GenerateSpeechAsync(string text);
     string CurrentEmotion { get; }
     bool TtsEnabled { get; }

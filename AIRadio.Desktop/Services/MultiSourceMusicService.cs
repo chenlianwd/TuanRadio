@@ -32,9 +32,18 @@ public class MultiSourceMusicService : IMusicSearchService
     private readonly object _reportGate = new();
     private readonly List<SourceSearchStatus> _lastSearchReport = new();
 
+    // 本服务是 DI 单例，用户搜索/电台推荐/DJ 点歌可能并发进入：
+    // 逐源报告绑定到“发起搜索的异步上下文”，避免并发搜索互相覆盖状态。
+    // 未设置时（直接调 SearchAsync 的旧路径）回落到共享的 _lastSearchReport。
+    private static readonly AsyncLocal<List<SourceSearchStatus>?> CurrentSearchReport = new();
+
+    /// <summary>带逐源报告的搜索结果：报告与结果同源，杜绝读到别的并发请求的状态。</summary>
+    public sealed record SearchOutcome(List<OnlineTrack> Tracks, IReadOnlyList<SourceSearchStatus> Report);
+
     public string Name => "多平台聚合";
 
-    /// <summary>最近一次搜索的各源状态（供 UI 透传具体失败原因，子项目 5）。</summary>
+    /// <summary>最近一次搜索的各源状态（供 UI 透传具体失败原因，子项目 5）。
+    /// 注意并发搜索下这是“最后一次旧式调用”的快照；需要精确归属请用 <see cref="SearchWithReportAsync"/>。</summary>
     public IReadOnlyList<SourceSearchStatus> LastSearchReport
     {
         get
@@ -43,6 +52,26 @@ public class MultiSourceMusicService : IMusicSearchService
             {
                 return _lastSearchReport.ToArray();
             }
+        }
+    }
+
+    /// <summary>
+    /// 在调用方上下文绑定独立报告作用域后执行搜索：报告对象随 ExecutionContext
+    /// 流入 SearchAsync 的全部子调用（含 Task.WhenAll 的并发分身），读取时零竞态。
+    /// </summary>
+    public async Task<SearchOutcome> SearchWithReportAsync(string keyword, int limit, CancellationToken cancellationToken)
+    {
+        var report = new List<SourceSearchStatus>();
+        CurrentSearchReport.Value = report;
+        try
+        {
+            var tracks = await SearchAsync(keyword, limit, cancellationToken);
+            lock (_reportGate)
+                return new SearchOutcome(tracks, report.ToArray());
+        }
+        finally
+        {
+            CurrentSearchReport.Value = null;
         }
     }
 
@@ -79,7 +108,12 @@ public class MultiSourceMusicService : IMusicSearchService
         CancellationToken cancellationToken)
     {
         lock (_reportGate)
-            _lastSearchReport.Clear();
+        {
+            if (CurrentSearchReport.Value is { } scoped)
+                scoped.Clear();
+            else
+                _lastSearchReport.Clear();
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
         // 快速源优先使用 8s 整体 deadline；后续慢源只能使用其剩余部分
@@ -306,8 +340,14 @@ public class MultiSourceMusicService : IMusicSearchService
             }
 
             var candidates = await SearchForPlaybackFallbackAsync(source, query, searchBudget, cancellationToken);
+            // 第一遍按原宽松口径精确匹配；落空再做“剥离标题修饰”的第二遍：
+            // YouTube 等源的结果标题几乎必带 "(Live)"/"(Official Music Video)" 等修饰，
+            // 不剥修饰时跨源兜底对该类源形同虚设。
             var candidate = candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
-                candidate.Title, candidate.Artist, track.Title, track.Artist));
+                candidate.Title, candidate.Artist, track.Title, track.Artist))
+                ?? candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
+                MusicIdentity.StripTitleDecorations(candidate.Title), candidate.Artist,
+                MusicIdentity.StripTitleDecorations(track.Title), track.Artist));
             if (candidate == null)
                 continue;
 
@@ -518,16 +558,17 @@ public class MultiSourceMusicService : IMusicSearchService
             SensitiveDataSanitizer.Sanitize(status.Error),
             SensitiveDataSanitizer.Sanitize(status.Note));
         lock (_reportGate)
-            _lastSearchReport.Add(sanitized);
+            (CurrentSearchReport.Value ?? _lastSearchReport).Add(sanitized);
     }
 
     private void AnnotateReport(string sourceName, string note)
     {
         lock (_reportGate)
         {
-            var index = _lastSearchReport.FindIndex(s => s.Name == sourceName);
+            var target = CurrentSearchReport.Value ?? _lastSearchReport;
+            var index = target.FindIndex(s => s.Name == sourceName);
             if (index >= 0)
-                _lastSearchReport[index] = _lastSearchReport[index] with { Note = note };
+                target[index] = target[index] with { Note = note };
         }
     }
 }

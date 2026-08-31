@@ -48,8 +48,6 @@ public class EdgeTtsService : ITtsService, IDisposable
     // Persistent WebSocket connection for TTS synthesis
     private ClientWebSocket? _ws;
     private readonly SemaphoreSlim _wsLock = new(1, 1);
-    private DateTime _wsCreatedAt = DateTime.MinValue;
-    private static readonly TimeSpan WsMaxAge = TimeSpan.FromMinutes(5);
 
     public EdgeTtsService(HttpClient httpClient)
     {
@@ -129,7 +127,8 @@ public class EdgeTtsService : ITtsService, IDisposable
             var voices = JsonSerializer.Deserialize<List<EdgeVoice>>(response) ?? new();
 
             _voiceCache = voices
-                .Where(v => v.Locale?.StartsWith("zh-") == true)
+                .Where(v => v.Locale?.StartsWith("zh-") == true ||
+                            v.Locale == "en-US" || v.Locale == "en-GB")
                 .Select(v => new VoiceOption
                 {
                     Id = v.ShortName ?? "",
@@ -161,13 +160,13 @@ public class EdgeTtsService : ITtsService, IDisposable
         }
     }
 
-    private async Task<ClientWebSocket> GetOrCreateWebSocketAsync(CancellationToken ct)
+    private async Task<ClientWebSocket> ConnectWebSocketAsync(CancellationToken ct)
     {
-        if (_ws != null && _ws.State == WebSocketState.Open &&
-            DateTime.UtcNow - _wsCreatedAt < WsMaxAge)
-            return _ws;
-
+        // 服务端按“一连接一次合成”设计：复用旧连接几乎必然在合成中途收到 Close，
+        // 每次合成都用全新连接，反而省掉一轮“失败→重连重试”的往返
         _ws?.Dispose();
+        _ws = null;
+
         var connectionId = Guid.NewGuid().ToString("N");
         var secMsGec = GenerateSecMsGec(DateTimeOffset.UtcNow);
         var url = $"{WssUrl}?TrustedClientToken={TrustedClientToken}" +
@@ -181,9 +180,17 @@ public class EdgeTtsService : ITtsService, IDisposable
         ws.Options.SetRequestHeader("Cache-Control", "no-cache");
         ws.Options.SetRequestHeader("Accept-Language", "en-US,en;q=0.9");
         ws.Options.SetRequestHeader("Cookie", $"muid={Guid.NewGuid().ToString("N").ToUpperInvariant()};");
-        await ws.ConnectAsync(new Uri(url), ct);
+        try
+        {
+            await ws.ConnectAsync(new Uri(url), ct);
+        }
+        catch
+        {
+            // 连接失败必须释放局部实例：此时还未赋给 _ws，外层 catch 只会清理旧值
+            ws.Dispose();
+            throw;
+        }
         _ws = ws;
-        _wsCreatedAt = DateTime.UtcNow;
         return ws;
     }
 
@@ -198,7 +205,7 @@ public class EdgeTtsService : ITtsService, IDisposable
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
-            var ws = await GetOrCreateWebSocketAsync(timeoutCts.Token);
+            var ws = await ConnectWebSocketAsync(timeoutCts.Token);
 
             // Send speech config
             var configMsg = BuildConfigMessage();
@@ -254,7 +261,11 @@ public class EdgeTtsService : ITtsService, IDisposable
                 break;
             }
 
-            return audioStream.ToArray();
+            var audio = audioStream.ToArray();
+            // 一连接一次合成：本轮结束即弃连接，下次合成重新握手
+            _ws?.Dispose();
+            _ws = null;
+            return audio;
         }
         catch (Exception)
         {
@@ -288,11 +299,25 @@ public class EdgeTtsService : ITtsService, IDisposable
 
         var (pitch, rate, volume) = ResolveProsody(emotion);
 
-        return $"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-CN'>" +
+        // xml:lang 跟随音色 locale（如 en-US-AriaNeural → en-US），英文音色不再声明成 zh-CN
+        return $"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{ResolveLocale(voice)}'>" +
                $"<voice name='{voice}'>" +
                $"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>" +
                $"{escaped}" +
                "</prosody></voice></speak>";
+    }
+
+    internal static string ResolveLocale(string voice)
+    {
+        // 音色名形如 "zh-CN-XiaoxiaoNeural" / "en-US-AriaNeural"，前两段即 locale
+        var parts = voice.Split('-');
+        if (parts.Length >= 2 &&
+            parts[0].Length == 2 &&
+            parts[1].Length is 2 or 3 or 4 &&
+            parts[0].All(char.IsLetter) &&
+            parts[1].All(char.IsLetter))
+            return $"{parts[0]}-{parts[1]}";
+        return "zh-CN";
     }
 
     internal static (string Pitch, string Rate, string Volume) ResolveProsody(string? emotion)

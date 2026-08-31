@@ -422,22 +422,28 @@
           currentTxappid = info.txappid || '';
           currentVtype = info.v_type || 0;
 
-          // 渲染验证信息面板
-          verifyInfoEl.innerHTML = [
+          // 渲染验证信息面板（值来自酷狗响应，一律用 DOM API + textContent 防注入）
+          verifyInfoEl.textContent = '';
+          [
             { label: 'sessionid', value: info.sessionid },
             { label: 'v_type', value: info.v_type },
             { label: 'txappid', value: info.txappid },
             { label: 'business', value: info.business },
             { label: 'url', value: info.url },
-          ]
-            .map(
-              (item) =>
-                `<div class="vi-row">` +
-                `<span class="vi-label">${item.label}</span>` +
-                `<span class="vi-value" title="${item.value || ''}">${item.value || '-'}</span>` +
-                `</div>`
-            )
-            .join('');
+          ].forEach((item) => {
+            const row = document.createElement('div');
+            row.className = 'vi-row';
+            const labelEl = document.createElement('span');
+            labelEl.className = 'vi-label';
+            labelEl.textContent = item.label;
+            const valueEl = document.createElement('span');
+            valueEl.className = 'vi-value';
+            const valueText = item.value == null ? '' : String(item.value);
+            valueEl.title = valueText;
+            valueEl.textContent = valueText === '' ? '-' : valueText;
+            row.append(labelEl, valueEl);
+            verifyInfoEl.appendChild(row);
+          });
           verifyInfoEl.style.display = 'block';
 
           // 从 cookie 预填设备参数，读不到则默认 '0'

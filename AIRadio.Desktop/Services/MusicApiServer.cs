@@ -22,6 +22,8 @@ public class MusicApiServer : IDisposable
     private readonly string _logTag;
     private readonly bool _requireSuccessStatusCode;
     private readonly object _processGate = new();
+    // 串行化整个“探测→拉起→就绪确认”启动序列，防并发启动泄漏 Node 进程
+    private readonly SemaphoreSlim _startGate = new(1, 1);
     private int _disposed;
 
     public int Port => _port;
@@ -78,102 +80,112 @@ public class MusicApiServer : IDisposable
             return;
         }
 
-        // 复用已经在运行的自有 API 实例；绝不按端口盲杀进程，避免误杀用户的
-        // 其他 Node/开发服务。
-        if (await IsServerReadyAsync(cancellationToken))
-        {
-            Log.Information("{Tag} server is already available on port {Port}", _logTag, _port);
-            return;
-        }
-
+        // 整个“探测→拉起→就绪确认”序列互斥：并发 StartAsync 会各启一个 Node 进程，
+        // 后写 _process 覆盖前者，泄漏的进程无人回收
+        await _startGate.WaitAsync(cancellationToken);
         try
         {
-            // 确保 Node.js 可用（自动下载便携版）
-            var nodePath = await EnvironmentManager.EnsureNodeJsAsync(cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            Log.Information("Using Node.js at: {Path}", nodePath);
-
-            Process process;
-            lock (_processGate)
+            // 复用已经在运行的自有 API 实例；绝不按端口盲杀进程，避免误杀用户的
+            // 其他 Node/开发服务。
+            if (await IsServerReadyAsync(cancellationToken))
             {
-                if (Volatile.Read(ref _disposed) != 0 || cancellationToken.IsCancellationRequested)
-                    return;
-
-                process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = nodePath,
-                        Arguments = $"\"{startScript}\"",
-                        WorkingDirectory = _serverDir,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        // Node 进程固定输出 UTF-8；不声明则按系统 ANSI 代码页解码出乱码
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8
-                    },
-                    EnableRaisingEvents = true
-                };
-
-                process.OutputDataReceived += (_, e) =>
-                {
-                    if (!string.IsNullOrEmpty(e.Data))
-                        Log.Debug("{Tag}: {Line}", _logTag, e.Data);
-                };
-
-                process.ErrorDataReceived += (_, e) =>
-                {
-                    if (!string.IsNullOrEmpty(e.Data))
-                        Log.Warning("{Tag} ERR: {Line}", _logTag, e.Data);
-                };
-
-                cancellationToken.ThrowIfCancellationRequested();
-                _process = process;
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                Log.Information("{Tag} server is already available on port {Port}", _logTag, _port);
+                return;
             }
 
-            // Short-lived HttpClient for startup health check only (called once)
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            for (int i = 0; i < MaxStartupRetries; i++)
+            try
             {
-                try
+                // 确保 Node.js 可用（自动下载便携版）
+                var nodePath = await EnvironmentManager.EnsureNodeJsAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                Log.Information("Using Node.js at: {Path}", nodePath);
+
+                Process process;
+                lock (_processGate)
                 {
-                    using var resp = await http.GetAsync(
-                        $"http://127.0.0.1:{_port}{_healthQuery}",
-                        cancellationToken);
-                    if (HealthResponseAccepted(resp) &&
-                        _healthValidator(await resp.Content.ReadAsStringAsync(cancellationToken)))
-                    {
-                        Log.Information("{Tag} server ready on port {Port}", _logTag, _port);
+                    if (Volatile.Read(ref _disposed) != 0 || cancellationToken.IsCancellationRequested)
                         return;
-                    }
+
+                    process = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = nodePath,
+                            Arguments = $"\"{startScript}\"",
+                            WorkingDirectory = _serverDir,
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            // Node 进程固定输出 UTF-8；不声明则按系统 ANSI 代码页解码出乱码
+                            StandardOutputEncoding = Encoding.UTF8,
+                            StandardErrorEncoding = Encoding.UTF8
+                        },
+                        EnableRaisingEvents = true
+                    };
+
+                    process.OutputDataReceived += (_, e) =>
+                    {
+                        if (!string.IsNullOrEmpty(e.Data))
+                            Log.Debug("{Tag}: {Line}", _logTag, e.Data);
+                    };
+
+                    process.ErrorDataReceived += (_, e) =>
+                    {
+                        if (!string.IsNullOrEmpty(e.Data))
+                            Log.Warning("{Tag} ERR: {Line}", _logTag, e.Data);
+                    };
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _process = process;
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
                 }
-                catch
+
+                // Short-lived HttpClient for startup health check only (called once)
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                for (int i = 0; i < MaxStartupRetries; i++)
                 {
+                    try
+                    {
+                        using var resp = await http.GetAsync(
+                            $"http://127.0.0.1:{_port}{_healthQuery}",
+                            cancellationToken);
+                        if (HealthResponseAccepted(resp) &&
+                            _healthValidator(await resp.Content.ReadAsStringAsync(cancellationToken)))
+                        {
+                            Log.Information("{Tag} server ready on port {Port}", _logTag, _port);
+                            return;
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    await Task.Delay(500, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (Volatile.Read(ref _disposed) != 0)
+                        return;
                 }
 
-                await Task.Delay(500, cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (Volatile.Read(ref _disposed) != 0)
-                    return;
+                // 健康检查失败也要回收进程：留着只会占用端口并让后续启动复用判断复杂化
+                Stop();
+                Log.Warning("{Tag} server did not become ready within 15 seconds", _logTag);
             }
-
-            // 健康检查失败也要回收进程：留着只会占用端口并让后续启动复用判断复杂化
-            Stop();
-            Log.Warning("{Tag} server did not become ready within 15 seconds", _logTag);
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                Stop();
+            }
+            catch (Exception ex)
+            {
+                Stop();
+                Log.Error(ex, "Failed to start {Tag} server", _logTag);
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        finally
         {
-            Stop();
-        }
-        catch (Exception ex)
-        {
-            Stop();
-            Log.Error(ex, "Failed to start {Tag} server", _logTag);
+            _startGate.Release();
         }
     }
 
@@ -193,8 +205,11 @@ public class MusicApiServer : IDisposable
         {
             if (!process.HasExited)
             {
+                // Kill(entireProcessTree) 后进程退出是既定事实，短等待只为收敛句柄；
+                // 两个实例在关机路径串行 Stop，长等待会累计成可感知的关窗卡顿
                 process.Kill(entireProcessTree: true);
-                process.WaitForExit(3000);
+                if (!process.WaitForExit(1000))
+                    Log.Debug("{Tag} server process has not exited within 1s after kill", _logTag);
                 Log.Information("{Tag} server stopped", _logTag);
             }
         }

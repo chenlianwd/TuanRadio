@@ -116,7 +116,7 @@ public class MiguMusicService : IMusicSearchService
             {
                 // 空字符串视为无地址，继续尝试备用端点，避免"首端点空值即放弃"
                 var primaryUrl = listenUrl.GetString();
-                if (!string.IsNullOrWhiteSpace(primaryUrl))
+                if (IsHttpUrl(primaryUrl))
                     return primaryUrl;
             }
 
@@ -132,7 +132,10 @@ public class MiguMusicService : IMusicSearchService
             if (doc2.RootElement.TryGetProperty("data", out var data2) &&
                 data2.TryGetProperty("playUrl", out var playUrl))
             {
-                return playUrl.GetString();
+                // 与酷狗/YouTube 同口径：非 http(s) 值不得流入 LibVLC
+                var secondaryUrl = playUrl.GetString();
+                if (IsHttpUrl(secondaryUrl))
+                    return secondaryUrl;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -145,4 +148,9 @@ public class MiguMusicService : IMusicSearchService
         }
         return null;
     }
+
+    private static bool IsHttpUrl(string? url)
+        => url is not null &&
+           (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
 }

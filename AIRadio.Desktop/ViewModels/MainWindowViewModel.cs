@@ -711,8 +711,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 ? "You have just taken over this radio station. Greet me in your own DJ personality and voice style. Do not mention settings."
                 : "你刚刚接管这个电台。请用你的主播人设和语气，主动向我打个招呼，不要提到设置。";
 
-            var response = await _djService.GenerateChatResponseAsync(prompt);
+            var response = await _djService.GenerateChatResponseAsync(prompt, cancellationToken);
             if (IsDisposed || cancellationToken.IsCancellationRequested)
+                return;
+
+            // LLM 失败/未配置时 GenerateChatResponseAsync 返回兜底文案并置 LastFailure：
+            // 问候路径不能把兜底或“请先在设置中配置 AI 服务。”当角色台词播报
+            if (_djService.LastFailure is { })
                 return;
 
             var text = StripDjControlTags(response);
@@ -863,7 +868,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         DjVisualCue?.Invoke(script.Expression, script.Motion);
         await SpeakDjTextAsync(script.Text);
 
-        var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended));
+        // AddExternalTrack 在宽松同曲命中时“合并且不入列”，随后严格身份查找会落空，
+        // 导致“return true 却不播放”且上层跳过轮换兜底 → 电台停播。
+        // 回退用与合并口径一致的宽松查找，保证总能拿到可播实例。
+        var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended))
+                       ?? PlaylistVM.FindMatchingTrack(recommended);
         if (playable != null && IsSameTrack(_audioService.CurrentTrack, current))
             _audioService.PlayTrack(playable);
         return true;
@@ -1072,14 +1081,28 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 {
                     var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(
                         System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+                    // 只有先见过本次 TTS 的 playing=true 才接受 false 完成：
+                    // 防止上一段 TTS 迟到的结束通知把等待提前放行（下一首在 DJ 人声未播完时开播）
+                    var sawTtsPlaying = 0;
                     var sub = _audioService.TtsStateChanged.Subscribe(playing =>
                     {
-                        if (!playing) tcs.TrySetResult(true);
+                        if (playing)
+                        {
+                            System.Threading.Volatile.Write(ref sawTtsPlaying, 1);
+                        }
+                        else if (System.Threading.Volatile.Read(ref sawTtsPlaying) == 1)
+                        {
+                            tcs.TrySetResult(true);
+                        }
                     });
-                    _audioService.PlayTtsAudio(speechData);
                     try
                     {
-                        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(60), token);
+                        // PlayTtsAudio 全同步：成功时此刻已发过 true；未见 true 说明播放启动失败，不必等待
+                        _audioService.PlayTtsAudio(speechData);
+                        if (System.Threading.Volatile.Read(ref sawTtsPlaying) == 1)
+                        {
+                            await tcs.Task.WaitAsync(TimeSpan.FromSeconds(60), token);
+                        }
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested || IsDisposed)
                     {

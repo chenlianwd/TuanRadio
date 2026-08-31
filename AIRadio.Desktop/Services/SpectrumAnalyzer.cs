@@ -17,7 +17,10 @@ public sealed class SpectrumAnalyzer : IDisposable
     // 避免底噪不断刷新时间戳，导致频谱条永远停在最小高度。
     private const float RealSpectrumActivityThreshold = 0.08f;
 
-    private readonly WasapiLoopbackCapture? _capture;
+    private readonly object _captureGate = new();
+    private WasapiLoopbackCapture? _capture;
+    private long _lastCaptureRebindAtMs;
+    private Timer? _rebindRetryTimer;
     private readonly Func<bool>? _isPlaybackActive;
     private readonly Func<long> _getTimestamp;
     private readonly Timer _fallbackTimer;
@@ -35,6 +38,10 @@ public sealed class SpectrumAnalyzer : IDisposable
         var edges = new int[BandCount + 1];
         for (int b = 0; b <= BandCount; b++)
             edges[b] = (int)Math.Floor(Math.Pow(half, b / (double)BandCount));
+        // 对数曲线在低频端会量化出相同整数（512^(1/32) < 2），若不强制严格递增，
+        // 最左侧多个频段会重复覆盖同一个 bin，对应频谱条数值永远完全相同。
+        for (int b = 1; b <= BandCount; b++)
+            edges[b] = Math.Max(edges[b], edges[b - 1] + 1);
         return edges;
     }
 
@@ -69,6 +76,7 @@ public sealed class SpectrumAnalyzer : IDisposable
         {
             _capture = new WasapiLoopbackCapture();
             _capture.DataAvailable += OnDataAvailable;
+            _capture.RecordingStopped += OnCaptureStopped;
         }
         catch (Exception ex)
         {
@@ -131,6 +139,95 @@ public sealed class SpectrumAnalyzer : IDisposable
         {
             Log.Warning(ex, "Spectrum loopback data could not be processed");
             _bufferCount = 0;
+        }
+    }
+
+    /// <summary>
+    /// 回环采集绑定构造时的默认输出设备；设备移除/切换会停止采集并触发 RecordingStopped。
+    /// 冷却限流后按新默认设备重建，频谱随之恢复；期间由播放态视觉兜底接管。
+    /// </summary>
+    private void OnCaptureStopped(object? sender, StoppedEventArgs e)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        lock (_captureGate)
+        {
+            if (_capture is null || !ReferenceEquals(sender, _capture))
+                return; // 陈旧实例（或实例已清空）的停止事件，忽略
+
+            var now = _getTimestamp();
+            if (now - _lastCaptureRebindAtMs < 30_000)
+            {
+                // 设备反复切换时限流，本次不重建；但停止的旧实例不会再发 RecordingStopped，
+                // 必须安排一次冷却到期后的重建，否则真实频谱会静默死亡直到重启
+                ScheduleCaptureRebindRetry();
+                return;
+            }
+            _lastCaptureRebindAtMs = now;
+        }
+
+        RebindCapture("default output device changed");
+    }
+
+    /// <summary>冷却到期后的一次性重建兜底（Timer 回调线程）。</summary>
+    private void ScheduleCaptureRebindRetry()
+    {
+        lock (_captureGate) // Monitor 可重入：允许在已持锁的 OnCaptureStopped 内调用
+        {
+            if (Volatile.Read(ref _disposed) != 0 || _rebindRetryTimer != null)
+                return;
+
+            _rebindRetryTimer = new Timer(
+                _ => RebindCapture("delayed rebind after cooldown"),
+                null,
+                TimeSpan.FromSeconds(35),
+                Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>按当前默认输出设备重建回环采集（不校验冷却；调用方负责限流）。</summary>
+    private void RebindCapture(string reason)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        try
+        {
+            lock (_captureGate)
+            {
+                _rebindRetryTimer?.Dispose();
+                _rebindRetryTimer = null;
+
+                if (_capture != null)
+                {
+                    _capture.DataAvailable -= OnDataAvailable;
+                    _capture.RecordingStopped -= OnCaptureStopped;
+                    _capture.Dispose();
+                    _capture = null;
+                }
+            }
+
+            var replacement = new WasapiLoopbackCapture();
+            replacement.DataAvailable += OnDataAvailable;
+            replacement.RecordingStopped += OnCaptureStopped;
+            lock (_captureGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 || _capture != null)
+                {
+                    // 已退出，或另一个并发重建已先赋值：丢弃本地实例，
+                    // 否则败者会带着事件挂在 _capture 之外永久录音（泄漏 + 双倍数据）
+                    replacement.Dispose();
+                    return;
+                }
+                _capture = replacement;
+            }
+            replacement.StartRecording();
+            Log.Information("Spectrum loopback capture rebound ({Reason})", reason);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Spectrum loopback capture rebind failed; visual fallback remains available");
         }
     }
 
@@ -336,11 +433,19 @@ public sealed class SpectrumAnalyzer : IDisposable
         // DisposeAsync 会等待已排队的 Timer 回调退出，避免回调在下游 Subject
         // 已释放后继续发布。发布锁同时等待可能正在执行的采集回调完成。
         _fallbackTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        if (_capture != null)
+        WasapiLoopbackCapture? capture;
+        lock (_captureGate)
         {
-            _capture.DataAvailable -= OnDataAvailable;
-            try { _capture.StopRecording(); } catch { }
-            _capture.Dispose();
+            _rebindRetryTimer?.Dispose();
+            _rebindRetryTimer = null;
+            capture = _capture;
+        }
+        if (capture != null)
+        {
+            capture.DataAvailable -= OnDataAvailable;
+            capture.RecordingStopped -= OnCaptureStopped;
+            try { capture.StopRecording(); } catch { }
+            capture.Dispose();
         }
 
         lock (_publishGate)

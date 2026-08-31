@@ -151,7 +151,28 @@ public class WhisperSttService : ISttService, IDisposable
         var tempPath = _modelPath + ".tmp";
         try
         {
-            await using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.Base);
+            // GetGgmlModelAsync 不接受取消令牌：握手阶段（连接/响应头）用 WaitAsync 兜底，
+            // 取消后孤儿任务的响应流随即释放，避免应用关闭被网络握手拖延
+            var modelStreamTask = WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.Base);
+            Stream modelStream;
+            try
+            {
+                modelStream = await modelStreamTask.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _ = modelStreamTask.ContinueWith(
+                    t =>
+                    {
+                        // 握手若随后失败（faulted），t.Result 会抛——只清理成功完成的流
+                        if (t.Status == TaskStatus.RanToCompletion)
+                            t.Result?.Dispose();
+                    },
+                    TaskScheduler.Default);
+                throw;
+            }
+
+            await using (modelStream)
             await using (var fileStream = File.Create(tempPath))
             {
                 await modelStream.CopyToAsync(fileStream, cancellationToken);

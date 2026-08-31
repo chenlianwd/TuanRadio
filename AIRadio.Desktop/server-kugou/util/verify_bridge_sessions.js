@@ -13,8 +13,8 @@
 
 const crypto = require('node:crypto');
 
-/** 会话有效期：10 分钟（覆盖用户注意到弹窗并完成滑块的时间） */
-const SESSION_TTL_MS = 10 * 60 * 1000;
+/** 会话有效期：6 分钟（桌面端轮询预算 5 分钟 + 1 分钟余量；超时由应用冷却后重新触发） */
+const SESSION_TTL_MS = 6 * 60 * 1000;
 
 /** 并发会话上限（FIFO 淘汰，防泄漏） */
 const MAX_SESSIONS = 16;
@@ -60,4 +60,12 @@ function getSession(id) {
   return session;
 }
 
-module.exports = { createSession, getSession };
+/**
+ * 删除验证会话（验证成功后消费，一次性使用，防 TTL 内重放提交）
+ * @param {string} id - sessionId
+ */
+function removeSession(id) {
+  if (id && typeof id === 'string') sessions.delete(id);
+}
+
+module.exports = { createSession, getSession, removeSession };

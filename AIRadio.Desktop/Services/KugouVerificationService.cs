@@ -66,7 +66,7 @@ public sealed class KugouVerificationService
     /// <summary>验证完成轮询的整体预算；首延迟给用户留出注意到弹窗的时间。测试可调快。</summary>
     internal TimeSpan VerifyInitialDelay { get; set; } = TimeSpan.FromSeconds(8);
     internal TimeSpan VerifyPollInterval { get; set; } = TimeSpan.FromSeconds(5);
-    internal TimeSpan VerifyWaitBudget { get; set; } = TimeSpan.FromMinutes(2);
+    internal TimeSpan VerifyWaitBudget { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>无挑战记录时的默认探测 hash（来自真实失败日志，仅用于触发风控判定）。</summary>
     public const string FallbackProbeHash = "EFC98A4B36BE04F144BEFDABF14654B5";
@@ -110,7 +110,21 @@ public sealed class KugouVerificationService
             handlers = ChallengeDetected;
         }
 
-        handlers?.Invoke(challenge);
+        if (handlers is null)
+            return;
+
+        // 逐个订阅者调用并隔离异常：任一订阅者抛错不得中断其余订阅者，也不得回灌到调用链
+        foreach (Action<KugouChallenge> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(challenge);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Kugou challenge subscriber failed");
+            }
+        }
     }
 
     /// <summary>自动触发资格：无进行中的验证，且从未触发过或距上次触发已超过冷却。锁内检查并置位。</summary>

@@ -51,6 +51,7 @@
         font-size: 14px;
         margin-top: 16px;
         line-height: 1.6;
+        white-space: pre-line;
       }
       .status.info {
         background: #eef3ff;
@@ -170,12 +171,23 @@
 
       function setStatus(kind, zh, en) {
         statusEl.className = 'status ' + kind;
-        statusEl.innerHTML = zh + (en ? '<br />' + en : '');
+        // 错误文案可能拼入酷狗上游响应字段，一律按纯文本渲染（white-space: pre-line 负责换行）
+        statusEl.textContent = zh + (en ? '\n' + en : '');
       }
 
-      function bridgeUrl(path, extra) {
-        var query = extra || '';
-        return path + (query ? '&' : '?') + 'timestamp=' + Date.now();
+      // 桥接请求统一 20s 超时：代理或酷狗上游挂起时给出出口，而不是永远停在“正在请求...”
+      function bridgeFetch(url, options) {
+        var controller = new AbortController();
+        var timer = setTimeout(function () {
+          controller.abort();
+        }, 20000);
+        return fetch(url, Object.assign({}, options, { signal: controller.signal })).finally(function () {
+          clearTimeout(timer);
+        });
+      }
+
+      function requestErrorMessage(err) {
+        return err && err.name === 'AbortError' ? '请求超时（20 秒）' : (err && err.message) || 'unknown';
       }
 
       function loadScript(url, cb) {
@@ -194,19 +206,24 @@
        * 提交验证结果到 /verify/bridge/submit 并展示结果。
        */
       function submitVerify(verifycode) {
-        var url = bridgeUrl(
-          '/verify/bridge/submit',
-          'sessionId=' + encodeURIComponent(sessionId) + '&v_type=' + vType +
-            '&verifycode=' + encodeURIComponent(verifycode)
-        );
         setStatus('info', '正在提交验证...', 'Submitting...');
-        fetch(url, { method: 'GET' })
+        // 凭证走 POST body：sessionId/verifycode 不进 URL，也就不落代理日志与浏览器历史
+        bridgeFetch('/verify/bridge/submit?timestamp=' + Date.now(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionId,
+            v_type: vType,
+            verifycode: verifycode,
+          }),
+        })
           .then(function (r) {
             return r.json().then(function (body) {
               return { httpOk: r.ok, body: body || {} };
             });
           })
           .then(function (result) {
+            if (verified) return; // 已验证成功：忽略迟到/重复提交的结果，防止覆盖成功提示
             console.log('verify result:', result);
             var ok = result.httpOk && result.body.status !== 0;
             if (ok) {
@@ -226,7 +243,7 @@
           })
           .catch(function (err) {
             console.error('verify request failed:', err);
-            setStatus('err', '验证请求失败：' + err.message, 'Request failed. Click retry.');
+            setStatus('err', '验证请求失败：' + requestErrorMessage(err), 'Request failed. Click retry.');
             retryBtn.style.display = 'block';
           });
       }
@@ -290,7 +307,11 @@
        */
       function fetchVerifyInfo() {
         setStatus('info', '正在获取验证信息...', 'Fetching verification info...');
-        fetch(bridgeUrl('/verify/bridge/info', 'sessionId=' + encodeURIComponent(sessionId)))
+        bridgeFetch('/verify/bridge/info?timestamp=' + Date.now(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: sessionId }),
+        })
           .then(function (r) {
             return r.json();
           })
@@ -320,7 +341,7 @@
           })
           .catch(function (err) {
             console.error('verify info failed:', err);
-            setStatus('err', '请求失败：' + err.message, 'Request failed.');
+            setStatus('err', '请求失败：' + requestErrorMessage(err), 'Request failed.');
             retryBtn.style.display = 'block';
           });
       }
