@@ -63,7 +63,7 @@ public class WindowsSecureStorage : ISecureStorage
             TargetName = targetName,
             UserName = service,
                 Type = CredentialType.Generic,
-                Persist = 1, // CRED_PERSIST_LOCAL_MACHINE：仅本机存储；2 是 ENTERPRISE，域环境会随漫游配置文件复制
+                Persist = 2, // CRED_PERSIST_LOCAL_MACHINE：本机跨登录会话持久；1 是 SESSION（注销/重启即丢），3 是 ENTERPRISE（域漫游）
                 CredentialBlob = blobPtr,
             CredentialBlobSize = (uint)(Encoding.Unicode.GetByteCount(apiKey))
         };
