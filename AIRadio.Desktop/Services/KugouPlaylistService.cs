@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AIRadio.Desktop.Models;
 using Serilog;
 
 namespace AIRadio.Desktop.Services;
@@ -378,22 +379,37 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
                 continue;
 
             var fileName = GetNestedString(item, "filename", "FileName", "file_name");
-            var title = NormalizeTrackTitle(GetNestedString(item,
-                            "songname", "SongName", "OriSongName", "audio_name", "name", "title"))
+            var rawTitle = GetNestedString(item,
+                "songname", "SongName", "OriSongName", "audio_name", "name", "title");
+            var title = NormalizeTrackTitle(rawTitle)
                         ?? ParseTitleFromFileName(fileName);
             if (string.IsNullOrWhiteSpace(title))
                 continue;
+
+            var artist = GetNestedString(item,
+                "singername", "SingerName", "singer_name", "author_name", "artist") ?? string.Empty;
+            NormalizeArtistAndTitle(ref artist, ref title, fileName);
+
+            var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            AddMetadata(metadata, "album_id", GetNestedFlexibleString(item,
+                "album_id", "albumid", "AlbumID", "AlbumId"));
+            AddMetadata(metadata, "album_audio_id", GetNestedFlexibleString(item,
+                "album_audio_id", "album_audioid", "mixsongid", "MixSongId", "MixSongID"));
+            AddMetadata(metadata, "hash_std", GetNestedFlexibleString(item,
+                "hash_std", "HashStd"));
+            AddMetadata(metadata, "hash_128", GetNestedFlexibleString(item,
+                "hash_128", "Hash128"));
 
             results.Add(new OnlineTrack
             {
                 Id = "kugou:" + hash,
                 Title = title,
-                Artist = GetNestedString(item,
-                    "singername", "SingerName", "singer_name", "author_name", "artist") ?? string.Empty,
+                Artist = artist,
                 Album = GetNestedString(item,
                     "album_name", "AlbumName", "albumname", "album") ?? string.Empty,
                 DurationMs = GetDurationMilliseconds(item),
-                Source = "酷狗"
+                Source = "酷狗",
+                ProviderMetadata = metadata
             });
         }
     }
@@ -628,6 +644,62 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
             }
         }
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    /// <summary>
+    /// 酷狗歌单部分响应只有 audio_name/filename，值为“歌手 - 歌名”，author_name 为空。
+    /// 在入库前拆开，避免跨源兜底把整段展示名当成歌曲标题而永远匹配失败。
+    /// </summary>
+    private static void NormalizeArtistAndTitle(ref string artist, ref string title, string? fileName)
+    {
+        if (TrySplitArtistAndTitle(title, out var titleArtist, out var cleanTitle))
+        {
+            if (string.IsNullOrWhiteSpace(artist))
+                artist = titleArtist;
+
+            if (string.IsNullOrWhiteSpace(artist) ||
+                MusicIdentity.NormalizeMusicText(artist) == MusicIdentity.NormalizeMusicText(titleArtist))
+                title = cleanTitle;
+        }
+
+        if (!string.IsNullOrWhiteSpace(artist) ||
+            !TrySplitArtistAndTitle(NormalizeTrackTitle(fileName), out var fileArtist, out _))
+            return;
+
+        artist = fileArtist;
+    }
+
+    private static bool TrySplitArtistAndTitle(
+        string? displayName,
+        out string artist,
+        out string title)
+    {
+        artist = string.Empty;
+        title = string.Empty;
+        if (string.IsNullOrWhiteSpace(displayName))
+            return false;
+
+        foreach (var separator in new[] { " - ", " – ", " — ", "－" })
+        {
+            var index = displayName.IndexOf(separator, StringComparison.Ordinal);
+            if (index <= 0 || index + separator.Length >= displayName.Length)
+                continue;
+
+            artist = displayName[..index].Trim();
+            title = displayName[(index + separator.Length)..].Trim();
+            return artist.Length > 0 && title.Length > 0;
+        }
+
+        return false;
+    }
+
+    private static void AddMetadata(
+        IDictionary<string, string> metadata,
+        string key,
+        string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && value != "0")
+            metadata[key] = value;
     }
 
     private static long ClockStamp() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

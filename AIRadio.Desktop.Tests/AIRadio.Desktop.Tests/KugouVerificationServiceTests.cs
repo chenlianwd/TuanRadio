@@ -69,11 +69,11 @@ public class KugouVerificationServiceTests
     }
 
     [Fact]
-    public void Classify_BareStatusTwo_IsSuspectChallenge()
+    public void Classify_BareStatusTwo_IsUnavailableWithoutChallengeEvidence()
     {
         var shape = Classify("{\"status\":2}", out var eventId, out _);
 
-        Assert.Equal(KugouVerificationService.KugouPlayUrlShape.Challenge, shape);
+        Assert.Equal(KugouVerificationService.KugouPlayUrlShape.Unavailable, shape);
         Assert.Null(eventId);
     }
 
@@ -318,10 +318,10 @@ public class KugouChallengeReportingTests
     }
 
     [Fact]
-    public async Task GetPlayUrlAsync_BareStatusTwo_ReportsSuspectChallengeWithoutEventId()
+    public async Task GetPlayUrlAsync_BareStatusTwo_DoesNotReportChallenge()
     {
         // 日志实测形状：http=200、status=2、无 errcode/无 error/无 data。
-        // 不上报会导致整张酷狗歌单被无限跳过且滑块流程永不触发
+        // 缺少 20028/ssaCode 时无法证明是风控，不能启动无 eventId 的无效验证。
         var handler = new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("{\"status\":2}")
@@ -336,9 +336,7 @@ public class KugouChallengeReportingTests
         var url = await service.GetPlayUrlAsync("kugou:HASHBARE");
 
         Assert.Null(url);
-        Assert.NotNull(reported);
-        Assert.Null(reported!.EventId);
-        Assert.Equal("HASHBARE", reported.Hash);
+        Assert.Null(reported);
     }
 
     [Fact]

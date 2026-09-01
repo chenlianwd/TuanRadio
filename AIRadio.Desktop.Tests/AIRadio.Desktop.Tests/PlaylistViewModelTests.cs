@@ -193,9 +193,9 @@ public class PlaylistViewModelTests
         var saved = await File.ReadAllTextAsync(playlistFile);
         Assert.Contains("\"FavoriteIds\"", saved);
         Assert.Contains("netease:ugly", saved);
-        // v2：在线曲目持久化稳定 Provider 身份，不落盘临时播放直链
+        // v3：在线曲目持久化稳定 Provider 身份与解析参数，不落盘临时播放直链
         using var doc = JsonDocument.Parse(saved);
-        Assert.Equal(2, doc.RootElement.GetProperty("Version").GetInt32());
+        Assert.Equal(3, doc.RootElement.GetProperty("Version").GetInt32());
         var savedTrack = doc.RootElement.GetProperty("Tracks")[0];
         Assert.Equal("netease", savedTrack.GetProperty("Provider").GetProperty("ProviderId").GetString());
         Assert.Equal("ugly", savedTrack.GetProperty("Provider").GetProperty("TrackId").GetString());
@@ -238,7 +238,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public async Task LoadAsync_V1Migration_WritesV2WithBackupAndIsIdempotent()
+    public async Task LoadAsync_V1Migration_WritesV3WithBackupAndIsIdempotent()
     {
         var playlistFile = CreateTempPlaylistFile();
         var v1Json = """
@@ -272,7 +272,7 @@ public class PlaylistViewModelTests
         var migrated = await File.ReadAllTextAsync(playlistFile);
         using (var doc = JsonDocument.Parse(migrated))
         {
-            Assert.Equal(2, doc.RootElement.GetProperty("Version").GetInt32());
+            Assert.Equal(3, doc.RootElement.GetProperty("Version").GetInt32());
             var track = doc.RootElement.GetProperty("Tracks")[0];
             Assert.Equal("kuwo", track.GetProperty("Provider").GetProperty("ProviderId").GetString());
             Assert.Equal("9", track.GetProperty("Provider").GetProperty("TrackId").GetString());
@@ -281,14 +281,52 @@ public class PlaylistViewModelTests
         Assert.DoesNotContain("http://stale.example", migrated);
         Assert.True(vm.Tracks[0].IsFavorite);
 
-        // 重复加载/保存幂等：已是 v2，不再重写备份
+        // 重复加载/保存幂等：已是 v3，不再重写备份
         await vm.LoadAsync();
         await vm.SaveAsync();
         await Task.Delay(100);
 
         Assert.Equal(v1Json, await File.ReadAllTextAsync(backupPath));
         using var doc2 = JsonDocument.Parse(await File.ReadAllTextAsync(playlistFile));
-        Assert.Equal(2, doc2.RootElement.GetProperty("Version").GetInt32());
+        Assert.Equal(3, doc2.RootElement.GetProperty("Version").GetInt32());
+    }
+
+    [Fact]
+    public async Task LoadAsync_V2Migration_WritesV3AndKeepsV2Backup()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var v2Json = """
+            {
+              "Version": 2,
+              "Tracks": [
+                {
+                  "Id": "kugou:OLD",
+                  "Title": "旧歌",
+                  "Artist": "歌手",
+                  "Provider": { "ProviderId": "kugou", "TrackId": "OLD" },
+                  "IsOnline": true
+                }
+              ],
+              "FavoriteIds": []
+            }
+            """;
+        await File.WriteAllTextAsync(playlistFile, v2Json);
+
+        var (vm, _, _) = CreateVm(playlistFile);
+        await vm.LoadAsync();
+        await Task.Delay(200);
+
+        var backupPath = playlistFile + ".v2.bak";
+        Assert.True(File.Exists(backupPath));
+        Assert.Equal(v2Json, await File.ReadAllTextAsync(backupPath));
+
+        using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(playlistFile));
+        Assert.Equal(3, doc.RootElement.GetProperty("Version").GetInt32());
+        var metadata = doc.RootElement.GetProperty("Tracks")[0]
+            .GetProperty("Provider")
+            .GetProperty("Metadata");
+        Assert.Equal(JsonValueKind.Object, metadata.ValueKind);
+        Assert.Empty(vm.Tracks[0].ProviderMetadata);
     }
 
     [Fact]
@@ -320,7 +358,7 @@ public class PlaylistViewModelTests
         // 首选 .v1.bak 不可写时回退时间戳备份：保存不再被静默阻断，v1 内容仍被保留
         var migrated = await File.ReadAllTextAsync(playlistFile);
         using var doc = JsonDocument.Parse(migrated);
-        Assert.Equal(2, doc.RootElement.GetProperty("Version").GetInt32());
+        Assert.Equal(3, doc.RootElement.GetProperty("Version").GetInt32());
         var dir = Path.GetDirectoryName(playlistFile)!;
         var fallback = Directory.GetFiles(dir, "playlist.json.v1.*.bak").Single();
         Assert.Equal(v1Json, await File.ReadAllTextAsync(fallback));
@@ -350,7 +388,7 @@ public class PlaylistViewModelTests
         var (vm, _, _) = CreateVm(playlistFile);
         await vm.LoadAsync();
         // 会话内后续的任何保存（含列表变更触发的自动保存）都必须拒绝回写，
-        // 否则首个列表操作就会用只含新内容的 v2 覆盖未来格式文件
+        // 否则首个列表操作就会用只含新内容的 v3 覆盖未来格式文件
         vm.Tracks.Add(new Track { Id = "local:new", Title = "新歌", Artist = "歌手", FilePath = @"X:\不存在.mp3" });
         await vm.SaveAsync();
 

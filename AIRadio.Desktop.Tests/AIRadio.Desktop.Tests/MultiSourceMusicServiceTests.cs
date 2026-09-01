@@ -67,6 +67,37 @@ public class MultiSourceMusicServiceTests
     }
 
     [Fact]
+    public async Task GetPlayUrlAsync_DoesNotWaitForLowerPriorityHangingFallback()
+    {
+        var lowerPriority = new CancellationTrackingMusicService();
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var service = new MultiSourceMusicService(
+            client,
+            new FallbackMusicService(),
+            lowerPriority);
+        var track = new OnlineTrack
+        {
+            Id = "unknown:1",
+            Title = "测试歌曲",
+            Artist = "测试歌手"
+        };
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var url = await service.GetPlayUrlAsync(track, CancellationToken.None);
+        stopwatch.Stop();
+
+        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2),
+            $"Lower-priority hanging source delayed a playable candidate (elapsed {stopwatch.Elapsed})");
+        Assert.Equal(1, lowerPriority.SearchCount);
+        await lowerPriority.Canceled.WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public async Task GetPlayUrlAsync_TreatsNeteaseTrialStreamAsUnavailable()
     {
         using var client = new HttpClient(new DelegateHandler((request, _) =>
@@ -318,6 +349,36 @@ public class MultiSourceMusicServiceTests
 
         public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
             => _neverCompletes.Task;
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>(null);
+    }
+
+    /// <summary>用于验证高优先级源命中后，低优先级搜索会收到取消且包装任务被收尾。</summary>
+    private sealed class CancellationTrackingMusicService : IMusicSearchService
+    {
+        private readonly TaskCompletionSource<bool> _canceled = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _searchCount;
+
+        public string Name => "可取消挂起音源";
+        public Task Canceled => _canceled.Task;
+        public int SearchCount => Volatile.Read(ref _searchCount);
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => SearchAsync(keyword, limit, CancellationToken.None);
+
+        public async Task<List<OnlineTrack>> SearchAsync(
+            string keyword,
+            int limit,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _searchCount);
+            using var registration = cancellationToken.Register(
+                () => _canceled.TrySetResult(true));
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new List<OnlineTrack>();
+        }
 
         public Task<string?> GetPlayUrlAsync(string trackId)
             => Task.FromResult<string?>(null);

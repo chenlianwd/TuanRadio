@@ -293,7 +293,10 @@ public class MultiSourceMusicService : IMusicSearchService
         {
             var preferredId = StripSourcePrefix(track.Id);
             var preferredUrl = await GetPlayUrlWithTimeout(
-                preferred, preferredId, CapBudget(SourceTimeout, RemainingBudget(deadline)), cancellationToken);
+                preferred,
+                CreateProviderTrack(track, preferredId),
+                CapBudget(SourceTimeout, RemainingBudget(deadline)),
+                cancellationToken);
             if (!string.IsNullOrWhiteSpace(preferredUrl))
                 return preferredUrl;
         }
@@ -325,62 +328,144 @@ public class MultiSourceMusicService : IMusicSearchService
             ? track.Title
             : $"{track.Title} {track.Artist}";
 
-        foreach (var source in _sources)
+        // 快速源共享同一段搜索预算并发查询；仍按 _sources 的既定优先级选择候选。
+        // 这样单个坏源不会在串行链路里吃光总预算，同时不改变正常情况下的选源顺序。
+        var fastSources = _sources
+            .Where(source => !ReferenceEquals(source, excludedSource) && !source.IsSlowSource)
+            .ToArray();
+        var fastSearchBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
+        if (fastSources.Length > 0 && fastSearchBudget >= MinSourceBudget)
         {
-            if (ReferenceEquals(source, excludedSource))
-                continue;
+            using var fastSearchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var searches = fastSources
+                .Select(async source => (
+                    Source: source,
+                    Candidates: await SearchForPlaybackFallbackAsync(
+                        source,
+                        query,
+                        fastSearchBudget,
+                        fastSearchCts.Token)))
+                .ToArray();
 
-            // 调用下一源前检查剩余预算：预算不足时明确记录并停止，
-            // 不再依赖外层 WaitAsync 超时把整个恢复流程硬掰断
-            var searchBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
+            // 任务已全部启动，但按优先级逐个等待：高优先级源一旦命中即可立即解析 URL，
+            // 不必等一个低优先级挂起源跑满超时。
+            string? resolvedUrl = null;
+            try
+            {
+                foreach (var search in searches)
+                {
+                    var (source, candidates) = await search;
+                    resolvedUrl = await TryResolveFallbackCandidateAsync(
+                        track,
+                        source,
+                        candidates,
+                        excludedSource,
+                        deadline,
+                        cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(resolvedUrl))
+                        break;
+                }
+            }
+            finally
+            {
+                // 命中、异常或调用方取消都要终止并观察其余包装任务，避免旧播放请求继续占用资源。
+                fastSearchCts.Cancel();
+                try
+                {
+                    await Task.WhenAll(searches);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // 本批次因已命中而主动取消。
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(resolvedUrl))
+                return resolvedUrl;
+        }
+        else if (fastSources.Length > 0)
+        {
+            Log.Debug("Fast playback fallback skipped: overall deadline exhausted");
+        }
+
+        // 慢源（目前为 YouTube/yt-dlp）只在快速源均无可播候选时使用剩余预算。
+        foreach (var source in _sources.Where(source =>
+                     !ReferenceEquals(source, excludedSource) && source.IsSlowSource))
+        {
+            var searchBudget = CapBudget(SlowSourceTimeout, RemainingBudget(deadline));
             if (searchBudget < MinSourceBudget)
             {
                 Log.Debug("Playback fallback skipped {Source}: overall deadline exhausted", source.Name);
                 break;
             }
 
-            var candidates = await SearchForPlaybackFallbackAsync(source, query, searchBudget, cancellationToken);
-            // 第一遍按原宽松口径精确匹配；落空再做“剥离标题修饰”的第二遍：
-            // YouTube 等源的结果标题几乎必带 "(Live)"/"(Official Music Video)" 等修饰，
-            // 不剥修饰时跨源兜底对该类源形同虚设。
-            var candidate = candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
-                candidate.Title, candidate.Artist, track.Title, track.Artist))
-                ?? candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
-                MusicIdentity.StripTitleDecorations(candidate.Title), candidate.Artist,
-                MusicIdentity.StripTitleDecorations(track.Title), track.Artist));
-            if (candidate == null)
-                continue;
-
-            var urlBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
-            if (urlBudget < MinSourceBudget)
-            {
-                Log.Debug("Playback fallback URL fetch skipped {Source}: overall deadline exhausted", source.Name);
-                break;
-            }
-
-            var url = await GetPlayUrlWithTimeout(
+            var candidates = await SearchForPlaybackFallbackAsync(
                 source,
-                StripSourcePrefix(candidate.Id),
-                urlBudget,
+                query,
+                searchBudget,
+                cancellationToken);
+            var url = await TryResolveFallbackCandidateAsync(
+                track,
+                source,
+                candidates,
+                excludedSource,
+                deadline,
                 cancellationToken);
             if (!string.IsNullOrWhiteSpace(url))
-            {
-                var previousSource = excludedSource?.Name ?? "unknown";
-                track.Id = candidate.Id;
-                track.Source = candidate.Source;
-                if (candidate.DurationMs > 0)
-                    track.DurationMs = candidate.DurationMs;
-
-                Log.Information(
-                    "Playback URL fallback switched {Track} from {Preferred} to {Source}",
-                    track.Title,
-                    previousSource,
-                    source.Name);
                 return url;
-            }
         }
 
         return null;
+    }
+
+    private async Task<string?> TryResolveFallbackCandidateAsync(
+        OnlineTrack track,
+        IMusicSearchService source,
+        IReadOnlyList<OnlineTrack> candidates,
+        IMusicSearchService? excludedSource,
+        DateTimeOffset deadline,
+        CancellationToken cancellationToken)
+    {
+        // 第一遍按原宽松口径精确匹配；落空再做“剥离标题修饰”的第二遍：
+        // YouTube 等源的结果标题几乎必带 "(Live)"/"(Official Music Video)" 等修饰。
+        var candidate = candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
+            candidate.Title, candidate.Artist, track.Title, track.Artist))
+            ?? candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
+                MusicIdentity.StripTitleDecorations(candidate.Title), candidate.Artist,
+                MusicIdentity.StripTitleDecorations(track.Title), track.Artist));
+        if (candidate == null)
+            return null;
+
+        var urlBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
+        if (urlBudget < MinSourceBudget)
+        {
+            Log.Debug("Playback fallback URL fetch skipped {Source}: overall deadline exhausted", source.Name);
+            return null;
+        }
+
+        var url = await GetPlayUrlWithTimeout(
+            source,
+            CreateProviderTrack(candidate, StripSourcePrefix(candidate.Id)),
+            urlBudget,
+            cancellationToken);
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        var previousSource = excludedSource?.Name ?? "unknown";
+        track.Id = candidate.Id;
+        track.Source = candidate.Source;
+        track.ProviderMetadata = new Dictionary<string, string>(
+            candidate.ProviderMetadata,
+            StringComparer.OrdinalIgnoreCase);
+        if (candidate.DurationMs > 0)
+            track.DurationMs = candidate.DurationMs;
+
+        Log.Information(
+            "Playback URL fallback switched {Track} from {Preferred} to {Source}",
+            track.Title,
+            previousSource,
+            source.Name);
+        return url;
     }
 
     private async Task<List<OnlineTrack>> SearchWithFallback(
@@ -437,9 +522,12 @@ public class MultiSourceMusicService : IMusicSearchService
             foreach (var track in tracks.Take(3))
             {
                 playabilityCts.Token.ThrowIfCancellationRequested();
-                var parts = track.Id.Split(':', 2);
-                var sourceId = parts.Length == 2 ? parts[1] : track.Id;
-                var url = await GetPlayUrlWithTimeout(source, sourceId, budget, playabilityCts.Token);
+                var sourceId = StripSourcePrefix(track.Id);
+                var url = await GetPlayUrlWithTimeout(
+                    source,
+                    CreateProviderTrack(track, sourceId),
+                    budget,
+                    playabilityCts.Token);
                 if (!string.IsNullOrWhiteSpace(url))
                     return PrimaryProbeResult.Playable;
             }
@@ -488,6 +576,11 @@ public class MultiSourceMusicService : IMusicSearchService
             Log.Debug(ex, "Playback fallback search failed for source {Source}", source.Name);
             return new List<OnlineTrack>();
         }
+        finally
+        {
+            // WaitAsync 先观察到批次取消时，显式取消内层令牌，确保取消继续传到底层音源实现。
+            timeoutCts.Cancel();
+        }
     }
 
     private async Task<string?> GetPlayUrlWithTimeout(
@@ -524,6 +617,55 @@ public class MultiSourceMusicService : IMusicSearchService
             return null;
         }
     }
+
+    private async Task<string?> GetPlayUrlWithTimeout(
+        IMusicSearchService source,
+        OnlineTrack track,
+        TimeSpan budget,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(budget);
+        try
+        {
+            return await source.GetPlayUrlAsync(track, timeoutCts.Token)
+                .WaitAsync(budget, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            timeoutCts.Cancel();
+            Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", source.Name, budget.TotalSeconds, track.Id);
+            return null;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", source.Name, budget.TotalSeconds, track.Id);
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Source {Name} play URL failed for {Id}", source.Name, track.Id);
+            return null;
+        }
+    }
+
+    private static OnlineTrack CreateProviderTrack(OnlineTrack track, string providerTrackId)
+        => new()
+        {
+            Id = providerTrackId,
+            Title = track.Title,
+            Artist = track.Artist,
+            Album = track.Album,
+            DurationMs = track.DurationMs,
+            Source = track.Source,
+            ProviderMetadata = new Dictionary<string, string>(
+                track.ProviderMetadata,
+                StringComparer.OrdinalIgnoreCase)
+        };
 
     private static TimeSpan RemainingBudget(DateTimeOffset deadline)
         => deadline - DateTimeOffset.UtcNow;

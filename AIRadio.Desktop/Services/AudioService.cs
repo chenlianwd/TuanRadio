@@ -15,7 +15,10 @@ using PlaybackState = AIRadio.Desktop.Models.PlaybackState;
 
 namespace AIRadio.Desktop.Services;
 
-public sealed record TrackUrlResolution(string Url, string? SourceId);
+public sealed record TrackUrlResolution(
+    string Url,
+    string? SourceId,
+    IReadOnlyDictionary<string, string>? ProviderMetadata = null);
 
 public class AudioService : IAudioService, IDisposable
 {
@@ -1718,9 +1721,17 @@ public class AudioService : IAudioService, IDisposable
             ? track.SourceId
             : resolution.SourceId;
         var changed = !string.Equals(track.FilePath, resolution.Url, StringComparison.Ordinal) ||
-                      !string.Equals(track.SourceId, resolvedSourceId, StringComparison.Ordinal);
+                      !string.Equals(track.SourceId, resolvedSourceId, StringComparison.Ordinal) ||
+                      (resolution.ProviderMetadata != null &&
+                       !track.ProviderMetadata.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                           .SequenceEqual(
+                               resolution.ProviderMetadata.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)));
         track.FilePath = resolution.Url;
         track.SourceId = resolvedSourceId;
+        if (resolution.ProviderMetadata != null)
+            track.ProviderMetadata = new Dictionary<string, string>(
+                resolution.ProviderMetadata,
+                StringComparer.OrdinalIgnoreCase);
         return changed;
     }
 

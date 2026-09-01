@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -72,6 +73,46 @@ public class KugouMusicServiceTests
         Assert.DoesNotContain("SECRET", url);
         Assert.DoesNotContain("cookie=", url, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("token=SECRET;userid=42;dfid=DF", capture.Last.Headers.GetValues("Authorization").Single());
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_UsesPlaylistMetadataAndRetriesStableHash()
+    {
+        var (client, capture) = CreateClient(request =>
+        {
+            var query = request.RequestUri!.Query;
+            return query.Contains("hash=STD", StringComparison.OrdinalIgnoreCase)
+                ? "{\"status\":1,\"data\":[{\"url\":\"https://cdn.example/stable.mp3\"}]}"
+                : "{\"status\":1,\"data\":[]}";
+        });
+        var accounts = await CreateLoggedInStoreAsync();
+        var service = new KugouMusicService(client, accounts);
+        var track = new OnlineTrack
+        {
+            Id = "kugou:OLD",
+            Title = "歌曲",
+            Artist = "歌手",
+            ProviderMetadata = new Dictionary<string, string>
+            {
+                ["album_id"] = "12",
+                ["album_audio_id"] = "34",
+                ["hash_std"] = "STD"
+            }
+        };
+
+        var playUrl = await service.GetPlayUrlAsync(track, CancellationToken.None);
+
+        Assert.Equal("https://cdn.example/stable.mp3", playUrl);
+        Assert.Equal(2, capture.Requests.Count);
+        Assert.All(capture.Requests, request =>
+        {
+            var query = request.RequestUri!.Query;
+            Assert.Contains("album_id=12", query);
+            Assert.Contains("album_audio_id=34", query);
+            Assert.DoesNotContain("SECRET", query);
+        });
+        Assert.Contains("hash=OLD", capture.Requests[0].RequestUri!.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("hash=STD", capture.Requests[1].RequestUri!.Query, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -128,10 +129,36 @@ public class KugouMusicService : IMusicSearchService
     public Task<string?> GetPlayUrlAsync(string trackId)
         => GetPlayUrlAsync(trackId, CancellationToken.None);
 
-    public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
+    public Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
+        => GetPlayUrlCoreAsync(trackId, providerMetadata: null, cancellationToken);
+
+    public async Task<string?> GetPlayUrlAsync(OnlineTrack track, CancellationToken cancellationToken)
     {
-        var separator = trackId.IndexOf(':');
-        var hash = separator >= 0 ? trackId[(separator + 1)..] : trackId;
+        var hashes = new[]
+            {
+                StripSourcePrefix(track.Id),
+                GetMetadata(track.ProviderMetadata, "hash_std"),
+                GetMetadata(track.ProviderMetadata, "hash_128")
+            }
+            .Where(hash => !string.IsNullOrWhiteSpace(hash))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var hash in hashes)
+        {
+            var playUrl = await GetPlayUrlCoreAsync(hash!, track.ProviderMetadata, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(playUrl))
+                return playUrl;
+        }
+
+        return null;
+    }
+
+    private async Task<string?> GetPlayUrlCoreAsync(
+        string trackId,
+        IReadOnlyDictionary<string, string>? providerMetadata,
+        CancellationToken cancellationToken)
+    {
+        var hash = StripSourcePrefix(trackId);
         var storedCookie = _accounts?.KugouCookie;
         if (string.IsNullOrEmpty(storedCookie))
         {
@@ -146,8 +173,7 @@ public class KugouMusicService : IMusicSearchService
             var cookie = await EnsureDfidCookieAsync(storedCookie, cancellationToken);
 
             // timestamp 破缓存：播放地址可能带时效签名，AudioService 断流重刷时不能拿到 2 分钟内的旧缓存
-            var url = $"{ProxyBase}/song/url?hash={Uri.EscapeDataString(hash)}" +
-                      $"&quality=128&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            var url = BuildPlayUrl(hash, providerMetadata);
             using var response = await SendWithTransientRetryAsync(
                 () => BuildRequest(url, cookie), cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -158,9 +184,8 @@ public class KugouMusicService : IMusicSearchService
             var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
 
             // 20028 风控挑战：代理在上游返回 ssa-code 头时会在响应体附加 ssaCode/sid/edt。
-            // 命中即上报验证服务（触发自动/手动滑块流程）；裸 status=2 等疑似形状没有
-            // 事件 ID 也同样上报——探测拿到事件 ID 才会真正进入滑块流程，拿不到则快速
-            // 失败并靠自动触发冷却防刷，否则整张歌单只会被无限跳过
+            // 只有明确的 20028 或 ssaCode 才上报验证服务。裸 status=2 也可能只是
+            // 版权/会员/参数不足，误报会启动一个注定拿不到 eventId 的验证流程。
             var shape = KugouVerificationService.ClassifyPlayUrlResponse(root, out var challengeEventId, out _);
             if (shape == KugouVerificationService.KugouPlayUrlShape.Challenge)
             {
@@ -220,6 +245,35 @@ public class KugouMusicService : IMusicSearchService
             Log.Warning(ex, "Kugou get play url failed for {Hash}", hash);
             return null;
         }
+    }
+
+    private static string BuildPlayUrl(
+        string hash,
+        IReadOnlyDictionary<string, string>? providerMetadata)
+    {
+        var url = $"{ProxyBase}/song/url?hash={Uri.EscapeDataString(hash)}" +
+                  $"&quality=128&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        url = AppendPositiveNumber(url, "album_id", GetMetadata(providerMetadata, "album_id"));
+        url = AppendPositiveNumber(url, "album_audio_id", GetMetadata(providerMetadata, "album_audio_id"));
+        return url;
+    }
+
+    private static string AppendPositiveNumber(string url, string name, string? value)
+        => long.TryParse(value, out var number) && number > 0
+            ? $"{url}&{name}={number}"
+            : url;
+
+    private static string? GetMetadata(
+        IReadOnlyDictionary<string, string>? metadata,
+        string key)
+        => metadata != null && metadata.TryGetValue(key, out var value)
+            ? value
+            : null;
+
+    private static string StripSourcePrefix(string trackId)
+    {
+        var separator = trackId.IndexOf(':');
+        return separator >= 0 ? trackId[(separator + 1)..] : trackId;
     }
 
     /// <summary>

@@ -37,7 +37,7 @@ public class KugouPlaylistServiceTests
                   """
                 : """
                   {"status":1,"data":{"songs":[
-                    {"audio_info":{"hash":"ABC","audio_name":"歌曲一.mp3","author_name":"歌手一","album_name":"专辑一","timelen":123000}},
+                    {"audio_info":{"hash":"ABC","hash_std":"STD","hash_128":"H128","audio_name":"歌手一 - 歌曲一.mp3","album_id":12,"mixsongid":34,"album_name":"专辑一","timelen":123000}},
                     {"hash":"DEF","filename":"歌手二 - 歌曲二.mp3","singername":"歌手二","duration":245}
                   ]}}
                   """;
@@ -63,6 +63,10 @@ public class KugouPlaylistServiceTests
                 Assert.Equal("歌曲一", first.Title);
                 Assert.Equal("歌手一", first.Artist);
                 Assert.Equal(123000, first.DurationMs);
+                Assert.Equal("12", first.ProviderMetadata["album_id"]);
+                Assert.Equal("34", first.ProviderMetadata["album_audio_id"]);
+                Assert.Equal("STD", first.ProviderMetadata["hash_std"]);
+                Assert.Equal("H128", first.ProviderMetadata["hash_128"]);
             },
             second =>
             {
@@ -288,7 +292,15 @@ public class KugouPlaylistViewModelTests
         kugou.Setup(x => x.GetPlaylistTracksAsync("7", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[]
             {
-                new OnlineTrack { Id = "kugou:A", Title = "甲", Artist = "歌手", DurationMs = 180000, Source = "酷狗" },
+                new OnlineTrack
+                {
+                    Id = "kugou:A", Title = "甲", Artist = "歌手", DurationMs = 180000, Source = "酷狗",
+                    ProviderMetadata = new Dictionary<string, string>
+                    {
+                        ["album_id"] = "12",
+                        ["album_audio_id"] = "34"
+                    }
+                },
                 new OnlineTrack { Id = "kugou:B", Title = "乙", Artist = "歌手", DurationMs = 200000, Source = "酷狗" }
             });
 
@@ -323,12 +335,75 @@ public class KugouPlaylistViewModelTests
 
         var json = await File.ReadAllTextAsync(playlistFile);
         Assert.Contains("\"ProviderId\": \"kugou\"", json);
+        Assert.Contains("\"album_id\": \"12\"", json);
+        Assert.Contains("\"album_audio_id\": \"34\"", json);
         Assert.Contains("\"RemoteId\": \"7\"", json);
         Assert.Equal("通勤", vm.SyncedPlaylists.Single().Name);
         Assert.Equal(new[] { "kugou:A", "kugou:B" }, vm.SyncedPlaylists.Single().TrackSourceIds);
         vm.SelectedSyncedPlaylist = vm.SyncedPlaylists.Single();
         Assert.Equal(new[] { "kugou:A", "kugou:B" }, vm.VisibleLibraryTracks.Select(track => track.SourceId));
         Assert.DoesNotContain("token", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ImportExistingKugouTrack_RefreshesProviderMetadataAndPersistsIt()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var audio = new Mock<IAudioService>();
+        audio.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
+        audio.Setup(x => x.StateChanged).Returns(new System.Reactive.Subjects.Subject<PlaybackState>());
+        audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        var search = new Mock<IMusicSearchService>();
+        var kugou = new Mock<IKugouPlaylistService>();
+        kugou.SetupGet(x => x.IsLoggedIn).Returns(true);
+        kugou.Setup(x => x.GetUserPlaylistsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new KugouPlaylistInfo { Id = "9", Name = "旧收藏", TrackCount = 1 } });
+        kugou.Setup(x => x.GetPlaylistTracksAsync("9", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new OnlineTrack
+                {
+                    Id = "kugou:OLD",
+                    Title = "旧歌",
+                    Artist = "歌手",
+                    Source = "酷狗",
+                    ProviderMetadata = new Dictionary<string, string>
+                    {
+                        ["album_id"] = "12",
+                        ["album_audio_id"] = "34",
+                        ["hash_std"] = "STD"
+                    }
+                }
+            });
+
+        using var vm = new PlaylistViewModel(
+            audio.Object,
+            search.Object,
+            playlistFile,
+            kugouPlaylistService: kugou.Object);
+        vm.Tracks.Add(new Track
+        {
+            Id = "kugou:OLD",
+            SourceId = "kugou:OLD",
+            Title = "旧歌",
+            Artist = "歌手"
+        });
+        await vm.SaveAsync();
+
+        await vm.LoadKugouPlaylistsAsync();
+        await WaitUntilAsync(() => vm.KugouPlaylistTracks.Count == 1);
+        await vm.ImportKugouPlaylistCommand.Execute().ToTask();
+
+        var existing = Assert.Single(vm.Tracks);
+        Assert.Equal("12", existing.ProviderMetadata["album_id"]);
+        Assert.Equal("34", existing.ProviderMetadata["album_audio_id"]);
+        Assert.Equal("STD", existing.ProviderMetadata["hash_std"]);
+        audio.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
+
+        var json = await File.ReadAllTextAsync(playlistFile);
+        Assert.Contains("\"Version\": 3", json);
+        Assert.Contains("\"album_id\": \"12\"", json);
+        Assert.Contains("\"hash_std\": \"STD\"", json);
     }
 
     [Fact]
