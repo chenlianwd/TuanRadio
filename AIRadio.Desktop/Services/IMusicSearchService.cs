@@ -6,10 +6,16 @@ using AIRadio.Desktop.Models;
 
 namespace AIRadio.Desktop.Services;
 
+public enum MusicSearchIntent
+{
+    Explicit,
+    Automatic
+}
+
 public interface IMusicSearchService
 {
     string Name { get; }
-    /// <summary>慢源只在快速源没有结果时使用，但仍受同一个用户操作 deadline 约束。</summary>
+    /// <summary>慢源仅供显式搜索/播放使用，不参与自动跨源恢复。</summary>
     bool IsSlowSource => false;
     Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20);
     Task<string?> GetPlayUrlAsync(string trackId);

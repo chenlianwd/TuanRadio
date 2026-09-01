@@ -6,10 +6,15 @@
              x:DataType="vm:MainWindowViewModel">
 
     <Border Background="{DynamicResource SurfaceFooter}" Padding="22,0">
-        <Grid ColumnDefinitions="*,Auto">
+        <Grid ColumnDefinitions="Auto,*,Auto">
             <TextBlock Text="TUANRADIO FM" FontSize="11" FontFamily="Consolas"
                        Foreground="{DynamicResource ShellText}" VerticalAlignment="Center"/>
-            <TextBlock Grid.Column="1"
+            <TextBlock Grid.Column="1" Text="{Binding PlaybackRecoveryMessage}"
+                       IsVisible="{Binding HasPlaybackRecoveryFailure}"
+                       Margin="16,0" TextTrimming="CharacterEllipsis"
+                       FontSize="11" Foreground="{DynamicResource StateErrorColor}"
+                       VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            <TextBlock Grid.Column="2"
                        Text="{Binding CurrentState, Converter={x:Static conv:RadioStateToTextConverter.Instance}}"
                        FontSize="11" FontFamily="Consolas" VerticalAlignment="Center">
                 <TextBlock.Foreground>

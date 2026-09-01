@@ -22,6 +22,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const nodeCrypto = require('node:crypto');
 const express = require('express');
 const decode = require('safe-decode-uri-component');
 const { cookieToJson, randomString, getGuid, calculateMid, generateWebGLHash, isUUIDv4 } = require('./util/util');
@@ -79,6 +80,24 @@ if (fs.existsSync(envPath)) {
   // 静默加载 .env 文件中的环境变量到 process.env，quiet 抑制加载日志
   dotenv.config({ path: envPath, quiet: true });
 }
+
+const getEffectiveDeviceIdentity = () => {
+  const rawGuid = process.env.KUGOU_API_GUID;
+  const effectiveGuid = isUUIDv4(rawGuid) ? cryptoMd5(rawGuid) : (rawGuid || guid);
+  return {
+    guid: effectiveGuid,
+    dev: (process.env.KUGOU_API_DEV || serverDev).toUpperCase(),
+    webgl: String(process.env.KUGOU_API_WEBGL || serverWebgl),
+  };
+};
+
+const getDeviceIdentityHash = () => {
+  const identity = getEffectiveDeviceIdentity();
+  return nodeCrypto
+    .createHash('sha256')
+    .update(`${identity.guid}|${identity.dev}|${identity.webgl}`, 'utf8')
+    .digest('hex');
+};
 
 /**
  * 动态扫描指定目录，获取所有 API 模块的定义信息
@@ -205,6 +224,16 @@ async function consturctServer(moduleDefs) {
     req.method === 'OPTIONS' ? res.status(204).end() : next();
   });
 
+  // 桌面端只复用身份摘要完全一致的本地代理。该端点不访问酷狗上游、也不暴露账号凭据。
+  app.get('/tuanradio/identity', (_, res) => {
+    res.status(200).send({
+      status: 1,
+      service: 'tuanradio-kugou-proxy',
+      protocol: 1,
+      device_hash: getDeviceIdentityHash(),
+    });
+  });
+
   /**
    * ============================================================
    * Cookie 解析中间件
@@ -264,19 +293,18 @@ async function consturctServer(moduleDefs) {
       res.append('Set-Cookie', `${key}=${cookies[key]}${cookieSuffix}`);
     };
 
-    // 获取 env guid
-    const env_guid = isUUIDv4(process.env.KUGOU_API_GUID) ? cryptoMd5(process.env.KUGOU_API_GUID) : process.env.KUGOU_API_GUID;
+    const identity = getEffectiveDeviceIdentity();
 
     // 计算设备 MID（基于 GUID 的衍生标识）
-    const mid = calculateMid(env_guid ?? guid);
+    const mid = calculateMid(identity.guid);
 
     // 依次注入各平台标识 Cookie
     ensureCookie('KUGOU_API_PLATFORM', process.env.platform);
     ensureCookie('KUGOU_API_MID', mid);
-    ensureCookie('KUGOU_API_GUID', env_guid ?? guid);
-    ensureCookie('KUGOU_API_DEV', (process.env.KUGOU_API_DEV ?? serverDev).toUpperCase());
+    ensureCookie('KUGOU_API_GUID', identity.guid);
+    ensureCookie('KUGOU_API_DEV', identity.dev);
     ensureCookie('KUGOU_API_MAC', (process.env.KUGOU_API_MAC ?? '02:00:00:00:00:00').toUpperCase());
-    ensureCookie('KUGOU_API_WEBGL', process.env.KUGOU_API_WEBGL ?? serverWebgl);
+    ensureCookie('KUGOU_API_WEBGL', identity.webgl);
 
     // 将注入后的 cookies 回写到 req 对象上，供后续中间件和路由处理器使用
     req.cookies = cookies;
@@ -342,7 +370,7 @@ async function consturctServer(moduleDefs) {
    * 键集与桌面端 SensitiveDataSanitizer 对齐，前缀放宽到路径段。 */
   const redactUrl = (url) =>
     url.replace(
-      /([?&/])(session(?:Id)?|verifycode|ticket|token|userid|dfid|mid|kg_mid|kg_dfid|cookie|sign|signature|authorization|access_token|accesstoken|music_u)=([^&]*)/gi,
+      /([?&/])(session(?:Id)?|verifycode|ticket|token|userid|dfid|mid|kg_mid|kg_dfid|cookie|sign|signature|auth|t1|vip_token|authorization|access_token|accesstoken|music_u)=([^&]*)/gi,
       '$1$2=***');
 
   for (const moduleDef of moduleDefinitions) {

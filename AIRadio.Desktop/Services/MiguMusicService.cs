@@ -37,6 +37,7 @@ public class MiguMusicService : IMusicSearchService
             request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
             using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(json) || json[0] == '<')
                 throw new MusicSourceBusinessException(AppLanguage.T(
@@ -90,7 +91,7 @@ public class MiguMusicService : IMusicSearchService
         catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Migu search failed");
-            return new List<OnlineTrack>();
+            throw;
         }
     }
 
@@ -107,6 +108,7 @@ public class MiguMusicService : IMusicSearchService
             request.Headers.Add("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36");
 
             using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -126,6 +128,7 @@ public class MiguMusicService : IMusicSearchService
             request2.Headers.Add("Referer", "https://music.migu.cn/");
 
             using var response2 = await _httpClient.SendAsync(request2, cancellationToken);
+            response2.EnsureSuccessStatusCode();
             var json2 = await response2.Content.ReadAsStringAsync(cancellationToken);
             using var doc2 = JsonDocument.Parse(json2);
 
@@ -145,6 +148,7 @@ public class MiguMusicService : IMusicSearchService
         catch (Exception ex)
         {
             Log.Warning(ex, "Migu get play url failed for {Id}", id);
+            throw;
         }
         return null;
     }

@@ -84,15 +84,17 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
                 _musicApiServer = new MusicApiServer();
+                var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
                 _kugouApiServer = new MusicApiServer(
                     port: 37251,
                     serverDirName: "server-kugou",
-                    healthQuery: "/search?keywords=test&pagesize=1",
-                    healthResponseValidator: LooksLikeKugouSearchResponse,
+                    healthQuery: "/tuanradio/identity",
+                    // 每次探测时读取 LoadAsync 恢复后的当前身份，不能在构造阶段捕获随机初始值。
+                    healthResponseValidator: body =>
+                        musicAccounts.KugouDevice.MatchesProxyIdentityResponse(body),
                     logTag: "KugouApi",
-                    // 酷狗未登录时 /search 返回 502 + 合法 JSON（error_code:152），
-                    // 不能用 2xx 判活，只能按响应体形状识别
-                    requireSuccessStatusCode: false);
+                    // 工厂在 StartAsync 前求值；此时 MusicAccountStore.LoadAsync 已恢复稳定设备身份。
+                    environmentFactory: musicAccounts.GetKugouProxyEnvironment);
                 _initializationTask = StartMusicAndInitializeAsync(_lifetimeCts.Token);
 
                 Log.Information("AI Radio shell started successfully");
@@ -254,22 +256,4 @@ public partial class App : Application
         Log.CloseAndFlush();
     }
 
-    /// <summary>酷狗代理健康检查：与网易不同，其响应形状以数字 status 字段标识。</summary>
-    private static bool LooksLikeKugouSearchResponse(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body) || body.Length > 64 * 1024)
-            return false;
-
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(body);
-            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object &&
-                   doc.RootElement.TryGetProperty("status", out var status) &&
-                   status.ValueKind == System.Text.Json.JsonValueKind.Number;
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return false;
-        }
-    }
 }

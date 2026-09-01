@@ -39,6 +39,7 @@ public class KuwoMusicService : IMusicSearchService
             request.Headers.Add("Cookie", "kw_token=0");
 
             using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -84,7 +85,7 @@ public class KuwoMusicService : IMusicSearchService
         catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Kuwo search failed");
-            return new List<OnlineTrack>();
+            throw;
         }
     }
 
@@ -105,6 +106,7 @@ public class KuwoMusicService : IMusicSearchService
             request.Headers.Add("Cookie", "kw_token=0");
 
             using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -123,6 +125,7 @@ public class KuwoMusicService : IMusicSearchService
         catch (Exception ex)
         {
             Log.Warning(ex, "Kuwo get play url failed for {Id}", id);
+            throw;
         }
         return null;
     }

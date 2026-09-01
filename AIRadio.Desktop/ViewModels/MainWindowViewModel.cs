@@ -27,6 +27,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
     private readonly IDisposable _playbackHistorySub;
+    private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
     private readonly IDisposable _languageTtsSub;
@@ -71,6 +72,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public string ProgramStatusText { get; set; } = AppLanguage.T(
         "打开节目单时，DJ 会按当前收听风格生成下一组候选歌曲。",
         "Open Program and the DJ will curate the next set from your current listening style.");
+    [Reactive] public string PlaybackRecoveryMessage { get; private set; } = string.Empty;
+    [Reactive] public bool HasPlaybackRecoveryFailure { get; private set; }
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
     [Reactive] public DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
@@ -274,14 +277,24 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                     _recommendationService.RecordPlayedTrack(current);
             });
 
+        _playbackRecoverySub = _audioService.PlaybackRecoveryNotices?
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(notice =>
+            {
+                HasPlaybackRecoveryFailure = notice.IsBlocked;
+                PlaybackRecoveryMessage = notice.Message;
+            });
+
         // 统一电台状态机：从子 VM flags 派生 CurrentState（spec §5.2）
         this.WhenAnyValue(
                 x => x.ChatVM.HasFailure,
+                x => x.HasPlaybackRecoveryFailure,
                 x => x.ChatVM.IsSpeaking,
                 x => x.PlaylistVM.IsSearching,
                 x => x.ChatVM.IsProcessing,
                 x => x.PlayerVM.IsPlaying,
-                DeriveRadioState)
+                (chatFailure, playbackFailure, speaking, searching, processing, playing) =>
+                    DeriveRadioState(chatFailure || playbackFailure, speaking, searching, processing, playing))
             .ObserveOn(RxApp.MainThreadScheduler)
             .ToProperty(this, x => x.CurrentState);
 
@@ -1176,6 +1189,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
         _playbackHistorySub?.Dispose();
+        _playbackRecoverySub?.Dispose();
         _darkModePersistSub?.Dispose();
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();

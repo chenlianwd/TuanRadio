@@ -20,6 +20,7 @@ public interface IAudioService
     IObservable<PlaybackState> StateChanged { get; }
     IObservable<TimeSpan> PositionChanged { get; }
     IObservable<Track?> TrackEnded { get; }
+    IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices { get; }
 
     void LoadTracks(IEnumerable<Track> tracks);
     void LoadFiles(IEnumerable<string> filePaths);

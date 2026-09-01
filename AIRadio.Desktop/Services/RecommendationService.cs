@@ -547,7 +547,7 @@ public class RecommendationService : IRecommendationService
         int limit,
         CancellationToken cancellationToken)
         => _musicSearch is MultiSourceMusicService multi
-            ? multi.SearchAsync(query, limit, cancellationToken)
+            ? multi.SearchAsync(query, limit, MusicSearchIntent.Automatic, cancellationToken)
             : _musicSearch.SearchAsync(query, limit)
                 .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
 

@@ -33,6 +33,8 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<TimeSpan> _positionChangedSubject = new();
     private readonly Subject<Track?> _trackEndedSubject = new();
     private readonly Subject<string> _ttsErrorSubject = new();
+    private readonly Subject<PlaybackRecoveryNotice> _playbackRecoverySubject = new();
+    private readonly AutomaticSkipGuard _automaticSkipGuard = new();
     private readonly List<Track> _playlist = new();
     // UI 线程（增删/清空）与后台续播线程（NextAsync 追加）并发访问 _playlist/_currentIndex，
     // 无同步的检查-使用间隙会抛越界异常
@@ -170,6 +172,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<PlaybackState> StateChanged => _stateChangedSubject.AsObservable();
     public IObservable<TimeSpan> PositionChanged => _positionChangedSubject.AsObservable();
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
+    public IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices => _playbackRecoverySubject.AsObservable();
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
     public IObservable<string> TtsError => _ttsErrorSubject.AsObservable();
 
@@ -439,6 +442,7 @@ public class AudioService : IAudioService, IDisposable
         _stateChangedSubject.Dispose();
         _positionChangedSubject.Dispose();
         _trackEndedSubject.Dispose();
+        _playbackRecoverySubject.Dispose();
         _ttsStateSubject.Dispose();
         _ttsErrorSubject.Dispose();
         _lifetimeCts.Dispose();
@@ -680,6 +684,8 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
+        ResetAutomaticSkipGuard();
+
         if (CurrentTrack == null) return;
         if (_currentState == PlaybackState.Playing) return;
 
@@ -745,6 +751,7 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
+        ResetAutomaticSkipGuard();
         _ = NextAsync();
     }
 
@@ -846,6 +853,7 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
+        ResetAutomaticSkipGuard();
         lock (_playbackIntentGate)
         {
             _playbackIntentVersion++;
@@ -890,6 +898,7 @@ public class AudioService : IAudioService, IDisposable
     public void PlayAtIndex(int index)
     {
         if (IsDisposed) return;
+        ResetAutomaticSkipGuard();
         lock (_playbackIntentGate)
         {
             _playbackIntentVersion++;
@@ -905,6 +914,7 @@ public class AudioService : IAudioService, IDisposable
     public void PlayTrack(Track track)
     {
         if (IsDisposed || track == null) return;
+        ResetAutomaticSkipGuard();
         lock (_playbackIntentGate)
         {
             _playbackIntentVersion++;
@@ -916,6 +926,7 @@ public class AudioService : IAudioService, IDisposable
     public void StartPlaybackContext(IEnumerable<Track> tracks, int startIndex = 0, bool shuffle = false, string? contextName = null)
     {
         if (IsDisposed) return;
+        ResetAutomaticSkipGuard();
         var items = tracks.Where(track => track != null).ToList();
         if (items.Count == 0) return;
 
@@ -1742,9 +1753,37 @@ public class AudioService : IAudioService, IDisposable
             if (IsDisposed || requestId != Volatile.Read(ref _playRequestId))
                 return;
 
-            Log.Warning("Advancing after playback recovery failed: {Reason}", reason);
-            Next();
+            var notice = _automaticSkipGuard.Record(CurrentTrack?.Title ?? "unknown", reason);
+            _playbackRecoverySubject.OnNext(notice);
+            if (notice.IsBlocked)
+            {
+                Log.Error(
+                    "Automatic playback advance blocked after {Count} consecutive failures: {Reasons}",
+                    notice.ConsecutiveFailures,
+                    string.Join(" | ", notice.RecentFailures));
+                Stop();
+                return;
+            }
+
+            Log.Warning(
+                "Advancing after playback recovery failed ({Count}/{Limit}): {Reason}",
+                notice.ConsecutiveFailures,
+                AutomaticSkipGuard.FailureLimit,
+                reason);
+            _ = NextAsync();
         });
+    }
+
+    private void ResetAutomaticSkipGuard()
+    {
+        if (_automaticSkipGuard.Reset() && !IsDisposed)
+        {
+            _playbackRecoverySubject.OnNext(new PlaybackRecoveryNotice(
+                false,
+                0,
+                string.Empty,
+                Array.Empty<string>()));
+        }
     }
 
     private void ScheduleAfterPlaybackCallback(int requestId, Action action)
@@ -1901,6 +1940,13 @@ public class AudioService : IAudioService, IDisposable
             {
                 Interlocked.Exchange(ref _lastPositionMs, pos);
                 _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(pos));
+            }
+
+            if (pos >= RecoverySuccessStability.TotalMilliseconds ||
+                Environment.TickCount64 - _trackStartedAtMs >= RecoverySuccessStability.TotalMilliseconds)
+            {
+                ResetAutomaticSkipGuard();
+                TryCompleteRecoveryAfterStablePlayback();
             }
 
             // Let LibVLC EndReached decide when a track is really over.

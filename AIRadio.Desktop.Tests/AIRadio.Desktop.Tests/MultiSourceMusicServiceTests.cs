@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
+using Moq;
 using Xunit;
 
 namespace AIRadio.Desktop.Tests;
@@ -283,10 +284,9 @@ public class MultiSourceMusicServiceTests
     }
 
     [Fact]
-    public async Task SearchAsync_OverallDeadlineIncludesSlowSourceAndDoesNotSurfaceAsCallerCancellation()
+    public async Task SearchAsync_SlowSourceUsesIndependentBudgetAndStillHonorsCallerCancellation()
     {
-        // 快速源立即空结果，慢源挂起：慢源只能吃整个 8s 操作的剩余预算，
-        // 不能在快速路径之后再叠加 30s。
+        // 快速源立即空结果，慢源挂起：慢源使用独立预算，但用户取消必须立刻向上传递。
         using var client = new HttpClient(new DelegateHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
@@ -296,13 +296,169 @@ public class MultiSourceMusicServiceTests
         var service = new MultiSourceMusicService(client, slowSource);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var results = await service.SearchAsync("测试", 5, CancellationToken.None);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.SearchAsync("测试", 5, cancellation.Token));
         stopwatch.Stop();
 
-        Assert.Empty(results);
         Assert.True(slowSource.Started);
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
-            $"slow source escaped the overall search deadline (elapsed {stopwatch.Elapsed})");
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2),
+            $"slow source ignored caller cancellation (elapsed {stopwatch.Elapsed})");
+    }
+
+    [Fact]
+    public async Task GetAlternativePlayUrlAsync_DoesNotStartSlowSource()
+    {
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var slowSource = new CountingSlowMusicService();
+        var service = new MultiSourceMusicService(client, slowSource);
+        var track = new OnlineTrack { Id = "unknown:1", Title = "歌", Artist = "手" };
+
+        var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
+
+        Assert.Null(url);
+        Assert.Equal(0, slowSource.SearchCount);
+    }
+
+    [Fact]
+    public async Task SearchAsync_AutomaticIntentDoesNotStartSlowSource()
+    {
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var slowSource = new CountingSlowMusicService();
+        var service = new MultiSourceMusicService(client, slowSource);
+
+        var results = await service.SearchAsync(
+            "测试",
+            5,
+            MusicSearchIntent.Automatic,
+            CancellationToken.None);
+
+        Assert.Empty(results);
+        Assert.Equal(0, slowSource.SearchCount);
+    }
+
+    [Fact]
+    public async Task SearchAsync_BuiltInHttpFailuresOpenCircuitAfterThreshold()
+    {
+        var neteaseRequests = 0;
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            if (request.RequestUri?.Port == 37250)
+                Interlocked.Increment(ref neteaseRequests);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("service unavailable")
+            });
+        }));
+        var service = new MultiSourceMusicService(client);
+
+        for (var attempt = 0; attempt <= SourceHealthRegistry.FailureThreshold; attempt++)
+        {
+            var results = await service.SearchAsync(
+                "测试",
+                5,
+                MusicSearchIntent.Automatic,
+                CancellationToken.None);
+            Assert.Empty(results);
+        }
+
+        Assert.Equal(SourceHealthRegistry.FailureThreshold, neteaseRequests);
+        var primary = service.LastSearchReport.Single(status => status.Name == "网易云音乐");
+        Assert.Equal("disabled", primary.Status);
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_BuiltInHttpFailuresOpenCircuitAfterThreshold()
+    {
+        var neteaseRequests = 0;
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            if (request.RequestUri?.Port == 37250)
+                Interlocked.Increment(ref neteaseRequests);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("service unavailable")
+            });
+        }));
+        var service = new MultiSourceMusicService(client);
+
+        for (var attempt = 0; attempt <= SourceHealthRegistry.FailureThreshold; attempt++)
+            Assert.Null(await service.GetPlayUrlAsync("netease:123", CancellationToken.None));
+
+        Assert.Equal(SourceHealthRegistry.FailureThreshold, neteaseRequests);
+    }
+
+    [Fact]
+    public async Task SearchAsync_BusinessFailureBreaksTransportFailureSequence()
+    {
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var source = new InterleavedFailureMusicService();
+        var service = new MultiSourceMusicService(client, source);
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var results = await service.SearchAsync(
+                "测试",
+                5,
+                MusicSearchIntent.Automatic,
+                CancellationToken.None);
+            Assert.Empty(results);
+        }
+
+        // 前两次传输失败后出现业务响应，计数应归零；后续两次失败尚不足以熔断第 5 次请求。
+        Assert.Equal(5, source.SearchCount);
+    }
+
+    [Fact]
+    public async Task PlaybackFallbackSearch_RespectsCircuitAndCredentialUpdateResetsIt()
+    {
+        var storage = new Mock<ISecureStorage>();
+        storage.Setup(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        var accounts = new MusicAccountStore(storage.Object);
+        await accounts.SetKugouCookieAsync("token=SECRET;userid=42;dfid=DF;t1=T1;vip_type=0;auth=AUTH");
+        var kugouRequests = 0;
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            if (request.RequestUri?.Port == 37251)
+            {
+                Interlocked.Increment(ref kugouRequests);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("service unavailable")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":200,\"result\":{\"songs\":[]}}")
+            });
+        }));
+        var service = new MultiSourceMusicService(client, accounts);
+        var track = new OnlineTrack { Id = "unknown:1", Title = "歌", Artist = "手" };
+
+        for (var attempt = 0; attempt < SourceHealthRegistry.FailureThreshold; attempt++)
+            Assert.Null(await service.GetAlternativePlayUrlAsync(track, CancellationToken.None));
+
+        Assert.Null(await service.GetAlternativePlayUrlAsync(track, CancellationToken.None));
+        Assert.Equal(SourceHealthRegistry.FailureThreshold, kugouRequests);
+
+        // 即使用户重新提交的是同一账号值，也代表明确的重新登录/恢复意图。
+        await accounts.SetKugouCookieAsync(accounts.KugouCookie);
+        Assert.Null(await service.GetAlternativePlayUrlAsync(track, CancellationToken.None));
+        Assert.Equal(SourceHealthRegistry.FailureThreshold + 1, kugouRequests);
     }
 
     private sealed class FallbackMusicService : IMusicSearchService
@@ -401,6 +557,47 @@ public class MultiSourceMusicServiceTests
             Started = true;
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return new List<OnlineTrack>();
+        }
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>(null);
+    }
+
+    private sealed class CountingSlowMusicService : IMusicSearchService
+    {
+        public string Name => "计数慢源";
+        public bool IsSlowSource => true;
+        public int SearchCount { get; private set; }
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+        {
+            SearchCount++;
+            return Task.FromResult(new List<OnlineTrack>());
+        }
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>(null);
+    }
+
+    private sealed class InterleavedFailureMusicService : IMusicSearchService
+    {
+        private int _searchCount;
+
+        public string Name => "交错故障音源";
+        public int SearchCount => Volatile.Read(ref _searchCount);
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => SearchAsync(keyword, limit, CancellationToken.None);
+
+        public Task<List<OnlineTrack>> SearchAsync(
+            string keyword,
+            int limit,
+            CancellationToken cancellationToken)
+        {
+            var attempt = Interlocked.Increment(ref _searchCount);
+            if (attempt == 3)
+                throw new MusicSourceBusinessException("simulated rights failure");
+            throw new HttpRequestException("simulated transport failure");
         }
 
         public Task<string?> GetPlayUrlAsync(string trackId)

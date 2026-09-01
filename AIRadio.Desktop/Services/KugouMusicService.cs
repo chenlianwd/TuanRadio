@@ -18,7 +18,9 @@ public class KugouMusicService : IMusicSearchService
 {
     private const string ProxyBase = "http://127.0.0.1:37251";
     private const int MaxTransientRetries = 10;
-    private readonly SemaphoreSlim _dfidGate = new(1, 1);
+    private static readonly TimeSpan CredentialRefreshFailureCooldown = TimeSpan.FromMinutes(10);
+    private readonly SemaphoreSlim _credentialGate = new(1, 1);
+    private long _credentialRefreshNotBeforeMs;
     private readonly HttpClient _httpClient;
     private readonly MusicAccountStore? _accounts;
     private readonly KugouAccountService _accountService;
@@ -33,6 +35,14 @@ public class KugouMusicService : IMusicSearchService
         _accounts = accounts;
         _verification = verification;
         _accountService = new KugouAccountService(httpClient, ProxyBase);
+        if (_accounts != null)
+            _accounts.KugouCredentialChanged += OnKugouCredentialChanged;
+    }
+
+    private void OnKugouCredentialChanged(object? sender, EventArgs e)
+    {
+        // 扫码、退出或手动刷新都代表一次新的账号意图，旧会话的十分钟退避不能继续阻挡它。
+        Volatile.Write(ref _credentialRefreshNotBeforeMs, 0);
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
@@ -54,7 +64,7 @@ public class KugouMusicService : IMusicSearchService
 
         try
         {
-            cookie = await EnsureDfidCookieAsync(cookie, cancellationToken);
+            cookie = await EnsureCredentialAsync(cookie, cancellationToken);
             var url = $"{ProxyBase}/search?keywords={Uri.EscapeDataString(keyword)}&pagesize={limit}";
             using var response = await SendWithTransientRetryAsync(
                 () => BuildRequest(url, cookie), cancellationToken);
@@ -62,6 +72,10 @@ public class KugouMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             var status = TryGetInt32(root, "status") ?? -1;
+
+            // HTTP 失败属于传输故障，即使响应体碰巧带有业务字段，也必须交给聚合层熔断。
+            if (!response.IsSuccessStatusCode)
+                response.EnsureSuccessStatusCode();
 
             if (status != 1)
             {
@@ -72,11 +86,6 @@ public class KugouMusicService : IMusicSearchService
                     $"酷狗接口业务状态异常(status={status},error={errorCode})：{safeError ?? "未知错误"}，登录态或本地代理可能失效",
                     $"Kugou returned an unexpected status (status={status}, error={errorCode}): {safeError ?? "unknown error"}; the sign-in or local proxy may be invalid"));
             }
-
-            // HTTP 失败即使响应体看起来像成功，也不能当作有效搜索结果；
-            // 让 HttpRequestException 进入现有的“空结果”降级路径。
-            if (!response.IsSuccessStatusCode)
-                response.EnsureSuccessStatusCode();
 
             var tracks = new List<OnlineTrack>();
             if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
@@ -122,7 +131,8 @@ public class KugouMusicService : IMusicSearchService
         catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Kugou search failed");
-            return new List<OnlineTrack>();
+            // 传输/协议故障必须交给聚合层计入熔断；返回空集合会被误记为成功。
+            throw;
         }
     }
 
@@ -130,7 +140,12 @@ public class KugouMusicService : IMusicSearchService
         => GetPlayUrlAsync(trackId, CancellationToken.None);
 
     public Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
-        => GetPlayUrlCoreAsync(trackId, providerMetadata: null, cancellationToken);
+        => GetPlayUrlCoreAsync(
+            trackId,
+            providerMetadata: null,
+            attemptAuth: true,
+            attemptLegacy: true,
+            cancellationToken);
 
     public async Task<string?> GetPlayUrlAsync(OnlineTrack track, CancellationToken cancellationToken)
     {
@@ -141,21 +156,37 @@ public class KugouMusicService : IMusicSearchService
                 GetMetadata(track.ProviderMetadata, "hash_128")
             }
             .Where(hash => !string.IsNullOrWhiteSpace(hash))
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
+        // 所有稳定 hash 先走当前 Auth 主链；只有整组失败后，才允许主 hash 进入一次旧接口。
         foreach (var hash in hashes)
         {
-            var playUrl = await GetPlayUrlCoreAsync(hash!, track.ProviderMetadata, cancellationToken);
+            var playUrl = await GetPlayUrlCoreAsync(
+                hash!,
+                track.ProviderMetadata,
+                attemptAuth: true,
+                attemptLegacy: false,
+                cancellationToken);
             if (!string.IsNullOrWhiteSpace(playUrl))
                 return playUrl;
         }
 
-        return null;
+        return hashes.Length == 0
+            ? null
+            : await GetPlayUrlCoreAsync(
+                hashes[0]!,
+                track.ProviderMetadata,
+                attemptAuth: false,
+                attemptLegacy: true,
+                cancellationToken);
     }
 
     private async Task<string?> GetPlayUrlCoreAsync(
         string trackId,
         IReadOnlyDictionary<string, string>? providerMetadata,
+        bool attemptAuth,
+        bool attemptLegacy,
         CancellationToken cancellationToken)
     {
         var hash = StripSourcePrefix(trackId);
@@ -168,72 +199,22 @@ public class KugouMusicService : IMusicSearchService
 
         try
         {
-            // 旧版本保存的登录态可能没有 dfid。播放前惰性补齐并持久化，
-            // 避免用户必须重新扫码才能恢复历史登录态。
-            var cookie = await EnsureDfidCookieAsync(storedCookie, cancellationToken);
+            var cookie = await EnsureCredentialAsync(storedCookie, cancellationToken);
 
-            // timestamp 破缓存：播放地址可能带时效签名，AudioService 断流重刷时不能拿到 2 分钟内的旧缓存
-            var url = BuildPlayUrl(hash, providerMetadata);
-            using var response = await SendWithTransientRetryAsync(
-                () => BuildRequest(url, cookie), cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            var status = TryGetInt32(root, "status") ?? -1;
-            var errorCode = TryGetInt32(root, "error_code", "errcode", "code");
-            var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
-
-            // 20028 风控挑战：代理在上游返回 ssa-code 头时会在响应体附加 ssaCode/sid/edt。
-            // 只有明确的 20028 或 ssaCode 才上报验证服务。裸 status=2 也可能只是
-            // 版权/会员/参数不足，误报会启动一个注定拿不到 eventId 的验证流程。
-            var shape = KugouVerificationService.ClassifyPlayUrlResponse(root, out var challengeEventId, out _);
-            if (shape == KugouVerificationService.KugouPlayUrlShape.Challenge)
+            if (attemptAuth)
             {
-                if (challengeEventId == null)
-                    Log.Information(
-                        "Kugou play url suspected risk-control challenge for {Hash}: errcode={Errcode} error={Error}",
-                        hash, errorCode ?? -1, SensitiveDataSanitizer.Sanitize(error) ?? error);
-                _verification?.RecordChallenge(new KugouChallenge(challengeEventId, hash));
-            }
-
-            if (status != 1 || !response.IsSuccessStatusCode)
-            {
-                Log.Information(
-                    "Kugou play url rejected for {Hash}: http={HttpStatus} status={Status} errorCode={ErrorCode} error={Error} data={Data}",
-                    hash,
-                    (int)response.StatusCode,
-                    status,
-                    errorCode ?? -1,
-                    SensitiveDataSanitizer.Sanitize(error) ?? error,
-                    DescribeData(root));
-                return null;
-            }
-
-            if (!root.TryGetProperty("data", out var data))
-            {
-                Log.Information("Kugou play url returned no data for {Hash}", hash);
-                return null;
-            }
-
-            // v5/url 成功响应的 data 为数组（或单对象），条目内 url/url_backup 为 CDN 链接
-            if (data.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in data.EnumerateArray())
-                {
-                    var playUrl = ExtractPlayUrl(item);
-                    if (playUrl != null)
-                        return playUrl;
-                }
-            }
-            else if (data.ValueKind == JsonValueKind.Object)
-            {
-                var playUrl = ExtractPlayUrl(data);
-                if (playUrl != null)
+                var authUrl = BuildPlayUrl(hash, providerMetadata, useAuth: true);
+                var playUrl = await TryGetPlayUrlAsync(authUrl, cookie, hash, "auth", cancellationToken);
+                if (!string.IsNullOrWhiteSpace(playUrl))
                     return playUrl;
             }
 
-            Log.Information("Kugou play url response contains no usable URL for {Hash}: data={Data}",
-                hash, DescribeData(root));
+            if (attemptLegacy)
+            {
+                var legacyUrl = BuildPlayUrl(hash, providerMetadata, useAuth: false);
+                return await TryGetPlayUrlAsync(legacyUrl, cookie, hash, "legacy", cancellationToken);
+            }
+
             return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -243,15 +224,89 @@ public class KugouMusicService : IMusicSearchService
         catch (Exception ex)
         {
             Log.Warning(ex, "Kugou get play url failed for {Hash}", hash);
+            // null 仅表示正常业务下无可播地址，异常则交给聚合层计入音源健康状态。
+            throw;
+        }
+    }
+
+    private async Task<string?> TryGetPlayUrlAsync(
+        string url,
+        string cookie,
+        string hash,
+        string route,
+        CancellationToken cancellationToken)
+    {
+        using var response = await SendWithTransientRetryAsync(
+            () => BuildRequest(url, cookie), cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var status = TryGetInt32(root, "status") ?? -1;
+        var errorCode = TryGetInt32(root, "error_code", "errcode", "code");
+        var error = GetFlexibleText(root, "error", "error_msg", "message", "msg");
+
+        var shape = KugouVerificationService.ClassifyPlayUrlResponse(
+            root, out var challengeEventId, out _);
+        if (shape == KugouVerificationService.KugouPlayUrlShape.Challenge)
+        {
+            if (challengeEventId == null)
+                Log.Information(
+                    "Kugou {Route} play URL suspected risk-control challenge for {Hash}: errcode={Errcode} error={Error}",
+                    route, hash, errorCode ?? -1, SensitiveDataSanitizer.Sanitize(error) ?? error);
+            _verification?.RecordChallenge(new KugouChallenge(challengeEventId, hash));
+        }
+
+        if (!response.IsSuccessStatusCode)
+            response.EnsureSuccessStatusCode();
+
+        if (status != 1)
+        {
+            Log.Information(
+                "Kugou {Route} play URL rejected for {Hash}: http={HttpStatus} status={Status} errorCode={ErrorCode} error={Error} data={Data}",
+                route,
+                hash,
+                (int)response.StatusCode,
+                status,
+                errorCode ?? -1,
+                SensitiveDataSanitizer.Sanitize(error) ?? error,
+                DescribeData(root));
             return null;
         }
+
+        if (!root.TryGetProperty("data", out var data))
+        {
+            Log.Information("Kugou {Route} play URL returned no data for {Hash}", route, hash);
+            return null;
+        }
+
+        if (data.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in data.EnumerateArray())
+            {
+                var playUrl = ExtractPlayUrl(item);
+                if (playUrl != null)
+                    return playUrl;
+            }
+        }
+        else if (data.ValueKind == JsonValueKind.Object)
+        {
+            var playUrl = ExtractPlayUrl(data);
+            if (playUrl != null)
+                return playUrl;
+        }
+
+        Log.Information("Kugou {Route} play URL response contains no usable URL for {Hash}: data={Data}",
+            route, hash, DescribeData(root));
+        return null;
     }
 
     private static string BuildPlayUrl(
         string hash,
-        IReadOnlyDictionary<string, string>? providerMetadata)
+        IReadOnlyDictionary<string, string>? providerMetadata,
+        bool useAuth)
     {
-        var url = $"{ProxyBase}/song/url?hash={Uri.EscapeDataString(hash)}" +
+        var route = useAuth ? "/song/url/auth/merge" : "/song/url";
+        var url = $"{ProxyBase}{route}?hash={Uri.EscapeDataString(hash)}" +
                   $"&quality=128&timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
         url = AppendPositiveNumber(url, "album_id", GetMetadata(providerMetadata, "album_id"));
         url = AppendPositiveNumber(url, "album_audio_id", GetMetadata(providerMetadata, "album_audio_id"));
@@ -287,32 +342,50 @@ public class KugouMusicService : IMusicSearchService
         return request;
     }
 
-    private async Task<string> EnsureDfidCookieAsync(
+    private async Task<string> EnsureCredentialAsync(
         string storedCookie,
         CancellationToken cancellationToken)
     {
-        if (HasUsableDfid(storedCookie) || _accounts == null)
+        var needsFullSession = ShouldRefreshCompleteSession(storedCookie);
+        if ((!needsFullSession && KugouCookieCodec.HasUsableDfid(storedCookie)) || _accounts == null)
             return storedCookie;
 
-        await _dfidGate.WaitAsync(cancellationToken);
+        await _credentialGate.WaitAsync(cancellationToken);
         try
         {
             // 可能已有另一个播放请求完成了补齐。
             var baseline = _accounts.KugouCookie;
             var current = baseline ?? storedCookie;
-            if (HasUsableDfid(current))
+            needsFullSession = ShouldRefreshCompleteSession(current);
+            if (!needsFullSession && KugouCookieCodec.HasUsableDfid(current))
                 return current;
 
-            var enriched = await _accountService.EnsureDfidCookieAsync(current, cancellationToken);
+            var enriched = _accounts.IsLoaded
+                ? await _accountService.RefreshCredentialAsync(current, cancellationToken: cancellationToken)
+                : await _accountService.EnsureDfidCookieAsync(current, cancellationToken);
             if (string.IsNullOrWhiteSpace(enriched))
+            {
+                DeferCompleteSessionRefresh();
                 return current;
+            }
+
+            if (_accounts.IsLoaded &&
+                (KugouCookieCodec.NeedsSessionRefresh(enriched) ||
+                 string.IsNullOrWhiteSpace(KugouCookieCodec.Get(enriched, "auth"))))
+            {
+                DeferCompleteSessionRefresh();
+            }
+            else
+            {
+                Volatile.Write(ref _credentialRefreshNotBeforeMs, 0);
+            }
 
             // 网络补齐期间用户可能重新扫码登录：store 值一旦变化就不再回写旧 token+dfid，
             // 否则会把刚写入的新登录态整个覆盖掉。
             var latest = _accounts.KugouCookie;
             if (!string.Equals(latest, baseline, StringComparison.Ordinal))
             {
-                Log.Information("Kugou credential changed during dfid enrichment; keeping the newer stored value");
+                Log.Information("Kugou credential changed during session enrichment; keeping the newer stored value");
                 return latest ?? current;
             }
 
@@ -323,16 +396,27 @@ public class KugouMusicService : IMusicSearchService
             catch (Exception ex)
             {
                 // 播放不应因凭据持久化失败而被阻断；本次请求仍使用已补齐的 Cookie。
-                Log.Warning(ex, "Failed to persist refreshed Kugou device credential");
+                Log.Warning(ex, "Failed to persist refreshed Kugou session credential");
             }
 
             return enriched;
         }
         finally
         {
-            _dfidGate.Release();
+            _credentialGate.Release();
         }
     }
+
+    private bool ShouldRefreshCompleteSession(string cookie)
+        => _accounts?.IsLoaded == true &&
+           Environment.TickCount64 >= Volatile.Read(ref _credentialRefreshNotBeforeMs) &&
+           (KugouCookieCodec.NeedsSessionRefresh(cookie) ||
+            string.IsNullOrWhiteSpace(KugouCookieCodec.Get(cookie, "auth")));
+
+    private void DeferCompleteSessionRefresh()
+        => Volatile.Write(
+            ref _credentialRefreshNotBeforeMs,
+            Environment.TickCount64 + (long)CredentialRefreshFailureCooldown.TotalMilliseconds);
 
     private async Task<HttpResponseMessage> SendWithTransientRetryAsync(
         Func<HttpRequestMessage> requestFactory,
@@ -358,26 +442,6 @@ public class KugouMusicService : IMusicSearchService
 
     private static TimeSpan GetRetryDelay(int attempt)
         => TimeSpan.FromMilliseconds(Math.Min(3000, 500 * (attempt + 1)));
-
-    private static bool HasUsableDfid(string cookie)
-    {
-        var dfid = ExtractCookieValue(cookie, "dfid");
-        return !string.IsNullOrWhiteSpace(dfid) &&
-               !string.Equals(dfid, "-", StringComparison.Ordinal) &&
-               !string.Equals(dfid, "0", StringComparison.Ordinal);
-    }
-
-    private static string? ExtractCookieValue(string cookie, string name)
-    {
-        foreach (var part in cookie.Split(';', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var pair = part.Split('=', 2);
-            if (pair.Length == 2 && pair[0].Trim().Equals(name, StringComparison.OrdinalIgnoreCase))
-                return pair[1].Trim();
-        }
-
-        return null;
-    }
 
     private static int? TryGetInt32(JsonElement element, params string[] names)
     {
