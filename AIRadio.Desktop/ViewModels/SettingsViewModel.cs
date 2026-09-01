@@ -541,10 +541,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
             if (!string.IsNullOrEmpty(_accounts.KugouCookie))
             {
-                var nickname = await _kugouAccount.GetNicknameAsync(_accounts.KugouCookie!, _lifetimeCts.Token);
-                SetKugouAccountStatus(() => nickname != null
-                    ? AppLanguage.T($"已登录：{nickname}", $"Signed in: {nickname}")
-                    : AppLanguage.T("已登录", "Signed in"));
+                var baseline = _accounts.KugouCookie!;
+                var refreshed = await _kugouAccount.RefreshCredentialAsync(
+                    baseline,
+                    forceSessionRefresh: true,
+                    cancellationToken: _lifetimeCts.Token) ?? baseline;
+                if (!string.Equals(baseline, refreshed, StringComparison.Ordinal))
+                    await _accounts.SetKugouCookieAsync(refreshed);
+
+                var snapshot = await _kugouAccount.GetAccountSnapshotAsync(refreshed, _lifetimeCts.Token);
+                SetKugouAccountStatus(() => BuildKugouAccountStatus(snapshot));
             }
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -650,8 +656,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                         await _accounts.SetKugouCookieAsync(result.Cookie!);
                         IsKugouQrVisible = false;
                         KugouQrImage = null;
-                        var nickname = await _kugouAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
-                        SetKugouAccountStatus(() => AppLanguage.T($"已登录：{nickname ?? "未知昵称"}", $"Signed in: {nickname ?? "unknown"}"));
+                        var snapshot = await _kugouAccount.GetAccountSnapshotAsync(
+                            result.Cookie!, _lifetimeCts.Token);
+                        SetKugouAccountStatus(() => BuildKugouAccountStatus(snapshot));
                         return;
                     case QrState.Expired:
                         SetKugouAccountStatus(() => AppLanguage.T("二维码已过期，请重新扫码", "QR code expired; scan again"));
@@ -675,6 +682,38 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         {
             _kugouQrRunning = false;
         }
+    }
+
+    private static string BuildKugouAccountStatus(KugouAccountSnapshot snapshot)
+    {
+        var account = snapshot.Nickname ?? AppLanguage.T("未知昵称", "unknown");
+        if (snapshot.Nickname == null)
+        {
+            return AppLanguage.T(
+                "登录态验证失败，请重新扫码或检查酷狗代理",
+                "Sign-in validation failed; scan again or check the Kugou proxy");
+        }
+
+        if (!snapshot.HasAuth)
+        {
+            return AppLanguage.T(
+                $"账号有效：{account}（播放授权未就绪，请稍后重试或重新扫码）",
+                $"Account valid: {account} (playback authorization is not ready; retry later or scan again)");
+        }
+
+        if (snapshot.VipType > 0)
+        {
+            var diagnostic = snapshot.VipEndpointAvailable
+                ? AppLanguage.T("会员接口可用", "membership endpoint available")
+                : AppLanguage.T("会员详情暂不可用", "membership details unavailable");
+            return AppLanguage.T(
+                $"已登录：{account}（会员类型 {snapshot.VipType}，{diagnostic}；播放权益以实际检测为准）",
+                $"Signed in: {account} (membership type {snapshot.VipType}, {diagnostic}; playback rights are verified per track)");
+        }
+
+        return AppLanguage.T(
+            $"已登录：{account}（未识别到付费会员；免费听活动以实际播放为准）",
+            $"Signed in: {account} (no paid membership detected; promotional access is verified per track)");
     }
 
     private async Task LogoutNeteaseAsync()

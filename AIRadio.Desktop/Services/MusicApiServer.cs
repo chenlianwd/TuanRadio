@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -21,6 +22,7 @@ public class MusicApiServer : IDisposable
     private readonly Func<string, bool> _healthValidator;
     private readonly string _logTag;
     private readonly bool _requireSuccessStatusCode;
+    private readonly Func<IReadOnlyDictionary<string, string>>? _environmentFactory;
     private readonly object _processGate = new();
     // 串行化整个“探测→拉起→就绪确认”启动序列，防并发启动泄漏 Node 进程
     private readonly SemaphoreSlim _startGate = new(1, 1);
@@ -51,7 +53,8 @@ public class MusicApiServer : IDisposable
         string? healthQuery = null,
         Func<string, bool>? healthResponseValidator = null,
         string? logTag = null,
-        bool requireSuccessStatusCode = true)
+        bool requireSuccessStatusCode = true,
+        Func<IReadOnlyDictionary<string, string>>? environmentFactory = null)
     {
         _port = port;
         _serverDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, serverDirName ?? "server");
@@ -59,6 +62,7 @@ public class MusicApiServer : IDisposable
         _healthValidator = healthResponseValidator ?? LooksLikeNeteaseSearchResponse;
         _logTag = logTag ?? "MusicApi";
         _requireSuccessStatusCode = requireSuccessStatusCode;
+        _environmentFactory = environmentFactory;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -123,6 +127,15 @@ public class MusicApiServer : IDisposable
                         },
                         EnableRaisingEvents = true
                     };
+
+                    if (_environmentFactory?.Invoke() is { } environment)
+                    {
+                        foreach (var (name, value) in environment)
+                        {
+                            if (!string.IsNullOrWhiteSpace(name) && value != null)
+                                process.StartInfo.Environment[name] = value;
+                        }
+                    }
 
                     process.OutputDataReceived += (_, e) =>
                     {

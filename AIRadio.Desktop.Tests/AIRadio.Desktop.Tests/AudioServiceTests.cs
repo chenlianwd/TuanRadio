@@ -13,6 +13,53 @@ namespace AIRadio.Desktop.Tests;
 public class AudioServiceTests
 {
     [Fact]
+    public void AutomaticSkipGuard_BlocksThirdFailureAndResetsAfterSuccess()
+    {
+        var guard = new AutomaticSkipGuard();
+
+        Assert.False(guard.Record("甲", "unavailable").IsBlocked);
+        Assert.False(guard.Record("乙", "timeout").IsBlocked);
+        var blocked = guard.Record("丙", "auth required");
+
+        Assert.True(blocked.IsBlocked);
+        Assert.Equal(3, blocked.ConsecutiveFailures);
+        Assert.Equal(3, blocked.RecentFailures.Count);
+        Assert.True(guard.Reset());
+        Assert.False(guard.Record("丁", "unavailable").IsBlocked);
+    }
+
+    [Fact]
+    public void SourceHealthRegistry_OpensAfterThreeTransportFailuresAndRecoversAfterCooldown()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var registry = new SourceHealthRegistry(() => now);
+
+        registry.RecordTransportFailure("测试源");
+        registry.RecordTransportFailure("测试源");
+        Assert.True(registry.CanRequest("测试源", out _));
+        registry.RecordTransportFailure("测试源");
+
+        Assert.False(registry.CanRequest("测试源", out var remaining));
+        Assert.Equal(SourceHealthRegistry.CircuitDuration, remaining);
+        now += SourceHealthRegistry.CircuitDuration;
+        Assert.True(registry.CanRequest("测试源", out _));
+    }
+
+    [Fact]
+    public void SourceHealthRegistry_ResetImmediatelyClosesCircuit()
+    {
+        var registry = new SourceHealthRegistry();
+        registry.RecordTransportFailure("酷狗音乐");
+        registry.RecordTransportFailure("酷狗音乐");
+        registry.RecordTransportFailure("酷狗音乐");
+        Assert.False(registry.CanRequest("酷狗音乐", out _));
+
+        registry.Reset("酷狗音乐");
+
+        Assert.True(registry.CanRequest("酷狗音乐", out _));
+    }
+
+    [Fact]
     public void NewInstance_HasEmptyPlaylist()
     {
         var svc = new AudioService();

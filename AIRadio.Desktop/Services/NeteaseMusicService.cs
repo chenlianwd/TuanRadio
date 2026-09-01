@@ -109,7 +109,8 @@ public class NeteaseMusicService : IMusicSearchService
         catch (Exception ex) when (ex is not MusicSourceBusinessException)
         {
             Log.Warning(ex, "Netease search failed");
-            return new List<OnlineTrack>();
+            // 传输/协议故障必须交给聚合层计入熔断；返回空集合会被误记为成功。
+            throw;
         }
     }
 
@@ -161,7 +162,8 @@ public class NeteaseMusicService : IMusicSearchService
         catch (Exception ex)
         {
             Log.Warning(ex, "Netease get play url failed for {Id}", trackId);
-            return null;
+            // null 仅表示正常业务下无可播地址，异常则交给聚合层计入音源健康状态。
+            throw;
         }
     }
 

@@ -12,7 +12,7 @@ internal static class SensitiveDataSanitizer
     // 键名包含各音源真实 Cookie 键（MUSIC_U/__csrf/kg_mid 等）与常见 OAuth 变体；
     // 注意 accesstoken 无词边界可循，必须显式列出，\btoken 匹配不到它。
     private static readonly Regex SensitivePairs = new(
-        @"(?i)\b(token|userid|dfid|cookie|sign|signature|auth|access_token|accesstoken|refresh_token|authorization|music_u|music_a|__csrf|nmtid|kg_mid|kg_dfid|vip_uid)\s*=\s*[^&;\s""']+",
+        @"(?i)\b(token|userid|dfid|cookie|sign|signature|auth|t1|vip_token|access_token|accesstoken|refresh_token|authorization|music_u|music_a|__csrf|nmtid|kg_mid|kg_dfid|vip_uid|kugou_api_guid|kugou_api_mid|kugou_api_dev|kugou_api_webgl)\s*=\s*[^&;\s""']+",
         RegexOptions.Compiled);
 
     // Authorization: Bearer xxx / bearer token 文本形态

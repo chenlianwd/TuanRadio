@@ -11,16 +11,15 @@ using Serilog;
 namespace AIRadio.Desktop.Services;
 
 /// <summary>
-/// 多平台聚合音乐搜索服务，集成酷我/酷狗/咪咕/网易云
+/// 多平台聚合音乐搜索服务。默认启用网易云与酷狗；脆弱网页源必须显式开启。
 /// </summary>
 public class MultiSourceMusicService : IMusicSearchService
 {
     private static readonly TimeSpan PrimarySourceTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SourceTimeout = TimeSpan.FromSeconds(5);
-    // yt-dlp 子进程允许使用较长的单源上限，但仍必须被整个搜索操作的剩余预算截断
+    // yt-dlp 子进程只用于显式搜索/播放，使用独立的有界预算。
     private static readonly TimeSpan SlowSourceTimeout = TimeSpan.FromSeconds(30);
-    // 0.4 统一 deadline：快速源与后续慢源共享 8s 整体预算（对应量化门禁"普通在线搜索硬截止 8s"），
-    // 每个单源预算从剩余时间中扣减，调用下一源前先检查剩余预算
+    // 快速源共享 8s 前台预算；慢源在显式搜索阶段使用自己的预算。
     private static readonly TimeSpan SearchOverallDeadline = TimeSpan.FromSeconds(8);
     // 播放地址解析/跨源回退的整体预算，与 AudioService.UrlRefreshTimeout 对齐：
     // 内层每源 5s 不再无限串行叠加，由本 deadline 收口
@@ -29,6 +28,7 @@ public class MultiSourceMusicService : IMusicSearchService
     private static readonly TimeSpan MinSourceBudget = TimeSpan.FromSeconds(1);
     private readonly HttpClient _httpClient;
     private readonly List<IMusicSearchService> _sources;
+    private readonly SourceHealthRegistry _healthRegistry = new();
     private readonly object _reportGate = new();
     private readonly List<SourceSearchStatus> _lastSearchReport = new();
 
@@ -65,7 +65,11 @@ public class MultiSourceMusicService : IMusicSearchService
         CurrentSearchReport.Value = report;
         try
         {
-            var tracks = await SearchAsync(keyword, limit, cancellationToken);
+            var tracks = await SearchAsync(
+                keyword,
+                limit,
+                MusicSearchIntent.Explicit,
+                cancellationToken);
             lock (_reportGate)
                 return new SearchOutcome(tracks, report.ToArray());
         }
@@ -89,22 +93,42 @@ public class MultiSourceMusicService : IMusicSearchService
         KugouVerificationService? kugouVerification, params IMusicSearchService[] extraSources)
     {
         _httpClient = httpClient;
+        var kugouSource = new KugouMusicService(httpClient, accounts, kugouVerification);
         _sources = new List<IMusicSearchService>
         {
             new NeteaseMusicService(httpClient, accounts),
-            new KuwoMusicService(httpClient),
-            new KugouMusicService(httpClient, accounts, kugouVerification),
-            new MiguMusicService(httpClient)
+            kugouSource
         };
+        if (accounts != null)
+        {
+            accounts.KugouCredentialChanged += (_, _) =>
+                _healthRegistry.Reset(kugouSource.Name);
+        }
+        // 酷我/咪咕当前依赖易失网页接口，默认不进入用户请求；仅供诊断和适配器开发显式开启。
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("AIRADIO_ENABLE_LEGACY_WEB_SOURCES"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            _sources.Add(new KuwoMusicService(httpClient));
+            _sources.Add(new MiguMusicService(httpClient));
+        }
         _sources.AddRange(extraSources); // YouTube 等额外源作为最低优先级
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
         => SearchAsync(keyword, limit, CancellationToken.None);
 
+    public Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        CancellationToken cancellationToken)
+        => SearchAsync(keyword, limit, MusicSearchIntent.Explicit, cancellationToken);
+
     public async Task<List<OnlineTrack>> SearchAsync(
         string keyword,
         int limit,
+        MusicSearchIntent intent,
         CancellationToken cancellationToken)
     {
         lock (_reportGate)
@@ -192,39 +216,26 @@ public class MultiSourceMusicService : IMusicSearchService
             Log.Debug("Fast search path cut off by overall deadline for '{Keyword}'", keyword);
         }
 
-        // YouTube 等慢源是最低优先级兜底：只使用整个搜索操作的剩余预算，
-        // 不得在 8s 总 deadline 之后再叠加自己的 30s 单源预算。
-        if (merged.Count == 0)
+        // 慢源只允许显式用户操作进入。自动电台/DJ 推荐即使快速源为空也必须立即返回，
+        // 否则 30s 搜索与 30s URL 解析会顶满下一首回调的 60s 上限。
+        if (merged.Count == 0 && intent == MusicSearchIntent.Explicit)
         {
+            var slowDeadline = DateTimeOffset.UtcNow + SlowSourceTimeout;
             foreach (var slowSource in _sources.Where(s => s.IsSlowSource))
             {
-                var slowBudget = CapBudget(SlowSourceTimeout, RemainingBudget(deadline));
-                if (slowBudget < MinSourceBudget || searchCts.IsCancellationRequested)
+                var slowBudget = CapBudget(SlowSourceTimeout, RemainingBudget(slowDeadline));
+                if (slowBudget < MinSourceBudget)
                 {
-                    Log.Debug("Slow source {Source} skipped for '{Keyword}': overall search deadline exhausted", slowSource.Name, keyword);
-                    // 逐源状态面板也要能看到慢源因总预算耗尽被跳过，而不是整行消失
-                    AddSearchReport(new SourceSearchStatus(slowSource.Name, "timeout", 0,
-                        AppLanguage.T($"超时({slowBudget.TotalSeconds:0}s)", $"timed out ({slowBudget.TotalSeconds:0}s)")));
+                    Log.Debug("Slow source budget exhausted for '{Keyword}'", keyword);
                     break;
                 }
 
-                List<OnlineTrack> slowResults;
-                try
-                {
-                    slowResults = await SearchWithFallback(
-                        slowSource,
-                        keyword,
-                        limit,
-                        slowBudget,
-                        searchCts.Token);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    Log.Debug("Slow source {Source} cut off by overall deadline for '{Keyword}'", slowSource.Name, keyword);
-                    AddSearchReport(new SourceSearchStatus(slowSource.Name, "timeout", 0,
-                        AppLanguage.T($"超时({slowBudget.TotalSeconds:0}s)", $"timed out ({slowBudget.TotalSeconds:0}s)")));
-                    break;
-                }
+                var slowResults = await SearchWithFallback(
+                    slowSource,
+                    keyword,
+                    limit,
+                    slowBudget,
+                    cancellationToken);
                 if (slowResults.Count > 0)
                 {
                     merged.AddRange(slowResults.Take(limit * 2));
@@ -251,8 +262,13 @@ public class MultiSourceMusicService : IMusicSearchService
             var source = _sources.FirstOrDefault(s =>
                 s.GetType().Name.Replace("MusicService", "").ToLower() == parts[0].ToLower());
             if (source != null)
+            {
+                var budget = source.IsSlowSource
+                    ? SlowSourceTimeout
+                    : CapBudget(SourceTimeout, RemainingBudget(deadline));
                 return await GetPlayUrlWithTimeout(
-                    source, parts[1], CapBudget(SourceTimeout, RemainingBudget(deadline)), cancellationToken);
+                    source, parts[1], budget, cancellationToken);
+            }
         }
 
         // Try all sources
@@ -292,10 +308,13 @@ public class MultiSourceMusicService : IMusicSearchService
         if (preferred != null)
         {
             var preferredId = StripSourcePrefix(track.Id);
+            var preferredBudget = preferred.IsSlowSource
+                ? SlowSourceTimeout
+                : CapBudget(SourceTimeout, RemainingBudget(deadline));
             var preferredUrl = await GetPlayUrlWithTimeout(
                 preferred,
                 CreateProviderTrack(track, preferredId),
-                CapBudget(SourceTimeout, RemainingBudget(deadline)),
+                preferredBudget,
                 cancellationToken);
             if (!string.IsNullOrWhiteSpace(preferredUrl))
                 return preferredUrl;
@@ -388,33 +407,7 @@ public class MultiSourceMusicService : IMusicSearchService
             Log.Debug("Fast playback fallback skipped: overall deadline exhausted");
         }
 
-        // 慢源（目前为 YouTube/yt-dlp）只在快速源均无可播候选时使用剩余预算。
-        foreach (var source in _sources.Where(source =>
-                     !ReferenceEquals(source, excludedSource) && source.IsSlowSource))
-        {
-            var searchBudget = CapBudget(SlowSourceTimeout, RemainingBudget(deadline));
-            if (searchBudget < MinSourceBudget)
-            {
-                Log.Debug("Playback fallback skipped {Source}: overall deadline exhausted", source.Name);
-                break;
-            }
-
-            var candidates = await SearchForPlaybackFallbackAsync(
-                source,
-                query,
-                searchBudget,
-                cancellationToken);
-            var url = await TryResolveFallbackCandidateAsync(
-                track,
-                source,
-                candidates,
-                excludedSource,
-                deadline,
-                cancellationToken);
-            if (!string.IsNullOrWhiteSpace(url))
-                return url;
-        }
-
+        // YouTube/yt-dlp 不参与自动回退：30s 子进程不能安全塞进 8s 播放恢复预算。
         return null;
     }
 
@@ -475,24 +468,37 @@ public class MultiSourceMusicService : IMusicSearchService
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        if (!_healthRegistry.CanRequest(source.Name, out var remaining))
+        {
+            var note = AppLanguage.T(
+                $"连续接口故障，暂停请求 {Math.Ceiling(remaining.TotalSeconds):0} 秒",
+                $"circuit open for {Math.Ceiling(remaining.TotalSeconds):0}s after repeated transport failures");
+            AddSearchReport(new SourceSearchStatus(source.Name, "disabled", 0, note));
+            Log.Debug("Source {Name} skipped while circuit is open for {Seconds}s", source.Name, remaining.TotalSeconds);
+            return new List<OnlineTrack>();
+        }
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
         try
         {
             var list = await source.SearchAsync(keyword, limit, timeoutCts.Token)
                 .WaitAsync(timeout, cancellationToken);
+            _healthRegistry.RecordSuccess(source.Name);
             AddSearchReport(new SourceSearchStatus(source.Name, "ok", list.Count, null));
             return list;
         }
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
+            _healthRegistry.RecordTransportFailure(source.Name);
             AddSearchReport(new SourceSearchStatus(source.Name, "timeout", 0, AppLanguage.T($"超时({timeout.TotalSeconds}s)", $"timed out ({timeout.TotalSeconds}s)")));
             Log.Warning("Source {Name} search timed out after {Seconds}s", source.Name, timeout.TotalSeconds);
             return new List<OnlineTrack>();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            _healthRegistry.RecordTransportFailure(source.Name);
             AddSearchReport(new SourceSearchStatus(source.Name, "timeout", 0, AppLanguage.T($"超时({timeout.TotalSeconds}s)", $"timed out ({timeout.TotalSeconds}s)")));
             Log.Warning("Source {Name} search timed out after {Seconds}s", source.Name, timeout.TotalSeconds);
             return new List<OnlineTrack>();
@@ -503,6 +509,7 @@ public class MultiSourceMusicService : IMusicSearchService
         }
         catch (Exception ex)
         {
+            RecordSourceOutcome(source.Name, ex);
             AddSearchReport(new SourceSearchStatus(source.Name, "failed", 0, ex.Message));
             Log.Warning(ex, "Source {Name} search failed", source.Name);
             return new List<OnlineTrack>();
@@ -554,16 +561,34 @@ public class MultiSourceMusicService : IMusicSearchService
         TimeSpan budget,
         CancellationToken cancellationToken)
     {
+        if (!_healthRegistry.CanRequest(source.Name, out var remaining))
+        {
+            Log.Debug(
+                "Playback fallback search skipped {Source}: circuit open for {Seconds}s",
+                source.Name,
+                remaining.TotalSeconds);
+            return new List<OnlineTrack>();
+        }
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(budget);
         try
         {
-            return await source.SearchAsync(query, 5, timeoutCts.Token)
+            var results = await source.SearchAsync(query, 5, timeoutCts.Token)
                 .WaitAsync(budget, cancellationToken);
+            _healthRegistry.RecordSuccess(source.Name);
+            return results;
         }
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
+            _healthRegistry.RecordTransportFailure(source.Name);
+            Log.Debug("Playback fallback search timed out for source {Source}", source.Name);
+            return new List<OnlineTrack>();
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _healthRegistry.RecordTransportFailure(source.Name);
             Log.Debug("Playback fallback search timed out for source {Source}", source.Name);
             return new List<OnlineTrack>();
         }
@@ -573,6 +598,7 @@ public class MultiSourceMusicService : IMusicSearchService
         }
         catch (Exception ex)
         {
+            RecordSourceOutcome(source.Name, ex);
             Log.Debug(ex, "Playback fallback search failed for source {Source}", source.Name);
             return new List<OnlineTrack>();
         }
@@ -589,21 +615,31 @@ public class MultiSourceMusicService : IMusicSearchService
         TimeSpan budget,
         CancellationToken cancellationToken)
     {
+        if (!_healthRegistry.CanRequest(source.Name, out var remaining))
+        {
+            Log.Debug("Source {Name} play URL skipped while circuit is open for {Seconds}s", source.Name, remaining.TotalSeconds);
+            return null;
+        }
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(budget);
         try
         {
-            return await source.GetPlayUrlAsync(trackId, timeoutCts.Token)
+            var url = await source.GetPlayUrlAsync(trackId, timeoutCts.Token)
                 .WaitAsync(budget, cancellationToken);
+            _healthRegistry.RecordSuccess(source.Name);
+            return url;
         }
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
+            _healthRegistry.RecordTransportFailure(source.Name);
             Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", source.Name, budget.TotalSeconds, trackId);
             return null;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            _healthRegistry.RecordTransportFailure(source.Name);
             Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", source.Name, budget.TotalSeconds, trackId);
             return null;
         }
@@ -613,6 +649,7 @@ public class MultiSourceMusicService : IMusicSearchService
         }
         catch (Exception ex)
         {
+            RecordSourceOutcome(source.Name, ex);
             Log.Debug(ex, "Source {Name} play URL failed for {Id}", source.Name, trackId);
             return null;
         }
@@ -624,21 +661,31 @@ public class MultiSourceMusicService : IMusicSearchService
         TimeSpan budget,
         CancellationToken cancellationToken)
     {
+        if (!_healthRegistry.CanRequest(source.Name, out var remaining))
+        {
+            Log.Debug("Source {Name} play URL skipped while circuit is open for {Seconds}s", source.Name, remaining.TotalSeconds);
+            return null;
+        }
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(budget);
         try
         {
-            return await source.GetPlayUrlAsync(track, timeoutCts.Token)
+            var url = await source.GetPlayUrlAsync(track, timeoutCts.Token)
                 .WaitAsync(budget, cancellationToken);
+            _healthRegistry.RecordSuccess(source.Name);
+            return url;
         }
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
+            _healthRegistry.RecordTransportFailure(source.Name);
             Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", source.Name, budget.TotalSeconds, track.Id);
             return null;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            _healthRegistry.RecordTransportFailure(source.Name);
             Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", source.Name, budget.TotalSeconds, track.Id);
             return null;
         }
@@ -648,9 +695,19 @@ public class MultiSourceMusicService : IMusicSearchService
         }
         catch (Exception ex)
         {
+            RecordSourceOutcome(source.Name, ex);
             Log.Debug(ex, "Source {Name} play URL failed for {Id}", source.Name, track.Id);
             return null;
         }
+    }
+
+    private void RecordSourceOutcome(string sourceName, Exception exception)
+    {
+        // 业务拒绝仍证明请求/响应链路健康，应打断此前的连续传输失败计数。
+        if (exception is MusicSourceBusinessException)
+            _healthRegistry.RecordSuccess(sourceName);
+        else
+            _healthRegistry.RecordTransportFailure(sourceName);
     }
 
     private static OnlineTrack CreateProviderTrack(OnlineTrack track, string providerTrackId)

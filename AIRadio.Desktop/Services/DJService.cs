@@ -338,7 +338,11 @@ Response rules:
     {
         var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
         var results = _musicSearch is MultiSourceMusicService multiSearch
-            ? await multiSearch.SearchAsync(searchQuery, 10, cancellationToken)
+            ? await multiSearch.SearchAsync(
+                searchQuery,
+                10,
+                MusicSearchIntent.Automatic,
+                cancellationToken)
             : await _musicSearch!.SearchAsync(searchQuery, 10)
                 .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
         foreach (var item in results)
