@@ -387,7 +387,7 @@ public sealed class KugouVerificationService
         /// <summary>命中 20028 风控（含代理附加的 ssaCode，或 errcode=20028 但未附带事件）。</summary>
         Challenge,
 
-        /// <summary>其余失败（status=1 无数据 / status=2 带非 20028 错误 / status=0）。</summary>
+        /// <summary>其余失败（status=1 无数据 / 无 20028 或 ssaCode 的 status=2 / status=0）。</summary>
         Unavailable,
     }
 
@@ -396,7 +396,8 @@ public sealed class KugouVerificationService
     /// 1) 正常成功（status=1 + data 内 URL）；
     /// 2) 20028 挑战且代理附加了 ssaCode/sid/edt（eventid 可得）；
     /// 3) errcode=20028 但无 ssaCode（事件 ID 缺失，只能等待探测确认）；
-    /// 4) 裸 status=2（无 error 无 data，疑似挑战但无事件）与非 20028 失败。
+    /// 4) 裸 status=2 与非 20028 失败。裸 status=2 无法证明是风控，按不可用处理，
+    ///    避免触发一个注定拿不到 eventId 的验证流程。
     /// </summary>
     /// <param name="root">响应体根元素。</param>
     /// <param name="eventId">命中挑战时输出事件 ID（ssaCode），可能为 null（疑似形状）。</param>
@@ -414,9 +415,6 @@ public sealed class KugouVerificationService
             eventId = ssa.GetString();
         if (eventId != null || errcode == 20028)
             return KugouPlayUrlShape.Challenge;
-
-        if (status == 2 && !HasErrorText(root) && errcode == null && !root.TryGetProperty("data", out _))
-            return KugouPlayUrlShape.Challenge; // 裸 status=2：疑似风控变体，事件 ID 缺失，交由探测确认
 
         if (status != 1)
             return KugouPlayUrlShape.Unavailable;
@@ -440,19 +438,6 @@ public sealed class KugouVerificationService
         }
 
         return playUrl != null ? KugouPlayUrlShape.Playable : KugouPlayUrlShape.Unavailable;
-    }
-
-    private static bool HasErrorText(JsonElement root)
-    {
-        foreach (var name in new[] { "error", "error_msg", "message", "msg" })
-        {
-            if (root.TryGetProperty(name, out var value) &&
-                value.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrEmpty(value.GetString()))
-                return true;
-        }
-
-        return false;
     }
 
     private static int? TryGetInt32(JsonElement element, params string[] names)

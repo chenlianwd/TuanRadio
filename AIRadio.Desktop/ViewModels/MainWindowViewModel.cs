@@ -309,7 +309,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             var directUrl = await _musicSearchService.GetPlayUrlAsync(sourceId, cancellationToken);
             return string.IsNullOrWhiteSpace(directUrl)
                 ? null
-                : new TrackUrlResolution(directUrl, sourceId);
+                : new TrackUrlResolution(directUrl, sourceId, track.ProviderMetadata);
         }
 
         var onlineTrack = new OnlineTrack
@@ -318,7 +318,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             Title = track.Title,
             Artist = track.Artist,
             Album = track.Album,
-            DurationMs = (long)track.Duration.TotalMilliseconds
+            DurationMs = (long)track.Duration.TotalMilliseconds,
+            ProviderMetadata = new Dictionary<string, string>(
+                track.ProviderMetadata,
+                StringComparer.OrdinalIgnoreCase)
         };
 
         var url = requireAlternative
@@ -327,7 +330,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         return string.IsNullOrWhiteSpace(url)
             ? null
-            : new TrackUrlResolution(url, onlineTrack.Id);
+            : new TrackUrlResolution(url, onlineTrack.Id, onlineTrack.ProviderMetadata);
     }
 
     private void ToggleCurrentFavorite()

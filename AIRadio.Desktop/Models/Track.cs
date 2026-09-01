@@ -25,6 +25,11 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public string FilePath { get; set; } = string.Empty;
     public byte[]? CoverArt { get; set; }
     public string? SourceId { get; set; }
+    /// <summary>
+    /// 音源解析播放地址所需的稳定附加参数。只保存业务标识（例如酷狗 album_id），
+    /// 不得放入 Cookie、token 或带签名的临时 URL。
+    /// </summary>
+    public Dictionary<string, string> ProviderMetadata { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsFavorite
     {

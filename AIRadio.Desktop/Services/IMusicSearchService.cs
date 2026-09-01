@@ -34,6 +34,8 @@ public class OnlineTrack
     public string Album { get; set; } = string.Empty;
     public long DurationMs { get; set; }
     public string Source { get; set; } = string.Empty;
+    /// <summary>播放地址解析所需的稳定音源参数；禁止保存凭据或临时直链。</summary>
+    public Dictionary<string, string> ProviderMetadata { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     // 数据层不写语言相关占位值（持久化发生在 Track 侧），展示层统一本地化，避免空白或错误语言
     public string DisplayArtist => string.IsNullOrWhiteSpace(Artist) || Artist is "未知艺术家" or "Unknown artist" or "未知" or "Unknown"
         ? AppLanguage.T("未知艺术家", "Unknown artist")
@@ -51,7 +53,8 @@ public class OnlineTrack
         Album = Album,
         Duration = System.TimeSpan.FromMilliseconds(DurationMs),
         FilePath = playUrl,
-        SourceId = Id  // store original ID for URL re-resolution
+        SourceId = Id,  // store original ID for URL re-resolution
+        ProviderMetadata = new Dictionary<string, string>(ProviderMetadata, StringComparer.OrdinalIgnoreCase)
     };
 }
 

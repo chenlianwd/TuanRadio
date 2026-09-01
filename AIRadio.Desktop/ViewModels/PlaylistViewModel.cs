@@ -42,8 +42,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _kugouGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
-    // 读取到 v1 歌单时置位：首次成功写入 v2 前保留一代旧格式备份，之后清零保证幂等
-    private bool _pendingLegacyBackup;
+    // 读取到旧版歌单时记录原版本：首次成功写入当前格式前保留一代备份，之后清零保证幂等
+    private int? _pendingLegacyVersion;
     // 读取到未来版本歌单时置位：拒绝本会话内任何回写，防止未知字段被旧版格式静默删除
     private bool _futureFormatSkipped;
     private static readonly string DefaultPlaylistDir = Path.Combine(
@@ -343,9 +343,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            // v1（无 Version 字段）在内存中一次性迁移为 v2；首次成功回写前由 SaveAsync 留一代备份
+            // 旧格式在内存中一次性迁移为当前版本；首次成功回写前由 SaveAsync 留一代对应版本的备份。
+            // 无 Version 字段的历史文件视为 v1。
             if (data.Version < PlaylistData.CurrentVersion)
-                _pendingLegacyBackup = true;
+                _pendingLegacyVersion = Math.Max(1, data.Version);
 
             _favoriteIds.Clear();
             if (data.FavoriteIds != null && data.FavoriteIds.Count > 0)
@@ -399,6 +400,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                         Duration = TimeSpan.FromMilliseconds(item.DurationMs),
                         FilePath = string.Empty,
                         SourceId = sourceId,
+                        ProviderMetadata = item.Provider?.Metadata == null
+                            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            : new Dictionary<string, string>(item.Provider.Metadata, StringComparer.OrdinalIgnoreCase),
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
                     Tracks.Add(track);
@@ -552,7 +556,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             provider = new PlaylistProviderRef
             {
                 ProviderId = parsed?.ProviderId ?? string.Empty,
-                TrackId = parsed?.TrackId ?? t.SourceId!
+                TrackId = parsed?.TrackId ?? t.SourceId!,
+                Metadata = new Dictionary<string, string>(t.ProviderMetadata, StringComparer.OrdinalIgnoreCase)
             };
         }
 
@@ -572,30 +577,35 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// v1 → v2 首次回写前保留一代旧格式备份（供手动降级旧版本时恢复）。
+    /// 旧格式首次回写前保留一代原版本备份（供手动降级旧版本时恢复）。
     /// 只有备份成功后才清零标记；首选路径不可写时回退到带时间戳的备份名，
-    /// 避免 .v1.bak 持续失败导致整个会话的保存被静默阻断。
+    /// 避免首选备份路径持续失败导致整个会话的保存被静默阻断。
     /// </summary>
     private void KeepLegacyBackupOrThrow()
     {
-        if (!_pendingLegacyBackup)
+        if (_pendingLegacyVersion is not { } legacyVersion)
             return;
 
         if (File.Exists(_playlistFile))
         {
+            var versionLabel = $"v{legacyVersion}";
             try
             {
-                File.Copy(_playlistFile, _playlistFile + ".v1.bak", overwrite: true);
+                File.Copy(_playlistFile, $"{_playlistFile}.{versionLabel}.bak", overwrite: true);
             }
             catch (Exception ex)
             {
-                var fallbackPath = $"{_playlistFile}.v1.{DateTime.Now:yyyyMMddHHmmss}.bak";
+                var fallbackPath = $"{_playlistFile}.{versionLabel}.{DateTime.Now:yyyyMMddHHmmss}.bak";
                 File.Copy(_playlistFile, fallbackPath, overwrite: true);
-                Log.Warning(ex, "Primary v1 backup path failed; wrote timestamped backup {Path}", fallbackPath);
+                Log.Warning(
+                    ex,
+                    "Primary {Version} backup path failed; wrote timestamped backup {Path}",
+                    versionLabel,
+                    fallbackPath);
             }
         }
 
-        _pendingLegacyBackup = false;
+        _pendingLegacyVersion = null;
     }
 
     private async Task PlayOnlineAsync(OnlineTrack track)
@@ -852,10 +862,23 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             await _kugouGate.WaitAsync(_lifetimeCts.Token);
             gateHeld = true;
             IsKugouLoading = true;
-            var imported = KugouPlaylistTracks
-                .Where(online => !Tracks.Any(track => MatchesOnlineTrack(track, online)))
-                .Select(online => online.ToTrack(string.Empty))
-                .ToList();
+            var imported = new List<Track>();
+            foreach (var online in KugouPlaylistTracks)
+            {
+                // 重新同步必须补齐修复前已导入曲目的音源参数；否则重复过滤会让存量曲目
+                // 永远停留在只有 hash、没有 album_id/备用 hash 的不可播状态。
+                var existingProviderTrack = Tracks.FirstOrDefault(track =>
+                    !string.IsNullOrWhiteSpace(track.SourceId) &&
+                    MusicIdentity.IsSameSource(track.SourceId, online.Id));
+                if (existingProviderTrack != null)
+                {
+                    MergeProviderMetadata(existingProviderTrack, online);
+                    continue;
+                }
+
+                if (!Tracks.Any(track => MatchesOnlineTrack(track, online)))
+                    imported.Add(online.ToTrack(string.Empty));
+            }
             var skipped = KugouPlaylistTracks.Count - imported.Count;
 
             if (imported.Count > 0)
@@ -966,6 +989,15 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         mapping.LastSyncedAt = DateTimeOffset.UtcNow;
         mapping.RefreshTrackCount();
         HasSyncedPlaylists = SyncedPlaylists.Count > 0;
+    }
+
+    private static void MergeProviderMetadata(Track existing, OnlineTrack remote)
+    {
+        foreach (var (key, value) in remote.ProviderMetadata)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                existing.ProviderMetadata[key] = value;
+        }
     }
 
     private void RemoveTrackFromSyncedPlaylists(Track track)
@@ -1180,7 +1212,7 @@ public static class ObservableCollectionExtensions
 // DTOs for JSON deserialization — mutable setters required by JsonSerializer
 internal class PlaylistData
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>歌单格式版本；v1 文件没有该字段，反序列化后为 0。</summary>
     public int Version { get; set; }
@@ -1235,7 +1267,7 @@ internal class PlaylistTrack
     public long DurationMs { get; set; }
     /// <summary>本地曲目保存稳定文件路径；在线曲目恒为空（临时直链不落盘）。</summary>
     public string FilePath { get; set; } = "";
-    /// <summary>v1 读取兼容字段；v2 写入只使用 Provider。</summary>
+    /// <summary>v1 读取兼容字段；v2 起写入只使用 Provider。</summary>
     public string? SourceId { get; set; }
     public bool IsOnline { get; set; }
     public bool IsFavorite { get; set; }
@@ -1245,4 +1277,5 @@ internal class PlaylistProviderRef
 {
     public string ProviderId { get; set; } = "";
     public string TrackId { get; set; } = "";
+    public Dictionary<string, string> Metadata { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
