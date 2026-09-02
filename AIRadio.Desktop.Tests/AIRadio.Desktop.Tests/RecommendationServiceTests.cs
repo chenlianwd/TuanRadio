@@ -337,4 +337,46 @@ public class RecommendationServiceTests
             AppLanguage.Apply("zh");
         }
     }
+    [Fact]
+    public void SanitizeSearchQueries_FiltersHostChatterAndKeepsKeywords()
+    {
+        // LLM 带人设时不守"只输出关键词"约定：台词按标点切开后，开场白碎片会混进搜索词
+        // （线上实例：拿"哈喽～我是小音"当关键词搜出蹦迪曲并直接播放）
+        var candidates = new[]
+        {
+            "哈喽～我是小音！",
+            "根据你的口味",
+            "为你准备了几首适合下午的歌",
+            "1. 轻音乐",
+            "久石让 钢琴",
+            "日语 流行"
+        };
+
+        var result = RecommendationService.SanitizeSearchQueries(candidates);
+
+        Assert.Equal(new[] { "轻音乐", "久石让 钢琴", "日语 流行" }, result);
+    }
+
+    [Fact]
+    public void SanitizeSearchQueries_AllChatter_ReturnsEmptyForFallback()
+    {
+        var result = RecommendationService.SanitizeSearchQueries(new[] { "你好呀！", "我们继续听歌吧。" });
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void SanitizeSearchQueries_KeepsEraKeywordsAndLongAsciiQueries()
+    {
+        // 年代关键词不能被列表序号清洗削头；纯 ASCII 关键词按更宽的长度上限；
+        // 句尾语气词（吧/呢/哦…）是解说行尾巴，关键词不会这样收尾
+        var result = RecommendationService.SanitizeSearchQueries(new[]
+        {
+            "90s city pop",
+            "2020 华语金曲",
+            "japanese city pop 80s funk",
+            "陪你度过这个下午吧"
+        });
+
+        Assert.Equal(new[] { "90s city pop", "2020 华语金曲", "japanese city pop 80s funk" }, result);
+    }
 }

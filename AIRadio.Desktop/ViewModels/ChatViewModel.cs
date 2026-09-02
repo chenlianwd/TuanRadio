@@ -199,13 +199,25 @@ public class ChatViewModel : ViewModelBase, IDisposable
             StartListening();
     }
 
-    public void BeginHoldToTalk()
+    /// <summary>
+    /// 按住说话开始。返回是否真正开始录音：AI 回复中/识别中被拒时必须让调用方知道，
+    /// 否则按压视觉照常出现却始终没有识别，用户会当成"按住说话坏了"。
+    /// </summary>
+    public bool BeginHoldToTalk()
     {
-        if (!IsListening && !IsRecognizing && !IsProcessing)
+        if (IsListening || IsRecognizing || IsProcessing)
         {
-            _sendAfterHoldToTalk = true;
-            StartListening();
+            Log.Information(
+                "Hold-to-talk rejected: listening={IsListening} recognizing={IsRecognizing} processing={IsProcessing}",
+                IsListening, IsRecognizing, IsProcessing);
+            return false;
         }
+
+        _sendAfterHoldToTalk = true;
+        StartListening();
+        if (!IsListening)
+            _sendAfterHoldToTalk = false;
+        return IsListening;
     }
 
     public void EndHoldToTalk()

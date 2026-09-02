@@ -456,6 +456,22 @@ public class ChatViewModelTests
         Assert.True(vm.HasFailure);
     }
 
+    [Fact]
+    public void BeginHoldToTalk_WhenBusy_ReturnsFalseWithoutStarting()
+    {
+        // 按住被拒必须可判定：静默拒绝会让调用方照常进入按压视觉，用户误以为录音已开始
+        var (vm, _, _, _) = CreateVm();
+
+        vm.IsProcessing = true;
+        Assert.False(vm.BeginHoldToTalk());
+        Assert.False(vm.IsListening);
+
+        vm.IsProcessing = false;
+        vm.IsRecognizing = true;
+        Assert.False(vm.BeginHoldToTalk());
+        Assert.False(vm.IsListening);
+    }
+
     [Theory]
     [InlineData("我们聊点别的", false)]          // 弱意图词单独出现：日常聊天，不得劫持为换歌
     [InlineData("有类似的软件吗", false)]

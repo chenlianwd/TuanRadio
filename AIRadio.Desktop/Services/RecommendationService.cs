@@ -308,6 +308,7 @@ public class RecommendationService : IRecommendationService
                 ? $"""
                     Generate 3 short music-search queries, one per line.
                     Infer the shared genre, era, language and mood of recently played tracks instead of repeating one title.
+                    Output only the queries — no greetings, preamble or explanations.
                     User intent: {userIntent}
                     Current track: {request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
                     Recently played: {string.Join(", ", recentTracks)}
@@ -316,19 +317,15 @@ public class RecommendationService : IRecommendationService
                 : $"""
                     根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
                     关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。
+                    只输出关键词本身：不要问候、开场白或任何解释。
                     用户意图：{userIntent}
                     当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
                     最近已播放：{string.Join(", ", recentTracks)}
                     收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
                     """;
             var response = await ChatAsync(prompt, cancellationToken);
-            var queries = response
-                .Split(new[] { '\r', '\n', ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(CleanQuery)
-                .Where(x => x.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(5)
-                .ToList();
+            var queries = SanitizeSearchQueries(
+                response.Split(new[] { '\r', '\n', ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries));
             return queries.Count > 0 ? queries : fallback;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -414,9 +411,30 @@ public class RecommendationService : IRecommendationService
 
     private static string CleanQuery(string value)
     {
-        var cleaned = Regex.Replace(value, @"^\s*[-*\d.、]+", "");
+        // 数字必须带 . 或 、 才算列表序号：裸剥会把 "90s city pop"/"2020 华语金曲" 这类年代关键词削头
+        var cleaned = Regex.Replace(value, @"^\s*(?:\d+[.、]|[-*、])+", "");
         cleaned = Regex.Replace(cleaned, @"[""“”‘’<>]+", "");
         return cleaned.Trim();
+    }
+
+    /// <summary>
+    /// LLM 偶发不守"只输出关键词"的约定（尤其回复里带问候/解说）：
+    /// 整段台词被按标点切开后，开场白碎片会混进搜索词，搜出与意图无关的歌并直接播放。
+    /// 按"像搜索词"过滤：短、无句末标点、无问候/解说开头、无句尾语气词。
+    /// </summary>
+    internal static List<string> SanitizeSearchQueries(IEnumerable<string> candidates)
+    {
+        return candidates
+            .Select(CleanQuery)
+            .Where(x => x.Length > 0)
+            // 含 CJK 的行按 25 字上限，纯 ASCII 关键词（如 "japanese city pop 80s funk"）放宽到 60
+            .Where(x => x.Length <= (Regex.IsMatch(x, @"\p{IsCJKUnifiedIdeographs}") ? 25 : 60))
+            .Where(x => !Regex.IsMatch(x, @"[。!！?？;；:：~～]"))
+            .Where(x => !Regex.IsMatch(x, @"^(哈喽|哈囉|你好|嗨|我是|欢迎|根据|为你|為你|接下来|接下來|我们|我們|这首|這首|希望|祝)"))
+            .Where(x => !Regex.IsMatch(x, @"[吧呢哦喔啦呀嘛咯哟]$"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToList();
     }
 
     private static string BuildProgramTitle(ListeningContext context)
@@ -561,7 +579,9 @@ public class RecommendationService : IRecommendationService
 
     private Task<string> ChatAsync(string prompt, CancellationToken cancellationToken)
         => _llm is LLMService llm
-            ? llm.ChatAsync(prompt, new List<ChatMessage>(), cancellationToken)
+            // 关键词生成必须走无人设调用：DJ 人设会让模型回整段台词，台词碎片被当搜索词
+            // 搜出与意图完全无关的歌（如把开场白拿去搜出儿歌并直接播放）
+            ? llm.ChatRawAsync(prompt, cancellationToken)
             : _llm.ChatAsync(prompt, new List<ChatMessage>())
                 .WaitAsync(cancellationToken);
 

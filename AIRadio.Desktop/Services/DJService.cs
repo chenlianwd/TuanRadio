@@ -284,8 +284,10 @@ Response rules:
                 excludedTracks.Add(current);
 
             var prompt = BuildRecommendationPrompt(current);
+            // 必须走无人设调用：DJ 人设会让模型回整段台词，台词会被 ParseRecommendedSong
+            // 的长度兜底整个当歌名拿去搜索，播出与推荐意图完全无关的歌
             var response = _llm is LLMService llm
-                ? await llm.ChatAsync(prompt, new List<ChatMessage>(), cancellationToken)
+                ? await llm.ChatRawAsync(prompt, cancellationToken)
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>())
                     .WaitAsync(cancellationToken);
             var cleaned = CleanRecommendationText(response);
