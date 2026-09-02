@@ -135,6 +135,21 @@ public class LLMServiceTests
         Assert.Equal("user", GetMessageRole(firstNonSystem));
     }
 
+    [Fact]
+    public void BuildRawMessages_DoesNotInjectDjPersona()
+    {
+        var service = new LLMService(CreateMockHttpClient("{}"));
+
+        var messages = service.BuildRawMessages("生成搜索关键词");
+
+        // 关键词生成等工具型调用不能带 DJ 人设：人设会让模型以 DJ 口吻回整段台词，
+        // 台词碎片被调用方当成搜索词拿去搜歌
+        Assert.Single(messages);
+        Assert.Equal("user", GetMessageRole(messages[0]));
+        Assert.Equal("生成搜索关键词", GetMessageContent(messages[0]));
+        Assert.DoesNotContain(messages, m => GetMessageRole(m) == "system");
+    }
+
     private static string? GetMessageContent(object message)
         => message.GetType().GetProperty("content")?.GetValue(message) as string;
 

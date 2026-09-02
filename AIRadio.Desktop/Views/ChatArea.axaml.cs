@@ -78,14 +78,18 @@ public partial class ChatArea : UserControl
         if (DataContext is MainWindowViewModel vm)
         {
             _micButton = sender as Button;
-            if (_micButton != null)
+            // 仅在真正开始录音时进入按压视觉：AI 回复中/识别中被拒时按钮不变色、不捕获，
+            // 让用户立即看出这次按住没有生效，而不是按下后石沉大海
+            if (vm.ChatVM.BeginHoldToTalk())
             {
-                _micButton.Background = ResolveBrush(_micButton, "C_FF56F5C4");
-                _micButton.Foreground = ResolveBrush(_micButton, "C_FF050507");
+                if (_micButton != null)
+                {
+                    _micButton.Background = ResolveBrush(_micButton, "C_FF56F5C4");
+                    _micButton.Foreground = ResolveBrush(_micButton, "C_FF050507");
+                }
+                (sender as Control)?.Focus();
+                e.Pointer.Capture(sender as IInputElement);
             }
-            (sender as Control)?.Focus();
-            e.Pointer.Capture(sender as IInputElement);
-            vm.ChatVM.BeginHoldToTalk();
             e.Handled = true;
         }
     }

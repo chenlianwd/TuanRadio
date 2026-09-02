@@ -58,6 +58,42 @@ public class LLMService : ILLMService
     public Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
         => ChatAsync(userMessage, history, CancellationToken.None);
 
+    /// <summary>
+    /// 无 DJ 人设的原始调用：关键词生成等工具型调用需要纯指令输出。
+    /// 走 ChatAsync 时 system 固定是 DJ 人设，模型会以 DJ 口吻回整段台词，
+    /// 台词碎片会被调用方当成数据用（如搜索关键词）。
+    /// </summary>
+    public async Task<string> ChatRawAsync(string userMessage, CancellationToken cancellationToken)
+    {
+        if (!IsConfigured())
+            return AppLanguage.T("请先在设置中配置 AI 服务。", "Configure the AI service in Settings first.");
+
+        try
+        {
+            var messages = BuildRawMessages(userMessage);
+            return await CallChatCompletionAsync(messages, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (LlmApiException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "LLM raw chat failed");
+            throw new LlmApiException(ApiFailureInfo.FromException(ex));
+        }
+    }
+
+    internal List<object> BuildRawMessages(string userMessage)
+    {
+        // 不注入 DJ 人设；Anthropic 首条非 system 消息必须是 user，此处无 system 直接以 user 开头
+        return [new { role = "user", content = userMessage }];
+    }
+
     public async Task<string> ChatAsync(
         string userMessage,
         List<ChatMessage> history,
@@ -259,13 +295,12 @@ public class LLMService : ILLMService
 
         return await RetryPolicy.ExecuteAsync(async ct =>
         {
-            var requestBody = new
-            {
-                model,
-                system = string.Join("\n\n", systemParts),
-                messages = claudeMessages,
-                max_tokens = MaxOutputTokens
-            };
+            // 无 system（如 ChatRawAsync 的纯指令调用）时整个省略字段：
+            // 官方 API 把空串视为省略，但部分 Anthropic 兼容代理严格校验非空
+            var systemText = string.Join("\n\n", systemParts);
+            var requestBody = systemText.Length == 0
+                ? (object)new { model, messages = claudeMessages, max_tokens = MaxOutputTokens }
+                : new { model, system = systemText, messages = claudeMessages, max_tokens = MaxOutputTokens };
 
             var json = JsonSerializer.Serialize(requestBody);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");

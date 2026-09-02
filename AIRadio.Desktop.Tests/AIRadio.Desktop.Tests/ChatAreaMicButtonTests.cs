@@ -47,7 +47,7 @@ public class ChatAreaMicButtonTests
 
     // 回归：Button 的类处理器会把 PointerPressed/PointerReleased 标记为 Handled，
     // XAML 属性挂载（handledEventsToo:false）收不到这两个事件，按住说话入口会整体失效。
-    // 按压视觉态由 ChatArea 处理器直接驱动，不依赖录音设备，可稳定断言事件是否送达。
+    // 按压视觉态由 ChatArea 处理器直接驱动：空闲按住=变色+捕获；被拒按住=不变色不捕获。
     [AvaloniaFact]
     public void MicButton_PointerPressAndRelease_ReachesHoldToTalkHandlers()
     {
@@ -57,9 +57,6 @@ public class ChatAreaMicButtonTests
         Window? window = null;
         try
         {
-            // 隔离真实录音设备：IsProcessing=true 时 BeginHoldToTalk 直接返回，但按压处理器仍执行
-            vm.ChatVM.IsProcessing = true;
-
             var view = new ChatArea { DataContext = vm };
             // 直接在 view 上提供处理器用到的 4 个颜色键，避开主题字典在 headless 下的解析差异
             var brushes = new ResourceDictionary
@@ -77,14 +74,31 @@ public class ChatAreaMicButtonTests
                 ?? throw new InvalidOperationException("MicButton not found in ChatArea");
 
             var pointer = new Pointer(1, PointerType.Mouse, true);
+
+            // —— 被拒路径：AI 处理中按住不得出现按压视觉/捕获，否则用户误以为录音已开始 ——
+            vm.ChatVM.IsProcessing = true;
+            mic.RaiseEvent(new PointerPressedEventArgs(
+                mic, pointer, mic, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
+                KeyModifiers.None, 1));
+            Assert.Null(pointer.Captured);
+            Assert.NotEqual(Color.FromUInt32(0xFF56F5C4), (mic.Background as SolidColorBrush)?.Color);
+            mic.RaiseEvent(new PointerReleasedEventArgs(
+                mic, pointer, mic, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
+                KeyModifiers.None, MouseButton.Left));
+
+            // —— 空闲路径：真正开始录音才有按压视觉与捕获 ——
+            vm.ChatVM.IsProcessing = false;
             mic.RaiseEvent(new PointerPressedEventArgs(
                 mic, pointer, mic, new Point(5, 5), 0,
                 new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
                 KeyModifiers.None, 1));
 
-            // 捕获由 ChatArea 处理器发起，与主题资源无关，可判定处理器确实收到事件
-            Assert.Same(mic, pointer.Captured);
+            if (!vm.ChatVM.IsListening)
+                return; // 机器无输入设备（如 CI）：成功路径不可用，仅验证被拒路径
 
+            Assert.Same(mic, pointer.Captured);
             var pressedBrush = Assert.IsType<SolidColorBrush>(mic.Background);
             Assert.Equal(Color.FromUInt32(0xFF56F5C4), pressedBrush.Color);
 
@@ -94,7 +108,6 @@ public class ChatAreaMicButtonTests
                 KeyModifiers.None, MouseButton.Left));
 
             Assert.Null(pointer.Captured);
-
             var releasedBrush = Assert.IsType<SolidColorBrush>(mic.Background);
             Assert.Equal(Color.FromUInt32(0x33262835), releasedBrush.Color);
         }
