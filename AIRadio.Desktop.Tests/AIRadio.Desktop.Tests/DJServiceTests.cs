@@ -184,6 +184,71 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task CorrectTranscriptionAsync_PreCancelledToken_Throws()
+    {
+        var llm = new Mock<ILLMService>();
+        var service = new DJService(llm.Object, null, null);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // 应用关闭期间不得把取消吞成"纠错失败"，否则后台流程继续空转
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.CorrectTranscriptionAsync("拿手青音樂", cts.Token));
+    }
+
+    [Fact]
+    public async Task CorrectTranscriptionAsync_EmptyReply_ReturnsOriginalTranscript()
+    {
+        var llm = new Mock<ILLMService>();
+        var service = new DJService(llm.Object, null, null);
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("   ");
+
+        var result = await service.CorrectTranscriptionAsync("来点轻音乐", CancellationToken.None);
+
+        Assert.Equal("来点轻音乐", result);
+    }
+
+    [Theory]
+    [InlineData("来点轻音乐", "来点轻音乐")]                       // 正常纠错透传
+    [InlineData("修正后：来点轻音乐", "来点轻音乐")]               // 标签前缀
+    [InlineData("“来点轻音乐”", "来点轻音乐")]         // 引号包裹
+    [InlineData("来点轻音乐\n（注：仅修正错别字）", "来点轻音乐")] // 后随解释行
+    [InlineData("", null)]                                          // 空回复 → 放弃修正
+    [InlineData("根据识别结果分析，用户的原话可能是想要听一些轻音乐来放松心情", null)]  // 异常膨胀（31字 > 原文5+20） → 放弃修正
+    public void NormalizeCorrectedTranscript_StripsDecoration(string reply, string? expected)
+    {
+        Assert.Equal(expected, DJService.NormalizeCorrectedTranscript(reply, "来点轻音乐"));
+    }
+
+    [Fact]
+    public async Task CorrectTranscriptionAsync_PassesThroughLlmCorrection()
+    {
+        var llm = new Mock<ILLMService>();
+        var service = new DJService(llm.Object, null, null);
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("来点轻音乐");
+
+        var result = await service.CorrectTranscriptionAsync("拿手青音樂", CancellationToken.None);
+
+        Assert.Equal("来点轻音乐", result);
+    }
+
+    [Fact]
+    public async Task CorrectTranscriptionAsync_LlmFailure_ReturnsOriginalTranscript()
+    {
+        var llm = new Mock<ILLMService>();
+        var service = new DJService(llm.Object, null, null);
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ThrowsAsync(new HttpRequestException("network down"));
+
+        var result = await service.CorrectTranscriptionAsync("拿手青音樂", CancellationToken.None);
+
+        // 纠错是体验增强：失败必须回退原文，不能阻塞语音流程
+        Assert.Equal("拿手青音樂", result);
+    }
+
+    [Fact]
     public async Task RecommendNextTrackAsync_SkipsTracksAlreadyInPlaylist()
     {
         var llm = new Mock<ILLMService>();

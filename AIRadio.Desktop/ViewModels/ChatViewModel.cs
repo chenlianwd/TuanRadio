@@ -370,6 +370,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
             if (!string.IsNullOrWhiteSpace(text))
             {
+                // Whisper base 中文同音错误率高，原始文本进点歌/搜索链路前先纠错（失败回退原文）
+                var corrected = await _djService.CorrectTranscriptionAsync(text, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(corrected) && corrected != text)
+                {
+                    Log.Information("Transcript corrected: {Raw} -> {Corrected}", text, corrected);
+                    text = corrected;
+                }
+
                 var sendAfterRecognition = false;
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 {

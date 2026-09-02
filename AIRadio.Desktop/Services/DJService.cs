@@ -230,6 +230,74 @@ Response rules:
         }
     }
 
+    /// <summary>
+    /// 语音识别结果的同音近音纠错。Whisper base 的中文词错率高（如"来点轻音乐"→"拿手青音樂"），
+    /// 在文本进入点歌/搜索链路前用已绑定的 LLM 归一化；失败或超时返回原文，不阻塞语音流程。
+    /// </summary>
+    public async Task<string> CorrectTranscriptionAsync(string transcript, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(transcript)) return transcript;
+        // 未配置时 ChatRawAsync 返回"请先在设置中配置"提示文案，不能当纠错结果用
+        if (_llm is LLMService llmService && !llmService.IsConfigured()) return transcript;
+
+        try
+        {
+            // 两个 LLM 路径统一取消语义：mock/非 LLMService 路径没有前置 token 检查
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // 英文界面下 Whisper 也切到英文识别：提示词必须语言中立，否则会把流利英文当"坏中文"往中文改写
+            var prompt = AppLanguage.T(
+                $"以下是中文语音识别的原始输出，可能包含同音或近音错别字（例如“拿手青音樂”应为“来点轻音乐”）。请结合中文常见歌曲名、歌手名和电台点歌的口语表达，推断用户真正想说的原话。只修正错别字，不要改写语气、不要增删内容；识别结果已通顺时原样输出。只输出修正后的原话，不要任何解释。\n识别结果：{transcript}",
+                $"The following is raw speech recognition output and may contain misrecognized words. Infer what the user actually said based on common song titles, artist names and radio-request phrasing. Fix wrong words only without rephrasing or translating, and without adding or removing content; output as-is when already fluent. Output only the corrected sentence, no explanations.\nTranscript: {transcript}");
+
+            // 纠错是体验增强而非关键路径：短超时快速回退原文，不拖慢按住说话的后续链路
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(8));
+
+            var corrected = _llm is LLMService llm
+                ? await llm.ChatRawAsync(prompt, timeoutCts.Token)
+                : await _llm.ChatAsync(prompt, new List<ChatMessage>())
+                    .WaitAsync(timeoutCts.Token);
+
+            var normalized = NormalizeCorrectedTranscript(corrected, transcript);
+            return normalized ?? transcript;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // 纠错自身的 8 秒超时（非应用关闭）：本地模型慢时用户会一直拿不到纠错，需要现场可见
+            Log.Warning("Transcript correction timed out; using raw transcript");
+            return transcript;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Transcript correction failed; using raw transcript");
+            return transcript;
+        }
+    }
+
+    /// <summary>
+    /// 清洗模型的纠错输出：剥掉标签前缀（"修正后："）、包裹引号与后随解释行；
+    /// 结果异常膨胀（疑似整段解释）时返回 null 表示放弃修正、沿用原文。
+    /// </summary>
+    internal static string? NormalizeCorrectedTranscript(string? reply, string transcript)
+    {
+        if (string.IsNullOrWhiteSpace(reply)) return null;
+
+        var cleaned = Regex.Replace(reply.Trim(), @"^(?:修正后|纠错后|corrected?)\s*[:：]\s*", "", RegexOptions.IgnoreCase);
+        cleaned = cleaned.Trim(' ', '"', '\'', '「', '」', '“', '”', '‘', '’');
+        cleaned = cleaned.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+        cleaned = cleaned.Trim(' ', '"', '\'', '「', '」', '“', '”', '‘', '’');
+
+        if (cleaned.Length == 0) return null;
+        // "只修正错别字"约束下长度应与原文相近；超出过多说明模型在解释而不是纠错
+        if (cleaned.Length > transcript.Length + 20) return null;
+        return cleaned;
+    }
+
     public Task<byte[]?> GenerateSpeechAsync(string text)
         => GenerateSpeechAsync(text, CancellationToken.None);
 

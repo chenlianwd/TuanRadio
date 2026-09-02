@@ -31,6 +31,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 酷狗 20028 风控滑块验证：server-kugou 新增会话桥（verify/bridge/*，token 不进 URL）+ verify_auto.html 自动验证页 + WEBGL 指纹进程级稳定化；C# 端 KugouVerificationService 负责挑战检测（四形状分类）、自动弹浏览器验证（10 分钟冷却）与恢复轮询，设置页提供手动「滑块验证」入口。
 - 修复按住麦克风说话整体失效：Avalonia Button 类处理器会把左键按下/释放标记为 Handled，XAML 属性挂载收不到事件；ChatArea 改为代码内 AddHandler(handledEventsToo:true) 订阅，测试工程引入 Avalonia.Headless.XUnit 并新增 ChatAreaMicButtonTests 回归测试。
 - 修复推荐与播放脱节及按住被拒无反馈：节目单搜索词生成改走 LLMService 新增的无人设 ChatRawAsync（原 ChatAsync 固定注入 DJ 人设，模型回整段台词、开场白碎片被当搜索词搜出无关歌曲直接播放），RecommendationService 增加 SanitizeSearchQueries 台词净化兜底；BeginHoldToTalk 改为返回是否真正开始录音，AI 回复/识别中被拒时不再出现按压视觉（原静默拒绝被用户当成第二次按住失效）。
+- 语音识别 LLM 纠错：Whisper base 中文同音错误率高（"来点轻音乐"→"拿手青音樂"），识别文本进入点歌/搜索链路前先经 DJService.CorrectTranscriptionAsync（无人设 ChatRawAsync + 8 秒短超时）归一化，失败/超时回退原文不阻塞语音流程。
 
 ## Architecture Notes
 

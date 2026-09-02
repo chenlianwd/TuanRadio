@@ -34,9 +34,13 @@ public class ChatAreaMicButtonTests
 
         var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
+        var dj = new Mock<IDJService>();
+        // 空闲路径真录音会走完识别管线：纠错未 Setup 时 Moq 返回结果为 null 的已完成 task
+        dj.Setup(x => x.CorrectTranscriptionAsync(It.IsAny<string>(), It.IsAny<System.Threading.CancellationToken>()))
+            .ReturnsAsync((string transcript, System.Threading.CancellationToken _) => transcript);
         return new MainWindowViewModel(
             audio.Object,
-            new Mock<IDJService>().Object,
+            dj.Object,
             new Mock<ILLMService>().Object,
             new Mock<ISecureStorage>().Object,
             new Mock<IMusicSearchService>().Object,
