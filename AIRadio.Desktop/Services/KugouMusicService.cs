@@ -273,27 +273,29 @@ public class KugouMusicService : IMusicSearchService
             return null;
         }
 
-        if (!root.TryGetProperty("data", out var data))
+        if (root.TryGetProperty("data", out var data))
         {
-            Log.Information("Kugou {Route} play URL returned no data for {Hash}", route, hash);
-            return null;
-        }
-
-        if (data.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in data.EnumerateArray())
+            if (data.ValueKind == JsonValueKind.Array)
             {
-                var playUrl = ExtractPlayUrl(item);
+                foreach (var item in data.EnumerateArray())
+                {
+                    var playUrl = ExtractPlayUrl(item);
+                    if (playUrl != null)
+                        return playUrl;
+                }
+            }
+            else if (data.ValueKind == JsonValueKind.Object)
+            {
+                var playUrl = ExtractPlayUrl(data);
                 if (playUrl != null)
                     return playUrl;
             }
         }
-        else if (data.ValueKind == JsonValueKind.Object)
-        {
-            var playUrl = ExtractPlayUrl(data);
-            if (playUrl != null)
-                return playUrl;
-        }
+
+        // Auth 链（/tracker/v5/url）成功时把直链放在根级 url[]/backupUrl[]，没有 data 包装。
+        var rootPlayUrl = ExtractPlayUrl(root);
+        if (rootPlayUrl != null)
+            return rootPlayUrl;
 
         Log.Information("Kugou {Route} play URL response contains no usable URL for {Hash}: data={Data}",
             route, hash, DescribeData(root));
@@ -556,12 +558,22 @@ public class KugouMusicService : IMusicSearchService
         if (item.ValueKind != JsonValueKind.Object)
             return null;
 
-        if (item.TryGetProperty("url", out var urlEl) &&
-            urlEl.ValueKind == JsonValueKind.String)
+        if (item.TryGetProperty("url", out var urlEl))
         {
-            var url = urlEl.GetString();
-            if (IsHttpUrl(url))
-                return url;
+            if (urlEl.ValueKind == JsonValueKind.String)
+            {
+                var url = urlEl.GetString();
+                if (IsHttpUrl(url))
+                    return url;
+            }
+            else if (urlEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var url in urlEl.EnumerateArray())
+                {
+                    if (url.ValueKind == JsonValueKind.String && IsHttpUrl(url.GetString()))
+                        return url.GetString();
+                }
+            }
         }
 
         if (item.TryGetProperty("urls", out var urlsEl) && urlsEl.ValueKind == JsonValueKind.Array)
@@ -576,6 +588,15 @@ public class KugouMusicService : IMusicSearchService
         if (item.TryGetProperty("url_backup", out var backupEl) && backupEl.ValueKind == JsonValueKind.Array)
         {
             foreach (var url in backupEl.EnumerateArray())
+            {
+                if (url.ValueKind == JsonValueKind.String && IsHttpUrl(url.GetString()))
+                    return url.GetString();
+            }
+        }
+
+        if (item.TryGetProperty("backupUrl", out var camelBackupEl) && camelBackupEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var url in camelBackupEl.EnumerateArray())
             {
                 if (url.ValueKind == JsonValueKind.String && IsHttpUrl(url.GetString()))
                     return url.GetString();
