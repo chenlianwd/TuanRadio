@@ -122,8 +122,6 @@
                          Watermark="{DynamicResource S_ChatWatermark}" KeyDown="OnChatInputKeyDown" TabIndex="10"/>
                 <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
                         Background="{DynamicResource C_33262835}"
-                        PointerPressed="OnMicPointerPressed"
-                        PointerReleased="OnMicPointerReleased"
                         PointerCaptureLost="OnMicPointerCaptureLost"
                         ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="Microphone">
                     <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>

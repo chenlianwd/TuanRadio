@@ -6,6 +6,7 @@ using System.Reactive;
 using AIRadio.Desktop.ViewModels;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 
@@ -22,6 +23,10 @@ public partial class ChatArea : UserControl
     public ChatArea()
     {
         InitializeComponent();
+        // Button 的类处理器会把左键按下/释放标记为 Handled，XAML 属性挂载默认跳过已 handled 事件，
+        // 必须以 handledEventsToo:true 订阅，否则按住说话的按下/释放永远收不到
+        MicButton.AddHandler(InputElement.PointerPressedEvent, OnMicPointerPressed, RoutingStrategies.Bubble, handledEventsToo: true);
+        MicButton.AddHandler(InputElement.PointerReleasedEvent, OnMicPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
         FillRoomDots();
         DataContextChanged += OnDataContextChanged;
     }
