@@ -437,6 +437,9 @@ public sealed class KugouVerificationService
             }
         }
 
+        // Auth 链成功响应没有 data 包装，直链在根级 url[]/backupUrl[]
+        playUrl ??= KugouMusicService.ExtractPlayUrl(root);
+
         return playUrl != null ? KugouPlayUrlShape.Playable : KugouPlayUrlShape.Unavailable;
     }
 

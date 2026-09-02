@@ -45,6 +45,21 @@ public class KugouVerificationServiceTests
     }
 
     [Fact]
+    public void Classify_AuthMergeRootLevelUrlArray_IsPlayable()
+    {
+        // Auth 链（/tracker/v5/url）成功形态：status=1，直链在根级 url[]，无 data 包装
+        var body = "{\"status\":1,\"hash\":\"abc\"," +
+                   "\"url\":[\"http://fsandroid.tx.kugou.com/a.mp3\"]," +
+                   "\"backupUrl\":[\"http://fsmobile.kugou.com/b.mp3\"]}";
+
+        var shape = Classify(body, out var eventId, out var playUrl);
+
+        Assert.Equal(KugouVerificationService.KugouPlayUrlShape.Playable, shape);
+        Assert.Null(eventId);
+        Assert.Equal("http://fsandroid.tx.kugou.com/a.mp3", playUrl);
+    }
+
+    [Fact]
     public void Classify_ChallengeWithSsaCode_ExtractsEventId()
     {
         var body = "{\"fail_process\":[\"pkg\"],\"errcode\":20028,\"status\":2," +

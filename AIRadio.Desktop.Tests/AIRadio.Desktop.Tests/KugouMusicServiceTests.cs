@@ -229,6 +229,63 @@ public class KugouMusicServiceTests
     }
 
     [Fact]
+    public async Task GetPlayUrlAsync_ParsesRootLevelUrlArrayFromAuthMerge()
+    {
+        // vendored auth 链（/tracker/v5/url）的真实成功形态：status=1 且直链在根级
+        // url[]/backupUrl[]，没有 data 包装（实测 2026-09-02 抓包确认）。
+        var (client, capture) = CreateClient(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/song/url/auth/merge" => "{\"status\":1,\"hash\":\"abc\"," +
+                "\"url\":[\"http://fsandroid.tx.kugou.com/a.mp3\",\"http://fsmobile.kugou.com/a2.mp3\"]," +
+                "\"backupUrl\":[\"http://fsmobile.kugou.com/b.mp3\"]," +
+                "\"timeLength\":271,\"bitRate\":128000}",
+            _ => "{\"status\":0}"
+        });
+        var service = new KugouMusicService(client, await CreateLoggedInStoreAsync());
+
+        var url = await service.GetPlayUrlAsync("kugou:abc");
+
+        Assert.Equal("http://fsandroid.tx.kugou.com/a.mp3", url);
+        Assert.Equal(new[] { "/song/url/auth/merge" },
+            capture.Requests.Select(request => request.RequestUri!.AbsolutePath));
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_FallsBackToRootLevelBackupUrl()
+    {
+        var (client, _) = CreateClient(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/song/url/auth/merge" => "{\"status\":1,\"backupUrl\":[\"http://fsmobile.kugou.com/backup.mp3\"]}",
+            _ => "{\"status\":0}"
+        });
+        var service = new KugouMusicService(client, await CreateLoggedInStoreAsync());
+
+        var url = await service.GetPlayUrlAsync("kugou:abc");
+
+        Assert.Equal("http://fsmobile.kugou.com/backup.mp3", url);
+    }
+
+    [Fact]
+    public async Task GetPlayUrlAsync_RootLevelFallbackMissDoesNotBlockLegacyFallback()
+    {
+        // auth 链返回 status=1 但没有任何可用直链（data 缺失、根级也无 url）时，
+        // 根级回退不得提前终结流程，必须继续走 legacy 兜底。
+        var (client, capture) = CreateClient(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/song/url/auth/merge" => "{\"status\":1,\"hash\":\"abc\",\"timeLength\":271}",
+            "/song/url" => "{\"status\":1,\"data\":[{\"url\":\"https://cdn.example/legacy.mp3\"}]}",
+            _ => "{\"status\":0}"
+        });
+        var service = new KugouMusicService(client, await CreateLoggedInStoreAsync());
+
+        var url = await service.GetPlayUrlAsync("kugou:abc");
+
+        Assert.Equal("https://cdn.example/legacy.mp3", url);
+        Assert.Equal(new[] { "/song/url/auth/merge", "/song/url" },
+            capture.Requests.Select(request => request.RequestUri!.AbsolutePath));
+    }
+
+    [Fact]
     public async Task GetPlayUrlAsync_MultipleHashesStillUseLegacyOnlyOnce()
     {
         var (client, capture) = CreateClient(request => request.RequestUri!.AbsolutePath switch
