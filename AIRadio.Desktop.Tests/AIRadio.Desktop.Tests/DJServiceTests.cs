@@ -120,6 +120,40 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task GenerateTrackIntroductionAsync_FallbackWhenLlmTruncatesTitle()
+    {
+        // 复现线上缺陷：模型在字数上限压力下于歌名中间停笔，串场词只写到《雨
+        var current = new Track { Title = "告白气球", Artist = "周杰伦" };
+        var next = new Track { Title = "雨爱", Artist = "杨丞琳" };
+
+        _mockLlm
+            .Setup(m => m.GenerateTrackIntroductionAsync(current, next))
+            .ReturnsAsync("气球载着甜蜜飘远了，接下来，让杨丞琳的《雨");
+
+        var result = await _djService.GenerateTrackIntroductionAsync(current, next);
+
+        Assert.NotNull(result);
+        Assert.Contains("《雨爱》", result.Text);
+        Assert.Equal("happy", result.Emotion);
+    }
+
+    [Fact]
+    public async Task GenerateTrackIntroductionAsync_KeepsLlmTextWhenTitleComplete()
+    {
+        var current = new Track { Title = "告白气球", Artist = "周杰伦" };
+        var next = new Track { Title = "雨爱", Artist = "杨丞琳" };
+
+        _mockLlm
+            .Setup(m => m.GenerateTrackIntroductionAsync(current, next))
+            .ReturnsAsync("气球载着甜蜜飘远了，接下来，让杨丞琳的《雨爱》[calm]");
+
+        var result = await _djService.GenerateTrackIntroductionAsync(current, next);
+
+        Assert.Equal("气球载着甜蜜飘远了，接下来，让杨丞琳的《雨爱》", result.Text);
+        Assert.Equal("calm", result.Emotion);
+    }
+
+    [Fact]
     public async Task GenerateChatResponseAsync_UpdatesEmotion()
     {
         _mockLlm
