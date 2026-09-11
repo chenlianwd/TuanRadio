@@ -100,10 +100,19 @@ Response rules:
                 : await _llm.GenerateTrackIntroductionAsync(current, next)
                     .WaitAsync(cancellationToken);
             var emotion = DetectEmotion(text);
+            var cleaned = StripControlTags(text);
+            // 模型受字数上限压力可能在歌名中间停笔，半句会原样进气泡和 TTS；
+            // 歌名不完整时回退模板，保证 DJ 念到完整歌名
+            if (!string.IsNullOrWhiteSpace(next.Title) &&
+                !cleaned.Contains(next.Title, StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Information("Discarded track introduction with incomplete title: {Title}", next.Title);
+                return BuildFallbackIntroduction(next);
+            }
 
             return new DJScript
             {
-                Text = StripControlTags(text),
+                Text = cleaned,
                 Emotion = emotion,
                 Expression = MapExpression(emotion),
                 Motion = MapMotion(emotion)
@@ -116,17 +125,19 @@ Response rules:
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to generate track introduction");
-            return new DJScript
-            {
-                Text = _profile.Language == "en"
-                    ? $"Up next is “{next.Title}” by {next.DisplayArtist}. Let's settle into its mood."
-                    : $"接下来为你带来《{next.Title}》 - {next.DisplayArtist}，一起听听这段情绪。",
-                Emotion = "happy",
-                Expression = "smile",
-                Motion = "wave"
-            };
+            return BuildFallbackIntroduction(next);
         }
     }
+
+    private DJScript BuildFallbackIntroduction(Track next) => new()
+    {
+        Text = _profile.Language == "en"
+            ? $"Up next is “{next.Title}” by {next.DisplayArtist}. Let's settle into its mood."
+            : $"接下来为你带来《{next.Title}》 - {next.DisplayArtist}，一起听听这段情绪。",
+        Emotion = "happy",
+        Expression = "smile",
+        Motion = "wave"
+    };
 
     public Task<SongStory> GenerateSongStoryAsync(Track track)
         => GenerateSongStoryAsync(track, CancellationToken.None);

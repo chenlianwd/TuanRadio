@@ -143,8 +143,8 @@ public class LLMService : ILLMService
         try
         {
             var prompt = AppLanguage.T(
-                $"你现在是 AI 电台 DJ。上一首歌是《{current.Title}》（{current.Artist}），下一首是《{next.Title}》（{next.Artist}）。请用一句话自然地衔接两首歌，像电台 DJ 一样。不要超过30字。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。",
-                $"You are an AI radio DJ. The previous track was '{current.Title}' by {current.Artist}; the next is '{next.Title}' by {next.Artist}. Connect them naturally in one short sentence and end with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].");
+                $"你现在是 AI 电台 DJ。上一首歌是《{current.Title}》（{current.Artist}），下一首是《{next.Title}》（{next.Artist}）。请用一句话自然地衔接两首歌，像电台 DJ 一样。必须完整念出下一首歌名和歌手名，句子要完整收尾，严禁在歌名或句子中间截断；全句不超过40字。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。",
+                $"You are an AI radio DJ. The previous track was '{current.Title}' by {current.Artist}; the next is '{next.Title}' by {next.Artist}. Connect them naturally in one short sentence. You must include the full next title and artist, and finish the sentence completely — never cut off mid-title or mid-sentence. End with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].");
 
             var messages = new List<object>
             {
