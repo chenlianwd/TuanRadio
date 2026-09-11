@@ -1,3 +1,5 @@
+using System;
+
 namespace AIRadio.Desktop.Models;
 
 /// <summary>
@@ -15,9 +17,12 @@ public static class TrackComparer
         if (ReferenceEquals(left, right)) return true;
         if (left == null || right == null) return false;
 
-        if (!string.IsNullOrWhiteSpace(left.SourceId) && left.SourceId == right.SourceId)
+        // SourceId/FilePath 忽略大小写，与 MusicIdentity.IsSameSource 口径一致
+        if (!string.IsNullOrWhiteSpace(left.SourceId) &&
+            string.Equals(left.SourceId, right.SourceId, StringComparison.OrdinalIgnoreCase))
             return true;
-        if (!string.IsNullOrWhiteSpace(left.FilePath) && left.FilePath == right.FilePath)
+        if (!string.IsNullOrWhiteSpace(left.FilePath) &&
+            string.Equals(left.FilePath, right.FilePath, StringComparison.OrdinalIgnoreCase))
             return true;
         return !string.IsNullOrWhiteSpace(left.Id) && left.Id == right.Id;
     }
@@ -33,10 +38,10 @@ public static class TrackComparer
         if (left == null || right == null) return false;
 
         if (!string.IsNullOrWhiteSpace(left.SourceId) && !string.IsNullOrWhiteSpace(right.SourceId) &&
-            left.SourceId == right.SourceId)
+            string.Equals(left.SourceId, right.SourceId, StringComparison.OrdinalIgnoreCase))
             return true;
         if (!string.IsNullOrWhiteSpace(left.FilePath) && !string.IsNullOrWhiteSpace(right.FilePath) &&
-            left.FilePath == right.FilePath)
+            string.Equals(left.FilePath, right.FilePath, StringComparison.OrdinalIgnoreCase))
             return true;
         if (!string.IsNullOrWhiteSpace(left.Id) && !string.IsNullOrWhiteSpace(right.Id) &&
             left.Id == right.Id)

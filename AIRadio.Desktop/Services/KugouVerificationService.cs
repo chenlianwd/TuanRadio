@@ -68,6 +68,14 @@ public sealed class KugouVerificationService
     internal TimeSpan VerifyPollInterval { get; set; } = TimeSpan.FromSeconds(5);
     internal TimeSpan VerifyWaitBudget { get; set; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// 互斥陈旧判定上限：须覆盖最坏合法时长（探测/会话桥/类型查询各 30s 超时重试 +
+    /// 8s 首延迟 + 5min 轮询预算，退化网络下约 6.8min），否则活流程会被误判陈旧遭接管。
+    /// 已知限制：接管无属主标识，原持有方稍后的 EndVerification 仍会清掉接管方的状态
+    /// （仅退化网络场景可观测，探测幂等，后果限于重复弹页）。
+    /// </summary>
+    internal TimeSpan StaleVerificationTimeout { get; set; } = TimeSpan.FromMinutes(8);
+
     /// <summary>无挑战记录时的默认探测 hash（来自真实失败日志，仅用于触发风控判定）。</summary>
     public const string FallbackProbeHash = "EFC98A4B36BE04F144BEFDABF14654B5";
 
@@ -79,6 +87,7 @@ public sealed class KugouVerificationService
     private KugouChallenge? _lastChallenge;
     private DateTimeOffset? _lastAutoTrigger;
     private bool _verificationInProgress;
+    private DateTimeOffset? _verificationStartedAt;
 
     /// <summary>最近一次记录的风控挑战（手动验证优先复用它的 hash 探测）。</summary>
     public KugouChallenge? LastChallenge
@@ -132,7 +141,7 @@ public sealed class KugouVerificationService
     {
         lock (_gate)
         {
-            if (_verificationInProgress)
+            if (_verificationInProgress && !IsStaleInProgressLocked())
                 return false;
 
             var now = DateTimeOffset.UtcNow;
@@ -141,6 +150,7 @@ public sealed class KugouVerificationService
 
             _lastAutoTrigger = now;
             _verificationInProgress = true;
+            _verificationStartedAt = now;
             return true;
         }
     }
@@ -150,10 +160,11 @@ public sealed class KugouVerificationService
     {
         lock (_gate)
         {
-            if (_verificationInProgress)
+            if (_verificationInProgress && !IsStaleInProgressLocked())
                 return false;
 
             _verificationInProgress = true;
+            _verificationStartedAt = DateTimeOffset.UtcNow;
             return true;
         }
     }
@@ -164,8 +175,16 @@ public sealed class KugouVerificationService
         lock (_gate)
         {
             _verificationInProgress = false;
+            _verificationStartedAt = null;
         }
     }
+
+    // 互斥的释放完全依赖调用方 finally 调 EndVerification：任何调用方漏掉就会把
+    // 自动+手动入口一起锁死到重启。超过最长合法验证时长仍未结束的"进行中"视为
+    // 陈旧（调用方已死/漏释放），允许后来者直接接管，自愈而非永久锁死。
+    private bool IsStaleInProgressLocked()
+        => _verificationStartedAt is { } started &&
+           DateTimeOffset.UtcNow - started > StaleVerificationTimeout;
 
     /// <summary>探测 /song/url，判定当前登录态的风控状态。</summary>
     public async Task<KugouProbeResult> DetectChallengeAsync(
@@ -260,8 +279,11 @@ public sealed class KugouVerificationService
             }
             else
             {
-                // 自动打开失败时把 URL 留在日志里供手动访问；手动入口由设置页展示
+                // 打开失败必须快速失败：没有页面在跑，轮询满 5 分钟预算只会白等；
+                // 更糟的是互斥期间设置页手动「滑块验证」入口被锁死，用户反而无法自救
+                //（URL 记入日志，供极端情况下手动访问）
                 Log.Warning("Kugou verify page could not be opened automatically; manual URL: {Url}", url);
+                return KugouVerifyOutcome.Failed;
             }
 
             return await WaitUntilVerifiedAsync(cookie, probe.Challenge.Hash, cancellationToken);

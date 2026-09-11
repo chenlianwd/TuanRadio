@@ -27,9 +27,17 @@ public class LLMService : ILLMService
     };
 
     private readonly HttpClient _httpClient;
+    // 配置单字段原子发布：baseUrl/model/apiKey 一律从调用点捕获的 config 快照经
+    // ResolveBaseUrl/内联派生，分多次读 _config 会看到切库瞬间的撕裂组合
     private volatile LLMConfig _config = new();
-    private volatile string _baseUrl = "https://api.openai.com/v1";
-    private volatile string _model = string.Empty;
+
+    private static string ResolveBaseUrl(LLMConfig config)
+    {
+        var baseUrl = (config.BaseUrl ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+            return baseUrl.TrimEnd('/');
+        return Providers.TryGetValue(config.Provider, out var fallback) ? fallback : Providers["openai"];
+    }
 
     public LLMService(HttpClient httpClient)
     {
@@ -49,10 +57,6 @@ public class LLMService : ILLMService
             BaseUrl = baseUrl,
             Model = model
         };
-
-        var defaultBaseUrl = Providers[provider];
-        _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? defaultBaseUrl : baseUrl.TrimEnd('/');
-        _model = model;
     }
 
     public Task<string> ChatAsync(string userMessage, List<ChatMessage> history)
@@ -65,8 +69,10 @@ public class LLMService : ILLMService
     /// </summary>
     public async Task<string> ChatRawAsync(string userMessage, CancellationToken cancellationToken)
     {
+        // 未配置必须抛错而不是把提示文案当数据返回：本方法输出会被调用方直接当
+        // 关键词/纠错结果使用（历史上正是"台词碎片被当搜索词"的事故来源）
         if (!IsConfigured())
-            return AppLanguage.T("请先在设置中配置 AI 服务。", "Configure the AI service in Settings first.");
+            throw new LlmApiException(ApiFailureInfo.MissingApiKey());
 
         try
         {
@@ -199,12 +205,14 @@ public class LLMService : ILLMService
         List<object> messages,
         CancellationToken cancellationToken)
     {
+        // 全部字段从同一次 config 快照派生：分多次读 _config 会看到"新 provider + 旧
+        // baseUrl/model/apiKey"的撕裂组合（Configure 并发落在这几次读之间时）
         var config = _config;
         if (config.Provider == "anthropic")
             return await CallAnthropicApiAsync(messages, cancellationToken);
 
-        var baseUrl = _baseUrl;
-        var model = _model;
+        var baseUrl = ResolveBaseUrl(config);
+        var model = (config.Model ?? string.Empty).Trim();
         var apiKey = config.ApiKey;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
@@ -249,7 +257,18 @@ public class LLMService : ILLMService
                 choices[0].TryGetProperty("message", out var message) &&
                 message.TryGetProperty("content", out var msgContent))
             {
-                return msgContent.GetString() ?? "";
+                // content 为 null/空白（部分兼容网关的过滤/拒绝场景）按无效响应抛错，
+                // 与 Anthropic 分支同口径：空串会被当合法台词写入历史并播报成空气泡
+                var contentText = msgContent.ValueKind == JsonValueKind.String
+                    ? msgContent.GetString()
+                    : null;
+                if (string.IsNullOrWhiteSpace(contentText))
+                    throw new LlmApiException(new ApiFailureInfo(
+                        ApiFailureKind.InvalidResponse,
+                        "AI 返回了空回复",
+                        "模型未返回任何正文内容（可能被内容过滤拦截）。",
+                        "请重试，或检查模型/服务是否支持当前请求。"));
+                return contentText;
             }
 
             Log.Warning("Unrecognized LLM response format: {Response}", responseJson[..Math.Min(200, responseJson.Length)]);
@@ -286,9 +305,10 @@ public class LLMService : ILLMService
             }
         }
 
+        // 与 CallChatCompletionAsync 同理：单次快照派生，避免撕裂读
         var config = _config;
-        var model = _model;
-        var baseUrl = _baseUrl;
+        var model = (config.Model ?? string.Empty).Trim();
+        var baseUrl = ResolveBaseUrl(config);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
@@ -378,15 +398,16 @@ public class LLMService : ILLMService
 
     public bool IsConfigured()
     {
-        var provider = _config.Provider;
+        var config = _config;
+        var provider = config.Provider;
         if (provider is null)
             return false;
 
-        if (string.IsNullOrWhiteSpace(_model))
+        if (string.IsNullOrWhiteSpace((config.Model ?? string.Empty).Trim()))
             return false;
 
         return provider.Equals("local", StringComparison.OrdinalIgnoreCase) ||
-               !string.IsNullOrWhiteSpace(_config.ApiKey);
+               !string.IsNullOrWhiteSpace(config.ApiKey);
     }
 
     private static string NormalizeProvider(string? provider) => provider?.ToLowerInvariant() switch

@@ -17,6 +17,7 @@ public class DJService : IDJService
     private DJProfile _profile = new();
     private string _currentEmotion = "neutral";
     private readonly List<ChatMessage> _chatHistory = new();
+    private readonly SemaphoreSlim _chatGate = new(1, 1);
 
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
@@ -178,55 +179,64 @@ Response rules:
             return AppLanguage.T("请先在设置中配置 AI 服务。", "Configure the AI service in Settings first.");
         }
 
+        // 串行化"取快照→LLM→落账"全程：角色问候（fire-and-forget）与用户聊天并发进入时，
+        // 各自基于同一快照生成、按完成顺序落账，历史会乱序且上下文互相不可见
+        await _chatGate.WaitAsync(cancellationToken);
         try
         {
-            // 传给 LLM 的历史用快照：角色问候（fire-and-forget）与聊天可能并发进入，
-            // 直接共享 _chatHistory 会在 BuildMessages 遍历与 Add 之间竞态
-            List<ChatMessage> snapshot;
-            lock (_chatHistory)
+            try
             {
-                snapshot = _chatHistory.ToList();
-            }
-
-            var response = _llm is LLMService llm
-                ? await llm.ChatAsync(userMessage, snapshot, cancellationToken)
-                : await _llm.ChatAsync(userMessage, snapshot)
-                    .WaitAsync(cancellationToken);
-
-            lock (_chatHistory)
-            {
-                _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
-                _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
-
-                // Trim history to avoid unbounded growth (keep system prompt + last N messages)。
-                // 必须按 user/assistant 成对删除：Anthropic 要求首条非 system 消息必须是 user，
-                // 逐条 RemoveAt(1) 会让序列以 assistant 开头，长对话后请求被 400 拒绝
-                const int maxHistoryMessages = 20;
-                while (_chatHistory.Count > maxHistoryMessages + 1)
+                // 传给 LLM 的历史用快照：锁外仍是同一 _chatHistory，快照避免遍历与 Add 竞态
+                List<ChatMessage> snapshot;
+                lock (_chatHistory)
                 {
-                    _chatHistory.RemoveAt(1);
-                    if (_chatHistory.Count > 1)
-                        _chatHistory.RemoveAt(1);
+                    snapshot = _chatHistory.ToList();
                 }
-            }
 
-            _currentEmotion = DetectEmotion(response);
-            // 在成功返回前才清空失败标记：方法开头就清会让并发路径（如 TTS 失败）写入的
-            // 状态在长 await 期间无法与本调用结果区分，角色问候会因此误判为聊天失败
-            LastFailure = null;
-            return response;
+                var response = _llm is LLMService llm
+                    ? await llm.ChatAsync(userMessage, snapshot, cancellationToken)
+                    : await _llm.ChatAsync(userMessage, snapshot)
+                        .WaitAsync(cancellationToken);
+
+                lock (_chatHistory)
+                {
+                    _chatHistory.Add(new ChatMessage { Role = MessageRole.User, Content = userMessage });
+                    _chatHistory.Add(new ChatMessage { Role = MessageRole.Assistant, Content = response });
+
+                    // Trim history to avoid unbounded growth (keep system prompt + last N messages)。
+                    // 必须按 user/assistant 成对删除：Anthropic 要求首条非 system 消息必须是 user，
+                    // 逐条 RemoveAt(1) 会让序列以 assistant 开头，长对话后请求被 400 拒绝
+                    const int maxHistoryMessages = 20;
+                    while (_chatHistory.Count > maxHistoryMessages + 1)
+                    {
+                        _chatHistory.RemoveAt(1);
+                        if (_chatHistory.Count > 1)
+                            _chatHistory.RemoveAt(1);
+                    }
+                }
+
+                _currentEmotion = DetectEmotion(response);
+                // 在成功返回前才清空失败标记：方法开头就清会让并发路径（如 TTS 失败）写入的
+                // 状态在长 await 期间无法与本调用结果区分，角色问候会因此误判为聊天失败
+                LastFailure = null;
+                return response;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                LastFailure = ApiFailureInfo.FromException(ex);
+                Log.Error(ex, "Failed to generate chat response");
+                return _profile.Language == "en"
+                    ? "Sorry, the signal drifted for a moment. Say that again? [calm]"
+                    : "不好意思，刚才信号飘了一下，可以再说一遍吗？[calm]";
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        finally
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LastFailure = ApiFailureInfo.FromException(ex);
-            Log.Error(ex, "Failed to generate chat response");
-            return _profile.Language == "en"
-                ? "Sorry, the signal drifted for a moment. Say that again? [calm]"
-                : "不好意思，刚才信号飘了一下，可以再说一遍吗？[calm]";
+            _chatGate.Release();
         }
     }
 
@@ -237,7 +247,7 @@ Response rules:
     public async Task<string> CorrectTranscriptionAsync(string transcript, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(transcript)) return transcript;
-        // 未配置时 ChatRawAsync 返回"请先在设置中配置"提示文案，不能当纠错结果用
+        // 未配置时 ChatRawAsync 抛 LlmApiException：前置检查拦截，未配置直接回退原文
         if (_llm is LLMService llmService && !llmService.IsConfigured()) return transcript;
 
         try

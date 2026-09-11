@@ -185,7 +185,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 if (_loadingYtdlpBrowser)
                     return;
                 // 用户切换浏览器时跟随保存，不触碰 LLM 字段与凭据
-                _ = SaveUiStateCommand.Execute();
+                // （Subscribe 与其余调用点对齐：不订阅则 IsExecuting 不翻转、异常无人观察）
+                _ = SaveUiStateCommand.Execute().Subscribe();
             });
 
         // 界面显示语言严格跟随本选项：加载读到旧值与用户切换时都经 Apply 生效
@@ -351,6 +352,25 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
+        // 与 SaveAsync 同门互斥：加载的多个 await 之间属性逐步赋值，而窗口在加载完成前
+        // 已可交互——此期间的自动保存（切主题/浏览器/退出简洁模式）会把半加载状态连同
+        // 尚未读入的角色覆盖整体写盘，角色语音/人设配置丢失
+        await _saveGate.WaitAsync(_lifetimeCts.Token);
+        try
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+
+            await LoadCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            _saveGate.Release();
+        }
+    }
+
+    private async Task LoadCoreAsync(CancellationToken cancellationToken)
+    {
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -546,8 +566,24 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     baseline,
                     forceSessionRefresh: true,
                     cancellationToken: _lifetimeCts.Token) ?? baseline;
-                if (!string.Equals(baseline, refreshed, StringComparison.Ordinal))
+                // 刷新期间（数秒级网络往返）用户可能登出/重新扫码：store 值一旦变化就
+                // 不再回写旧会话，否则会把登出/新登录静默覆盖（与播放路径同口径）
+                var latest = _accounts.KugouCookie;
+                if (!string.Equals(latest, baseline, StringComparison.Ordinal))
+                {
+                    Log.Information("Kugou credential changed during status refresh; keeping the newer stored value");
+                    if (latest == null)
+                    {
+                        // 刷新期间用户登出：按登出口径显示，不拿旧会话再查快照
+                        SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
+                        return;
+                    }
+                    refreshed = latest;
+                }
+                else if (!string.Equals(baseline, refreshed, StringComparison.Ordinal))
+                {
                     await _accounts.SetKugouCookieAsync(refreshed);
+                }
 
                 var snapshot = await _kugouAccount.GetAccountSnapshotAsync(refreshed, _lifetimeCts.Token);
                 SetKugouAccountStatus(() => BuildKugouAccountStatus(snapshot));
@@ -577,7 +613,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            NeteaseQrImage = CreateBitmap(session.QrPng);
+            SetNeteaseQrImage(CreateBitmap(session.QrPng));
             IsNeteaseQrVisible = true;
             SetNeteaseAccountStatus(() => AppLanguage.T("请用网易云音乐 App 扫码", "Scan with the NetEase Cloud Music app"));
 
@@ -595,7 +631,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     case QrState.Confirmed when !string.IsNullOrEmpty(result.Cookie):
                         await _accounts.SetNeteaseCookieAsync(result.Cookie!);
                         IsNeteaseQrVisible = false;
-                        NeteaseQrImage = null;
+                        SetNeteaseQrImage(null);
                         var nickname = await _neteaseAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
                         SetNeteaseAccountStatus(() => AppLanguage.T($"已登录：{nickname ?? "未知昵称"}", $"Signed in: {nickname ?? "unknown"}"));
                         return;
@@ -615,7 +651,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Netease QR login failed");
-            SetNeteaseAccountStatus(() => AppLanguage.T($"登录失败：{ex.Message}", $"Login failed: {ex.Message}"));
+            // 异常消息可能携带含 QR key/userid 的请求 URL：进 UI 前统一脱敏
+            var detail = Services.SensitiveDataSanitizer.Sanitize(ex.Message);
+            SetNeteaseAccountStatus(() => AppLanguage.T($"登录失败：{detail}", $"Login failed: {detail}"));
         }
         finally
         {
@@ -637,7 +675,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            KugouQrImage = CreateBitmap(session.QrPng);
+            SetKugouQrImage(CreateBitmap(session.QrPng));
             IsKugouQrVisible = true;
             SetKugouAccountStatus(() => AppLanguage.T("请用酷狗音乐 App 扫码", "Scan with the Kugou Music app"));
 
@@ -655,7 +693,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     case QrState.Confirmed when !string.IsNullOrEmpty(result.Cookie):
                         await _accounts.SetKugouCookieAsync(result.Cookie!);
                         IsKugouQrVisible = false;
-                        KugouQrImage = null;
+                        SetKugouQrImage(null);
                         var snapshot = await _kugouAccount.GetAccountSnapshotAsync(
                             result.Cookie!, _lifetimeCts.Token);
                         SetKugouAccountStatus(() => BuildKugouAccountStatus(snapshot));
@@ -676,7 +714,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Kugou QR login failed");
-            SetKugouAccountStatus(() => AppLanguage.T($"登录失败：{ex.Message}", $"Login failed: {ex.Message}"));
+            var detail = Services.SensitiveDataSanitizer.Sanitize(ex.Message);
+            SetKugouAccountStatus(() => AppLanguage.T($"登录失败：{detail}", $"Login failed: {detail}"));
         }
         finally
         {
@@ -720,7 +759,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         await _accounts.SetNeteaseCookieAsync(null);
         IsNeteaseQrVisible = false;
-        NeteaseQrImage = null;
+        SetNeteaseQrImage(null);
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
     }
 
@@ -808,7 +847,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Kugou verification failed");
-            SetKugouAccountStatus(() => AppLanguage.T($"验证失败：{ex.Message}", $"Verification failed: {ex.Message}"));
+            var detail = Services.SensitiveDataSanitizer.Sanitize(ex.Message);
+            SetKugouAccountStatus(() => AppLanguage.T($"验证失败：{detail}", $"Verification failed: {detail}"));
         }
         finally
         {
@@ -820,7 +860,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         await _accounts.SetKugouCookieAsync(null);
         IsKugouQrVisible = false;
-        KugouQrImage = null;
+        SetKugouQrImage(null);
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
     }
 
@@ -836,6 +876,19 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             Log.Debug(ex, "Failed to decode QR image");
             return null;
         }
+    }
+
+    private void SetNeteaseQrImage(IImage? image)
+    {
+        // Bitmap 持非托管内存：覆盖/置空前 Dispose 旧图，仅靠终结器回收会随反复扫码累积
+        (NeteaseQrImage as IDisposable)?.Dispose();
+        NeteaseQrImage = image;
+    }
+
+    private void SetKugouQrImage(IImage? image)
+    {
+        (KugouQrImage as IDisposable)?.Dispose();
+        KugouQrImage = image;
     }
 
     private async Task SaveAsync(bool persistLlmFields = true)
@@ -994,6 +1047,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _selectedYtdlpBrowserSub.Dispose();
         _selectedLanguageSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
+        // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
+        // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更
+        try
+        {
+            if (!_saveGate.Wait(TimeSpan.FromMilliseconds(500)))
+                Log.Warning("Settings save still in flight during shutdown; last change may be lost");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private void ConfigureLlm(string? apiKeyOverride = null)

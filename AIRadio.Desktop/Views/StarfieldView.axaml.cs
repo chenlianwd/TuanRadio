@@ -101,7 +101,11 @@ public partial class StarfieldView : UserControl
     {
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _timer.Tick += OnTick;
-        _timer.Start();
+        // 启动时星空开关为 false 的话，IsVisible=false 设在 _timer 创建之前（Stop 空操作），
+        // 这里无条件 Start 会让 30fps 定时器对不可见星星空转整个会话；不可见时交给
+        // IsVisible 处理器在重新可见时恢复
+        if (IsVisible)
+            _timer.Start();
     }
 
     private void OnTick(object? sender, EventArgs e)

@@ -18,6 +18,9 @@ public class WhisperSttService : ISttService, IDisposable
     private readonly CancellationTokenSource _lifetimeCts = new();
     private int _disposed;
 
+    /// <summary>模型下载（约 140MB）的总时限：网络停滞时快速失败而不是无限挂起持锁。</summary>
+    private static readonly TimeSpan ModelDownloadTimeout = TimeSpan.FromMinutes(5);
+
     /// <summary>
     /// Whisper 语言代码，如 "zh"、"en"。默认 "zh"。
     /// </summary>
@@ -131,7 +134,13 @@ public class WhisperSttService : ISttService, IDisposable
             catch
             {
                 // 兼容旧版本可能遗留的半份模型；下次使用时会重新下载。
+                // 删除失败（文件句柄未释放等）时改名隔离：否则 File.Exists 仍为真，
+                // 下次跳过下载再次加载坏文件，STT 永久失效
                 try { File.Delete(_modelPath); } catch { }
+                if (File.Exists(_modelPath))
+                {
+                    try { File.Move(_modelPath, _modelPath + ".bad", overwrite: true); } catch { }
+                }
                 throw;
             }
 
@@ -175,8 +184,20 @@ public class WhisperSttService : ISttService, IDisposable
             await using (modelStream)
             await using (var fileStream = File.Create(tempPath))
             {
-                await modelStream.CopyToAsync(fileStream, cancellationToken);
-                await fileStream.FlushAsync(cancellationToken);
+                // 模型约 140MB：CopyTo 只受取消令牌约束，网络停滞（连接不断但无数据）
+                // 会无限挂起并一直持有 _operationLock；给传输阶段独立总时限
+                using var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                downloadCts.CancelAfter(ModelDownloadTimeout);
+                try
+                {
+                    await modelStream.CopyToAsync(fileStream, downloadCts.Token);
+                    await fileStream.FlushAsync(downloadCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    Log.Warning("Whisper model download timed out after {Seconds}s", ModelDownloadTimeout.TotalSeconds);
+                    throw new TimeoutException($"Whisper model download timed out after {ModelDownloadTimeout.TotalSeconds}s");
+                }
             }
 
             cancellationToken.ThrowIfCancellationRequested();

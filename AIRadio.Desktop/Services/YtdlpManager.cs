@@ -151,6 +151,8 @@ public static class YtdlpManager
                 // Windows 不允许覆盖正在运行的可执行文件：更新恰逢旧版 yt-dlp 正在播放时，
                 // 保留旧版并跳过本次更新（版本文件不写，状态判定维持旧版可用，下次启动再更）
                 Log.Warning("yt-dlp update skipped: target executable is currently in use");
+                // 跳过路径同样要清理半成品临时文件，否则长驻一个约 17MB 的 .tmp
+                try { File.Delete(tempPath); } catch { }
                 return false;
             }
             File.WriteAllText(versionFilePath, version);

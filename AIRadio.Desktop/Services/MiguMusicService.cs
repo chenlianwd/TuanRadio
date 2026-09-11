@@ -48,7 +48,8 @@ public class MiguMusicService : IMusicSearchService
             var root = doc.RootElement;
 
             var tracks = new List<OnlineTrack>();
-            if (root.TryGetProperty("musics", out var musics))
+            // musics:null/非数组会直接抛 InvalidOperationException（TryGet 前置形状检查），按空结果处理
+            if (root.TryGetProperty("musics", out var musics) && musics.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in musics.EnumerateArray())
                 {
@@ -113,8 +114,12 @@ public class MiguMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
+            // 无版权曲普遍返回 data:null：形状检查后按"无地址"继续备用端点，
+            // 不能让 TryGetProperty 抛异常短路整个 GetPlayUrl
             if (root.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("listenUrl", out var listenUrl))
+                data.ValueKind == JsonValueKind.Object &&
+                data.TryGetProperty("listenUrl", out var listenUrl) &&
+                listenUrl.ValueKind == JsonValueKind.String)
             {
                 // 空字符串视为无地址，继续尝试备用端点，避免"首端点空值即放弃"
                 var primaryUrl = listenUrl.GetString();
@@ -133,7 +138,9 @@ public class MiguMusicService : IMusicSearchService
             using var doc2 = JsonDocument.Parse(json2);
 
             if (doc2.RootElement.TryGetProperty("data", out var data2) &&
-                data2.TryGetProperty("playUrl", out var playUrl))
+                data2.ValueKind == JsonValueKind.Object &&
+                data2.TryGetProperty("playUrl", out var playUrl) &&
+                playUrl.ValueKind == JsonValueKind.String)
             {
                 // 与酷狗/YouTube 同口径：非 http(s) 值不得流入 LibVLC
                 var secondaryUrl = playUrl.GetString();

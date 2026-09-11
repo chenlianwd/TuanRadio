@@ -17,7 +17,9 @@ namespace AIRadio.Desktop.Services;
 public class KugouMusicService : IMusicSearchService
 {
     private const string ProxyBase = "http://127.0.0.1:37251";
-    private const int MaxTransientRetries = 10;
+    // 无 token 入口（两参重载固定 CancellationToken.None）下退避累计不可中断：
+    // 上限压到 5 次（累计约 7.5s），避免本地代理未启动时串行烧完 22.5s
+    private const int MaxTransientRetries = 5;
     private static readonly TimeSpan CredentialRefreshFailureCooldown = TimeSpan.FromMinutes(10);
     private readonly SemaphoreSlim _credentialGate = new(1, 1);
     private long _credentialRefreshNotBeforeMs;

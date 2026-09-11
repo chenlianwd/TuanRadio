@@ -27,6 +27,9 @@ public class PlaylistViewModelTests
         audioMock.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
 
         var searchMock = new Mock<IMusicSearchService>();
+        // VM 现走带 token 的三参重载；Moq 不透传默认接口实现，两个重载都要兜底
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<System.Threading.CancellationToken>()))
+            .ReturnsAsync(new List<OnlineTrack>());
         searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
             .ReturnsAsync(new List<OnlineTrack>());
 
@@ -188,7 +191,9 @@ public class PlaylistViewModelTests
 
         vm.Tracks.Add(track);
         vm.ToggleFavoriteCommand.Execute(track).Subscribe();
-        await Task.Delay(150);
+        // 保存是 fire-and-forget：固定 150ms 在整机负载高时不够，轮询等待文件落盘
+        for (var waited = 0; !File.Exists(playlistFile) && waited < 5000; waited += 100)
+            await Task.Delay(100);
 
         var saved = await File.ReadAllTextAsync(playlistFile);
         Assert.Contains("\"FavoriteIds\"", saved);
@@ -632,7 +637,7 @@ public class PlaylistViewModelTests
             new OnlineTrack { Id = "1", Title = "Song A" },
             new OnlineTrack { Id = "2", Title = "Song B" }
         };
-        searchMock.Setup(x => x.SearchAsync("test", 20))
+        searchMock.Setup(x => x.SearchAsync("test", 20, It.IsAny<System.Threading.CancellationToken>()))
             .ReturnsAsync(results);
 
         vm.SearchText = "test";
@@ -652,6 +657,7 @@ public class PlaylistViewModelTests
         var (vm, _, searchMock) = CreateVm();
         vm.SearchCommand.Execute().Subscribe();
         System.Threading.Thread.Sleep(50);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<System.Threading.CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
 
