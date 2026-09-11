@@ -122,11 +122,26 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
+    private bool _bouncing;
+
     private async void OnDjVisualCue(string expression, string motion)
     {
+        if (_bouncing) return; // 串场/TTS 分段触发快于动画时长时避免多段 bounce 并发交错闪烁
         if (_avatarBorder is Border border)
         {
-            await Animations.PlayBounceAsync(border);
+            try
+            {
+                _bouncing = true;
+                await Animations.PlayBounceAsync(border);
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Debug(ex, "DJ avatar bounce animation failed");
+            }
+            finally
+            {
+                _bouncing = false;
+            }
         }
     }
 

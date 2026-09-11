@@ -84,7 +84,11 @@ public sealed class MusicAccountStore
         {
             ["KUGOU_API_GUID"] = KugouDevice.DeviceGuid,
             ["KUGOU_API_DEV"] = KugouDevice.DeviceDev,
-            ["KUGOU_API_WEBGL"] = KugouDevice.DeviceWebGl
+            ["KUGOU_API_WEBGL"] = KugouDevice.DeviceWebGl,
+            // 上游默认反射任意 Origin 且允许凭据：用户浏览器里的恶意网页可静默调用本地
+            // 代理，借用户 IP 与稳定设备指纹消耗风控信誉。桌面合法消费全走 HttpClient
+            // （无 CORS）与同源验证页，固定一个不可达 Origin 即封死跨域浏览器访问。
+            ["CORS_ALLOW_ORIGIN"] = "http://tuanradio.local"
         };
 
     public async Task SetNeteaseCookieAsync(string? cookie)

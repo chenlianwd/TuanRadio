@@ -44,8 +44,11 @@ public static class MusicIdentity
 
         var artistLeft = NormalizeLoose(artistA);
         var artistRight = NormalizeLoose(artistB);
-        return artistLeft.Length == 0 || artistRight.Length == 0 ||
-               artistLeft.Contains(artistRight, StringComparison.Ordinal) ||
+        // 单边 artist 缺失不再无条件判同曲：同名不同曲（翻唱/伴奏与原曲）会被误合并，
+        // 点歌/导入被静默跳过；双方都缺失时才允许仅凭标题匹配
+        if (artistLeft.Length == 0 || artistRight.Length == 0)
+            return artistLeft.Length == 0 && artistRight.Length == 0;
+        return artistLeft.Contains(artistRight, StringComparison.Ordinal) ||
                artistRight.Contains(artistLeft, StringComparison.Ordinal);
     }
 

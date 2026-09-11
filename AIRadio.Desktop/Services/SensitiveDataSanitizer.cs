@@ -10,9 +10,10 @@ internal static class SensitiveDataSanitizer
 {
     // 覆盖 query 参数（& 分隔）与 cookie 分号分隔两种 key=value 形态。
     // 键名包含各音源真实 Cookie 键（MUSIC_U/__csrf/kg_mid 等）与常见 OAuth 变体；
-    // 注意 accesstoken 无词边界可循，必须显式列出，\btoken 匹配不到它。
+    // 注意 accesstoken 无词边界可循，必须显式列出，\btoken 匹配不到它；
+    // key 为网易二维码轮询的会话键——有效期内持 key 可直接换取完整登录 cookie。
     private static readonly Regex SensitivePairs = new(
-        @"(?i)\b(token|userid|dfid|cookie|sign|signature|auth|t1|vip_token|access_token|accesstoken|refresh_token|authorization|music_u|music_a|__csrf|nmtid|kg_mid|kg_dfid|vip_uid|kugou_api_guid|kugou_api_mid|kugou_api_dev|kugou_api_webgl)\s*=\s*[^&;\s""']+",
+        @"(?i)\b(token|userid|dfid|cookie|sign|signature|auth|key|t1|vip_token|access_token|accesstoken|refresh_token|authorization|music_u|music_a|__csrf|nmtid|kg_mid|kg_dfid|vip_uid|kugou_api_guid|kugou_api_mid|kugou_api_dev|kugou_api_webgl)\s*=\s*[^&;\s""']+",
         RegexOptions.Compiled);
 
     // Authorization: Bearer xxx / bearer token 文本形态

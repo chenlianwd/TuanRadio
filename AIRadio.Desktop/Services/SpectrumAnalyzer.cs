@@ -49,6 +49,8 @@ public sealed class SpectrumAnalyzer : IDisposable
     private long _lastRealSpectrumAtMs;
     private int _fallbackWarningLogged;
     private int _disposed;
+    private int _rebindConsecutiveFailures;
+    private const int MaxRebindRetries = 5;
 
     public event Action<float[]>? SpectrumReady;
 
@@ -192,6 +194,7 @@ public sealed class SpectrumAnalyzer : IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
+        WasapiLoopbackCapture? replacement = null;
         try
         {
             lock (_captureGate)
@@ -208,7 +211,7 @@ public sealed class SpectrumAnalyzer : IDisposable
                 }
             }
 
-            var replacement = new WasapiLoopbackCapture();
+            replacement = new WasapiLoopbackCapture();
             replacement.DataAvailable += OnDataAvailable;
             replacement.RecordingStopped += OnCaptureStopped;
             lock (_captureGate)
@@ -223,11 +226,58 @@ public sealed class SpectrumAnalyzer : IDisposable
                 _capture = replacement;
             }
             replacement.StartRecording();
+            // StartRecording 与 Dispose 并发的极窄窗口：二次确认已退出则立即停录回收，
+            // 避免实例在 Dispose 完成后才开始录音且无人释放
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                // 先摘除 _capture：并发的 Dispose() 随后会拿到同一实例再次 Stop/Dispose，造成双重释放
+                lock (_captureGate)
+                {
+                    if (ReferenceEquals(_capture, replacement))
+                        _capture = null;
+                }
+                StopAndDisposeCapture(replacement);
+                return;
+            }
+            Volatile.Write(ref _rebindConsecutiveFailures, 0);
             Log.Information("Spectrum loopback capture rebound ({Reason})", reason);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Spectrum loopback capture rebind failed; visual fallback remains available");
+            // StartRecording 失败的实例已挂在 _capture 上但永远不会开始录音，也不会触发
+            // RecordingStopped：必须主动摘除并安排冷却重试，否则真实频谱永久失效直到重启
+            if (replacement != null)
+            {
+                lock (_captureGate)
+                {
+                    if (ReferenceEquals(_capture, replacement))
+                        _capture = null;
+                }
+                StopAndDisposeCapture(replacement);
+            }
+            // 持续失败（无回环设备等）时限制重试次数：无限每 35s 一次的告警循环没有意义
+            if (Interlocked.Increment(ref _rebindConsecutiveFailures) <= MaxRebindRetries)
+                ScheduleCaptureRebindRetry();
+            else
+                Log.Information(
+                    "Spectrum loopback rebind gave up after {Count} consecutive failures; visual fallback only",
+                    MaxRebindRetries);
+        }
+    }
+
+    private void StopAndDisposeCapture(WasapiLoopbackCapture capture)
+    {
+        try
+        {
+            capture.DataAvailable -= OnDataAvailable;
+            capture.RecordingStopped -= OnCaptureStopped;
+            try { capture.StopRecording(); } catch { }
+            capture.Dispose();
+        }
+        catch
+        {
+            // 清理路径不再向上抛：调用方处于 catch/收尾分支，再抛会让重建兜底中断
         }
     }
 

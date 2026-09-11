@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using Serilog;
 
 namespace AIRadio.Desktop.Services;
 
@@ -100,6 +101,9 @@ public class WindowsSecureStorage : ISecureStorage
     public void DeleteApiKey(string service)
     {
         var targetName = Prefix + service;
-        CredDelete(targetName, CredentialType.Generic, 0);
+        // 删除失败（策略限制/凭据库锁定）不能静默：内存已清而磁盘残留，
+        // 下次启动会"自动恢复登录"，用户以为已登出的账号悄悄复活
+        if (!CredDelete(targetName, CredentialType.Generic, 0))
+            Log.Warning("Failed to delete stored credential for {Service} (win32 error {Error})", service, Marshal.GetLastWin32Error());
     }
 }

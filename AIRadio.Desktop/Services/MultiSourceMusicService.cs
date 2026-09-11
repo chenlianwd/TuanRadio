@@ -30,6 +30,8 @@ public class MultiSourceMusicService : IMusicSearchService
     private readonly List<IMusicSearchService> _sources;
     private readonly SourceHealthRegistry _healthRegistry = new();
     private readonly object _reportGate = new();
+    // 跨源回退对共享 track 实例的身份变更互斥（见 TryResolveFallbackCandidateAsync 内注释）
+    private readonly object _fallbackMutationGate = new();
     private readonly List<SourceSearchStatus> _lastSearchReport = new();
 
     // 本服务是 DI 单例，用户搜索/电台推荐/DJ 点歌可能并发进入：
@@ -255,23 +257,20 @@ public class MultiSourceMusicService : IMusicSearchService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var deadline = DateTimeOffset.UtcNow + ResolveOverallDeadline;
-        // trackId format: "source:id"
-        var parts = trackId.Split(':', 2);
-        if (parts.Length == 2)
+        // trackId format: "source:id"：复用 FindSource 的 OrdinalIgnoreCase 匹配，
+        // 不再各自实现（原 culture 敏感 ToLower 在 tr-TR 等文化下行为异常）
+        var prefixedSource = FindSource(trackId);
+        if (prefixedSource != null)
         {
-            var source = _sources.FirstOrDefault(s =>
-                s.GetType().Name.Replace("MusicService", "").ToLower() == parts[0].ToLower());
-            if (source != null)
-            {
-                var budget = source.IsSlowSource
-                    ? SlowSourceTimeout
-                    : CapBudget(SourceTimeout, RemainingBudget(deadline));
-                return await GetPlayUrlWithTimeout(
-                    source, parts[1], budget, cancellationToken);
-            }
+            var budget = prefixedSource.IsSlowSource
+                ? SlowSourceTimeout
+                : CapBudget(SourceTimeout, RemainingBudget(deadline));
+            return await GetPlayUrlWithTimeout(
+                prefixedSource, StripSourcePrefix(trackId), budget, cancellationToken);
         }
 
-        // Try all sources
+        // Try all sources：无前缀时才逐源尝试，且必须剥离可能存在的前缀，
+        // 否则 "kugou:abc" 整串被喂给网易等源拼出无意义请求
         foreach (var source in _sources)
         {
             var budget = CapBudget(SourceTimeout, RemainingBudget(deadline));
@@ -283,7 +282,7 @@ public class MultiSourceMusicService : IMusicSearchService
 
             try
             {
-                var url = await GetPlayUrlWithTimeout(source, trackId, budget, cancellationToken);
+                var url = await GetPlayUrlWithTimeout(source, StripSourcePrefix(trackId), budget, cancellationToken);
                 if (url != null) return url;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -445,13 +444,18 @@ public class MultiSourceMusicService : IMusicSearchService
             return null;
 
         var previousSource = excludedSource?.Name ?? "unknown";
-        track.Id = candidate.Id;
-        track.Source = candidate.Source;
-        track.ProviderMetadata = new Dictionary<string, string>(
-            candidate.ProviderMetadata,
-            StringComparer.OrdinalIgnoreCase);
-        if (candidate.DurationMs > 0)
-            track.DurationMs = candidate.DurationMs;
+        // 共享 track 实例可能同时经历 URL 刷新与本回退：变更串行化，
+        // 避免后写者覆盖前写者（Id 指向 A 源而实际播放 B 源直链）
+        lock (_fallbackMutationGate)
+        {
+            track.Id = candidate.Id;
+            track.Source = candidate.Source;
+            track.ProviderMetadata = new Dictionary<string, string>(
+                candidate.ProviderMetadata,
+                StringComparer.OrdinalIgnoreCase);
+            if (candidate.DurationMs > 0)
+                track.DurationMs = candidate.DurationMs;
+        }
 
         Log.Information(
             "Playback URL fallback switched {Track} from {Preferred} to {Source}",

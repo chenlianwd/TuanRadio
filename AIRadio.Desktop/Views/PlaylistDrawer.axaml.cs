@@ -17,11 +17,20 @@ public partial class PlaylistDrawer : UserControl
 
     private async void OnImportFiles(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is not MainWindowViewModel vm) return;
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel == null) return;
-        var paths = await FilePickerHelper.PickAudioFilesAsync(topLevel);
-        if (paths.Length > 0) vm.PlaylistVM.AddFiles(paths);
+        // async void 事件处理器必须自捕获异常：文件选择器在存储提供者不可用/窗口关闭
+        // 竞态时抛出，直达 dispatcher 未处理异常会崩掉整个进程
+        try
+        {
+            if (DataContext is not MainWindowViewModel vm) return;
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel == null) return;
+            var paths = await FilePickerHelper.PickAudioFilesAsync(topLevel);
+            if (paths.Length > 0) vm.PlaylistVM.AddFiles(paths);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Import audio files failed");
+        }
     }
 
     private void OnSearchKeyDown(object? sender, KeyEventArgs e)

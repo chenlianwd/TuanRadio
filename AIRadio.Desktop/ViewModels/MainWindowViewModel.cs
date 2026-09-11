@@ -951,6 +951,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             if (IsDisposed)
                 return null;
 
+            // 60 秒推荐超时被 AudioService 抛弃后它会自行做列表轮换兜底（当前曲目已变）：
+            // 这条迟到管线不能再更新节目单/推开场白气泡，否则播出内容与 UI 错位
+            if (!IsSameTrack(_audioService.CurrentTrack, current))
+                return null;
+
             var prevOpening = CurrentRadioProgram?.DjOpening;
             UpdateCurrentProgram(_recommendationService.CurrentProgram);
             // 新节目单的开场白作为 DJ 气泡推荐理由（去重，避免续播每首刷屏）
@@ -1039,6 +1044,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
             {
                 PlaylistVM.AddExternalTrack(recommended);
+                // AddExternalTrack 宽松同曲命中时"合并且不入列"：返回 Tracks 内的既有实例，
+                // 否则新实例不带收藏标记等状态，正在播的歌在 UI 上显示为未收藏
+                var merged = PlaylistVM.FindMatchingTrack(recommended);
+                if (merged != null)
+                    recommended = merged;
             }
 
             return IsDisposed ? null : recommended;
@@ -1168,6 +1178,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 var outcome = await verification.RunVerificationAsync(cookie, challenge.Hash, _lifetimeCts.Token);
                 Log.Information("Kugou risk-control verification finished: {Outcome} (hash {Hash})",
                     outcome, challenge.Hash);
+            }
+            catch (Exception ex)
+            {
+                // 无 catch 的 fire-and-forget 异常无人观察（.NET 默认不上抛不记日志），现场不可诊断
+                Log.Warning(ex, "Kugou risk-control verification failed (hash {Hash})", challenge.Hash);
             }
             finally
             {

@@ -30,6 +30,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly Action<Track>? _trackAdded;
     private readonly IDisposable _ttsSub;
     private readonly IDisposable _ttsCommandSub;
+    // DJ 指令的统一串行执行队列（Concat）：多条来源（TTS 结束/失败兑现、新消息承诺兑现）共用
+    private readonly System.Reactive.Subjects.Subject<string> _commandQueue = new();
+    private readonly IDisposable _commandQueueSub;
     private readonly IDisposable _ttsErrorSub;
     private readonly IDisposable _stateSub;
     private readonly Action _onLanguageChanged;
@@ -44,6 +47,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private string? _tempWavPath;
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
+    // 对话模式空识别后待 IsRecognizing 复位再重启监听：识别未结束时直接调
+    // StartListening 会被其 IsRecognizing 早退否决，监听循环就此中断
+    private bool _restartConversationListening;
+    private const int MaxChatMessages = 200;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private int _disposed;
     [Reactive] public bool HasFailure { get; set; }
@@ -110,18 +117,25 @@ public class ChatViewModel : ViewModelBase, IDisposable
         // Handle pending command after TTS ends (separate subscription to avoid async void).
         // pending 在语音生成的网络等待期间就已挂上，期间任何别的 TTS 结束通知（如上一段
         // DJ 串场播完、StopTts 收尾）都不得提前触发切歌：必须等本次播报真实开播过
+        // 指令执行统一走 _commandQueue（Concat 串行化）：TTS 结束消费、TTS 失败兑现、
+        // 新消息到达时的承诺兑现三条来源共用，避免相邻指令并发执行互相覆盖切歌
+        _commandQueueSub = _commandQueue
+            .Select(cmd => Observable.FromAsync(() => ExecuteCommandAsync(cmd)))
+            .Concat()
+            .Subscribe(
+                _ => { },
+                ex => Log.Warning(ex, "Command queue subscription failed"));
+
         _ttsCommandSub = _audioService.TtsStateChanged
             .ObserveOn(RxApp.MainThreadScheduler)
             .Where(playing => !playing && _pendingCommand != null && _pendingCommandSpeechStarted)
-            .Select(_ =>
+            .Subscribe(_ =>
             {
                 var cmd = _pendingCommand!;
                 _pendingCommand = null;
                 _pendingCommandSpeechStarted = false;
-                return cmd;
-            })
-            .SelectMany(cmd => Observable.FromAsync(() => ExecuteCommandAsync(cmd)))
-            .Subscribe();
+                _commandQueue.OnNext(cmd);
+            });
 
         _ttsErrorSub = _audioService.TtsError
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -140,9 +154,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                     var cmd = _pendingCommand;
                     _pendingCommand = null;
                     _pendingCommandSpeechStarted = false;
-                    _ = ExecuteCommandAsync(cmd).ContinueWith(
-                        t => Log.Warning(t.Exception, "ExecuteCommand failed after TTS error"),
-                        TaskContinuationOptions.OnlyOnFaulted);
+                    _commandQueue.OnNext(cmd);
                 }
             });
 
@@ -178,11 +190,19 @@ public class ChatViewModel : ViewModelBase, IDisposable
     {
         if (string.IsNullOrWhiteSpace(text)) return;
 
-        Messages.Add(new ChatMessage
+        AddMessage(new ChatMessage
         {
             Role = MessageRole.Assistant,
             Content = text
         });
+    }
+
+    private void AddMessage(ChatMessage message)
+    {
+        Messages.Add(message);
+        // UI 集合不设上限会让长电台会话内存缓慢膨胀、语言切换的全量刷新越来越慢
+        while (Messages.Count > MaxChatMessages)
+            Messages.RemoveAt(0);
     }
 
     private void ToggleVoiceInput()
@@ -394,12 +414,20 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 {
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                     {
-                        if (Volatile.Read(ref _disposed) == 0)
+                        if (Volatile.Read(ref _disposed) != 0)
+                            return;
+
+                        if (IsProcessing)
                         {
-                            SendMessageCommand.Execute().Subscribe(
-                                _ => { },
-                                error => Log.Warning(error, "Voice message send failed"));
+                            // AI 仍在回复：拦住并发发送（Execute 不检查 canExecute），
+                            // 识别文本留在输入框，当前回复结束后可手动发送
+                            StatusText = "AI BUSY";
+                            return;
                         }
+
+                        SendMessageCommand.Execute().Subscribe(
+                            _ => { },
+                            error => Log.Warning(error, "Voice message send failed"));
                     });
                 }
             }
@@ -412,7 +440,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                     {
                         StatusText = "NO SPEECH";
                         if (IsConversationMode)
-                            StartListening();
+                            _restartConversationListening = true; // 复位 IsRecognizing 后由 finally 重启
                     }
                 });
             }
@@ -436,12 +464,17 @@ public class ChatViewModel : ViewModelBase, IDisposable
             {
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    if (Volatile.Read(ref _disposed) == 0)
+                    if (Volatile.Read(ref _disposed) != 0)
+                        return;
+
+                    IsRecognizing = false;
+                    MicButtonText = "HOLD";
+                    RefreshStatus();
+                    _sendAfterHoldToTalk = false;
+                    if (_restartConversationListening && IsConversationMode)
                     {
-                        IsRecognizing = false;
-                        MicButtonText = "HOLD";
-                        RefreshStatus();
-                        _sendAfterHoldToTalk = false;
+                        _restartConversationListening = false;
+                        StartListening();
                     }
                 });
             }
@@ -452,6 +485,10 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private async Task SendMessageAsync()
     {
+        // 语音自动发送经 Execute() 进入，不经过 canExecute：这里必须自防重入，
+        // 否则与进行中的请求并发——双份 LLM 交错、TTS 互相截断、挂起状态被后到者清空
+        if (IsProcessing)
+            return;
         if (string.IsNullOrWhiteSpace(InputText)) return;
 
         var userMsg = new ChatMessage
@@ -459,14 +496,29 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Role = MessageRole.User,
             Content = InputText
         };
-        Messages.Add(userMsg);
+        AddMessage(userMsg);
         var text = InputText;
         InputText = string.Empty;
         IsProcessing = true;
         RefreshStatus();
         SetWorkingNotice(AppLanguage.T("AI 正在回复", "AI is replying"), AppLanguage.T("正在请求 AI 服务，最多等待 30 秒。", "Requesting the AI service; waiting up to 30 seconds."));
-        _pendingCommand = null;
-        _pendingRecommendedTrack = null;
+        // 上一轮 DJ 已承诺的播放动作不能随新消息静默丢弃：说"播放晴天"后在播报期间
+        // 追加消息是常见交互，此时立即兑现承诺（TTS 马上会被停止，不再等播报结束）
+        if (_pendingCommand != null)
+        {
+            var cmd = _pendingCommand;
+            _pendingCommand = null;
+            _pendingCommandSpeechStarted = false;
+            if (cmd != "play_recommended")
+                _pendingRecommendedTrack = null; // play_recommended 由 PlayPendingRecommendedTrack 自行消费
+            // 经统一指令队列串行执行：直接 fire-and-forget 会与后续指令并发，
+            // 被 _isPlayingSong 守卫静默吞掉（用户要 B 听到 A）
+            _commandQueue.OnNext(cmd);
+        }
+        else
+        {
+            _pendingRecommendedTrack = null;
+        }
         // 上一轮播报未结束就发新消息时，门会残留 true：不在新一轮开头复位会让
         // "先见 true"门失效，语音生成窗口内的陈旧 TTS 结束通知又会提前消费新指令
         _pendingCommandSpeechStarted = false;
@@ -505,7 +557,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             if (response.StartsWith("请先在设置中配置", StringComparison.Ordinal) ||
                 response.StartsWith("Configure the AI service", StringComparison.OrdinalIgnoreCase))
             {
-                Messages.Add(new ChatMessage
+                AddMessage(new ChatMessage
                 {
                     Role = MessageRole.System,
                     Content = AppLanguage.T("AI 服务尚未配置。请在设置中填写 API Key 后再试。", "AI service is not configured. Fill in your API key in Settings and try again.")
@@ -528,7 +580,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             var failure = ApiFailureLocalization.ForCurrentLanguage(ApiFailureInfo.FromException(ex));
-            Messages.Add(new ChatMessage
+            AddMessage(new ChatMessage
             {
                 Role = MessageRole.Assistant,
                 Content = AppLanguage.T($"AI 回复失败：{failure.Title}。{failure.RecoveryHint}", $"AI reply failed: {failure.Title}. {failure.RecoveryHint}")
@@ -547,7 +599,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private async Task RespondWithCommandAsync(string displayText, string? command, string emotion)
     {
-        Messages.Add(new ChatMessage
+        AddMessage(new ChatMessage
         {
             Role = MessageRole.Assistant,
             Content = displayText
@@ -734,7 +786,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private void AddFailureMessage(string prefix, ApiFailureInfo failure)
     {
         failure = ApiFailureLocalization.ForCurrentLanguage(failure);
-        Messages.Add(new ChatMessage
+        AddMessage(new ChatMessage
         {
             Role = MessageRole.Assistant,
             Content = AppLanguage.T(
@@ -780,15 +832,19 @@ public class ChatViewModel : ViewModelBase, IDisposable
             var root = doc.RootElement;
             if (!root.TryGetProperty("action", out var actionElement))
                 return null;
-            var action = actionElement.GetString()?.Trim().ToLowerInvariant();
+            // GetString 对非字符串 JSON 值抛 InvalidOperationException（不在 JsonException 之列），
+            // 必须先判 ValueKind；query/mood 为空时也不能产出 "play:" 这类空参指令
+            var action = actionElement.ValueKind == JsonValueKind.String
+                ? actionElement.GetString()?.Trim().ToLowerInvariant()
+                : null;
             return action switch
             {
-                "play" when root.TryGetProperty("query", out var query) => $"play:{query.GetString()?.Trim()}",
+                "play" when TryGetTrimmedString(root, "query", out var query) => $"play:{query}",
                 "next" => "next",
                 "pause" => "pause",
                 "resume" => "resume",
                 "recommend_more" => "recommend_more",
-                "change_mood" when root.TryGetProperty("mood", out var mood) => $"change_mood:{mood.GetString()?.Trim()}",
+                "change_mood" when TryGetTrimmedString(root, "mood", out var mood) => $"change_mood:{mood}",
                 _ => null
             };
         }
@@ -796,6 +852,23 @@ public class ChatViewModel : ViewModelBase, IDisposable
         {
             return null;
         }
+        catch (InvalidOperationException)
+        {
+            // TryGetProperty 只在 ValueKind==Object 时返回 bool，畸形结构（如根为数组）走这里
+            return null;
+        }
+    }
+
+    private static bool TryGetTrimmedString(JsonElement root, string property, out string value)
+    {
+        value = string.Empty;
+        if (!root.TryGetProperty(property, out var element) || element.ValueKind != JsonValueKind.String)
+            return false;
+        var trimmed = element.GetString()!.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return false;
+        value = trimmed;
+        return true;
     }
 
     private async Task<bool> HasConfidentSongMatchAsync(string query)
@@ -850,7 +923,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         if (recommended == null)
         {
-            Messages.Add(new ChatMessage
+            AddMessage(new ChatMessage
             {
                 Role = MessageRole.Assistant,
                 Content = AppLanguage.T("暂时没找到新的可播放推荐。你可以给我一个风格或歌手关键词，我继续帮你找。", "No new playable recommendations right now. Give me a genre or artist keyword and I'll keep looking.")
@@ -880,8 +953,25 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
         // TTS 期间列表可能变化，播放前重查索引，避免旧索引指向错误曲目
         var index = FindAudioTrackIndex(track.SourceId ?? track.Id, track.FilePath);
+        if (index < 0)
+        {
+            // 添加推荐时可能被宽松匹配合并（同名同歌手的既有条目），严格查找会落空；
+            // DJ 已宣布要播这首，回退宽松匹配定位既有条目，否则宣布后静默不播
+            index = FindAudioTrackIndexLoose(track);
+        }
         if (index >= 0)
             _audioService.PlayAtIndex(index);
+    }
+
+    private int FindAudioTrackIndexLoose(Track track)
+    {
+        var playlist = _audioService.Playlist;
+        for (int i = 0; i < playlist.Count; i++)
+        {
+            if (IsSameTrack(playlist[i], track))
+                return i;
+        }
+        return -1;
     }
 
     private Task<Track?> RequestProgramRecommendationAsync(
@@ -1038,23 +1128,33 @@ public class ChatViewModel : ViewModelBase, IDisposable
         while (enumerator.MoveNext())
         {
             var element = enumerator.GetTextElement();
+            // 孤立代理项（畸形 UTF-16，LLM 输出经 JSON 转义可产生）会让 ConvertToUtf32 抛
+            // ArgumentException，整轮回复被当失败处理；这里原样保留，不参与码点过滤
+            if (char.IsSurrogate(element[0]) && !char.IsSurrogatePair(element, 0))
+            {
+                sb.Append(element);
+                continue;
+            }
             var codePoint = char.ConvertToUtf32(element, 0);
             // Skip emoji and symbol ranges
-            if (codePoint >= 0x1F600 && codePoint <= 0x1F64F) continue; // emoticons
-            if (codePoint >= 0x1F300 && codePoint <= 0x1F5FF) continue; // symbols & pictographs
-            if (codePoint >= 0x1F680 && codePoint <= 0x1F6FF) continue; // transport & map
-            if (codePoint >= 0x1F900 && codePoint <= 0x1F9FF) continue; // supplemental
-            if (codePoint >= 0x1FA00 && codePoint <= 0x1FA6F) continue; // chess symbols
-            if (codePoint >= 0x1FA70 && codePoint <= 0x1FAFF) continue; // extended-A
-            if (codePoint >= 0x2600 && codePoint <= 0x26FF) continue;   // misc symbols
-            if (codePoint >= 0x2700 && codePoint <= 0x27BF) continue;   // dingbats
-            if (codePoint >= 0xFE00 && codePoint <= 0xFE0F) continue;   // variation selectors
-            if (codePoint == 0x200D) continue;                          // zero-width joiner
-            if (codePoint >= 0xE0020 && codePoint <= 0xE007F) continue; // tag characters
+            if (IsFilteredCodePoint(codePoint)) continue;
             sb.Append(element);
         }
         return sb.ToString().Trim();
     }
+
+    private static bool IsFilteredCodePoint(int codePoint) =>
+        codePoint is >= 0x1F600 and <= 0x1F64F || // emoticons
+        codePoint is >= 0x1F300 and <= 0x1F5FF || // symbols & pictographs
+        codePoint is >= 0x1F680 and <= 0x1F6FF || // transport & map
+        codePoint is >= 0x1F900 and <= 0x1F9FF || // supplemental
+        codePoint is >= 0x1FA00 and <= 0x1FA6F || // chess symbols
+        codePoint is >= 0x1FA70 and <= 0x1FAFF || // extended-A
+        codePoint is >= 0x2600 and <= 0x26FF ||   // misc symbols
+        codePoint is >= 0x2700 and <= 0x27BF ||   // dingbats
+        codePoint is >= 0xFE00 and <= 0xFE0F ||   // variation selectors
+        codePoint == 0x200D ||                    // zero-width joiner
+        codePoint is >= 0xE0020 and <= 0xE007F;   // tag characters
 
     private async Task ExecuteCommandAsync(string command)
     {
@@ -1095,7 +1195,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 var mood = command["change_mood:".Length..].Trim();
                 // 会话级氛围偏好：真正影响后续节目单的意图检测与搜索词
                 _recommendationService?.SetMoodBias(mood);
-                Messages.Add(new ChatMessage
+                AddMessage(new ChatMessage
                 {
                     Role = MessageRole.Assistant,
                     Content = string.IsNullOrWhiteSpace(mood)
@@ -1124,7 +1224,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Log.Debug("DJ search returned {Count} results", results.Count);
             if (results.Count == 0)
             {
-                Messages.Add(new ChatMessage
+                AddMessage(new ChatMessage
                 {
                     Role = MessageRole.Assistant,
                     Content = AppLanguage.T("没找到这首歌，换个关键词试试？", "Couldn't find that track; try another keyword?")
@@ -1138,7 +1238,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
             Log.Debug("DJ got URL: {Url}", url != null ? "present" : "null");
             if (url == null)
             {
-                Messages.Add(new ChatMessage
+                AddMessage(new ChatMessage
                 {
                     Role = MessageRole.Assistant,
                     Content = AppLanguage.T("这首歌暂时无法播放，换一首吧？", "That track can't be played right now; try another?")
@@ -1146,26 +1246,34 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var existingIndex = FindAudioTrackIndex(track.Id, url);
-            if (existingIndex >= 0)
-            {
-                Log.Debug("Track already in playlist at index {Index}, playing", existingIndex);
-                _audioService.PlayAtIndex(existingIndex);
-                return;
-            }
-
             var t = track.ToTrack(url);
-            Log.Debug("Adding track to playlist and playing...");
-            if (_trackAdded != null)
-                _trackAdded(t);
-            else
-                _audioService.AddTracks(new[] { t });
-
-            var index = FindAudioTrackIndex(t.SourceId ?? t.Id, t.FilePath);
+            // 添加前先严格+宽松两级查重：AddExternalTrack 命中宽松合并时不会入列，
+            // 后续仅靠严格查找会落空；宽松预查让"已在列表"直接复用既有条目
+            var index = FindAudioTrackIndex(track.Id, url);
+            if (index < 0)
+                index = FindAudioTrackIndexLoose(t);
             if (index < 0)
             {
+                Log.Debug("Adding track to playlist and playing...");
+                if (_trackAdded != null)
+                    _trackAdded(t);
+                else
+                    _audioService.AddTracks(new[] { t });
+
+                index = FindAudioTrackIndex(t.SourceId ?? t.Id, t.FilePath);
+                if (index < 0)
+                    index = FindAudioTrackIndexLoose(t);
+            }
+            if (index < 0)
+            {
+                // 两套口径都定位不到的极端情况：直加音频服务保证点歌有响应，
+                // 接受该曲暂时不出现在歌单 UI（不持久化）的降级
                 _audioService.AddTracks(new[] { t });
-                index = _audioService.Playlist.Count - 1;
+                // AddTracks 对瞬态上下文曲目是原地替换而非尾部追加，Count-1 可能失准，
+                // 重新定位一次，仅最终兜底才用尾索引
+                index = FindAudioTrackIndex(t.SourceId ?? t.Id, t.FilePath);
+                if (index < 0)
+                    index = _audioService.Playlist.Count - 1;
             }
             _audioService.PlayAtIndex(index);
             Log.Information("DJ track play initiated: {Track}", t);
@@ -1258,14 +1366,24 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     private static bool IsSameTrack(Track left, Track right)
     {
-        if (!string.IsNullOrWhiteSpace(left.SourceId) && left.SourceId == right.SourceId)
+        if (!string.IsNullOrWhiteSpace(left.SourceId) &&
+            string.Equals(left.SourceId, right.SourceId, StringComparison.OrdinalIgnoreCase))
             return true;
-        if (!string.IsNullOrWhiteSpace(left.FilePath) && left.FilePath == right.FilePath)
+        if (!string.IsNullOrWhiteSpace(left.FilePath) &&
+            string.Equals(left.FilePath, right.FilePath, StringComparison.OrdinalIgnoreCase))
             return true;
-        return NormalizeForMusicCompare(left.Title) == NormalizeForMusicCompare(right.Title) &&
-               (string.IsNullOrWhiteSpace(left.Artist) ||
-                string.IsNullOrWhiteSpace(right.Artist) ||
-                NormalizeForMusicCompare(left.Artist) == NormalizeForMusicCompare(right.Artist));
+        // 宽松兜底与 PlaylistViewModel.FindMatchingTrack 的合并口径保持一致
+        // （收紧后的 IsSameSongLoose + 双边已知时长 ±8s 兼容）：否则预查重会拦截
+        // 应新增的不同版本同名曲、回退查找会定位到错误条目
+        return MusicIdentity.IsSameSongLoose(left.Title, left.Artist, right.Title, right.Artist) &&
+               AreDurationsCompatible(left.Duration, right.Duration);
+    }
+
+    private static bool AreDurationsCompatible(TimeSpan left, TimeSpan right)
+    {
+        if (left <= TimeSpan.Zero || right <= TimeSpan.Zero)
+            return true;
+        return Math.Abs((left - right).TotalSeconds) <= 8;
     }
 
     private static string MapExpression(string emotion) => emotion switch
@@ -1294,6 +1412,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
         _lifetimeCts.Cancel();
         _ttsSub.Dispose();
         _ttsCommandSub.Dispose();
+        _commandQueueSub.Dispose();
+        _commandQueue.Dispose();
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;

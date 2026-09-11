@@ -52,8 +52,12 @@ public class KuwoMusicService : IMusicSearchService
                     $"Kuwo returned an unexpected business code ({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})"));
 
             var tracks = new List<OnlineTrack>();
+            // TryGetProperty 仅在 ValueKind==Object 时返回 bool，data:null 等形状会直接抛
+            // InvalidOperationException，被聚合层误判为传输故障触发熔断（酷我受限曲常见此形状）
             if (!root.TryGetProperty("data", out var dataElement) ||
-                !dataElement.TryGetProperty("list", out var listElement))
+                dataElement.ValueKind != JsonValueKind.Object ||
+                !dataElement.TryGetProperty("list", out var listElement) ||
+                listElement.ValueKind != JsonValueKind.Array)
                 return tracks;
 
             foreach (var item in listElement.EnumerateArray())
@@ -111,11 +115,14 @@ public class KuwoMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("code", out var codeEl) && codeEl.GetInt32() == 200 &&
+            // code/data 同样做形状防御：受限曲返回 code:200 + data:null，按"无地址"处理
+            if (root.TryGetProperty("code", out var codeEl) &&
+                codeEl.ValueKind == JsonValueKind.Number && codeEl.GetInt32() == 200 &&
                 root.TryGetProperty("data", out var data) &&
+                data.ValueKind == JsonValueKind.Object &&
                 data.TryGetProperty("url", out var urlEl))
             {
-                return urlEl.GetString();
+                return urlEl.ValueKind == JsonValueKind.String ? urlEl.GetString() : null;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -25,9 +25,14 @@ public static class EnvironmentManager
     public static async Task<string> EnsureNodeJsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        // 探测加超时：损坏的 node shim 可能挂死，无超时会让音乐代理初始化无限延迟；
+        // 超时/取消都要击杀探测进程
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeCts.CancelAfter(TimeSpan.FromSeconds(10));
+        Process? probe = null;
         try
         {
-            using var proc = Process.Start(new ProcessStartInfo
+            probe = Process.Start(new ProcessStartInfo
             {
                 FileName = "node",
                 Arguments = "-v",
@@ -35,20 +40,34 @@ public static class EnvironmentManager
                 RedirectStandardOutput = true,
                 CreateNoWindow = true
             });
-            if (proc != null)
+            if (probe != null)
             {
-                var version = await proc.StandardOutput.ReadToEndAsync(cancellationToken);
-                await proc.WaitForExitAsync(cancellationToken);
-                if (proc.ExitCode == 0 && version.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                var version = await probe.StandardOutput.ReadToEndAsync(probeCts.Token);
+                await probe.WaitForExitAsync(probeCts.Token);
+                if (probe.ExitCode == 0 && version.StartsWith("v", StringComparison.OrdinalIgnoreCase))
                 {
                     Log.Information("Using system Node.js {Version}", version.Trim());
                     return "node";
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            try { probe?.Kill(entireProcessTree: true); } catch { }
+            throw; // 应用关闭的取消不能被当成"没有 node"落入下载分支
+        }
+        catch (OperationCanceledException)
+        {
+            try { probe?.Kill(entireProcessTree: true); } catch { }
+            Log.Debug("Node.js version probe timed out; falling through to portable runtime");
+        }
         catch (Exception ex)
         {
             Log.Debug(ex, "Node.js detection failed, falling through to portable runtime");
+        }
+        finally
+        {
+            probe?.Dispose();
         }
 
         if (File.Exists(NodeExe))

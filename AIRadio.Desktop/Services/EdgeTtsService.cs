@@ -24,6 +24,8 @@ public class EdgeTtsService : ITtsService, IDisposable
     private const string TrustedClientToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
     private const string ChromiumFullVersion = "143.0.3650.75";
     private const string SecMsGecVersion = $"1-{ChromiumFullVersion}";
+    /// <summary>单次 SynthesizeAsync（首试+重试）的总时限，略高于单次 60s 内部超时。</summary>
+    private static readonly TimeSpan TotalSynthesisTimeout = TimeSpan.FromSeconds(75);
     private const string WssUrl = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
     private const string VoiceListUrl = $"https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken={TrustedClientToken}";
     private const string EdgeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -70,6 +72,9 @@ public class EdgeTtsService : ITtsService, IDisposable
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             _lifetimeCts.Token,
             cancellationToken);
+        // 总时限：首试+重试各 60s 内部超时，无总限时调用方最长可见约 120s，
+        // 期间 _wsLock 被占，后续所有 TTS 排队
+        linkedCts.CancelAfter(TotalSynthesisTimeout);
 
         try
         {
@@ -223,6 +228,7 @@ public class EdgeTtsService : ITtsService, IDisposable
             while (ws.State == WebSocketState.Open)
             {
                 using var msgBuffer = new MemoryStream();
+                using var textBuffer = new MemoryStream();
                 WebSocketReceiveResult result;
                 do
                 {
@@ -241,11 +247,20 @@ public class EdgeTtsService : ITtsService, IDisposable
                     }
                     else if (result.MessageType == WebSocketMessageType.Text)
                     {
-                        var textMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                        if (textMsg.Contains("turn.end"))
-                            goto turnEnd;
+                        // 文本消息同样要累积到 EndOfMessage：WebSocket 允许把一条消息切成
+                        // 多帧，"turn.end" 跨帧切断时逐分片 Contains 会漏检，该句合成
+                        // 挂满 60s 超时再重试一次（最长约 2 分钟占住合成锁）
+                        textBuffer.Write(buffer, 0, result.Count);
                     }
                 } while (!result.EndOfMessage);
+
+                if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var textMsg = Encoding.UTF8.GetString(textBuffer.ToArray());
+                    if (textMsg.Contains("turn.end"))
+                        goto turnEnd;
+                    continue;
+                }
 
                 var msgBytes = msgBuffer.ToArray();
                 if (msgBytes.Length > 2)
@@ -262,7 +277,19 @@ public class EdgeTtsService : ITtsService, IDisposable
             }
 
             var audio = audioStream.ToArray();
-            // 一连接一次合成：本轮结束即弃连接，下次合成重新握手
+            // 一连接一次合成：本轮结束即弃连接，下次合成重新握手。
+            // 先做正常关闭握手（失败再强弃）：高频 abortive close 会被服务端
+            // 记为异常断连，抬高被限流/握手失败的概率
+            try
+            {
+                using var closeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                closeCts.CancelAfter(TimeSpan.FromSeconds(2));
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "turn.end", closeCts.Token);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "Edge TTS graceful close failed; disposing connection");
+            }
             _ws?.Dispose();
             _ws = null;
             return audio;
@@ -290,22 +317,27 @@ public class EdgeTtsService : ITtsService, IDisposable
     internal static string BuildSsml(string text, string voice, string? emotion = null)
     {
         // Escape XML special characters
-        var escaped = text
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;")
-            .Replace("\"", "&quot;")
-            .Replace("'", "&apos;");
+        var escaped = EscapeXml(text);
+        // voice 名进入单引号属性：与正文一致转义，防含引号/尖括号的值破坏 SSML 结构
+        var voiceAttr = EscapeXml(voice);
 
         var (pitch, rate, volume) = ResolveProsody(emotion);
 
         // xml:lang 跟随音色 locale（如 en-US-AriaNeural → en-US），英文音色不再声明成 zh-CN
         return $"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{ResolveLocale(voice)}'>" +
-               $"<voice name='{voice}'>" +
+               $"<voice name='{voiceAttr}'>" +
                $"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>" +
                $"{escaped}" +
                "</prosody></voice></speak>";
     }
+
+    private static string EscapeXml(string value)
+        => value
+            .Replace("&", "&amp;")
+            .Replace("<", "&lt;")
+            .Replace(">", "&gt;")
+            .Replace("\"", "&quot;")
+            .Replace("'", "&apos;");
 
     internal static string ResolveLocale(string voice)
     {

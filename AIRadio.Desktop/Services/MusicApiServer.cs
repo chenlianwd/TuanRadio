@@ -42,6 +42,16 @@ public class MusicApiServer : IDisposable
     }
 
     /// <summary>
+    /// 网易代理等无专属环境需求的启动环境：仅固定 CORS，与酷狗代理的
+    /// GetKugouProxyEnvironment 同理封死跨域浏览器访问（上游默认反射任意 Origin）。
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> RestrictedCorsEnvironment { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CORS_ALLOW_ORIGIN"] = "http://tuanradio.local"
+        };
+
+    /// <summary>
     /// 本地 Node 音乐 API 代理管理器。默认参数对应网易云代理（server 目录 + 37250 端口），
     /// 酷狗代理复用本类并传入各自的目录/端口/健康检查形状。
     /// requireSuccessStatusCode=false 适用于"业务失败也用 2xx 之外的状态码表达"的代理

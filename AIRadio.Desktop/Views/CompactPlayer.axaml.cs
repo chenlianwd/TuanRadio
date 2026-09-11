@@ -46,6 +46,10 @@ public partial class CompactPlayer : UserControl
 
     private void OnSpectrumReceived(float[] data)
     {
+        // 本控件常驻可视树、标准模式下不可见：跳过隐藏状态的逐帧属性写
+        if (!IsVisible)
+            return;
+
         // SpectrumViewModel 已把事件切到 UI 线程；只更新 8 段小柱高度，开销可忽略
         var bars = SpectrumPanel.Children;
         for (int i = 0; i < bars.Count; i++)

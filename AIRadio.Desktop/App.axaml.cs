@@ -83,7 +83,9 @@ public partial class App : Application
 
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
-                _musicApiServer = new MusicApiServer();
+                // 网易代理上游默认反射任意 Origin：固定 CORS 封死浏览器跨域访问本地端口
+                _musicApiServer = new MusicApiServer(
+                    environmentFactory: () => MusicApiServer.RestrictedCorsEnvironment);
                 var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
                 _kugouApiServer = new MusicApiServer(
                     port: 37251,

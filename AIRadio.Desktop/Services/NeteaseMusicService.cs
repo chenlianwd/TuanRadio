@@ -56,8 +56,12 @@ public class NeteaseMusicService : IMusicSearchService
                     $"网易接口业务码异常({(codeEl.ValueKind == JsonValueKind.Number ? codeEl.GetInt32() : -1)})，本地代理或鉴权可能失效",
                     $"NetEase returned an unexpected business code ({(codeEl.ValueKind == JsonValueKind.Number ? codeEl.GetInt32() : -1)}); the local proxy or authentication may be invalid"));
 
+            // result:null（JsonValueKind.Null 时 TryGetProperty 抛 InvalidOperationException）
+            // 或 songs 非数组会被聚合层误判为传输故障熔断主源：与播放路径同口径做形状防御
             if (!root.TryGetProperty("result", out var result) ||
-                !result.TryGetProperty("songs", out var songs))
+                result.ValueKind != JsonValueKind.Object ||
+                !result.TryGetProperty("songs", out var songs) ||
+                songs.ValueKind != JsonValueKind.Array)
                 return new List<OnlineTrack>();
 
             var tracks = new List<OnlineTrack>();
@@ -133,10 +137,15 @@ public class NeteaseMusicService : IMusicSearchService
             using var doc = JsonDocument.Parse(responseText);
             var root = doc.RootElement;
 
-            if (!root.TryGetProperty("code", out var codeEl) || codeEl.GetInt32() != 200)
+            // 与搜索路径同口径的形状防御：code 非数字或 data 非数组（旧接口返回单对象/null）
+            // 会抛 InvalidOperationException，被上游按传输故障熔断
+            if (!root.TryGetProperty("code", out var codeEl) ||
+                codeEl.ValueKind != JsonValueKind.Number ||
+                codeEl.GetInt32() != 200)
                 return null;
 
-            if (root.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
+            if (root.TryGetProperty("data", out var data) &&
+                data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0)
             {
                 var first = data[0];
                 if (IsTrialOrRestricted(first))

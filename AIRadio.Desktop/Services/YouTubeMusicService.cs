@@ -51,11 +51,13 @@ public class YouTubeMusicService : IMusicSearchService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (YtdlpUnavailableException ex)
         {
-            Log.Warning(ex, "YouTube search failed for {Keyword}", keyword);
-            return new List<OnlineTrack>();
+            // yt-dlp 未安装/版本被禁用属于源不可用（业务态）：透传为业务异常，聚合层
+            // 记 failed；塌缩成空结果会被记 success("ok(0)")，YouTube 永不熔断、状态失真
+            throw new MusicSourceBusinessException(ex.Message);
         }
+        // 其余异常不再吞掉：与其他源的 rethrow 口径一致，由聚合层按 failed/timeout 记账
     }
 
     public Task<string?> GetPlayUrlAsync(string trackId)
@@ -94,11 +96,12 @@ public class YouTubeMusicService : IMusicSearchService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (YtdlpUnavailableException ex)
         {
-            Log.Warning(ex, "YouTube get play URL failed for {TrackId}", trackId);
-            return null;
+            // 同 SearchAsync：源不可用按业务异常透传，聚合层记录后继续回退下一源
+            throw new MusicSourceBusinessException(ex.Message);
         }
+        // TimeoutException/其余异常上抛：聚合层按 timeout/failed 记账后返回 null 走跨源回退
     }
 
     private List<OnlineTrack> ParseSearchResultsJson(string output)
@@ -136,9 +139,10 @@ public class YouTubeMusicService : IMusicSearchService
                     DurationMs = duration * 1000
                 });
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // Skip malformed lines
+                // GetString 对非字符串值抛 InvalidOperationException：一条畸形行
+                // 不能把前面所有正常行一起丢掉（异常穿出会被上层当整次搜索失败）
                 continue;
             }
         }
@@ -148,64 +152,57 @@ public class YouTubeMusicService : IMusicSearchService
 
     private async Task<string?> RunYtdlpAsync(string args, CancellationToken cancellationToken)
     {
+        // 不再兜底吞异常：执行失败若塌缩成 null 会被聚合层记 success("ok(0)")，
+        // YouTube 源永远不熔断、逐源状态失真；异常上抛由聚合层统一记账
+        var ytdlpPath = await EnsureUsableYtdlpAsync(cancellationToken);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = ytdlpPath,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null) return null;
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+        var outputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+        var errorTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+
         try
         {
-            var ytdlpPath = await EnsureUsableYtdlpAsync(cancellationToken);
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = ytdlpPath,
-                Arguments = args,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process == null) return null;
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-            var outputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-            var errorTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
-
-            try
-            {
-                await process.WaitForExitAsync(timeoutCts.Token);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                throw;
-            }
-            catch (OperationCanceledException)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                Log.Warning("yt-dlp timed out after 30s");
-                return null;
-            }
-
-            var output = await outputTask;
-            var stderr = await errorTask;
-
-            if (process.ExitCode != 0)
-            {
-                Log.Warning("yt-dlp exited with code {Code}: {Error}", process.ExitCode, stderr);
-                return null;
-            }
-
-            return output;
+            await process.WaitForExitAsync(timeoutCts.Token);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            try { process.Kill(entireProcessTree: true); } catch { }
             throw;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
-            Log.Debug(ex, "yt-dlp execution failed");
+            try { process.Kill(entireProcessTree: true); } catch { }
+            // 内层 30s 超时按 TimeoutException 上抛：聚合层才能记 timeout（外层预算更大
+            // 的调用路径下，返回 null 会被记成 success）
+            Log.Warning("yt-dlp timed out after 30s");
+            throw new TimeoutException("yt-dlp timed out after 30s");
+        }
+
+        var output = await outputTask;
+        var stderr = await errorTask;
+
+        if (process.ExitCode != 0)
+        {
+            // 搜索无结果时 yt-dlp 也以非零退出：无法与真实故障区分，保守按"无输出"处理
+            Log.Warning("yt-dlp exited with code {Code}: {Error}", process.ExitCode, stderr);
             return null;
         }
+
+        return output;
     }
 
     /// <summary>
@@ -247,11 +244,29 @@ public class YouTubeMusicService : IMusicSearchService
         return string.IsNullOrEmpty(browser) ? "" : $" --cookies-from-browser {EscapeArg(browser)}";
     }
 
-    private static string EscapeArg(string arg)
+    internal static string EscapeArg(string arg)
     {
-        // Strip control characters and escape embedded double quotes for safe process arguments
+        // Strip control characters and escape for safe process arguments (CRT parsing rules)：
+        // 嵌入引号翻倍为 ""，且紧邻任意引号（含嵌入与闭合）前的连续反斜杠必须翻倍，
+        // 否则结尾的 \" 被解析为字面引号、其后拼接的固定参数会全部并入同一参数
         var sanitized = arg.Replace("\r", "").Replace("\n", "").Replace("\0", "");
-        var escaped = sanitized.Replace("\"", "\"\"");
-        return $"\"{escaped}\"";
+        var sb = new System.Text.StringBuilder(sanitized.Length + 2);
+        var pendingBackslashes = 0;
+        foreach (var c in sanitized)
+        {
+            if (c == '\\')
+            {
+                pendingBackslashes++;
+                continue;
+            }
+
+            if (c == '"')
+                sb.Append('\\', pendingBackslashes * 2).Append("\"\"");
+            else
+                sb.Append('\\', pendingBackslashes).Append(c);
+            pendingBackslashes = 0;
+        }
+        sb.Append('\\', pendingBackslashes * 2); // 闭合引号前的结尾反斜杠翻倍
+        return $"\"{sb}\"";
     }
 }

@@ -117,19 +117,25 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         RemoveTrackCommand = ReactiveCommand.Create<Track>(track =>
         {
             _audioService.RemoveTrack(track);
-            Tracks.Remove(track);
-            // 同步收藏视图：删除的曲目留在 Favorites 里会成为不可播的幽灵条目
-            if (Favorites.Contains(track))
-                Favorites.Remove(track);
+            // 抑制 Tracks.Remove 触发的自动保存：此刻 _favoriteIds/SyncedPlaylists 尚未清理，
+            // 中间快照若恰逢崩溃/第二次保存失败会残留孤儿数据；清理完成后统一保存一次
+            MutateWithoutAutosave(() =>
+            {
+                Tracks.Remove(track);
+                // 同步收藏视图：删除的曲目留在 Favorites 里会成为不可播的幽灵条目
+                if (Favorites.Contains(track))
+                    Favorites.Remove(track);
+            });
             _favoriteIds.Remove(track.Id);
             RemoveTrackFromSyncedPlaylists(track);
+            ApplyLibraryPlaylistFilter();
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
         ClearPlaylistCommand = ReactiveCommand.Create(() =>
         {
             _audioService.ClearPlaylist();
-            Tracks.Clear();
+            MutateWithoutAutosave(Tracks.Clear);
             // 收藏从属于播放列表：清空后重载时收藏本来就会随之消失，这里同步清理避免幽灵条目和脏持久化
             Favorites.Clear();
             _favoriteIds.Clear();
@@ -309,14 +315,43 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
 
+    /// <summary>
+    /// 多步状态清理期间抑制 Tracks 变更触发的自动保存，由调用方在清理完成后统一保存一次，
+    /// 避免中间不一致快照（如已删曲目但收藏/同步歌单未清理）落盘。
+    /// </summary>
+    private void MutateWithoutAutosave(Action mutate)
+    {
+        // 加载期间 OnTracksChanged 已被 LoadAsync 摘除：这里不能再 += 回去，
+        // 否则 LoadAsync 收尾再次 += 会造成双订阅（每次变更双倍过滤/保存）
+        if (_isLoading)
+        {
+            mutate();
+            return;
+        }
+
+        Tracks.CollectionChanged -= OnTracksChanged;
+        try
+        {
+            mutate();
+        }
+        finally
+        {
+            Tracks.CollectionChanged += OnTracksChanged;
+        }
+    }
+
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (Volatile.Read(ref _disposed) != 0 || _isLoading)
             return;
 
         _isLoading = true;
         var loadCompleted = false;
         _futureFormatSkipped = false;
+        // 加载的 await 窗口内窗口已可见可交互：记录进入加载时的快照，
+        // 应用文件数据后把窗口内新增的曲目/收藏合并回来，否则被 Clear 静默丢弃并固化
+        var tracksAtLoadStart = Tracks.ToList();
+        var favoriteIdsAtLoadStart = _favoriteIds.ToHashSet();
         Tracks.CollectionChanged -= OnTracksChanged;
         try
         {
@@ -348,6 +383,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             if (data.Version < PlaylistData.CurrentVersion)
                 _pendingLegacyVersion = Math.Max(1, data.Version);
 
+            // 必须在 Clear 之前捕获窗口内新增的收藏：Clear 之后差集恒为空，窗口内点收藏会被静默回滚
+            var lateFavoriteIds = _favoriteIds.Where(id => !favoriteIdsAtLoadStart.Contains(id)).ToList();
             _favoriteIds.Clear();
             if (data.FavoriteIds != null && data.FavoriteIds.Count > 0)
             {
@@ -361,6 +398,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                     if (item.IsFavorite && !string.IsNullOrEmpty(item.Id))
                         _favoriteIds.Add(item.Id);
             }
+
+            // 窗口内（读取/反序列化期间）新增的曲目：合并回放，避免丢更新（收藏差集已在 Clear 前捕获）
+            var lateAddedTracks = Tracks.Where(t => !tracksAtLoadStart.Contains(t)).ToList();
 
             Tracks.Clear();
             Favorites.Clear();
@@ -405,6 +445,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                             : new Dictionary<string, string>(item.Provider.Metadata, StringComparer.OrdinalIgnoreCase),
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
+                    // 仅存在于 legacy IsFavorite 字段的收藏要并入 _favoriteIds：保存侧只看它，
+                    // 否则先显示为已收藏、首次保存即被静默清除（空 Id 与 legacy 回填路径同口径排除）
+                    if (track.IsFavorite && !string.IsNullOrEmpty(track.Id))
+                        _favoriteIds.Add(track.Id);
                     Tracks.Add(track);
                     if (track.IsFavorite)
                         Favorites.Add(track);
@@ -421,11 +465,26 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                         FilePath = item.FilePath,
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
+                    // 同上：legacy 收藏并入 _favoriteIds，保证显示与持久化同一数据源
+                    if (track.IsFavorite && !string.IsNullOrEmpty(track.Id))
+                        _favoriteIds.Add(track.Id);
                     Tracks.Add(track);
                     if (track.IsFavorite)
                         Favorites.Add(track);
                 }
             }
+
+            // 合并加载窗口内新增的曲目/收藏（按既有宽松口径查重，避免与文件数据重复入列）
+            foreach (var late in lateAddedTracks)
+            {
+                if (FindMatchingTrack(late) != null)
+                    continue;
+                Tracks.Add(late);
+                if (late.IsFavorite && !Favorites.Contains(late))
+                    Favorites.Add(late);
+            }
+            foreach (var id in lateFavoriteIds)
+                _favoriteIds.Add(id);
 
             HasSyncedPlaylists = SyncedPlaylists.Count > 0;
             ApplyLibraryPlaylistFilter();
@@ -681,7 +740,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             return (outcome.Tracks, outcome.Report);
         }
 
-        var tracks = await _musicSearchService.SearchAsync(keyword, limit);
+        var tracks = await _musicSearchService.SearchAsync(keyword, limit, _lifetimeCts.Token);
         return (tracks, Array.Empty<Services.SourceSearchStatus>());
     }
 
@@ -767,7 +826,10 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsKugouLoading = false;
+            // 只有自己持门置位过才复位：取消路径（gateHeld=false）无条件复位会
+            // 提前熄灭另一路仍在持门加载的指示器
+            if (gateHeld)
+                IsKugouLoading = false;
             if (gateHeld)
                 _kugouGate.Release();
         }
@@ -839,7 +901,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsKugouLoading = false;
+            // 取消路径（gateHeld=false）不能无条件复位：会提前熄灭另一路仍在持门加载的指示器
+            if (gateHeld)
+                IsKugouLoading = false;
             if (gateHeld)
                 _kugouGate.Release();
         }
@@ -936,7 +1000,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsKugouLoading = false;
+            // 取消路径（gateHeld=false）不能无条件复位：会提前熄灭另一路仍在持门加载的指示器
+            if (gateHeld)
+                IsKugouLoading = false;
             if (gateHeld)
                 _kugouGate.Release();
         }
@@ -1193,6 +1259,9 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         _selectedSyncedPlaylistSub.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
         AppLanguage.Changed -= _onLanguageChanged;
+        // _lifetimeCts/_saveGate/_kugouGate 不显式释放：均为无定时器的纯托管对象，
+        // 同步 Dispose 里等待在途保存会阻塞关闭线程，强制释放则让在途 SaveAsync 的
+        // await/Release 抛 ObjectDisposedException 丢掉最后一次持久化。交给 finalizer 回收。
     }
 }
 

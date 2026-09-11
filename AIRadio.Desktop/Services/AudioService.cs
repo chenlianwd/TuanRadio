@@ -50,7 +50,7 @@ public class AudioService : IAudioService, IDisposable
     private bool _shuffle;
     private string _repeatMode = "radio";
     private string _speechMixMode = "duck";
-    private bool _resumeAfterTts;
+    private volatile bool _resumeAfterTts;
     private bool _ttsWasPlayingWhenMusicPaused;
     private readonly object _ttsStateGate = new();
     private int _ttsSessionId;
@@ -77,6 +77,8 @@ public class AudioService : IAudioService, IDisposable
     private readonly object _nativeCallbackGate = new();
     private readonly object _playerOperationGate = new();
     private readonly SemaphoreSlim _nextGate = new(1, 1);
+    // -1=无待补跑；>=0 为"持门期间有新切歌请求"置位时的 _playRequestId 快照
+    private int _nextRequestedWhileGateHeld = -1;
     private readonly object _ttsOperationGate = new();
     private readonly ManualResetEventSlim _nativeCallbacksDrained = new(initialState: true);
     private int _activeNativeCallbacks;
@@ -255,6 +257,12 @@ public class AudioService : IAudioService, IDisposable
 
             if (state == PlaybackState.Paused)
             {
+                // pause 串场模式下音乐暂停由 TTS 自己发起（先 OnNext(true) 再开播语音），
+                // LibVLC 的 Paused 事件晚于 TTS 启动到达；此时反手暂停 TTS 会让两者
+                // 互相等待对方恢复（音乐等 tts=false，TTS 等音乐 Playing），双双卡死。
+                if (_resumeAfterTts)
+                    return;
+
                 WaveOutEvent? output;
                 lock (_ttsStateGate)
                 {
@@ -445,7 +453,9 @@ public class AudioService : IAudioService, IDisposable
         _playbackRecoverySubject.Dispose();
         _ttsStateSubject.Dispose();
         _ttsErrorSubject.Dispose();
-        _lifetimeCts.Dispose();
+        // 不释放 _lifetimeCts：后台延迟任务（重试/续播/旧 Media 释放）在 IsDisposed 检查
+        // 之后才读 Token，释放 CTS 会把 ObjectDisposedException 抛进 fire-and-forget 任务。
+        // 普通 CTS 不含定时器资源，交给 finalizer 回收即可。
         _nativeCallbacksDrained.Dispose();
     }
 
@@ -464,8 +474,15 @@ public class AudioService : IAudioService, IDisposable
         if (IsDisposed)
             return;
 
-        var index = _currentIndex;
-        var track = CurrentTrack;
+        Track? track;
+        int index;
+        lock (_playlistGate)
+        {
+            // index 与 track 必须同锁快照：分开读会在并发增删时失配，
+            // 把旧 index 喂给重试/推进逻辑导致守卫误判
+            index = _currentIndex;
+            track = index >= 0 && index < _playlist.Count ? _playlist[index] : null;
+        }
         var requestId = Volatile.Read(ref _playRequestId);
         Log.Warning("Playback error on track: {Track}", track?.Title);
         SetState(PlaybackState.Stopped);
@@ -507,11 +524,23 @@ public class AudioService : IAudioService, IDisposable
         SetState(PlaybackState.Ended);
         // LibVLC 的事件回调中不能同步 Stop/Play；延迟到回调返回后再处理续播。
         var requestId = Volatile.Read(ref _playRequestId);
+        long endReachedIntentVersion;
+        lock (_playbackIntentGate)
+        {
+            endReachedIntentVersion = _playbackIntentVersion;
+        }
         ScheduleAfterPlaybackCallback(requestId, () =>
         {
             // In radio mode, hand off to MainWindowViewModel's TrackEnded handler
             // to keep AudioService playlist and PlaylistVM in sync.
             if (IsDisposed)
+                return;
+
+            // 延迟窗口内版本被推进时，只有 _nextGate 被占用（NextAsync 推荐链在途、
+            // 即将接管播放）才作废旧续播；仅队列类操作推进版本（PlayNextInQueue 等，
+            // 当前无调用方）不接管播放，误杀会让电台模式自动续播静默停摆。
+            // CurrentCount 是瞬时快照，够用于此判定
+            if (!IsCurrentPlaybackIntent(endReachedIntentVersion) && _nextGate.CurrentCount == 0)
                 return;
 
             if (_repeatMode == "single" && CurrentTrack != null)
@@ -757,8 +786,16 @@ public class AudioService : IAudioService, IDisposable
 
     private async Task NextAsync()
     {
-        if (IsDisposed || !await _nextGate.WaitAsync(0).ConfigureAwait(false))
+        if (IsDisposed)
             return;
+
+        if (!await _nextGate.WaitAsync(0).ConfigureAwait(false))
+        {
+            // 推荐回调在途（持门最长约 2 分钟）时到达的切歌请求不能静默丢弃：
+            // 登记"期间有新请求"及其发起时的播放请求号，持门方结束后补跑一次
+            Interlocked.Exchange(ref _nextRequestedWhileGateHeld, Volatile.Read(ref _playRequestId));
+            return;
+        }
 
         try
         {
@@ -845,6 +882,11 @@ public class AudioService : IAudioService, IDisposable
         finally
         {
             _nextGate.Release();
+            // 标志置位后若已发生新播放（requestId 变化）则丢弃补跑：新曲已接管，
+            // 补跑会把刚开播的曲切掉（错误恢复触发的自动 Next 与慢推荐碰撞时的多跳一首）
+            var requestAtFlag = Interlocked.Exchange(ref _nextRequestedWhileGateHeld, -1);
+            if (!IsDisposed && requestAtFlag >= 0 && requestAtFlag == Volatile.Read(ref _playRequestId))
+                _ = NextAsync();
         }
     }
 
@@ -1237,6 +1279,7 @@ public class AudioService : IAudioService, IDisposable
             Volatile.Write(ref _recoveryPlaybackStartedAtMs, 0);
         }
         Media? newMedia = null;
+        Media? oldMedia = null;
         var mediaAssigned = false;
         try
         {
@@ -1282,10 +1325,10 @@ public class AudioService : IAudioService, IDisposable
                 return;
             }
 
-            Media? oldMedia = null;
+            Media? previousMedia = null;
             if (!TryPlayerOperation(() =>
             {
-                oldMedia = _player.Media;
+                previousMedia = _player.Media;
                 _player.Stop();
                 newMedia = new Media(_libVLC, filePath, isUrl ? FromType.FromLocation : FromType.FromPath);
                 if (isUrl)
@@ -1295,6 +1338,9 @@ public class AudioService : IAudioService, IDisposable
                 }
 
                 _player.Media = newMedia;
+                // 此点之后旧 Media 已脱离播放器：立即记录，lambda 后续（Play）抛出时
+                // finally 的延迟释放仍能覆盖，不会悬挂到进程结束
+                oldMedia = previousMedia;
                 mediaAssigned = true;
                 _player.Play();
             }))
@@ -1302,9 +1348,6 @@ public class AudioService : IAudioService, IDisposable
                 newMedia?.Dispose();
                 return;
             }
-
-            if (oldMedia != null)
-                _ = DisposeMediaAfterDelayAsync(oldMedia, _lifetimeCts.Token);
 
             QueuePlayerVolume(0);
             NotifyTrackChanged();
@@ -1320,6 +1363,13 @@ public class AudioService : IAudioService, IDisposable
             Log.Error(ex, "Failed to play track: {Track}", track);
             // 同上：锁外延迟派发，避免与播放入口形成反向锁序。
             ScheduleNextTrack(requestId, "play track failed");
+        }
+        finally
+        {
+            // 换曲中途抛异常（或 TryPlayerOperation 失败返回）时旧 Media 也要走延迟释放，
+            // 不能只覆盖正常路径，否则最后一次换曲的旧 Media 悬挂到进程结束
+            if (oldMedia != null)
+                _ = DisposeMediaAfterDelayAsync(oldMedia, _lifetimeCts.Token);
         }
     }
 
@@ -1630,14 +1680,20 @@ public class AudioService : IAudioService, IDisposable
             {
                 // Ensure the VLC callback has fully returned before calling Stop/Play.
                 await Task.Delay(PlaybackCallbackReleaseDelay, cancellationToken).ConfigureAwait(false);
-                if (!cancellationToken.IsCancellationRequested &&
-                    !IsDisposed &&
-                    requestId == Volatile.Read(ref _playRequestId) &&
-                    index == Volatile.Read(ref _currentIndex))
+                if (cancellationToken.IsCancellationRequested || IsDisposed)
+                    return;
+                if (requestId != Volatile.Read(ref _playRequestId))
+                    return; // 新播放已接管，旧重试作废
+                if (index != Volatile.Read(ref _currentIndex))
                 {
-                    Log.Information("Retrying track {TrackIndex} after {Reason}", index, reason);
-                    PlayTrack(index, isRetry: true);
+                    // 播放列表并发增删导致索引漂移：播放器已停，静默丢弃重试会让电台停摆，
+                    // 兜底推进下一首（新播放接管的情况已被上面的 requestId 守卫排除）
+                    Log.Information("Playback retry index drifted from {Index}; advancing instead", index);
+                    ScheduleNextTrack(requestId, "playback retry index drifted");
+                    return;
                 }
+                Log.Information("Retrying track {TrackIndex} after {Reason}", index, reason);
+                PlayTrack(index, isRetry: true);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -1672,24 +1728,30 @@ public class AudioService : IAudioService, IDisposable
             try
             {
                 await Task.Delay(PlaybackCallbackReleaseDelay, cancellationToken).ConfigureAwait(false);
-                if (cancellationToken.IsCancellationRequested ||
-                    IsDisposed ||
-                    requestId != Volatile.Read(ref _playRequestId) ||
-                    index != Volatile.Read(ref _currentIndex) ||
-                    !IsPlaylistEntryAt(index, track))
+                if (cancellationToken.IsCancellationRequested || IsDisposed)
+                    return;
+                if (requestId != Volatile.Read(ref _playRequestId))
+                    return; // 新播放已接管，旧恢复作废
+                if (index != Volatile.Read(ref _currentIndex) || !IsPlaylistEntryAt(index, track))
                 {
+                    // 索引漂移或曲目已被替换：与 SchedulePlaybackRetry 同理兜底推进，避免静默停摆
+                    Log.Information("Alternative source retry index drifted from {Index}; advancing instead", index);
+                    ScheduleNextTrack(requestId, "alternative source retry index drifted");
                     return;
                 }
 
                 var previousUrl = track.FilePath;
                 var previousSourceId = track.SourceId;
                 var resolution = await ResolveAlternativeUrlWithTimeoutAsync(track).ConfigureAwait(false);
-                if (cancellationToken.IsCancellationRequested ||
-                    IsDisposed ||
-                    requestId != Volatile.Read(ref _playRequestId) ||
-                    index != Volatile.Read(ref _currentIndex) ||
-                    !IsPlaylistEntryAt(index, track))
+                if (cancellationToken.IsCancellationRequested || IsDisposed)
+                    return;
+                if (requestId != Volatile.Read(ref _playRequestId))
+                    return; // 新播放已接管，旧恢复作废
+                if (index != Volatile.Read(ref _currentIndex) || !IsPlaylistEntryAt(index, track))
                 {
+                    // 解析耗期间索引漂移：同样兜底推进，避免恢复死路
+                    Log.Information("Alternative source resolution index drifted from {Index}; advancing instead", index);
+                    ScheduleNextTrack(requestId, "alternative source resolution index drifted");
                     return;
                 }
 
@@ -1955,6 +2017,11 @@ public class AudioService : IAudioService, IDisposable
         catch (Exception ex) when (IsDisposed)
         {
             Log.Debug(ex, "Ignoring position update during audio shutdown");
+        }
+        catch (Exception ex)
+        {
+            // System.Threading.Timer 会吞掉回调异常，这里不接住的话进度更新静默中断且无日志
+            Log.Warning(ex, "Position update failed");
         }
         finally
         {

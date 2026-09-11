@@ -183,7 +183,8 @@ public sealed class KugouAccountService
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Kugou nickname check failed");
+            // 请求 URL 含 userid，部分异常消息会带出完整 URL：脱敏后再入日志
+            Log.Debug("Kugou nickname check failed: {Error}", SensitiveDataSanitizer.Sanitize(ex.ToString()));
             return null;
         }
     }

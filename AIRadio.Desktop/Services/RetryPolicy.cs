@@ -8,6 +8,11 @@ namespace AIRadio.Desktop.Services;
 
 public static class RetryPolicy
 {
+    /// <summary>
+    /// 无 token 重载仅供测试/无取消场景使用：内部固定 CancellationToken.None，
+    /// 动作抛出的任何 OperationCanceledException（含调用方真实取消的穿透）都会被
+    /// 判为瞬态而重试，且退避 Delay 不可取消。生产调用必须用带 token 的重载。
+    /// </summary>
     public static async Task<T> ExecuteAsync<T>(
         Func<Task<T>> action,
         int maxRetries = 3,
@@ -47,6 +52,7 @@ public static class RetryPolicy
         => ex is HttpRequestException or TimeoutException ||
            (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested);
 
+    /// <summary>同上：无 token 的 void 重载，仅供测试/无取消场景，生产调用用带 token 的重载。</summary>
     public static async Task ExecuteAsync(
         Func<Task> action,
         int maxRetries = 3,
