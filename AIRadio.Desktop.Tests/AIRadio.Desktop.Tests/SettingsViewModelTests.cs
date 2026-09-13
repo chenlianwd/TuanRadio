@@ -703,6 +703,30 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task SaveAndLoad_PersistsLyricsStagePreference()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var settingsFile = Path.Combine(dir, "settings.json");
+
+        try
+        {
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            vm.ShowLyricsInStage = true;
+            await vm.SaveCommand.Execute();
+
+            var reloaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await reloaded.LoadAsync();
+
+            Assert.True(reloaded.ShowLyricsInStage);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task SaveAndLoad_PersistsSpectrumStyle()
     {
         var settingsFile = CreateTempSettingsFile();

@@ -75,6 +75,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public string SelectedSpectrumStyle { get; set; } = "bars";
     [Reactive] public bool CompactModeTopmost { get; set; } = true;
     [Reactive] public bool StartInCompactMode { get; set; }
+    [Reactive] public bool ShowLyricsInStage { get; set; }
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
@@ -414,6 +415,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("start_in_compact_mode", out var startCompact))
                     StartInCompactMode = startCompact.GetBoolean();
+
+                if (root.TryGetProperty("show_lyrics_in_stage", out var showLyrics))
+                    ShowLyricsInStage = showLyrics.GetBoolean();
 
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
@@ -963,6 +967,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 spectrum_style = NormalizeSpectrumStyle(SelectedSpectrumStyle),
                 compact_mode_topmost = CompactModeTopmost,
                 start_in_compact_mode = StartInCompactMode,
+                show_lyrics_in_stage = ShowLyricsInStage,
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
