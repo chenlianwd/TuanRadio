@@ -232,6 +232,8 @@ public partial class App : Application
                 sp.GetRequiredService<ILLMService>(),
                 sp.GetRequiredService<IMusicSearchService>()));
         services.AddSingleton<ISttService, WhisperSttService>();
+        services.AddSingleton<ILyricService>(sp =>
+            new LyricService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
         services.AddSingleton(sp => new MainWindowViewModel(
             sp.GetRequiredService<IAudioService>(),
@@ -244,7 +246,8 @@ public partial class App : Application
             SettingsViewModel.DefaultSettingsFile,
             accountStore: sp.GetRequiredService<MusicAccountStore>(),
             httpClient: sp.GetRequiredService<System.Net.Http.HttpClient>(),
-            kugouVerification: sp.GetRequiredService<KugouVerificationService>()));
+            kugouVerification: sp.GetRequiredService<KugouVerificationService>(),
+            lyricService: sp.GetRequiredService<ILyricService>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)

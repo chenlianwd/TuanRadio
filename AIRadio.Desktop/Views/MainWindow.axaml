@@ -110,6 +110,10 @@
                                           Data="M12,4 L12,2 M12,22 L12,20 M4.9,4.9 L3.5,3.5 M20.5,20.5 L19.1,19.1 M4,12 L2,12 M22,12 L20,12 M4.9,19.1 L3.5,20.5 M20.5,3.5 L19.1,4.9 M12,17 C14.8,17 17,14.8 17,12 C17,9.2 14.8,7 12,7 C9.2,7 7,9.2 7,12 C7,14.8 9.2,17 12,17"/>
                                 </Grid>
                             </Button>
+                            <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
+                                    Command="{Binding ToggleLyricsModeCommand}" ToolTip.Tip="{DynamicResource S_LyricsMode}" AutomationProperties.Name="{DynamicResource S_LyricsMode}">
+                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M5,4 L19,4 M5,9 L19,9 M5,14 L19,14 M5,19 L12,19"/>
+                            </Button>
                         </StackPanel>
                     </Grid>
                 </Border>

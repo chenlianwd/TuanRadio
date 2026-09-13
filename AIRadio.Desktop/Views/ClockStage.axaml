@@ -16,7 +16,7 @@
                    TextWrapping="Wrap"/>
         <local:StarfieldView x:Name="Starfield"
                              IsHitTestVisible="False"/>
-        <Grid ColumnDefinitions="*,Auto,*" Margin="24,10">
+        <Grid ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding !IsLyricsMode}">
             <local:SpectrumView Grid.Column="0" DataContext="{Binding SpectrumVM}"
                                 HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                 Height="118" Margin="0,0,18,0"/>
@@ -33,5 +33,22 @@
                                 HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                 Height="118" Margin="18,0,0,0"/>
         </Grid>
+
+        <!-- 歌词图层：与三栏时钟/频谱互斥；星空与 ClockDots 继续作为背景 -->
+        <StackPanel IsVisible="{Binding IsLyricsMode}" IsHitTestVisible="False"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" Margin="48,0">
+            <TextBlock Text="{Binding LyricsVM.PreviousLineText}" FontSize="12" Opacity="0.7"
+                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
+                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="540"/>
+            <TextBlock Text="{Binding LyricsVM.CurrentLineText}" FontSize="19" FontWeight="700"
+                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"
+                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="600"/>
+            <TextBlock Text="{Binding LyricsVM.NextLineText}" FontSize="12" Opacity="0.7"
+                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
+                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="540"/>
+            <TextBlock Text="{Binding LyricsVM.LyricStatusText}" FontSize="10" Margin="0,6,0,0"
+                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
+                       HorizontalAlignment="Center" IsVisible="{Binding LyricsVM.HasStatusText}"/>
+        </StackPanel>
     </Grid>
 </UserControl>

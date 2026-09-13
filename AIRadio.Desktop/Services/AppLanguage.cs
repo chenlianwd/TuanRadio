@@ -154,6 +154,7 @@ public static class AppLanguage
         ["S_Add"] = "加入",
         // 主窗口与聊天区
         ["S_Library"] = "曲库",
+        ["S_LyricsMode"] = "歌词模式",
         ["S_HostPicker"] = "数字人",
         ["S_Theme"] = "切换主题",
         ["S_CloseSettings"] = "关闭设置",
@@ -246,6 +247,7 @@ public static class AppLanguage
         ["S_Add"] = "Add",
         // Main window & chat area
         ["S_Library"] = "Library",
+        ["S_LyricsMode"] = "Lyrics mode",
         ["S_HostPicker"] = "Host",
         ["S_Theme"] = "Switch theme",
         ["S_CloseSettings"] = "Close settings",

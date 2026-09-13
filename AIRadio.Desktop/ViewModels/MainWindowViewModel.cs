@@ -52,6 +52,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ChatViewModel ChatVM { get; }
     public SettingsViewModel SettingsVM { get; }
     public SpectrumViewModel SpectrumVM { get; }
+    public LyricsViewModel LyricsVM { get; }
 
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
 
@@ -66,6 +67,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsDarkMode { get; set; } = true;
     [Reactive] public bool IsCurrentFavorite { get; set; }
     [Reactive] public bool IsCompactMode { get; set; }
+    [Reactive] public bool IsLyricsMode { get; set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
     [Reactive] public bool HasCurrentRadioProgram { get; set; }
     [Reactive] public bool IsProgramLoading { get; set; }
@@ -105,6 +107,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<CharacterProfile, Unit> SelectCharacterCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleLyricsModeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactTopmostCommand { get; }
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
@@ -128,7 +131,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IRecommendationService? recommendationService = null,
         MusicAccountStore? accountStore = null,
         System.Net.Http.HttpClient? httpClient = null,
-        KugouVerificationService? kugouVerification = null)
+        KugouVerificationService? kugouVerification = null,
+        ILyricService? lyricService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -154,6 +158,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             track => PlaylistVM.AddExternalTrack(track), _recommendationService);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification);
         SpectrumVM = new SpectrumViewModel(_audioService);
+        LyricsVM = new LyricsViewModel(
+            _audioService,
+            lyricService ?? new LyricService(httpClient ?? new System.Net.Http.HttpClient()));
 
         // 酷狗 20028 风控：命中挑战时自动弹浏览器滑块验证（冷却限频），完成后播放自然恢复
         if (_kugouVerification != null)
@@ -199,6 +206,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
         ToggleCompactModeCommand = ReactiveCommand.Create(ToggleCompactMode);
+        ToggleLyricsModeCommand = ReactiveCommand.Create(ToggleLyricsMode);
         ToggleCompactTopmostCommand = ReactiveCommand.Create(() =>
         {
             SettingsVM.CompactModeTopmost = !SettingsVM.CompactModeTopmost;
@@ -614,8 +622,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             return;
 
         IsDarkMode = SettingsVM.IsDarkMode;
-        // 启动时恢复上次的窗口模式（简洁/标准）
+        // 启动时恢复上次的窗口模式（简洁/标准）与歌词模式
         IsCompactMode = SettingsVM.StartInCompactMode;
+        IsLyricsMode = SettingsVM.ShowLyricsInStage;
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
@@ -649,6 +658,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         // 记住窗口模式，下次启动直接进入上次模式（复用主题切换的保存链路）
         SettingsVM.StartInCompactMode = IsCompactMode;
+        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+    }
+
+    private void ToggleLyricsMode()
+    {
+        IsLyricsMode = !IsLyricsMode;
+        // 与简洁模式同款记忆链路：时钟舞台与歌词视图的偏好跨启动保留
+        SettingsVM.ShowLyricsInStage = IsLyricsMode;
         SettingsVM.SaveUiStateCommand.Execute().Subscribe();
     }
 
@@ -1216,6 +1233,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         PlayerVM?.Dispose();
         ChatVM?.Dispose();
         SpectrumVM?.Dispose();
+        LyricsVM?.Dispose();
         PlaylistVM?.Dispose();
         SettingsVM?.Dispose();
     }

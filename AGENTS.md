@@ -13,7 +13,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 不再保留旧 Web 静态资源、模型资源或相关运行时依赖。
 - AI DJ 角色保留为名称、声音、人设提示和轻量头像动效。
 - 推荐闭环先做当前会话级，不做长期用户画像数据库。
-- 天气、日历、歌词暂不进入第一轮开发。
+- 天气、日历暂不进入第一轮开发；歌词显示已作为第二轮特性交付（ClockStage 歌词模式）。
 
 ## Recent Work
 
@@ -32,6 +32,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 修复按住麦克风说话整体失效：Avalonia Button 类处理器会把左键按下/释放标记为 Handled，XAML 属性挂载收不到事件；ChatArea 改为代码内 AddHandler(handledEventsToo:true) 订阅，测试工程引入 Avalonia.Headless.XUnit 并新增 ChatAreaMicButtonTests 回归测试。
 - 修复推荐与播放脱节及按住被拒无反馈：节目单搜索词生成改走 LLMService 新增的无人设 ChatRawAsync（原 ChatAsync 固定注入 DJ 人设，模型回整段台词、开场白碎片被当搜索词搜出无关歌曲直接播放），RecommendationService 增加 SanitizeSearchQueries 台词净化兜底；BeginHoldToTalk 改为返回是否真正开始录音，AI 回复/识别中被拒时不再出现按压视觉（原静默拒绝被用户当成第二次按住失效）。
 - 语音识别 LLM 纠错：Whisper base 中文同音错误率高（"来点轻音乐"→"拿手青音樂"），识别文本进入点歌/搜索链路前先经 DJService.CorrectTranscriptionAsync（无人设 ChatRawAsync + 8 秒短超时）归一化，失败/超时回退原文不阻塞语音流程。
+- 歌词模式：LyricService 经本地代理双源取词（网易 /lyric 单步、酷狗 /search/lyric 两步 + 关键词兜底 + 时长过滤）、LrcParser 解析、LyricsViewModel 按 PositionChanged 逐行滚动（generation+SourceId 双卫兵防旧词晚到）；ClockStage 时钟/歌词图层互斥，BrandHeader 按钮切换并记忆 show_lyrics_in_stage。
 
 ## Architecture Notes
 
