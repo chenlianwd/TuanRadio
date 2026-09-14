@@ -379,4 +379,197 @@ public class RecommendationServiceTests
 
         Assert.Equal(new[] { "90s city pop", "2020 华语金曲", "japanese city pop 80s funk" }, result);
     }
+
+    // ---------- 长期收听画像注入 ----------
+
+    private sealed class FakeListeningProfile : IListeningProfileService
+    {
+        public ListenerProfileSnapshot Snapshot { get; set; } = ListenerProfileSnapshot.Empty;
+        public bool Enabled { get; set; } = true;
+        public int RefreshDigestCalls;
+
+        public ListenerProfileSnapshot GetSnapshot()
+            => Enabled ? Snapshot : ListenerProfileSnapshot.Empty;
+
+        public void RecordEvent(ListeningEventData eventData) { }
+        public void NotifyPlaybackStarted(Track track) { }
+        public void NotifyPlaybackEndedNaturally(Track track) { }
+        public void NotifyPositionSampled(Track track, TimeSpan position) { }
+        public void NotifyTrackSwitched(Track? next) { }
+        public void NotifyPlaybackPaused() { }
+        public void Reset() { }
+        public Task LoadAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RefreshDigestAsync(CancellationToken cancellationToken)
+        {
+            RefreshDigestCalls++;
+            return Task.CompletedTask;
+        }
+        public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private static ListenerProfileSnapshot BuildThresholdSnapshot(
+        string? digestText = null,
+        IReadOnlyList<ProfileMusicRef>? blacklist = null)
+        => new()
+        {
+            TotalEventsIngested = ListeningProfileService.InjectionMinEvents,
+            TopArtists = new[]
+            {
+                new ArtistAffinity { Artist = "周杰伦", Score = 5, PlayCount = 10 },
+                new ArtistAffinity { Artist = "陈绮贞", Score = 3, PlayCount = 6 },
+                new ArtistAffinity { Artist = "五月天", Score = 2, PlayCount = 4 },
+            },
+            AvoidArtists = new[] { new ArtistAffinity { Artist = "差评歌手", Score = -3 } },
+            DislikeBlacklist = blacklist ?? Array.Empty<ProfileMusicRef>(),
+            Digest = digestText == null ? null : new TasteDigestData { Text = digestText, Language = "zh" },
+        };
+
+    [Fact]
+    public async Task ProfileInjection_AddsDigestArtistsAndExplorationToPrompt()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = BuildThresholdSnapshot(digestText: "偏爱华语流行与 City Pop"),
+        };
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("华语 流行\nCity pop\n新方向 关键词");
+        SetupSearchWithPlayableTracks(search);
+        var service = new RecommendationService(llm.Object, search.Object, profile);
+
+        await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "继续当前电台" });
+
+        var prompt = Assert.Single(prompts);
+        // digest 与常听/回避歌手进入提示词；探索要求仅在画像注入时出现
+        Assert.Contains("偏爱华语流行与 City Pop", prompt);
+        Assert.Contains("周杰伦", prompt);
+        Assert.Contains("差评歌手", prompt);
+        Assert.True(prompt.Contains("画像之外") || prompt.Contains("adjacent to this profile"),
+            $"prompt should require one exploratory query: {prompt}");
+        // 节目单生成路径触发后台归纳
+        Assert.True(profile.RefreshDigestCalls >= 1);
+    }
+
+    [Fact]
+    public async Task ProfileBlacklist_ExcludesDislikedTrackByMusicIdentity()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = BuildThresholdSnapshot(blacklist: new[] { new ProfileMusicRef("不爱听", "某人") }),
+        };
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("华语 流行");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), 8))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                // 与黑名单同曲不同源：仅凭音乐身份即应排除
+                new() { Id = "kugou:123", Title = "不爱听", Artist = "某人", Source = "kugou" },
+                new() { Id = "netease:456", Title = "保留曲", Artist = "别的歌手", Source = "netease" },
+            });
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => $"http://example.com/{id}.mp3");
+        var service = new RecommendationService(llm.Object, search.Object, profile);
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "华语 流行" });
+
+        Assert.DoesNotContain(program.Tracks, item => MusicIdentity.IsSameMusicIdentity(item.Track.Title, item.Track.Artist, "不爱听", "某人"));
+        Assert.Contains(program.Tracks, item => item.Track.SourceId == "netease:456");
+    }
+
+    [Fact]
+    public async Task ProfileBelowColdStartThreshold_PromptStaysUnchanged()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = new ListenerProfileSnapshot
+            {
+                TotalEventsIngested = 5,
+                TopArtists = new[] { new ArtistAffinity { Artist = "周杰伦", Score = 1 } },
+                Digest = new TasteDigestData { Text = "过早的结论", Language = "zh" },
+            },
+        };
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("华语 流行");
+        SetupSearchWithPlayableTracks(search);
+        var service = new RecommendationService(llm.Object, search.Object, profile);
+
+        await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "继续当前电台" });
+
+        var prompt = Assert.Single(prompts);
+        Assert.DoesNotContain("过早的结论", prompt);
+        Assert.DoesNotContain("长期常听歌手", prompt);
+        Assert.DoesNotContain("长期回避歌手", prompt);
+        Assert.False(prompt.Contains("画像之外") || prompt.Contains("adjacent to this profile"));
+    }
+
+    [Fact]
+    public async Task ProfileDisabled_SnapshotEmptyAndBehaviorMatchesCurrent()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var profile = new FakeListeningProfile
+        {
+            Enabled = false,
+            Snapshot = BuildThresholdSnapshot(digestText: "不该出现"),
+        };
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("华语 流行");
+        SetupSearchWithPlayableTracks(search);
+        var service = new RecommendationService(llm.Object, search.Object, profile);
+
+        await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "继续当前电台" });
+
+        Assert.DoesNotContain("不该出现", Assert.Single(prompts));
+    }
+
+    [Fact]
+    public async Task ProfileBlacklist_AppliesBelowColdStartThreshold()
+    {
+        // 黑名单不走冷启动门槛（Dislike 是显式信号）：候选搜索与节目单内筛选（IsDisliked）口径一致
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = new ListenerProfileSnapshot
+            {
+                TotalEventsIngested = 3,
+                TopArtists = new[] { new ArtistAffinity { Artist = "某人", Score = -3 } },
+                DislikeBlacklist = new[] { new ProfileMusicRef("不爱听", "某人") },
+            },
+        };
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), 8))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                new() { Id = "netease:1", Title = "不爱听", Artist = "某人", Source = "netease" },
+                new() { Id = "netease:2", Title = "保留曲", Artist = "别人", Source = "netease" },
+            });
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => $"http://example.com/{id}.mp3");
+        var service = new RecommendationService(llm.Object, search.Object, profile);
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest { UserIntent = "华语" });
+        Assert.DoesNotContain(program.Tracks, item => item.Track.SourceId == "netease:1");
+
+        var next = await service.GetNextTrackAsync(new RecommendationRequest());
+        Assert.NotEqual("netease:1", next?.SourceId);
+    }
+
+    private static void SetupSearchWithPlayableTracks(Mock<IMusicSearchService> search)
+    {
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), 8))
+            .ReturnsAsync((string query, int _) => new List<OnlineTrack>
+            {
+                new() { Id = $"netease:{query}:1", Title = $"{query} A", Artist = "Artist A", Source = "netease" },
+            });
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => $"http://example.com/{id}.mp3");
+    }
 }

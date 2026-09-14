@@ -39,6 +39,11 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly NeteaseAccountService _neteaseAccount;
     private readonly KugouAccountService _kugouAccount;
     private readonly KugouVerificationService? _kugouVerification;
+    private readonly IListeningProfileService? _listeningProfile;
+    private readonly IDisposable _listenerProfileToggleSub;
+    private bool _loadingProfileToggle;
+    private int _listenerProfileResetArmed;
+    private int _resetArmVersion;
     private bool _kugouVerifyRunning;
     private bool _neteaseQrRunning;
     private bool _kugouQrRunning;
@@ -76,6 +81,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool CompactModeTopmost { get; set; } = true;
     [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public bool ShowLyricsInStage { get; set; }
+    [Reactive] public bool ListenerProfileEnabled { get; set; } = true;
+    // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
+    [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
@@ -119,6 +127,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
+    public ReactiveCommand<Unit, Unit> ResetListenerProfileCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
@@ -138,7 +147,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         string settingsFile,
         MusicAccountStore? accountStore = null,
         System.Net.Http.HttpClient? httpClient = null,
-        KugouVerificationService? kugouVerification = null)
+        KugouVerificationService? kugouVerification = null,
+        IListeningProfileService? listeningProfile = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -149,15 +159,29 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _neteaseAccount = new NeteaseAccountService(http);
         _kugouAccount = new KugouAccountService(http);
         _kugouVerification = kugouVerification;
+        _listeningProfile = listeningProfile;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(() => SaveAsync());
+        ResetListenerProfileCommand = ReactiveCommand.Create(ResetListenerProfile);
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
         SaveUiStateCommand = ReactiveCommand.CreateFromTask(() => SaveAsync(persistLlmFields: false));
+
+        // Skip(1)：避免构造/加载赋值触发自动保存；加载期赋值由 _loadingProfileToggle 屏蔽
+        _listenerProfileToggleSub = this.WhenAnyValue(x => x.ListenerProfileEnabled)
+            .Skip(1)
+            .Subscribe(enabled =>
+            {
+                if (_loadingProfileToggle)
+                    return;
+                if (_listeningProfile != null)
+                    _listeningProfile.Enabled = enabled;
+                _ = SaveUiStateCommand.Execute().Subscribe();
+            });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
         KugouQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunKugouQrLoginAsync());
@@ -199,6 +223,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _onLanguageChanged = () =>
         {
             TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
+            ResetProfileButtonText = Volatile.Read(ref _listenerProfileResetArmed) != 0
+                ? AppLanguage.T("再次点击确认清除", "Click again to confirm")
+                : AppLanguage.T("清除收听画像", "Clear listening profile");
             CharacterProfile.RefreshLocalizedPresets();
             RelocalizeCharacterPersonality();
             if (_statusMessageFactory != null)
@@ -419,6 +446,14 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 if (root.TryGetProperty("show_lyrics_in_stage", out var showLyrics))
                     ShowLyricsInStage = showLyrics.GetBoolean();
 
+                if (root.TryGetProperty("listener_profile_enabled", out var listenerProfile))
+                {
+                    // 加载期赋值只同步内存态，不触发跟随保存
+                    _loadingProfileToggle = true;
+                    ListenerProfileEnabled = listenerProfile.GetBoolean();
+                    _loadingProfileToggle = false;
+                }
+
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
 
@@ -441,6 +476,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     }
                 }
             }
+
+            // 画像开关初值在设置加载完成后同步给服务（主窗口加载路径也会再同步一次）
+            if (_listeningProfile != null)
+                _listeningProfile.Enabled = ListenerProfileEnabled;
 
             // Apply first character
             if (SelectedCharacter != null)
@@ -471,6 +510,47 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public (string VoiceId, string Personality)? GetOverride(string characterId)
     {
         return _overrides.TryGetValue(characterId, out var ov) ? ov : null;
+    }
+
+    /// <summary>
+    /// 清除收听画像：二次确认（首次点击武装、5 秒内再点执行），武装态经按钮文案表达。
+    /// 命令体保持同步、延时解除武装走 UI 调度器上的 Timer：CreateFromTask 执行期间的
+    /// 再次 Execute 会被 ReactiveCommand 忽略，确认点击将失效。
+    /// </summary>
+    private void ResetListenerProfile()
+    {
+        if (_listeningProfile == null)
+        {
+            SetStatusMessage(() => AppLanguage.T("收听画像服务不可用", "Listening profile service unavailable"));
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _listenerProfileResetArmed, 1, 0) != 0)
+        {
+            // 已武装：第二次点击执行清除
+            Interlocked.Increment(ref _resetArmVersion);
+            Interlocked.Exchange(ref _listenerProfileResetArmed, 0);
+            _listeningProfile.Reset();
+            ResetProfileButtonText = AppLanguage.T("清除收听画像", "Clear listening profile");
+            SetStatusMessage(() => AppLanguage.T("收听画像已清除", "Listening profile cleared"));
+            return;
+        }
+
+        ResetProfileButtonText = AppLanguage.T("再次点击确认清除", "Click again to confirm");
+        SetStatusMessage(() => AppLanguage.T("5 秒内再次点击以确认清除收听画像", "Click again within 5 seconds to confirm"));
+        var version = Interlocked.Increment(ref _resetArmVersion);
+        // 计时用默认调度器（MainThreadScheduler 在测试环境可能被替换为 Immediate，
+        // Observable.Timer 的 dueTime 会被忽略而立即解除武装），回调再切回 UI 线程
+        Observable.Timer(TimeSpan.FromSeconds(5))
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(_ =>
+            {
+                if (Volatile.Read(ref _resetArmVersion) == version && Volatile.Read(ref _listenerProfileResetArmed) != 0)
+                {
+                    Interlocked.Exchange(ref _listenerProfileResetArmed, 0);
+                    ResetProfileButtonText = AppLanguage.T("清除收听画像", "Clear listening profile");
+                }
+            });
     }
 
     /// <summary>优先读 settings.json，损坏或读不了时回退 .bak；两者都不可用返回 null，调用方按默认值运行。</summary>
@@ -968,6 +1048,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 compact_mode_topmost = CompactModeTopmost,
                 start_in_compact_mode = StartInCompactMode,
                 show_lyrics_in_stage = ShowLyricsInStage,
+                listener_profile_enabled = ListenerProfileEnabled,
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
@@ -1051,6 +1132,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _selectedCharacterSub.Dispose();
         _selectedYtdlpBrowserSub.Dispose();
         _selectedLanguageSub.Dispose();
+        _listenerProfileToggleSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更

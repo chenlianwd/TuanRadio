@@ -780,6 +780,33 @@ public class SettingsViewModelTests
         }
     }
 
+    [Fact]
+    public void ResetListenerProfile_SecondClickWithinWindowExecutesClear()
+    {
+        var profile = new Mock<IListeningProfileService>();
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        var originalText = vm.ResetProfileButtonText;
+
+        try
+        {
+            // 首次点击：武装确认态，不执行清除
+            vm.ResetListenerProfileCommand.Execute().Subscribe();
+            profile.Verify(x => x.Reset(), Times.Never);
+            Assert.NotEqual(originalText, vm.ResetProfileButtonText);
+
+            // 5 秒窗口内第二次点击：执行清除并回到初始文案。
+            // 命令体必须是同步的：CreateFromTask 在 Task.Delay 期间会忽略后续 Execute，确认点击会失效
+            vm.ResetListenerProfileCommand.Execute().Subscribe();
+            profile.Verify(x => x.Reset(), Times.Once);
+            Assert.Equal(originalText, vm.ResetProfileButtonText);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
     private sealed class StaticResponseHandler(string content) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)

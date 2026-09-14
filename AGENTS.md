@@ -12,7 +12,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 
 - 不再保留旧 Web 静态资源、模型资源或相关运行时依赖。
 - AI DJ 角色保留为名称、声音、人设提示和轻量头像动效。
-- 推荐闭环先做当前会话级，不做长期用户画像数据库。
+- 长期用户画像已落地（本地文件级，不做云端数据库）；DJ 聊天链路暂不注入画像。
 - 天气、日历暂不进入第一轮开发；歌词显示已作为第二轮特性交付（ClockStage 歌词模式）。
 
 ## Recent Work
@@ -33,12 +33,14 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 修复推荐与播放脱节及按住被拒无反馈：节目单搜索词生成改走 LLMService 新增的无人设 ChatRawAsync（原 ChatAsync 固定注入 DJ 人设，模型回整段台词、开场白碎片被当搜索词搜出无关歌曲直接播放），RecommendationService 增加 SanitizeSearchQueries 台词净化兜底；BeginHoldToTalk 改为返回是否真正开始录音，AI 回复/识别中被拒时不再出现按压视觉（原静默拒绝被用户当成第二次按住失效）。
 - 语音识别 LLM 纠错：Whisper base 中文同音错误率高（"来点轻音乐"→"拿手青音樂"），识别文本进入点歌/搜索链路前先经 DJService.CorrectTranscriptionAsync（无人设 ChatRawAsync + 8 秒短超时）归一化，失败/超时回退原文不阻塞语音流程。
 - 歌词模式：LyricService 经本地代理双源取词（网易 /lyric 单步、酷狗 /search/lyric 两步 + 关键词兜底 + 时长过滤）、LrcParser 解析、LyricsViewModel 按 PositionChanged 逐行滚动（generation+SourceId 双卫兵防旧词晚到）；ClockStage 时钟/歌词图层互斥，BrandHeader 按钮切换并记忆 show_lyrics_in_stage。
+- 长期收听画像：ListeningProfileService 持久化收听事件（%APPDATA%\AIRadio\listener-profile.json，事件为唯一事实、统计现算），歌手亲和度 30 天半衰期、Dislike 黑名单 180 天音乐身份匹配、LLM 口味摘要（水位/老化/语言触发、失败退避、Reset 代次隔离）；跳过信号三重前置判定（前曲播放态+新曲身份不同+进度样本绑定本曲，TrackChanged 有 8 处触发点不能直接当切歌）；推荐搜索词注入画像段与探索要求（冷启动门槛 ≥30 事件且 ≥3 歌手），黑名单拼入排除集（不走冷启动门槛）；设置页学习开关（listener_profile_enabled）+ 二次确认清除。
 
 ## Architecture Notes
 
 - `AudioService` 管理播放和 TTS。
 - `PlaylistViewModel` 管理展示歌单、收藏和搜索结果。
 - `RecommendationService` 负责节目单候选生成、去重、可播状态和会话反馈。
+- `ListeningProfileService` 负责长期收听画像：事件采集/统计/持久化与 LLM 口味摘要，供 `RecommendationService` 跨会话消费。
 - `DJService` 负责 AI 对话、串场、TTS 文本和单首推荐 fallback。
 - `MainWindowViewModel` 组合各模块，并在 Radio Mode 中触发自动续播。
 

@@ -27,6 +27,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly ISttService _sttService;
     private readonly IRecommendationService? _recommendationService;
+    private readonly IListeningProfileService? _listeningProfile;
     private readonly Action<Track>? _trackAdded;
     private readonly IDisposable _ttsSub;
     private readonly IDisposable _ttsCommandSub;
@@ -85,13 +86,14 @@ public class ChatViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> DismissStatusNoticeCommand { get; }
     public ReactiveCommand<Unit, Unit> RestoreStatusNoticeCommand { get; }
 
-    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService, Action<Track>? trackAdded = null, IRecommendationService? recommendationService = null)
+    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService, Action<Track>? trackAdded = null, IRecommendationService? recommendationService = null, IListeningProfileService? listeningProfile = null)
     {
         _djService = djService;
         _audioService = audioService;
         _musicSearchService = musicSearchService;
         _sttService = sttService;
         _recommendationService = recommendationService;
+        _listeningProfile = listeningProfile;
         _trackAdded = trackAdded;
 
         SendMessageCommand = ReactiveCommand.CreateFromTask(
@@ -1195,6 +1197,13 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 var mood = command["change_mood:".Length..].Trim();
                 // 会话级氛围偏好：真正影响后续节目单的意图检测与搜索词
                 _recommendationService?.SetMoodBias(mood);
+                // 长期画像记 mood 历史（仅聊天指令走 MoodSet；CALM/FIRE 按钮走 Calmer/Energetic 事件）
+                if (_listeningProfile != null && !string.IsNullOrWhiteSpace(mood))
+                    _listeningProfile.RecordEvent(new ListeningEventData
+                    {
+                        Type = ListeningEventType.MoodSet,
+                        Detail = mood,
+                    });
                 AddMessage(new ChatMessage
                 {
                     Role = MessageRole.Assistant,
