@@ -132,6 +132,21 @@
             </Grid>
         </StackPanel>
 
+        <!-- Listening profile -->
+        <StackPanel Spacing="6">
+            <TextBlock Text="{DynamicResource S_ProfileGroup}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="{DynamicResource S_ProfileLearn}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ToggleSwitch Grid.Column="1" IsChecked="{Binding ListenerProfileEnabled, Mode=TwoWay}"
+                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+            </Grid>
+            <TextBlock Text="{DynamicResource S_ProfileHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+            <Button Command="{Binding ResetListenerProfileCommand}"
+                    Content="{Binding ResetProfileButtonText}"
+                    HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
+        </StackPanel>
+
         <!-- Character customization -->
         <StackPanel Spacing="8">
             <TextBlock Text="{DynamicResource S_CharSettings}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>

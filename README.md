@@ -24,6 +24,7 @@ TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电
 - 设置页可配置 LLM 提供商、API Key、Base URL、模型、回复语言、语音播报和说话混音方式，带连接测试与失败原因提示。
 - Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
 - 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
+- 长期收听画像：播放/完播/跳过/按钮反馈/氛围指令持久化到 `%APPDATA%\AIRadio\listener-profile.json`，派生歌手亲和度（30 天半衰期）、Dislike 曲目黑名单（180 天过期、音乐身份跨源匹配）与 LLM 口味摘要，注入节目单搜索词生成与排除逻辑（冷启动门槛 ≥30 事件且 ≥3 歌手，强制 1 个探索方向防茧房）；设置页提供「学习我的口味」开关与二次确认清除。
 - 多平台音乐搜索：网易云优先，酷我/酷狗/咪咕并行 fallback，YouTube 作为最低优先级兜底；每个源有独立硬超时，搜索状态逐源显示成功/超时/失败。
 - 播放 URL 失效或返回明确试听流时会依据歌名和歌手跨源重新匹配，并同步实际生效的音源 ID。
 - 真实 FFT 频谱：WasapiLoopbackCapture 采集系统输出 + 1024 点 FFT 转 32 频段；无有效回环数据时启用播放态视觉兜底，并限制幅度与刷新分配。
@@ -74,7 +75,7 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 
 ## 已知技术债
 
-- 推荐闭环仍是当前会话级：反馈只影响本轮推荐，尚未持久化为长期用户画像。
+- 长期收听画像已落地（本地事件 + LLM 摘要，见 docs/plans/2026-09-14-long-term-listener-profile-design.md），但画像纯本地、不跨设备同步（有意不做云端）；DJ 聊天链路暂未注入画像。
 - AI 控制协议已支持 JSON 控制块，但旧格式仍保留短期兼容。
 - 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态和跨源回退降级。
 - Node.js 便携包目前记录 SHA256 供审计，但尚未自动对照官方 `SHASUMS256.txt` 做完整性校验。

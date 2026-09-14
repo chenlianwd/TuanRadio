@@ -24,9 +24,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly IRecommendationService _recommendationService;
     private readonly ISttService _sttService;
+    private readonly IListeningProfileService? _listeningProfile;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
+    private readonly IDisposable? _profileTrackChangedSub;
     private readonly IDisposable _playbackHistorySub;
+    private readonly IDisposable? _positionSampleSub;
     private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
@@ -132,7 +135,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         MusicAccountStore? accountStore = null,
         System.Net.Http.HttpClient? httpClient = null,
         KugouVerificationService? kugouVerification = null,
-        ILyricService? lyricService = null)
+        ILyricService? lyricService = null,
+        IListeningProfileService? listeningProfile = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -142,6 +146,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _recommendationService = recommendationService ?? new RecommendationService(llmService, musicSearchService);
         _accountStore = accountStore;
         _kugouVerification = kugouVerification;
+        _listeningProfile = listeningProfile;
 
         SelectedCharacter = Characters[0];
 
@@ -155,8 +160,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             playlistFile,
             kugouPlaylistService: kugouPlaylistService);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
-            track => PlaylistVM.AddExternalTrack(track), _recommendationService);
-        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification);
+            track => PlaylistVM.AddExternalTrack(track), _recommendationService, listeningProfile);
+        SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
+            listeningProfile);
         SpectrumVM = new SpectrumViewModel(_audioService);
         LyricsVM = new LyricsViewModel(
             _audioService,
@@ -267,6 +273,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(current =>
             {
                 if (current == null) return;
+                // 自然播完先结算画像（Completed + 清除跳过待判态），再走自动续播
+                _listeningProfile?.NotifyPlaybackEndedNaturally(current);
                 _ = HandleAutoRadioTrackEndedAsync(current);
             });
 
@@ -274,16 +282,45 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(track => IsCurrentFavorite = track?.IsFavorite == true);
 
+        // 跳过判定必须与 TrackChanged 发射同步评估：经 ObserveOn 派发到 UI 线程时，
+        // 新曲的进度样本可能已把旧曲样本覆盖，导致漏记跳过。判定在服务内加锁，线程安全。
+        _profileTrackChangedSub = _listeningProfile == null
+            ? null
+            : _audioService.TrackChanged
+                .Subscribe(track => _listeningProfile.NotifyTrackSwitched(track));
+
         // TrackChanged 也会在载入列表、删除曲目和重试音源时触发；只有真正进入播放态
         // 才能算作已播放历史，避免尚未播放的歌曲污染 DJ 的风格上下文。
         _playbackHistorySub = _audioService.StateChanged
-            .Where(state => state == PlaybackState.Playing)
-            .Subscribe(_ =>
+            .Subscribe(state =>
             {
                 var current = _audioService.CurrentTrack;
-                if (current != null)
-                    _recommendationService.RecordPlayedTrack(current);
+                if (state == PlaybackState.Playing)
+                {
+                    if (current != null)
+                    {
+                        _recommendationService.RecordPlayedTrack(current);
+                        _listeningProfile?.NotifyPlaybackStarted(current);
+                    }
+                }
+                else if (state == PlaybackState.Paused)
+                {
+                    // 暂停后再切歌不算跳过（前曲非播放态）；不响应 Stopped：
+                    // 在线曲目的换曲主路径会先短暂 Stopped 再 TrackChanged
+                    _listeningProfile?.NotifyPlaybackPaused();
+                }
             });
+
+        // 跳过判定用的进度样本：样本与曲目身份绑定（500ms 粒度，仅缓存一个数值）
+        _positionSampleSub = _listeningProfile == null
+            ? null
+            : _audioService.PositionChanged
+                .Subscribe(position =>
+                {
+                    var current = _audioService.CurrentTrack;
+                    if (current != null)
+                        _listeningProfile.NotifyPositionSampled(current, position);
+                });
 
         _playbackRecoverySub = _audioService.PlaybackRecoveryNotices?
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -551,6 +588,28 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             Action = action
         });
 
+        // 长期画像同步记录同一信号（Calmer/Energetic 事件本身即 mood 信号，不另记 MoodSet）
+        if (current != null && _listeningProfile != null)
+        {
+            var profileType = action switch
+            {
+                MusicFeedbackAction.Like => ListeningEventType.Like,
+                MusicFeedbackAction.Dislike => ListeningEventType.Dislike,
+                MusicFeedbackAction.Similar => ListeningEventType.Similar,
+                MusicFeedbackAction.Calmer => ListeningEventType.Calmer,
+                MusicFeedbackAction.Energetic => ListeningEventType.Energetic,
+                _ => (ListeningEventType?)null,
+            };
+            if (profileType.HasValue)
+                _listeningProfile.RecordEvent(new ListeningEventData
+                {
+                    Type = profileType.Value,
+                    Title = current.Title,
+                    Artist = current.Artist,
+                    SourceId = trackId,
+                });
+        }
+
         // CALM/FIRE 同步切换会话级氛围偏好，让按钮立即影响后续推荐
         if (action == MusicFeedbackAction.Calmer)
             _recommendationService.SetMoodBias("calm");
@@ -620,6 +679,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
             return;
+
+        // 长期收听画像：本地文件读取失败按空画像运行，不阻塞启动；
+        // 开关初值在 settings 加载完成后推送（DI 构造顺序不保证 settings 先就绪）
+        if (_listeningProfile != null)
+        {
+            await _listeningProfile.LoadAsync(cancellationToken);
+            _listeningProfile.Enabled = SettingsVM.ListenerProfileEnabled;
+        }
 
         IsDarkMode = SettingsVM.IsDarkMode;
         // 启动时恢复上次的窗口模式（简洁/标准）与歌词模式
@@ -1220,7 +1287,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         // 关闭线程同步 Stop NAudio，否则设备线程异常时会再次把窗口关闭卡住。
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
+        _profileTrackChangedSub?.Dispose();
         _playbackHistorySub?.Dispose();
+        _positionSampleSub?.Dispose();
         _playbackRecoverySub?.Dispose();
         _darkModePersistSub?.Dispose();
         _languageTtsSub?.Dispose();

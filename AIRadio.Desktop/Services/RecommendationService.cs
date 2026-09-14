@@ -13,6 +13,7 @@ public class RecommendationService : IRecommendationService
 {
     private readonly ILLMService _llm;
     private readonly IMusicSearchService _musicSearch;
+    private readonly IListeningProfileService? _profile;
     private readonly List<UserMusicFeedback> _feedback = new();
     private readonly List<Track> _recentlyPlayed = new();
     private readonly HashSet<string> _returnedTrackIds = new(StringComparer.OrdinalIgnoreCase);
@@ -21,9 +22,18 @@ public class RecommendationService : IRecommendationService
     private string? _moodBias;
 
     public RecommendationService(ILLMService llm, IMusicSearchService musicSearch)
+        : this(llm, musicSearch, profile: null)
+    {
+    }
+
+    public RecommendationService(
+        ILLMService llm,
+        IMusicSearchService musicSearch,
+        IListeningProfileService? profile)
     {
         _llm = llm;
         _musicSearch = musicSearch;
+        _profile = profile;
     }
 
     public RadioProgram? CurrentProgram { get; private set; }
@@ -71,8 +81,13 @@ public class RecommendationService : IRecommendationService
         lock (_stateGate)
             moodBias = _moodBias;
 
+        // 口味摘要后台刷新：内部自带水位/退避/全异常内吞，当次节目单仍用旧摘要
+        if (_profile != null)
+            _ = _profile.RefreshDigestAsync(cancellationToken);
+
         var context = BuildContext(moodBias, request);
-        var queries = await GenerateQueriesAsync(request, context, moodBias, cancellationToken);
+        var profileSnapshot = GetUsableProfileSnapshot();
+        var queries = await GenerateQueriesAsync(request, context, moodBias, profileSnapshot, cancellationToken);
         var excluded = BuildExcludedTracks(request);
 
         var tracks = new List<RecommendedTrack>();
@@ -251,7 +266,24 @@ public class RecommendationService : IRecommendationService
         return value.Length <= 12 ? value : null;
     }
 
+    /// <summary>画像提示词注入前置：未注入/未启用/未过冷启动门槛（≥30 事件且 ≥3 歌手）返回 null，prompt 与现状一致。</summary>
+    private ListenerProfileSnapshot? GetUsableProfileSnapshot()
+    {
+        var snapshot = _profile?.GetSnapshot();
+        return snapshot is { MeetsInjectionThreshold: true } ? snapshot : null;
+    }
+
+    /// <summary>黑名单不走冷启动门槛：Dislike 是显式信号，少量事件也应当即排除。</summary>
+    private ListenerProfileSnapshot? GetBlacklistSnapshot()
+    {
+        var snapshot = _profile?.GetSnapshot();
+        return snapshot is { DislikeBlacklist.Count: > 0 } ? snapshot : null;
+    }
+
     private List<Track> BuildExcludedTracks(RecommendationRequest request)
+        => BuildExcludedTracks(request, GetBlacklistSnapshot());
+
+    private List<Track> BuildExcludedTracks(RecommendationRequest request, ListenerProfileSnapshot? profileSnapshot)
     {
         Track[] played;
         UserMusicFeedback[] feedback;
@@ -268,6 +300,8 @@ public class RecommendationService : IRecommendationService
             .Concat(feedback
                 .Where(x => x.Action == MusicFeedbackAction.Dislike)
                 .Select(x => new Track { SourceId = x.TrackId, Id = x.TrackId }))
+            // 长期画像 Dislike 黑名单（音乐身份匹配，未过期项）
+            .Concat(profileSnapshot?.DislikeBlacklist.Select(x => new Track { Title = x.Title, Artist = x.Artist }) ?? Enumerable.Empty<Track>())
             .ToList();
     }
 
@@ -275,20 +309,28 @@ public class RecommendationService : IRecommendationService
     {
         lock (_stateGate)
         {
-            return _feedback.Any(f =>
+            if (_feedback.Any(f =>
                 f.Action == MusicFeedbackAction.Dislike &&
-                IsSameSource(f.TrackId, track.SourceId ?? track.Id));
+                IsSameSource(f.TrackId, track.SourceId ?? track.Id)))
+            {
+                return true;
+            }
         }
+
+        var blacklist = GetBlacklistSnapshot()?.DislikeBlacklist;
+        return blacklist != null && blacklist.Any(x =>
+            IsSameMusicIdentity(x.Title, x.Artist, track.Title, track.Artist));
     }
 
     private async Task<List<string>> GenerateQueriesAsync(
         RecommendationRequest request,
         ListeningContext context,
         string? moodBias,
+        ListenerProfileSnapshot? profileSnapshot,
         CancellationToken cancellationToken)
     {
         var recentHistory = BuildRecentHistory(request);
-        var fallback = BuildFallbackQueries(request, context, recentHistory);
+        var fallback = BuildFallbackQueries(request, context, recentHistory, profileSnapshot);
         // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
         // 直接走本地兜底关键词，避免把提示文案当搜索词发给音源
         if (_llm is LLMService llmService && !llmService.IsConfigured())
@@ -304,24 +346,25 @@ public class RecommendationService : IRecommendationService
                 .DistinctBy(track => $"{track.Title.Trim()}|{track.Artist.Trim()}", StringComparer.OrdinalIgnoreCase)
                 .Take(8)
                 .Select(track => $"{track.Title} - {track.Artist}");
+            var profileSection = BuildProfilePromptSection(profileSnapshot);
             var prompt = AppLanguage.Current == "en"
                 ? $"""
                     Generate 3 short music-search queries, one per line.
-                    Infer the shared genre, era, language and mood of recently played tracks instead of repeating one title.
+                    Infer the shared genre, era, language and mood of recently played tracks instead of repeating one title.{profileSection.ExploreInstruction}
                     Output only the queries — no greetings, preamble or explanations.
                     User intent: {userIntent}
                     Current track: {request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
                     Recently played: {string.Join(", ", recentTracks)}
-                    Favorites: {string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
+                    Favorites: {string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}{profileSection.Context}
                     """
                 : $"""
                     根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
-                    关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。
+                    关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。{profileSection.ExploreInstruction}
                     只输出关键词本身：不要问候、开场白或任何解释。
                     用户意图：{userIntent}
                     当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
                     最近已播放：{string.Join(", ", recentTracks)}
-                    收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}
+                    收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}{profileSection.Context}
                     """;
             var response = await ChatAsync(prompt, cancellationToken);
             var queries = SanitizeSearchQueries(
@@ -337,6 +380,38 @@ public class RecommendationService : IRecommendationService
             Log.Warning(ex, "Recommendation query generation failed");
             return fallback;
         }
+    }
+
+    /// <summary>
+    /// 画像提示词段：digest + 常听/回避歌手 + 反茧房探索要求。
+    /// 仅在画像过冷启动门槛时注入，否则两段均为空（prompt 与现状逐字一致）。
+    /// </summary>
+    private static (string ExploreInstruction, string Context) BuildProfilePromptSection(ListenerProfileSnapshot? snapshot)
+    {
+        if (snapshot == null)
+            return (string.Empty, string.Empty);
+
+        var topArtists = string.Join("、", snapshot.TopArtists.Take(5).Select(a => a.Artist));
+        var avoidArtists = string.Join("、", snapshot.AvoidArtists.Take(3).Select(a => a.Artist));
+        var digestText = snapshot.Digest?.Text;
+        if (AppLanguage.Current == "en")
+        {
+            var context = string.Empty;
+            if (!string.IsNullOrWhiteSpace(digestText))
+                context += $"\nListener taste profile: {digestText}";
+            context += $"\nLong-term favorite artists: {topArtists}";
+            if (avoidArtists.Length > 0)
+                context += $"; avoid: {avoidArtists}";
+            return (" At least 1 of the 3 queries should explore a fresh direction adjacent to this profile.", context);
+        }
+
+        var zhContext = string.Empty;
+        if (!string.IsNullOrWhiteSpace(digestText))
+            zhContext += $"\n听众口味画像：{digestText}";
+        zhContext += $"\n长期常听歌手：{topArtists}";
+        if (avoidArtists.Length > 0)
+            zhContext += $"；长期回避歌手：{avoidArtists}";
+        return ("其中至少 1 个关键词尝试听众画像之外的相近新方向。", zhContext);
     }
 
     private static ListeningContext BuildContext(string? moodBias, RecommendationRequest request)
@@ -378,7 +453,8 @@ public class RecommendationService : IRecommendationService
     private static List<string> BuildFallbackQueries(
         RecommendationRequest request,
         ListeningContext context,
-        IReadOnlyCollection<Track> recentHistory)
+        IReadOnlyCollection<Track> recentHistory,
+        ListenerProfileSnapshot? profileSnapshot)
     {
         var queries = new List<string>();
         var userIntent = GetLocalizedUserIntent(request.UserIntentKey, request.UserIntent);
@@ -399,6 +475,13 @@ public class RecommendationService : IRecommendationService
             queries.Add(AppLanguage.T(
                 $"{string.Join(" ", recentArtists)} 相似风格",
                 $"music similar to {string.Join(" ", recentArtists)}"));
+        else if (profileSnapshot?.TopArtists.FirstOrDefault()?.Artist is { Length: > 0 } profileArtist)
+        {
+            // 无近期历史但画像达标：用长期最常听歌手兜底，避免只有意图+氛围两类词
+            queries.Add(AppLanguage.T(
+                $"{profileArtist} 相似歌曲",
+                $"songs similar to {profileArtist}"));
+        }
         queries.Add(context.Mood switch
         {
             "calm" => AppLanguage.T("安静 氛围", "calm ambient"),

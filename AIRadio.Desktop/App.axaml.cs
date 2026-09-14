@@ -230,7 +230,10 @@ public partial class App : Application
         services.AddSingleton<IRecommendationService>(sp =>
             new RecommendationService(
                 sp.GetRequiredService<ILLMService>(),
-                sp.GetRequiredService<IMusicSearchService>()));
+                sp.GetRequiredService<IMusicSearchService>(),
+                sp.GetRequiredService<IListeningProfileService>()));
+        services.AddSingleton<IListeningProfileService>(sp =>
+            new ListeningProfileService(sp.GetRequiredService<ILLMService>()));
         services.AddSingleton<ISttService, WhisperSttService>();
         services.AddSingleton<ILyricService>(sp =>
             new LyricService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
@@ -247,7 +250,8 @@ public partial class App : Application
             accountStore: sp.GetRequiredService<MusicAccountStore>(),
             httpClient: sp.GetRequiredService<System.Net.Http.HttpClient>(),
             kugouVerification: sp.GetRequiredService<KugouVerificationService>(),
-            lyricService: sp.GetRequiredService<ILyricService>()));
+            lyricService: sp.GetRequiredService<ILyricService>(),
+            listeningProfile: sp.GetRequiredService<IListeningProfileService>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
