@@ -418,13 +418,11 @@ public class MultiSourceMusicService : IMusicSearchService
         DateTimeOffset deadline,
         CancellationToken cancellationToken)
     {
-        // 第一遍按原宽松口径精确匹配；落空再做“剥离标题修饰”的第二遍：
-        // YouTube 等源的结果标题几乎必带 "(Live)"/"(Official Music Video)" 等修饰。
-        var candidate = candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
-            candidate.Title, candidate.Artist, track.Title, track.Artist))
-            ?? candidates.FirstOrDefault(candidate => MusicIdentity.IsSameSongLoose(
-                MusicIdentity.StripTitleDecorations(candidate.Title), candidate.Artist,
-                MusicIdentity.StripTitleDecorations(track.Title), track.Artist));
+        // 两遍按原宽松口径：先精确匹配，落空再做”剥离标题修饰”的第二遍（YouTube 等源
+        // 的结果标题几乎必带 “(Live)”/”(Official Music Video)” 等修饰）。每遍内按时长
+        // 接近度择优（docs/plans/2026-09-15 §2），源间优先级仍由外层”命中即停”控制。
+        var candidate = FindBestFallbackCandidate(candidates, track, stripDecorations: false)
+            ?? FindBestFallbackCandidate(candidates, track, stripDecorations: true);
         if (candidate == null)
             return null;
 
@@ -463,6 +461,53 @@ public class MultiSourceMusicService : IMusicSearchService
             previousSource,
             source.Name);
         return url;
+    }
+
+    /// <summary>
+    /// 单遍回退候选择优：通过该遍身份匹配的候选中按时长接近度取最高分；
+    /// 严格大于才替换（并列取源内首个，保留各源自身相关性排序为 tie-breaker）。
+    /// </summary>
+    private static OnlineTrack? FindBestFallbackCandidate(
+        IReadOnlyList<OnlineTrack> candidates,
+        OnlineTrack target,
+        bool stripDecorations)
+    {
+        var targetTitle = stripDecorations
+            ? MusicIdentity.StripTitleDecorations(target.Title)
+            : target.Title;
+
+        OnlineTrack? best = null;
+        var bestScore = double.MinValue;
+        foreach (var candidate in candidates)
+        {
+            var candidateTitle = stripDecorations
+                ? MusicIdentity.StripTitleDecorations(candidate.Title)
+                : candidate.Title;
+            if (!MusicIdentity.IsSameSongLoose(candidateTitle, candidate.Artist, targetTitle, target.Artist))
+                continue;
+
+            var score = ScoreFallbackCandidate(candidate, target);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// 时长接近度：1 − |候选−目标|/目标，clamp ≥ 0；候选缺元数据时长记 −1（劣于任何
+    /// 带时长候选）；目标无时长时全体同分（取首个，与引入评分前的行为一致）。
+    /// DurationMs 是元数据时长（试听只是播放流截断），此评分防的是截断版/live 版/错曲。
+    /// </summary>
+    private static double ScoreFallbackCandidate(OnlineTrack candidate, OnlineTrack target)
+    {
+        if (target.DurationMs <= 0)
+            return 0;
+        if (candidate.DurationMs <= 0)
+            return -1;
+        return Math.Max(0, 1 - Math.Abs(candidate.DurationMs - target.DurationMs) / (double)target.DurationMs);
     }
 
     private async Task<List<OnlineTrack>> SearchWithFallback(
@@ -514,7 +559,8 @@ public class MultiSourceMusicService : IMusicSearchService
         catch (Exception ex)
         {
             RecordSourceOutcome(source.Name, ex);
-            AddSearchReport(new SourceSearchStatus(source.Name, "failed", 0, ex.Message));
+            AddSearchReport(new SourceSearchStatus(
+                source.Name, "failed", 0, ex.Message, FailureKind: ClassifyFailure(ex)));
             Log.Warning(ex, "Source {Name} search failed", source.Name);
             return new List<OnlineTrack>();
         }
@@ -714,6 +760,9 @@ public class MultiSourceMusicService : IMusicSearchService
             _healthRegistry.RecordTransportFailure(sourceName);
     }
 
+    private static MusicSourceFailureKind ClassifyFailure(Exception exception)
+        => exception is MusicSourceBusinessException business ? business.Kind : MusicSourceFailureKind.None;
+
     private static OnlineTrack CreateProviderTrack(OnlineTrack track, string providerTrackId)
         => new()
         {
@@ -759,7 +808,8 @@ public class MultiSourceMusicService : IMusicSearchService
             status.Status,
             status.Count,
             SensitiveDataSanitizer.Sanitize(status.Error),
-            SensitiveDataSanitizer.Sanitize(status.Note));
+            SensitiveDataSanitizer.Sanitize(status.Note),
+            status.FailureKind);
         lock (_reportGate)
             (CurrentSearchReport.Value ?? _lastSearchReport).Add(sanitized);
     }
@@ -776,5 +826,12 @@ public class MultiSourceMusicService : IMusicSearchService
     }
 }
 
-/// <summary>单个音源搜索状态（成功/超时/失败 + 原因；Note 附加说明如"已过滤"）。</summary>
-public record SourceSearchStatus(string Name, string Status, int Count, string? Error, string? Note = null);
+/// <summary>单个音源搜索状态（成功/超时/失败 + 原因；Note 附加说明如"已过滤"；
+/// FailureKind 为业务失败的结构化分类，供 UI 渲染用户可读文案，默认 None=非业务失败）。</summary>
+public record SourceSearchStatus(
+    string Name,
+    string Status,
+    int Count,
+    string? Error,
+    string? Note = null,
+    MusicSourceFailureKind FailureKind = MusicSourceFailureKind.None);

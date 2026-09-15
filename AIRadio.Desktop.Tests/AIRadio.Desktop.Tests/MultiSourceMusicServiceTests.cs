@@ -618,4 +618,110 @@ public class MultiSourceMusicServiceTests
             CancellationToken cancellationToken)
             => _handler(request, cancellationToken);
     }
+
+    // ---------- 播放回退候选择优 + 失败分类透传（docs/plans/2026-09-15-music-source-experience-enhancement-design.md） ----------
+
+    private sealed class MultiCandidateMusicService : IMusicSearchService
+    {
+        private readonly List<OnlineTrack> _candidates;
+
+        public MultiCandidateMusicService(List<OnlineTrack> candidates)
+            => _candidates = candidates;
+
+        public string Name => "多候选";
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => Task.FromResult(_candidates);
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>($"https://multi.invalid/{trackId.Replace(":", "_")}.mp3");
+    }
+
+    private static OnlineTrack Candidate(string id, string title, long durationMs)
+        => new() { Id = id, Title = title, Artist = "测试歌手", Source = "多候选", DurationMs = durationMs };
+
+    private static MultiSourceMusicService CreateServiceWithCandidates(
+        out OnlineTrack track,
+        params OnlineTrack[] candidates)
+    {
+        // client 不能 using：service 持有它，方法返回后仍要发请求（测试进程生命周期内不释放）
+        var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var service = new MultiSourceMusicService(client, new MultiCandidateMusicService(candidates.ToList()));
+        track = new OnlineTrack
+        {
+            Id = "netease:123",
+            Title = "测试歌曲",
+            Artist = "测试歌手",
+            DurationMs = 240_000
+        };
+        return service;
+    }
+
+    [Fact]
+    public async Task GetAlternativePlayUrlAsync_PicksCandidateClosestInDuration()
+    {
+        // 同遍（精确宽松匹配）三个候选：330s(0.625)、245s(0.979)、缺时长(-1) → 取 245s
+        var service = CreateServiceWithCandidates(out var track,
+            Candidate("multi:long", "测试歌曲", 330_000),
+            Candidate("multi:best", "测试歌曲", 245_000),
+            Candidate("multi:nodur", "测试歌曲", 0));
+
+        var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
+
+        Assert.NotNull(url);
+        Assert.Equal("multi:best", track.Id);
+    }
+
+    [Fact]
+    public async Task GetAlternativePlayUrlAsync_WithoutTargetDuration_KeepsFirstCandidate()
+    {
+        // 目标无时长：全体同分，取源内首个（与引入评分前的行为一致）
+        var service = CreateServiceWithCandidates(out var track,
+            Candidate("multi:first", "测试歌曲", 999_000),
+            Candidate("multi:second", "测试歌曲", 241_000));
+        track.DurationMs = 0;
+
+        var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
+
+        Assert.NotNull(url);
+        Assert.Equal("multi:first", track.Id);
+    }
+
+    [Fact]
+    public async Task GetAlternativePlayUrlAsync_ExactMatchPassBeatsBetterDecoratedCandidate()
+    {
+        // 两遍次序不变：第一遍精确命中（330s）优先于第二遍剥修饰命中（240s 完美时长）
+        var service = CreateServiceWithCandidates(out var track,
+            Candidate("multi:exact", "测试歌曲", 330_000),
+            Candidate("multi:live", "测试歌曲 (Live)", 240_000));
+
+        var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
+
+        Assert.NotNull(url);
+        Assert.Equal("multi:exact", track.Id);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReportsStructuredFailureKindForBusinessExceptions()
+    {
+        // 未配置账号：酷狗未登录(NotSignedIn)；网易走 code=0 业务失败(AuthExpired)
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var service = new MultiSourceMusicService(client);
+
+        await service.SearchAsync("测试", 5, CancellationToken.None);
+
+        var failures = service.LastSearchReport.Where(s => s.Status == "failed").ToList();
+        Assert.Contains(failures, s => s.FailureKind == MusicSourceFailureKind.NotSignedIn);
+        Assert.Contains(failures, s => s.FailureKind == MusicSourceFailureKind.AuthExpired);
+        // 非业务失败（如传输异常）保持 None：此处无传输失败，断言所有 failed 均已分类
+        Assert.All(failures, s => Assert.NotEqual(MusicSourceFailureKind.None, s.FailureKind));
+    }
 }

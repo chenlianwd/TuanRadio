@@ -25,8 +25,8 @@ TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电
 - Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
 - 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
 - 长期收听画像：播放/完播/跳过/按钮反馈/氛围指令持久化到 `%APPDATA%\AIRadio\listener-profile.json`，派生歌手亲和度（30 天半衰期）、Dislike 曲目黑名单（180 天过期、音乐身份跨源匹配）与 LLM 口味摘要，注入节目单搜索词生成与排除逻辑（冷启动门槛 ≥30 事件且 ≥3 歌手，强制 1 个探索方向防茧房）；DJ 聊天的 system 上下文同样注入口味段与黑名单避雷（可自然提及但受克制约束，跟随「学习我的口味」开关）；设置页提供「学习我的口味」开关与二次确认清除。
-- 多平台音乐搜索：网易云优先，酷我/酷狗/咪咕并行 fallback，YouTube 作为最低优先级兜底；每个源有独立硬超时，搜索状态逐源显示成功/超时/失败。
-- 播放 URL 失效或返回明确试听流时会依据歌名和歌手跨源重新匹配，并同步实际生效的音源 ID。
+- 多平台音乐搜索：网易云优先，酷我/酷狗/咪咕并行 fallback，YouTube 作为最低优先级兜底；每个源有独立硬超时，搜索状态逐源显示成功/超时/失败，业务失败按结构化分类（未登录/登录态或代理失效/风控验证/接口失效）渲染用户可读文案与恢复建议。
+- 播放 URL 失效或返回明确试听流时会依据歌名和歌手跨源重新匹配（同遍候选按时长接近度择优，防截断版/live 版误选），并同步实际生效的音源 ID。
 - 真实 FFT 频谱：WasapiLoopbackCapture 采集系统输出 + 1024 点 FFT 转 32 频段；无有效回环数据时启用播放态视觉兜底，并限制幅度与刷新分配。
 - 统一电台状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error），StatusBar 实时显示。
 - Light/Dark 双主题，全部颜色走 `Themes/Colors.axaml` token。

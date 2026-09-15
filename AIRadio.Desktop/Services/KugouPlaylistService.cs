@@ -217,7 +217,8 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
     private string RequireCookie()
         => _accounts.KugouCookie ?? throw new MusicSourceBusinessException(AppLanguage.T(
             "酷狗未登录，请先在设置中扫码登录。",
-            "Kugou is not signed in. Scan the QR code in Settings first."));
+            "Kugou is not signed in. Scan the QR code in Settings first."),
+            MusicSourceFailureKind.NotSignedIn);
 
     private async Task<JsonElement> GetRootAsync(
         string relativeUrl,
@@ -273,7 +274,8 @@ public sealed class KugouPlaylistService : IKugouPlaylistService, IKugouPlaylist
                     error = SensitiveDataSanitizer.Sanitize(error) ?? error;
                     throw new MusicSourceBusinessException(AppLanguage.T(
                         $"酷狗歌单接口返回异常：{error}",
-                        $"Kugou playlist request failed: {error}"));
+                        $"Kugou playlist request failed: {error}"),
+                        errorCode == 20028 ? MusicSourceFailureKind.RiskControl : MusicSourceFailureKind.AuthExpired);
                 }
 
                 if (!response.IsSuccessStatusCode)

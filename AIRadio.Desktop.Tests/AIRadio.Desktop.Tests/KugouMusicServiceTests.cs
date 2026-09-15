@@ -154,7 +154,26 @@ public class KugouMusicServiceTests
         var (client, _) = CreateClient(_ => "{\"status\":1}");
         var service = new KugouMusicService(client, accounts: null);
 
-        await Assert.ThrowsAsync<MusicSourceBusinessException>(() => service.SearchAsync("测试", 5));
+        var ex = await Assert.ThrowsAsync<MusicSourceBusinessException>(() => service.SearchAsync("测试", 5));
+        Assert.Equal(MusicSourceFailureKind.NotSignedIn, ex.Kind);
+    }
+
+    [Fact]
+    public async Task SearchAsync_BusinessFailure_ClassifiesRiskControlVersusAuthExpired()
+    {
+        var accounts = await CreateLoggedInStoreAsync();
+
+        // error_code 20028 → 风控验证（对应滑块验证链路）
+        var (riskClient, _) = CreateClient(_ => "{\"status\":0,\"error_code\":20028,\"error\":\"risk\"}");
+        var riskService = new KugouMusicService(riskClient, accounts);
+        var riskEx = await Assert.ThrowsAsync<MusicSourceBusinessException>(() => riskService.SearchAsync("测试", 5));
+        Assert.Equal(MusicSourceFailureKind.RiskControl, riskEx.Kind);
+
+        // 其他业务码 → 登录态/代理失效
+        var (authClient, _) = CreateClient(_ => "{\"status\":0,\"error_code\":301,\"error\":\"expired\"}");
+        var authService = new KugouMusicService(authClient, accounts);
+        var authEx = await Assert.ThrowsAsync<MusicSourceBusinessException>(() => authService.SearchAsync("测试", 5));
+        Assert.Equal(MusicSourceFailureKind.AuthExpired, authEx.Kind);
     }
 
     [Fact]
