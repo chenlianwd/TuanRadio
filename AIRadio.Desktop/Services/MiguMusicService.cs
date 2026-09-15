@@ -42,7 +42,8 @@ public class MiguMusicService : IMusicSearchService
             if (string.IsNullOrWhiteSpace(json) || json[0] == '<')
                 throw new MusicSourceBusinessException(AppLanguage.T(
                     "咪咕接口返回了非 JSON 响应（可能被门户页劫持）",
-                    "Migu returned a non-JSON response, possibly redirected to a portal page"));
+                    "Migu returned a non-JSON response, possibly redirected to a portal page"),
+                    MusicSourceFailureKind.ApiBroken);
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;

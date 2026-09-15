@@ -732,4 +732,61 @@ public class PlaylistViewModelTests
         Assert.Equal(1, maxConcurrentWriters);
         Assert.Equal(20, doc.RootElement.GetProperty("Tracks").GetArrayLength());
     }
+
+    // ---------- 搜索状态行按失败分类渲染（docs/plans/2026-09-15-music-source-experience-enhancement-design.md） ----------
+
+    [Fact]
+    public void FormatSourceStatus_RendersStructuredFailureKinds()
+    {
+        var originalLanguage = AppLanguage.Current;
+        try
+        {
+            AppLanguage.Apply("zh");
+
+            var notSignedIn = PlaylistViewModel.FormatSourceStatus(
+                new Services.SourceSearchStatus("酷狗音乐", "failed", 0, "raw", FailureKind: MusicSourceFailureKind.NotSignedIn));
+            Assert.Contains("未登录", notSignedIn);
+            Assert.Contains("扫码登录", notSignedIn);
+
+            var authExpired = PlaylistViewModel.FormatSourceStatus(
+                new Services.SourceSearchStatus("网易云音乐", "failed", 0, "raw", FailureKind: MusicSourceFailureKind.AuthExpired));
+            // AuthExpired 同时覆盖登录态失效与本地代理未就绪，文案不得只给"重新扫码"这一半场景有效的动作
+            Assert.Contains("登录态或本地服务异常", authExpired);
+
+            var riskControl = PlaylistViewModel.FormatSourceStatus(
+                new Services.SourceSearchStatus("酷狗音乐", "failed", 0, "raw", FailureKind: MusicSourceFailureKind.RiskControl));
+            Assert.Contains("滑块验证", riskControl);
+            Assert.Contains("10 分钟", riskControl);
+
+            var apiBroken = PlaylistViewModel.FormatSourceStatus(
+                new Services.SourceSearchStatus("咪咕音乐", "failed", 0, "raw", FailureKind: MusicSourceFailureKind.ApiBroken));
+            Assert.Contains("暂时不可用", apiBroken);
+        }
+        finally
+        {
+            AppLanguage.Apply(originalLanguage);
+        }
+    }
+
+    [Fact]
+    public void FormatSourceStatus_UnknownOrNoneFallsBackToRawErrorText()
+    {
+        var originalLanguage = AppLanguage.Current;
+        try
+        {
+            AppLanguage.Apply("zh");
+
+            var unknown = PlaylistViewModel.FormatSourceStatus(
+                new Services.SourceSearchStatus("酷我音乐", "failed", 0, "业务码异常(301)", FailureKind: MusicSourceFailureKind.Unknown));
+            Assert.Contains("业务码异常(301)", unknown);
+
+            var none = PlaylistViewModel.FormatSourceStatus(
+                new Services.SourceSearchStatus("酷我音乐", "failed", 0, "传输故障", FailureKind: MusicSourceFailureKind.None));
+            Assert.Contains("传输故障", none);
+        }
+        finally
+        {
+            AppLanguage.Apply(originalLanguage);
+        }
+    }
 }

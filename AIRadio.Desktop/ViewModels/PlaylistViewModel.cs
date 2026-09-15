@@ -1166,8 +1166,35 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             ? AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}成功{status.Count}条", $"{AppLanguage.MusicSourceName(status.Name)}: {status.Count} result(s)")
             : AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}搜到{status.Count}条({status.Note})", $"{AppLanguage.MusicSourceName(status.Name)}: {status.Count} results ({status.Note})"),
         "timeout" => AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}超时", $"{AppLanguage.MusicSourceName(status.Name)} timed out"),
-        _ => AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}失败:{status.Error}", $"{AppLanguage.MusicSourceName(status.Name)} failed: {status.Error}")
+        _ => FormatFailedSourceStatus(status)
     };
+
+    /// <summary>
+    /// failed 状态按结构化分类渲染用户可读文案与恢复建议；
+    /// None（非业务失败）与 Unknown（未标注业务异常）回退到原始错误文本。
+    /// AuthExpired 同时覆盖"酷狗登录态失效"（扫码可解）与"网易 code≠200"（常见为本地
+    /// 代理未就绪，扫码无效），文案必须取两类场景皆不误导的措辞。
+    /// </summary>
+    private static string FormatFailedSourceStatus(Services.SourceSearchStatus status)
+    {
+        var name = AppLanguage.MusicSourceName(status.Name);
+        return status.FailureKind switch
+        {
+            MusicSourceFailureKind.NotSignedIn => AppLanguage.T(
+                $"{name}未登录，请到设置的音源账号扫码登录",
+                $"{name} is not signed in; scan the QR code under Music accounts in Settings"),
+            MusicSourceFailureKind.AuthExpired => AppLanguage.T(
+                $"{name}登录态或本地服务异常，请到设置检查音源账号后重试",
+                $"{name} sign-in or local service issue; check the music account in Settings and retry"),
+            MusicSourceFailureKind.RiskControl => AppLanguage.T(
+                $"{name}触发风控验证，请到设置点击「滑块验证」；播放时会尝试自动弹出验证页（约 10 分钟内不重复弹）",
+                $"{name} triggered a captcha check; use \"Captcha verify\" in Settings. Playback will try to open the verification page automatically (at most once every ~10 minutes)"),
+            MusicSourceFailureKind.ApiBroken => AppLanguage.T(
+                $"{name}接口暂时不可用，已跳过",
+                $"{name} is temporarily unavailable; skipped"),
+            _ => AppLanguage.T($"{name}失败:{status.Error}", $"{name} failed: {status.Error}")
+        };
+    }
 
     private void SetSearchStatus(Func<string> messageFactory)
     {

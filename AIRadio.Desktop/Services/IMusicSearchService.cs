@@ -64,13 +64,34 @@ public class OnlineTrack
     };
 }
 
+/// <summary>音源业务失败的结构化分类（docs/plans/2026-09-15-music-source-experience-enhancement-design.md）。
+/// None=非业务失败（超时/传输故障走既有 timeout/failed 状态，不参与分类渲染）。</summary>
+public enum MusicSourceFailureKind
+{
+    None,
+    /// <summary>未登录（酷狗搜索/歌单在无 Cookie 时直接拒绝）。</summary>
+    NotSignedIn,
+    /// <summary>业务码异常：登录态或本地代理可能失效（网易 code≠200、酷狗 status≠1 非 20028）。</summary>
+    AuthExpired,
+    /// <summary>酷狗风控验证（error_code 20028）。</summary>
+    RiskControl,
+    /// <summary>网页接口/工具链失效（酷我、咪咕门户劫持、yt-dlp 不可用）。</summary>
+    ApiBroken,
+    Unknown
+}
+
 /// <summary>
 /// 音源接口返回了明确的业务失败（鉴权失败、风控、代理失效等）。
 /// 与"正常搜索无结果"区分：聚合层把这类异常透传为逐源 failed 状态，而不是误报"成功 0 条"。
+/// Kind 供 UI 按类型渲染用户可读文案与恢复建议（默认 Unknown 时显示原始错误文本）。
 /// </summary>
 public class MusicSourceBusinessException : Exception
 {
-    public MusicSourceBusinessException(string message) : base(message)
+    public MusicSourceFailureKind Kind { get; }
+
+    public MusicSourceBusinessException(string message,
+        MusicSourceFailureKind kind = MusicSourceFailureKind.Unknown) : base(message)
     {
+        Kind = kind;
     }
 }

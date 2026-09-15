@@ -55,7 +55,7 @@ public class YouTubeMusicService : IMusicSearchService
         {
             // yt-dlp 未安装/版本被禁用属于源不可用（业务态）：透传为业务异常，聚合层
             // 记 failed；塌缩成空结果会被记 success("ok(0)")，YouTube 永不熔断、状态失真
-            throw new MusicSourceBusinessException(ex.Message);
+            throw new MusicSourceBusinessException(ex.Message, MusicSourceFailureKind.ApiBroken);
         }
         // 其余异常不再吞掉：与其他源的 rethrow 口径一致，由聚合层按 failed/timeout 记账
     }
@@ -99,7 +99,7 @@ public class YouTubeMusicService : IMusicSearchService
         catch (YtdlpUnavailableException ex)
         {
             // 同 SearchAsync：源不可用按业务异常透传，聚合层记录后继续回退下一源
-            throw new MusicSourceBusinessException(ex.Message);
+            throw new MusicSourceBusinessException(ex.Message, MusicSourceFailureKind.ApiBroken);
         }
         // TimeoutException/其余异常上抛：聚合层按 timeout/failed 记账后返回 null 走跨源回退
     }

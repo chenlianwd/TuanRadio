@@ -49,7 +49,8 @@ public class KuwoMusicService : IMusicSearchService
                 codeElement.GetInt32() != 200)
                 throw new MusicSourceBusinessException(AppLanguage.T(
                     $"酷我接口业务码异常({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})",
-                    $"Kuwo returned an unexpected business code ({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})"));
+                    $"Kuwo returned an unexpected business code ({(codeElement.ValueKind == JsonValueKind.Number ? codeElement.GetInt32() : -1)})"),
+                    MusicSourceFailureKind.ApiBroken);
 
             var tracks = new List<OnlineTrack>();
             // TryGetProperty 仅在 ValueKind==Object 时返回 bool，data:null 等形状会直接抛
