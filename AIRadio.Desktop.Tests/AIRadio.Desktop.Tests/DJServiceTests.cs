@@ -380,4 +380,227 @@ public class DJServiceTests
         for (var i = 1; i < last.Count; i++)
             Assert.Equal(i % 2 == 1 ? MessageRole.User : MessageRole.Assistant, last[i].Role);
     }
+
+    // ---------- 聊天注入长期收听画像（docs/plans/2026-09-15-dj-chat-profile-injection-design.md） ----------
+
+    private sealed class FakeListeningProfile : IListeningProfileService
+    {
+        public ListenerProfileSnapshot Snapshot { get; set; } = ListenerProfileSnapshot.Empty;
+        public bool Enabled { get; set; } = true;
+
+        public ListenerProfileSnapshot GetSnapshot()
+            => Enabled ? Snapshot : ListenerProfileSnapshot.Empty;
+
+        public void RecordEvent(ListeningEventData eventData) { }
+        public void NotifyPlaybackStarted(Track track) { }
+        public void NotifyPlaybackEndedNaturally(Track track) { }
+        public void NotifyPositionSampled(Track track, TimeSpan position) { }
+        public void NotifyTrackSwitched(Track? next) { }
+        public void NotifyPlaybackPaused() { }
+        public void Reset() { }
+        public Task LoadAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RefreshDigestAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private static ListenerProfileSnapshot BuildThresholdSnapshot(string digestText) => new()
+    {
+        TotalEventsIngested = ListeningProfileService.InjectionMinEvents,
+        TopArtists = new[]
+        {
+            new ArtistAffinity { Artist = "周杰伦", Score = 5, PlayCount = 10 },
+            new ArtistAffinity { Artist = "陈绮贞", Score = 3, PlayCount = 6 },
+            new ArtistAffinity { Artist = "五月天", Score = 2, PlayCount = 4 },
+        },
+        AvoidArtists = new[] { new ArtistAffinity { Artist = "差评歌手", Score = -3 } },
+        MoodUsage = new Dictionary<string, int> { ["calm"] = 5, ["energetic"] = 2 },
+        DislikeBlacklist = new[] { new ProfileMusicRef("不爱听", "某人") },
+        Digest = new TasteDigestData { Text = digestText, Language = "zh" },
+    };
+
+    private static List<List<ChatMessage>> SetupHistoryCapture(Mock<ILLMService> mock)
+    {
+        var captured = new List<List<ChatMessage>>();
+        mock.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("回复[calm]")
+            .Callback<string, List<ChatMessage>>((_, history) => captured.Add(history.ToList()));
+        return captured;
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_AddsTasteAndBlacklistToSystemSnapshot()
+    {
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile { Snapshot = BuildThresholdSnapshot("偏爱华语流行与 City Pop") };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        await dj.GenerateChatResponseAsync("来点歌");
+
+        var system = captured[^1][0];
+        Assert.Equal(MessageRole.System, system.Role);
+        Assert.Contains("测试人设", system.Content);
+        Assert.Contains("偏爱华语流行与 City Pop", system.Content);
+        Assert.Contains("周杰伦", system.Content);
+        Assert.Contains("差评歌手", system.Content);
+        Assert.Contains("calm", system.Content);
+        Assert.Contains("不爱听 - 某人", system.Content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_DoesNotPersistAcrossCalls()
+    {
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile { Snapshot = BuildThresholdSnapshot("旧摘要") };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        await dj.GenerateChatResponseAsync("第一句");
+        profile.Snapshot = BuildThresholdSnapshot("新摘要");
+        await dj.GenerateChatResponseAsync("第二句");
+
+        // 拼接只发生在快照副本：第二次调用只含新画像段，持久历史未落画像
+        var secondSystem = captured[1][0].Content;
+        Assert.DoesNotContain("旧摘要", secondSystem);
+        Assert.Contains("新摘要", secondSystem);
+        // Split 出 2 段 = 画像段标题恰好出现一次（无跨调用叠加）
+        Assert.Equal(2, secondSystem.Split("听众长期口味").Length);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_NullDisabledOrColdStart_KeepsSystemIdentical()
+    {
+        var baselineMock = new Mock<ILLMService>();
+        var baselineCapture = SetupHistoryCapture(baselineMock);
+        var baseline = new DJService(baselineMock.Object);
+        baseline.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+        await baseline.GenerateChatResponseAsync("你好");
+        var expected = baselineCapture[^1][0].Content;
+
+        // Enabled=false：GetSnapshot 返回空 → 不注入
+        var disabledMock = new Mock<ILLMService>();
+        var disabledCapture = SetupHistoryCapture(disabledMock);
+        var disabled = new DJService(disabledMock.Object,
+            profile: new FakeListeningProfile { Enabled = false, Snapshot = BuildThresholdSnapshot("不该出现") });
+        disabled.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+        await disabled.GenerateChatResponseAsync("你好");
+        Assert.Equal(expected, disabledCapture[^1][0].Content);
+
+        // 冷启动（门槛未达且无黑名单）：不注入
+        var coldMock = new Mock<ILLMService>();
+        var coldCapture = SetupHistoryCapture(coldMock);
+        var cold = new DJService(coldMock.Object,
+            profile: new FakeListeningProfile
+            {
+                Snapshot = new ListenerProfileSnapshot
+                {
+                    TotalEventsIngested = 5,
+                    TopArtists = new[] { new ArtistAffinity { Artist = "周杰伦", Score = 1 } },
+                    Digest = new TasteDigestData { Text = "过早结论" },
+                },
+            });
+        cold.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+        await cold.GenerateChatResponseAsync("你好");
+        Assert.Equal(expected, coldCapture[^1][0].Content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_BlacklistWithoutThreshold_InjectsAvoidLineOnly()
+    {
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = new ListenerProfileSnapshot
+            {
+                TotalEventsIngested = 3,
+                TopArtists = new[] { new ArtistAffinity { Artist = "某人", Score = -3 } },
+                DislikeBlacklist = new[] { new ProfileMusicRef("不爱听", "某人") },
+            },
+        };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        await dj.GenerateChatResponseAsync("来点歌");
+
+        var content = captured[^1][0].Content;
+        Assert.Contains("不要主动推荐这些歌", content);
+        Assert.Contains("不爱听 - 某人", content);
+        Assert.DoesNotContain("听众长期口味", content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_FollowsProfileLanguage()
+    {
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile { Snapshot = BuildThresholdSnapshot("Taste summary text") };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "DJ Alex", SystemPrompt = "Test persona", Language = "en" });
+
+        await dj.GenerateChatResponseAsync("play something");
+
+        var content = captured[^1][0].Content;
+        Assert.Contains("Listener long-term taste", content);
+        Assert.Contains("Taste summary text", content);
+        Assert.Contains("Never suggest these songs", content);
+        Assert.DoesNotContain("听众长期口味", content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_SurvivesHistoryTrimming()
+    {
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile { Snapshot = BuildThresholdSnapshot("稳定摘要") };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        for (var i = 0; i < 12; i++)
+            await dj.GenerateChatResponseAsync($"消息{i}");
+
+        var last = captured[^1];
+        Assert.True(last.Count >= 21, $"history should be at cap, got {last.Count}");
+        Assert.Contains("稳定摘要", last[0].Content);
+        Assert.Contains("测试人设", last[0].Content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_UninitializedEmptyHistory_DoesNotInjectOrThrow()
+    {
+        // Initialize 未调用（空历史）：即使画像达标也不注入，且不抛异常
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile { Snapshot = BuildThresholdSnapshot("不该出现") };
+        var dj = new DJService(mock.Object, profile: profile);
+
+        var response = await dj.GenerateChatResponseAsync("你好");
+
+        Assert.Equal("回复[calm]", response);
+        var history = Assert.Single(captured);
+        Assert.Empty(history);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_ReinitializeHasNoResidue()
+    {
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile { Snapshot = BuildThresholdSnapshot("摘要") };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+        await dj.GenerateChatResponseAsync("第一句");
+
+        // 角色切换：Initialize 重建全新 system，画像段只随当次调用注入一份
+        dj.Initialize(new DJProfile { Name = "Lumen", SystemPrompt = "新人设", Language = "zh" });
+        await dj.GenerateChatResponseAsync("第二句");
+
+        var content = captured[^1][0].Content;
+        Assert.StartsWith("新人设", content);
+        Assert.DoesNotContain("测试人设", content);
+        // Split 出 2 段 = 画像段标题恰好出现一次（重建后无旧段残留）
+        Assert.Equal(2, content.Split("听众长期口味").Length);
+    }
 }

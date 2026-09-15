@@ -14,6 +14,7 @@ public class DJService : IDJService
     private readonly ILLMService _llm;
     private readonly ITtsService? _tts;
     private readonly IMusicSearchService? _musicSearch;
+    private readonly IListeningProfileService? _listeningProfile;
     private DJProfile _profile = new();
     private string _currentEmotion = "neutral";
     private readonly List<ChatMessage> _chatHistory = new();
@@ -23,11 +24,13 @@ public class DJService : IDJService
     public bool TtsEnabled => _profile.TtsEnabled;
     public ApiFailureInfo? LastFailure { get; private set; }
 
-    public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null)
+    public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null,
+        IListeningProfileService? profile = null)
     {
         _llm = llm;
         _tts = tts;
         _musicSearch = musicSearch;
+        _listeningProfile = profile;
     }
 
     public void Initialize(DJProfile profile)
@@ -204,6 +207,20 @@ Response rules:
                     snapshot = _chatHistory.ToList();
                 }
 
+                // 长期画像注入：拼在快照副本的人设 system 尾部（docs/plans/2026-09-15-dj-chat-profile-injection-design.md）。
+                // 每次调用取最新画像、不落持久历史；BuildMessages 的 Take(1) 恒保首条 system，长对话不丢。
+                var profileBlock = BuildProfileContextBlock();
+                if (profileBlock != null &&
+                    snapshot.Count > 0 &&
+                    snapshot[0].Role == MessageRole.System)
+                {
+                    snapshot[0] = new ChatMessage
+                    {
+                        Role = MessageRole.System,
+                        Content = snapshot[0].Content + profileBlock
+                    };
+                }
+
                 var response = _llm is LLMService llm
                     ? await llm.ChatAsync(userMessage, snapshot, cancellationToken)
                     : await _llm.ChatAsync(userMessage, snapshot)
@@ -249,6 +266,64 @@ Response rules:
         {
             _chatGate.Release();
         }
+    }
+
+    /// <summary>
+    /// 聊天画像段（docs/plans/2026-09-15-dj-chat-profile-injection-design.md）：
+    /// 口味段（digest+歌手+氛围）走冷启动门槛（≥30 事件且 ≥3 歌手），
+    /// 黑名单避雷不走门槛（Dislike 是显式信号）；无内容可注入时返回 null。
+    /// 文案跟随 DJ 人设语言（_profile.Language），黑名单条目取最近 5 首。
+    /// </summary>
+    private string? BuildProfileContextBlock()
+    {
+        var snapshot = _listeningProfile?.GetSnapshot();
+        if (snapshot == null)
+            return null;
+
+        var isEn = _profile.Language == "en";
+        var separator = isEn ? ", " : "、";
+        var sections = new List<string>();
+
+        if (snapshot.MeetsInjectionThreshold)
+        {
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(snapshot.Digest?.Text))
+                lines.Add(snapshot.Digest.Text.Trim());
+
+            var statsParts = new List<string>
+            {
+                (isEn ? "Favorite artists: " : "常听歌手：") +
+                string.Join(separator, snapshot.TopArtists.Take(5).Select(a => a.Artist)),
+            };
+            var avoidArtists = string.Join(separator, snapshot.AvoidArtists.Take(3).Select(a => a.Artist));
+            if (avoidArtists.Length > 0)
+                statsParts.Add((isEn ? "avoided artists: " : "回避歌手：") + avoidArtists);
+            var moods = snapshot.MoodUsage.OrderByDescending(kv => kv.Value).Take(2).Select(kv => kv.Key).ToList();
+            if (moods.Count > 0)
+                statsParts.Add((isEn ? "frequent moods: " : "常见氛围：") + string.Join(separator, moods));
+            lines.Add(string.Join(isEn ? "; " : "；", statsParts));
+
+            lines.Add(isEn
+                ? "You may weave these tastes naturally into music talk (e.g. occasionally mention styles they often listen to), but not in every reply and never as a list."
+                : "聊到音乐时可以自然地结合这些口味（比如偶尔提到对方常听的风格），但不要每句都提、不要播报清单。");
+
+            sections.Add((isEn
+                ? "Listener long-term taste (internal reference; don't recite it like a dossier):"
+                : "听众长期口味（内部参考，不要像档案一样罗列）：") + "\n" + string.Join("\n", lines));
+        }
+
+        var blacklist = snapshot.DislikeBlacklist
+            .Take(5)
+            .Select(x => $"{x.Title} - {x.Artist}")
+            .ToList();
+        if (blacklist.Count > 0)
+        {
+            sections.Add(isEn
+                ? $"Never suggest these songs (the listener explicitly dislikes them): {string.Join("; ", blacklist)}."
+                : $"不要主动推荐这些歌（听众明确不喜欢）：{string.Join("；", blacklist)}。");
+        }
+
+        return sections.Count == 0 ? null : "\n\n" + string.Join("\n", sections);
     }
 
     /// <summary>
