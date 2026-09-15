@@ -554,7 +554,6 @@ Response rules:
     {
         var cleaned = Regex.Replace(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
         cleaned = Regex.Replace(cleaned, @"<cmd>\s*\{.*?\}\s*</cmd>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-        cleaned = Regex.Replace(cleaned, @"【\s*(?:play:.+?|next|pause|resume)\s*】", "", RegexOptions.IgnoreCase);
         return cleaned.Trim();
     }
 

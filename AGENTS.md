@@ -36,6 +36,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 长期收听画像：ListeningProfileService 持久化收听事件（%APPDATA%\AIRadio\listener-profile.json，事件为唯一事实、统计现算），歌手亲和度 30 天半衰期、Dislike 黑名单 180 天音乐身份匹配、LLM 口味摘要（水位/老化/语言触发、失败退避、Reset 代次隔离）；跳过信号三重前置判定（前曲播放态+新曲身份不同+进度样本绑定本曲，TrackChanged 有 8 处触发点不能直接当切歌）；推荐搜索词注入画像段与探索要求（冷启动门槛 ≥30 事件且 ≥3 歌手），黑名单拼入排除集（不走冷启动门槛）；设置页学习开关（listener_profile_enabled）+ 二次确认清除。
 - DJ 聊天画像注入：GenerateChatResponseAsync 在历史快照副本的人设 system 尾部拼画像段（LLMService.BuildMessages 恒前置内置小音 system，双 system 合并是现状常态，注入不新增第三条；Take(1) 恒保首条 system 故长对话裁剪不丢）；口味段（digest+歌手+氛围）走冷启动门槛、黑名单避雷不走门槛；文案跟随 DJ 人设语言；拼接只在快照副本上，持久历史不落画像、角色切换 Initialize 重建无残留。
 - 音源体验增强：播放回退候选在身份匹配每遍内按时长接近度择优（ScoreFallbackCandidate：目标无时长取首个、候选缺时长记 -1，两遍次序与外层"高优先级源命中即停"不变——跨源不比时长是预算效率的有意取舍）；MusicSourceFailureKind 结构化分类（NotSignedIn/AuthExpired/RiskControl(20028)/ApiBroken/Unknown）由 MusicSourceBusinessException.Kind 携带，七处抛出点标注，经 SourceSearchStatus.FailureKind 透传（注意 AddSearchReport 脱敏重建必须保字段），搜索状态行按类型渲染；AuthExpired 文案须兼顾酷狗登录态失效与网易代理未就绪两类场景，风控文案注明自动验证仅播放路径且约 10 分钟冷却。
+- 产品化清理五件套：设置页音源逐源连接诊断（MultiSourceMusicService.DiagnoseAsync 独立 AsyncLocal 作用域报告不污染搜索状态，复用 FormatSourceStatus 分类渲染）；AI 控制协议旧文本尾标（【play:…】/【next】）从 ParseDjResponse 与两处 StripControlTags 移除，协议只认 JSON 控制块；弹层硬编码标题 SETTINGS/LIBRARY 迁 S_Settings/S_Library（VOL/LIVE 为复古电台设计元素有意保留英文）；Light 主题 WCAG 审计修正三处超标（提示字 #6A6478、LIVE 徽标 #146C4F、StatePlaying #0C6E4E，均 ≥4.5:1）；Node.js/yt-dlp 供应链校验确认已实现（EnvironmentManager 下载即 fail-closed 校验、YtdlpManager 固定版本+SHA256），技术债清单同步。
 
 ## Architecture Notes
 

@@ -78,6 +78,16 @@
                 <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
                            Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
+
+            <!-- Per-source connection diagnostics -->
+            <StackPanel Spacing="4" Margin="0,6,0,0">
+                <Button Command="{Binding DiagnoseSourcesCommand}"
+                        Content="{Binding DiagnoseSourcesButtonText}"
+                        IsEnabled="{Binding !IsDiagnosingSources}"
+                        HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
+                <TextBlock Text="{Binding SourceDiagnosticsText}" Foreground="{DynamicResource C_FFFFC86B}"
+                           FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
         </StackPanel>
 
         <!-- Language selection -->

@@ -40,10 +40,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly KugouAccountService _kugouAccount;
     private readonly KugouVerificationService? _kugouVerification;
     private readonly IListeningProfileService? _listeningProfile;
+    private readonly IMusicSearchService? _musicSearch;
     private readonly IDisposable _listenerProfileToggleSub;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
     private int _resetArmVersion;
+    private Func<string>? _sourceDiagnosticsFactory;
     private bool _kugouVerifyRunning;
     private bool _neteaseQrRunning;
     private bool _kugouQrRunning;
@@ -84,6 +86,10 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool ListenerProfileEnabled { get; set; } = true;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
+    // 音源逐源连接诊断结果（随语言切换重建）
+    [Reactive] public string SourceDiagnosticsText { get; set; } = string.Empty;
+    [Reactive] public bool IsDiagnosingSources { get; set; }
+    [Reactive] public string DiagnoseSourcesButtonText { get; set; } = AppLanguage.T("音源连接诊断", "Diagnose music sources");
     [Reactive] public string SpeechMixMode { get; set; } = "duck";
     [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
@@ -128,6 +134,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
     public ReactiveCommand<Unit, Unit> ResetListenerProfileCommand { get; }
+    public ReactiveCommand<Unit, Unit> DiagnoseSourcesCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
@@ -148,7 +155,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         MusicAccountStore? accountStore = null,
         System.Net.Http.HttpClient? httpClient = null,
         KugouVerificationService? kugouVerification = null,
-        IListeningProfileService? listeningProfile = null)
+        IListeningProfileService? listeningProfile = null,
+        IMusicSearchService? musicSearch = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -160,12 +168,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _kugouAccount = new KugouAccountService(http);
         _kugouVerification = kugouVerification;
         _listeningProfile = listeningProfile;
+        _musicSearch = musicSearch;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(() => SaveAsync());
         ResetListenerProfileCommand = ReactiveCommand.Create(ResetListenerProfile);
+        DiagnoseSourcesCommand = ReactiveCommand.CreateFromTask(
+            DiagnoseSourcesAsync,
+            this.WhenAnyValue(x => x.IsDiagnosingSources).Select(running => !running));
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
@@ -223,6 +235,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _onLanguageChanged = () =>
         {
             TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
+            DiagnoseSourcesButtonText = AppLanguage.T("音源连接诊断", "Diagnose music sources");
+            if (_sourceDiagnosticsFactory != null)
+                SourceDiagnosticsText = _sourceDiagnosticsFactory();
             ResetProfileButtonText = Volatile.Read(ref _listenerProfileResetArmed) != 0
                 ? AppLanguage.T("再次点击确认清除", "Click again to confirm")
                 : AppLanguage.T("清除收听画像", "Clear listening profile");
@@ -510,6 +525,48 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public (string VoiceId, string Personality)? GetOverride(string characterId)
     {
         return _overrides.TryGetValue(characterId, out var ov) ? ov : null;
+    }
+
+    /// <summary>
+    /// 音源逐源连接诊断：聚合服务对每个源做 limit 1 轻量探测，结果按结构化分类渲染
+    /// （复用搜索状态行的 FormatSourceStatus，含未登录/风控/接口失效等恢复建议）。
+    /// </summary>
+    private async Task DiagnoseSourcesAsync()
+    {
+        if (_musicSearch is not MultiSourceMusicService multi)
+        {
+            SetSourceDiagnostics(() => AppLanguage.T(
+                "聚合音源服务不可用。", "The aggregated music service is unavailable."));
+            return;
+        }
+
+        IsDiagnosingSources = true;
+        try
+        {
+            var report = (await multi.DiagnoseAsync(_lifetimeCts.Token)).ToList();
+            // 文案在工厂里现算：语言切换时经 _onLanguageChanged 重建成当前语言
+            SetSourceDiagnostics(() => report.Count == 0
+                ? AppLanguage.T("没有可诊断的音源。", "No music sources to diagnose.")
+                : string.Join("\n", report.Select(PlaylistViewModel.FormatSourceStatus)));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Source diagnostics failed");
+            SetSourceDiagnostics(() => AppLanguage.T("诊断失败，请稍后重试。", "Diagnostics failed; try again later."));
+        }
+        finally
+        {
+            IsDiagnosingSources = false;
+        }
+    }
+
+    private void SetSourceDiagnostics(Func<string> factory)
+    {
+        _sourceDiagnosticsFactory = factory;
+        SourceDiagnosticsText = factory();
     }
 
     /// <summary>

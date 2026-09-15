@@ -92,7 +92,7 @@
             <Color x:Key="StateCuratingColor">#FF7546AB</Color>
             <Color x:Key="StateSearchingColor">#FF936000</Color>
             <Color x:Key="StateSpeakingColor">#FF23654F</Color>
-            <Color x:Key="StatePlayingColor">#FF0E7B58</Color>
+            <Color x:Key="StatePlayingColor">#FF0C6E4E</Color>
             <Color x:Key="StateErrorColor">#FFC62828</Color>
             <Color x:Key="C_00000000">#00000000</Color>
             <Color x:Key="C_01000000">#01000000</Color>
@@ -124,13 +124,13 @@
             <Color x:Key="C_FF111118">#FF2E2937</Color>
             <Color x:Key="C_FF169C46">#FF0E7B58</Color>
             <Color x:Key="C_FF262632">#FFE2DAEC</Color>
-            <Color x:Key="C_FF44465C">#FFB9B1C4</Color>
+            <Color x:Key="C_FF44465C">#FF6A6478</Color>
             <Color x:Key="C_FF56F5C4">#FF178A65</Color>
             <Color x:Key="C_FF666666">#FF756E7C</Color>
             <Color x:Key="C_FF7F7896">#FFDCD5E8</Color>
             <Color x:Key="C_FF858594">#FF746D7C</Color>
             <Color x:Key="C_FF8A8A96">#FF6D6675</Color>
-            <Color x:Key="C_FF8DFFC8">#FF167A5B</Color>
+            <Color x:Key="C_FF8DFFC8">#FF146C4F</Color>
             <Color x:Key="C_FF8E8E9C">#FF6B6474</Color>
             <Color x:Key="C_FF9A9AA6">#FF675F70</Color>
             <Color x:Key="C_FF9A9AA8">#FF675F70</Color>

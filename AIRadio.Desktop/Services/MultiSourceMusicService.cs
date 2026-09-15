@@ -81,6 +81,33 @@ public class MultiSourceMusicService : IMusicSearchService
         }
     }
 
+    /// <summary>
+    /// 设置页逐源连接诊断：按源序独立探测（limit 1 的轻量搜索），复用逐源状态与
+    /// 结构化失败分类（含熔断/超时/业务失败 Kind）。报告走独立作用域，
+    /// 不污染用户上一次搜索的 LastSearchReport。
+    /// </summary>
+    public async Task<IReadOnlyList<SourceSearchStatus>> DiagnoseAsync(CancellationToken cancellationToken)
+    {
+        var report = new List<SourceSearchStatus>();
+        CurrentSearchReport.Value = report;
+        try
+        {
+            foreach (var source in _sources)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // 慢源（yt-dlp 子进程）给独立短预算：诊断是手动触发，总时长需有界
+                var budget = source.IsSlowSource ? TimeSpan.FromSeconds(10) : SourceTimeout;
+                await SearchWithFallback(source, "周杰伦", 1, budget, cancellationToken);
+            }
+            lock (_reportGate)
+                return report.ToArray();
+        }
+        finally
+        {
+            CurrentSearchReport.Value = null;
+        }
+    }
+
     public MultiSourceMusicService(HttpClient httpClient, params IMusicSearchService[] extraSources)
         : this(httpClient, accounts: null, extraSources)
     {
