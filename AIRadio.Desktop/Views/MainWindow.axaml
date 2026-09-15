@@ -1,4 +1,3 @@
-<!-- TODO: UI strings mix Chinese and English; consider introducing a localization resource system (L12) -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AIRadio.Desktop.ViewModels"
@@ -144,7 +143,7 @@
                     Padding="18">
                 <Grid RowDefinitions="Auto,*" RowSpacing="12">
                     <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock Text="SETTINGS" FontSize="18" FontWeight="700"
+                        <TextBlock Text="{DynamicResource S_Settings}" FontSize="18" FontWeight="700"
                                    FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"/>
                         <Button Grid.Column="1" Width="32" Height="28" Padding="0"
                                 Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="{DynamicResource S_CloseSettings}">

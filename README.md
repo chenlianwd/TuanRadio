@@ -21,7 +21,7 @@ TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电
 - 库抽屉四类视图：歌单、收藏、搜索、当前节目单（含推荐标签）。
 - AI DJ 聊天、点歌、串场、TTS 播报和 TTS 中断，DJ 角色可切换（名称/声音/人设）。
 - SongStory：STORY 按钮触发现曲 3-5 句 DJ 讲述，走 LLM 生成 + TTS 播报。
-- 设置页可配置 LLM 提供商、API Key、Base URL、模型、回复语言、语音播报和说话混音方式，带连接测试与失败原因提示。
+- 设置页可配置 LLM 提供商、API Key、Base URL、模型、回复语言、语音播报和说话混音方式，带连接测试与失败原因提示；音源账号区提供逐源连接诊断（按结构化分类渲染各源状态与恢复建议）。
 - Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
 - 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
 - 长期收听画像：播放/完播/跳过/按钮反馈/氛围指令持久化到 `%APPDATA%\AIRadio\listener-profile.json`，派生歌手亲和度（30 天半衰期）、Dislike 曲目黑名单（180 天过期、音乐身份跨源匹配）与 LLM 口味摘要，注入节目单搜索词生成与排除逻辑（冷启动门槛 ≥30 事件且 ≥3 歌手，强制 1 个探索方向防茧房）；DJ 聊天的 system 上下文同样注入口味段与黑名单避雷（可自然提及但受克制约束，跟随「学习我的口味」开关）；设置页提供「学习我的口味」开关与二次确认清除。
@@ -76,8 +76,7 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 ## 已知技术债
 
 - 长期收听画像已落地且推荐/聊天双链路注入（见 docs/plans/2026-09-14 与 2026-09-15 设计文档），但画像纯本地、不跨设备同步（有意不做云端）。
-- AI 控制协议已支持 JSON 控制块，但旧格式仍保留短期兼容。
 - 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态和跨源回退降级。
-- Node.js 便携包目前记录 SHA256 供审计，但尚未自动对照官方 `SHASUMS256.txt` 做完整性校验。
+- Node.js 便携包下载即按官方 SHASUMS256 值做 fail-closed 校验，yt-dlp 固定官方 release 版本 + SHA256 校验（不追随 latest）。
 - 原生音频设备异常属于运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试。
-- Light/Dark 已使用独立配色 token，主界面、设置页和弹层会随主题完整切换。
+- Light/Dark 双主题经 WCAG 对比度审计（文字对 ≥4.5:1，Light 主题三处超标 token 已修正）；后续视觉调整需保持该标准。

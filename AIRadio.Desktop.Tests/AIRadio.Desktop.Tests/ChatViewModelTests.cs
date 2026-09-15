@@ -97,12 +97,14 @@ public class ChatViewModelTests
     [Fact]
     public void ParseResponse_StripsEmotionTags()
     {
+        // 旧文本尾标已移除：情绪标签照常剥离，【next】不再是指令、按普通文本保留
         var response = "今天天气真好呢[happy]【next】";
         var parsed = ChatViewModel.ParseDjResponse(response);
 
         Assert.DoesNotContain("[happy]", parsed.DisplayText);
         Assert.Equal("happy", parsed.Emotion);
-        Assert.Equal("next", parsed.Command);
+        Assert.Null(parsed.Command);
+        Assert.Contains("【next】", parsed.DisplayText);
     }
 
     [Fact]

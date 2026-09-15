@@ -813,15 +813,8 @@ public class ChatViewModel : ViewModelBase, IDisposable
             command = ParseJsonCommand(jsonMatch.Groups[1].Value);
             displayText = displayText.Remove(jsonMatch.Index, jsonMatch.Length);
         }
-        else
-        {
-            var legacyMatch = Regex.Match(displayText, @"【(play:.+?|next|pause|resume)】\s*$", RegexOptions.IgnoreCase);
-            if (legacyMatch.Success)
-            {
-                displayText = displayText[..legacyMatch.Index];
-                command = legacyMatch.Groups[1].Value;
-            }
-        }
+        // 旧文本尾标格式（【play:…】/【next】等）已按计划移除：协议只认 JSON 控制块，
+        // 系统提示词自始只教学 JSON 格式，遗留解析分支不再保留
 
         return new DjResponse(displayText.Trim(), command, emotion);
     }

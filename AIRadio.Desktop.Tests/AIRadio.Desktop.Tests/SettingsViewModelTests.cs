@@ -807,6 +807,29 @@ public class SettingsViewModelTests
         }
     }
 
+    [Fact]
+    public async Task DiagnoseSources_RendersPerSourceClassifiedResults()
+    {
+        // 聚合服务双源：网易 code=0 → 登录态/代理失效；酷狗未登录 → 未登录分类文案
+        var handler = new StaticResponseHandler("{\"code\":0}");
+        using var client = new HttpClient(handler);
+        var musicSearch = new MultiSourceMusicService(client);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            musicSearch: musicSearch);
+
+        try
+        {
+            await vm.DiagnoseSourcesCommand.Execute();
+            Assert.Contains("未登录", vm.SourceDiagnosticsText);
+            Assert.Contains("登录态或本地服务异常", vm.SourceDiagnosticsText);
+            Assert.False(vm.IsDiagnosingSources);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
     private sealed class StaticResponseHandler(string content) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)

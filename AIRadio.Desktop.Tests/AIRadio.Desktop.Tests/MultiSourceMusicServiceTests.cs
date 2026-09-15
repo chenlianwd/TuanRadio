@@ -724,4 +724,24 @@ public class MultiSourceMusicServiceTests
         // 非业务失败（如传输异常）保持 None：此处无传输失败，断言所有 failed 均已分类
         Assert.All(failures, s => Assert.NotEqual(MusicSourceFailureKind.None, s.FailureKind));
     }
+
+    [Fact]
+    public async Task DiagnoseAsync_ReportsPerSourceStatusWithoutPollutingLastReport()
+    {
+        // netease code=0 → failed(AuthExpired)；kugou 未登录 → failed(NotSignedIn)
+        var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var service = new MultiSourceMusicService(client);
+
+        var report = await service.DiagnoseAsync(CancellationToken.None);
+
+        Assert.Equal(2, report.Count);
+        Assert.Contains(report, s => s.Name == "网易云音乐" && s.FailureKind == MusicSourceFailureKind.AuthExpired);
+        Assert.Contains(report, s => s.Name == "酷狗音乐" && s.FailureKind == MusicSourceFailureKind.NotSignedIn);
+        // 诊断走独立作用域：不污染用户上一次搜索的共享报告
+        Assert.Empty(service.LastSearchReport);
+    }
 }

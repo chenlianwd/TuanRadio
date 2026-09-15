@@ -162,7 +162,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService, listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
-            listeningProfile);
+            listeningProfile, musicSearchService);
         SpectrumVM = new SpectrumViewModel(_audioService);
         LyricsVM = new LyricsViewModel(
             _audioService,
@@ -1166,7 +1166,6 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     {
         var cleaned = Regex.Replace(text, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
         cleaned = Regex.Replace(cleaned, @"<cmd>\s*\{.*?\}\s*</cmd>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-        cleaned = Regex.Replace(cleaned, @"【(?:play:.+?|next|pause|resume)】", "", RegexOptions.IgnoreCase);
         return cleaned.Trim();
     }
 
