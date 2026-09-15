@@ -226,7 +226,8 @@ public partial class App : Application
             new DJService(
                 sp.GetRequiredService<ILLMService>(),
                 sp.GetRequiredService<ITtsService>(),
-                sp.GetRequiredService<IMusicSearchService>()));
+                sp.GetRequiredService<IMusicSearchService>(),
+                sp.GetRequiredService<IListeningProfileService>()));
         services.AddSingleton<IRecommendationService>(sp =>
             new RecommendationService(
                 sp.GetRequiredService<ILLMService>(),
