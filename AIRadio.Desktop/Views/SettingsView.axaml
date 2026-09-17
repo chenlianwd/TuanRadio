@@ -99,6 +99,8 @@
                       DisplayMemberBinding="{Binding DisplayName}"
                       HorizontalAlignment="Stretch"/>
             <TextBlock Text="{DynamicResource S_LanguageHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+            <TextBox Text="{Binding WeatherCity, Mode=TwoWay}" Watermark="{DynamicResource S_WeatherCityWatermark}" Margin="0,4,0,0"/>
+            <TextBlock Text="{DynamicResource S_WeatherCityHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
         </StackPanel>
 
         <!-- TTS -->

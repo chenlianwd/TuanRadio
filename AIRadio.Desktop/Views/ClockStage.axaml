@@ -5,6 +5,26 @@
              x:Class="AIRadio.Desktop.Views.ClockStage"
              x:DataType="vm:MainWindowViewModel">
 
+    <!-- 环境指示器徽标样式：节气/节日当天高亮。
+         注意：子树必须用 {Binding WeatherVM.X} 路径绑定——DataContext="{Binding WeatherVM}"
+         重定向与编译绑定组合会静默破坏整个程序集的 XAML 预编译（ChatAreaMicButtonTests 回归锚定） -->
+    <UserControl.Styles>
+        <Style Selector="Border.calendar-badge">
+            <Setter Property="Background" Value="{DynamicResource C_10000000}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_333A3D4A}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="9"/>
+            <Setter Property="Padding" Value="7,2"/>
+        </Style>
+        <Style Selector="Border.calendar-badge.highlighted">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+        </Style>
+        <Style Selector="Border.calendar-badge.highlighted TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="FontWeight" Value="700"/>
+        </Style>
+    </UserControl.Styles>
+
     <Grid Background="{DynamicResource C_F008080D}">
         <TextBlock x:Name="ClockDots"
                    IsHitTestVisible="False"
@@ -34,7 +54,23 @@
                                 Height="118" Margin="18,0,0,0"/>
         </Grid>
 
-        <!-- 歌词图层：与三栏时钟/频谱互斥；星空与 ClockDots 继续作为背景 -->
+        <!-- 环境指示器（天气 + 日历徽标）：与时钟图层同显隐，歌词模式避让；默认仅图标，悬停出详情 -->
+    <StackPanel Orientation="Horizontal" Spacing="12"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,18,10"
+                IsVisible="{Binding !IsLyricsMode}">
+        <Border Classes="calendar-badge" Classes.highlighted="{Binding WeatherVM.IsCalendarHighlighted}"
+                ToolTip.Tip="{Binding WeatherVM.CalendarTooltip}">
+            <TextBlock Text="{Binding WeatherVM.CalendarDayBadge}" FontSize="10" FontFamily="Consolas"
+                       Foreground="{DynamicResource C_FFB3B3B3}"/>
+        </Border>
+        <TextBlock Text="{Binding WeatherVM.WeatherGlyph}" FontSize="14"
+                   FontFamily="Segoe UI Symbol, Microsoft YaHei UI"
+                   Foreground="{DynamicResource C_FFB3B3B3}"
+                   ToolTip.Tip="{Binding WeatherVM.WeatherTooltip}"
+                   IsVisible="{Binding WeatherVM.IsWeatherVisible}"/>
+    </StackPanel>
+
+    <!-- 歌词图层：与三栏时钟/频谱互斥；星空与 ClockDots 继续作为背景 -->
         <StackPanel IsVisible="{Binding IsLyricsMode}" IsHitTestVisible="False"
                     HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" Margin="48,0">
             <TextBlock Text="{Binding LyricsVM.PreviousLineText}" FontSize="12" Opacity="0.7"

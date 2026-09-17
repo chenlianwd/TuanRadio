@@ -238,6 +238,8 @@ public partial class App : Application
         services.AddSingleton<ISttService, WhisperSttService>();
         services.AddSingleton<ILyricService>(sp =>
             new LyricService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<IWeatherService>(sp =>
+            new WeatherService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
         services.AddSingleton(sp => new MainWindowViewModel(
             sp.GetRequiredService<IAudioService>(),
@@ -252,7 +254,8 @@ public partial class App : Application
             httpClient: sp.GetRequiredService<System.Net.Http.HttpClient>(),
             kugouVerification: sp.GetRequiredService<KugouVerificationService>(),
             lyricService: sp.GetRequiredService<ILyricService>(),
-            listeningProfile: sp.GetRequiredService<IListeningProfileService>()));
+            listeningProfile: sp.GetRequiredService<IListeningProfileService>(),
+            weatherService: sp.GetRequiredService<IWeatherService>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
