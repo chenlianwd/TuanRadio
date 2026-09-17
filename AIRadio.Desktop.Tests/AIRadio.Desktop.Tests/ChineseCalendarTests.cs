@@ -1,0 +1,103 @@
+using System;
+using AIRadio.Desktop.Services;
+using Xunit;
+
+namespace AIRadio.Desktop.Tests;
+
+public class ChineseCalendarTests
+{
+    [Fact]
+    public void GetInfo_SpringFestival2026_IsFirstDayOfFirstLunarMonth()
+    {
+        var info = ChineseCalendar.GetInfo(new DateTime(2026, 2, 17));
+
+        Assert.NotNull(info);
+        Assert.Equal("正月初一", info.LunarText);
+        Assert.Equal("春节", info.Festival);
+        Assert.True(info.IsHighlighted);
+    }
+
+    [Fact]
+    public void GetInfo_DayBeforeSpringFestival2026_IsChineseNewYearEve()
+    {
+        var info = ChineseCalendar.GetInfo(new DateTime(2026, 2, 16));
+
+        Assert.NotNull(info);
+        Assert.Equal("除夕", info.Festival);
+    }
+
+    [Fact]
+    public void GetInfo_MidAutumn2025_IsEighthMonthFifteenth()
+    {
+        var info = ChineseCalendar.GetInfo(new DateTime(2025, 10, 6));
+
+        Assert.NotNull(info);
+        Assert.Equal("八月十五", info.LunarText);
+        Assert.Equal("中秋节", info.Festival);
+    }
+
+    [Theory]
+    [InlineData(2024, 12, 21, "冬至")]
+    [InlineData(2025, 2, 3, "立春")]
+    [InlineData(2025, 4, 4, "清明")]
+    [InlineData(2026, 12, 22, "冬至")]
+    [InlineData(2026, 9, 23, "秋分")]
+    public void GetInfo_SolarTermAnchors(int year, int month, int day, string expectedTerm)
+    {
+        var info = ChineseCalendar.GetInfo(new DateTime(year, month, day));
+
+        Assert.NotNull(info);
+        Assert.Equal(expectedTerm, info.SolarTerm);
+    }
+
+    [Fact]
+    public void GetInfo_NationalDay2026_HighlightedWithWeekendDistance()
+    {
+        // 2026-10-01 是周四：距周六 2 天
+        var info = ChineseCalendar.GetInfo(new DateTime(2026, 10, 1));
+
+        Assert.NotNull(info);
+        Assert.Equal(1, info.Day);
+        Assert.Equal("国庆节", info.Festival);
+        Assert.Equal(2, info.DaysToSaturday);
+    }
+
+    [Fact]
+    public void GetInfo_OrdinaryDay_NoHighlight()
+    {
+        var info = ChineseCalendar.GetInfo(new DateTime(2026, 9, 18));
+
+        Assert.NotNull(info);
+        Assert.Null(info.SolarTerm);
+        Assert.Null(info.Festival);
+        Assert.False(info.IsHighlighted);
+        // 2026-09-18 周五：距周六 1 天
+        Assert.Equal(1, info.DaysToSaturday);
+    }
+
+    [Fact]
+    public void GetInfo_SaturdayItself_HasZeroDaysToWeekend()
+    {
+        // 2026-09-19 是周六
+        var info = ChineseCalendar.GetInfo(new DateTime(2026, 9, 19));
+
+        Assert.NotNull(info);
+        Assert.Equal(0, info.DaysToSaturday);
+    }
+
+    [Fact]
+    public void GetInfo_LeapLunarMonth2025_IsPrefixedWithRun()
+    {
+        // 2025 农历有闰六月（闰六月初一=2025-07-25）：闰月内的日期文本带"闰"前缀且月份不串位
+        var info = ChineseCalendar.GetInfo(new DateTime(2025, 8, 1));
+
+        Assert.NotNull(info);
+        Assert.StartsWith("闰六月", info.LunarText);
+    }
+
+    [Fact]
+    public void GetInfo_BeforeLunarCalendarSupport_ReturnsNull()
+    {
+        Assert.Null(ChineseCalendar.GetInfo(new DateTime(1899, 6, 1)));
+    }
+}

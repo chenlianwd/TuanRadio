@@ -30,6 +30,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable? _profileTrackChangedSub;
     private readonly IDisposable _playbackHistorySub;
     private readonly IDisposable? _positionSampleSub;
+    private readonly IDisposable _weatherCitySub;
     private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
@@ -55,6 +56,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ChatViewModel ChatVM { get; }
     public SettingsViewModel SettingsVM { get; }
     public SpectrumViewModel SpectrumVM { get; }
+    public WeatherViewModel WeatherVM { get; }
     public LyricsViewModel LyricsVM { get; }
 
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
@@ -136,7 +138,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         System.Net.Http.HttpClient? httpClient = null,
         KugouVerificationService? kugouVerification = null,
         ILyricService? lyricService = null,
-        IListeningProfileService? listeningProfile = null)
+        IListeningProfileService? listeningProfile = null,
+        IWeatherService? weatherService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -164,9 +167,19 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
             listeningProfile, musicSearchService);
         SpectrumVM = new SpectrumViewModel(_audioService);
+        WeatherVM = new WeatherViewModel(
+            weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));
         LyricsVM = new LyricsViewModel(
             _audioService,
             lyricService ?? new LyricService(httpClient ?? new System.Net.Http.HttpClient()));
+
+        // 设置页城市变更即重新取天气（含清空回到 IP 定位）。
+        // TextBox 逐键更新源：直接订阅会每个按键发一次 geocoding，先节流
+        _weatherCitySub = SettingsVM.WhenAnyValue(x => x.WeatherCity)
+            .Skip(1)
+            .Throttle(TimeSpan.FromMilliseconds(600), RxApp.TaskpoolScheduler)
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(city => _ = WeatherVM.RefreshWeatherAsync(city));
 
         // 酷狗 20028 风控：命中挑战时自动弹浏览器滑块验证（冷却限频），完成后播放自然恢复
         if (_kugouVerification != null)
@@ -256,7 +269,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(mode => _audioService.SetSpeechMixMode(mode));
         _spectrumStyleSub = SettingsVM.WhenAnyValue(x => x.SelectedSpectrumStyle)
             .Subscribe(style => SpectrumVM.SelectedStyle = style);
-        _onLanguageChanged = RefreshLocalizedProgramText;
+        _onLanguageChanged = () =>
+        {
+            RefreshLocalizedProgramText();
+            WeatherVM.RebuildTooltips();
+        };
         AppLanguage.Changed += _onLanguageChanged;
         RefreshLocalizedClockText();
 
@@ -343,13 +360,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .ToProperty(this, x => x.CurrentState);
 
-        // 1s 时钟推进（spec §5.5）
+        // 1s 时钟推进（spec §5.5）；跨日时刷新日历徽标
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(_ =>
             {
                 Now = DateTimeOffset.Now;
                 RefreshLocalizedClockText();
+                WeatherVM.UpdateCalendar(Now.LocalDateTime);
             });
     }
 
@@ -687,6 +705,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             await _listeningProfile.LoadAsync(cancellationToken);
             _listeningProfile.Enabled = SettingsVM.ListenerProfileEnabled;
         }
+
+        // 天气取数：设置页有城市时经城市订阅自动触发，这里只补 IP 定位路径的首次取数
+        if (string.IsNullOrWhiteSpace(SettingsVM.WeatherCity))
+            _ = WeatherVM.RefreshWeatherAsync(SettingsVM.WeatherCity);
 
         IsDarkMode = SettingsVM.IsDarkMode;
         // 启动时恢复上次的窗口模式（简洁/标准）与歌词模式
@@ -1297,6 +1319,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         AppLanguage.Changed -= _onLanguageChanged;
         _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
+        _weatherCitySub.Dispose();
+        WeatherVM?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();
         ChatVM?.Dispose();

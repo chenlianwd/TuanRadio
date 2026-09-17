@@ -13,7 +13,8 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 不再保留旧 Web 静态资源、模型资源或相关运行时依赖。
 - AI DJ 角色保留为名称、声音、人设提示和轻量头像动效。
 - 长期用户画像已落地并双链路消费（推荐 + DJ 聊天），本地文件级，不做云端数据库。
-- 天气、日历暂不进入第一轮开发；歌词显示已作为第二轮特性交付（ClockStage 歌词模式）。
+- 天气、日历已交付（ClockStage 环境指示器）；歌词模式此前已交付；供应链校验、旧协议清理、本地化与对比度修正均已落地。
+- 剩余人工事项：发布前真实设备耐久验证（长时间在线播放、进程退出/内存观察、无输出设备/睡眠唤醒）。
 
 ## Recent Work
 
@@ -36,6 +37,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 长期收听画像：ListeningProfileService 持久化收听事件（%APPDATA%\AIRadio\listener-profile.json，事件为唯一事实、统计现算），歌手亲和度 30 天半衰期、Dislike 黑名单 180 天音乐身份匹配、LLM 口味摘要（水位/老化/语言触发、失败退避、Reset 代次隔离）；跳过信号三重前置判定（前曲播放态+新曲身份不同+进度样本绑定本曲，TrackChanged 有 8 处触发点不能直接当切歌）；推荐搜索词注入画像段与探索要求（冷启动门槛 ≥30 事件且 ≥3 歌手），黑名单拼入排除集（不走冷启动门槛）；设置页学习开关（listener_profile_enabled）+ 二次确认清除。
 - DJ 聊天画像注入：GenerateChatResponseAsync 在历史快照副本的人设 system 尾部拼画像段（LLMService.BuildMessages 恒前置内置小音 system，双 system 合并是现状常态，注入不新增第三条；Take(1) 恒保首条 system 故长对话裁剪不丢）；口味段（digest+歌手+氛围）走冷启动门槛、黑名单避雷不走门槛；文案跟随 DJ 人设语言；拼接只在快照副本上，持久历史不落画像、角色切换 Initialize 重建无残留。
 - 音源体验增强：播放回退候选在身份匹配每遍内按时长接近度择优（ScoreFallbackCandidate：目标无时长取首个、候选缺时长记 -1，两遍次序与外层"高优先级源命中即停"不变——跨源不比时长是预算效率的有意取舍）；MusicSourceFailureKind 结构化分类（NotSignedIn/AuthExpired/RiskControl(20028)/ApiBroken/Unknown）由 MusicSourceBusinessException.Kind 携带，七处抛出点标注，经 SourceSearchStatus.FailureKind 透传（注意 AddSearchReport 脱敏重建必须保字段），搜索状态行按类型渲染；AuthExpired 文案须兼顾酷狗登录态失效与网易代理未就绪两类场景，风控文案注明自动验证仅播放路径且约 10 分钟冷却。
+- 天气/日历 + 耐久测试：ClockStage 角落环境指示器（WeatherService 走 Open-Meteo：设置页城市经 geocoding / 空 city 走 ip-api 定位，30 分钟缓存失败静默；ChineseCalendar 纯本地 BCL 农历 + 寿星公式节气 + 节日表，徽标节气/节日高亮，详情 Tooltip）；DurabilityTests 六场景（含真实 LibVLC 静音 WAV 四曲连播）。**Avalonia 编译器陷阱**：DataContext="{Binding VM}" 重定向 + 编译绑定组合会静默击穿程序集 XAML 预编译（ChatAreaMicButtonTests"找不到预编译 XAML"），ClockStage 指示器子树必须用 {Binding VM.X} 路径绑定，已注释锚定。
 - 产品化清理五件套：设置页音源逐源连接诊断（MultiSourceMusicService.DiagnoseAsync 独立 AsyncLocal 作用域报告不污染搜索状态，复用 FormatSourceStatus 分类渲染）；AI 控制协议旧文本尾标（【play:…】/【next】）从 ParseDjResponse 与两处 StripControlTags 移除，协议只认 JSON 控制块；弹层硬编码标题 SETTINGS/LIBRARY 迁 S_Settings/S_Library（VOL/LIVE 为复古电台设计元素有意保留英文）；Light 主题 WCAG 审计修正三处超标（提示字 #6A6478、LIVE 徽标 #146C4F、StatePlaying #0C6E4E，均 ≥4.5:1）；Node.js/yt-dlp 供应链校验确认已实现（EnvironmentManager 下载即 fail-closed 校验、YtdlpManager 固定版本+SHA256），技术债清单同步。
 
 ## Architecture Notes

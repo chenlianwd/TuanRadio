@@ -84,6 +84,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public bool ShowLyricsInStage { get; set; }
     [Reactive] public bool ListenerProfileEnabled { get; set; } = true;
+    // 天气城市：留空时按 IP 自动定位（见 WeatherService）
+    [Reactive] public string WeatherCity { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     // 音源逐源连接诊断结果（随语言切换重建）
@@ -468,6 +470,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     ListenerProfileEnabled = listenerProfile.GetBoolean();
                     _loadingProfileToggle = false;
                 }
+
+                if (root.TryGetProperty("weather_city", out var weatherCity))
+                    WeatherCity = weatherCity.GetString() ?? string.Empty;
 
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
@@ -1106,6 +1111,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 start_in_compact_mode = StartInCompactMode,
                 show_lyrics_in_stage = ShowLyricsInStage,
                 listener_profile_enabled = ListenerProfileEnabled,
+                weather_city = WeatherCity,
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
