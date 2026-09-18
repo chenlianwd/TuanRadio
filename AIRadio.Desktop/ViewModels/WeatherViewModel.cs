@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reactive.Concurrency;
 using System.Reactive.Linq;
+using System.Reactive.Threading.Tasks;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
@@ -19,6 +21,10 @@ public class WeatherViewModel : ViewModelBase, IDisposable
     private readonly IWeatherService _weather;
     private readonly IDisposable _refreshTimer;
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly CancellationToken _lifetimeToken;
+    private readonly IScheduler _uiScheduler;
+    private int _generation;
+    private int _disposed;
     private string? _lastCity;
     private WeatherInfo? _lastWeather;
     private CalendarDayInfo? _lastCalendar;
@@ -31,26 +37,32 @@ public class WeatherViewModel : ViewModelBase, IDisposable
     [Reactive] public string CalendarTooltip { get; private set; } = string.Empty;
     [Reactive] public bool IsCalendarHighlighted { get; private set; }
 
-    public WeatherViewModel(IWeatherService weather)
+    /// <summary>创建环境指示器，所有异步天气结果均交回界面调度器。</summary>
+    public WeatherViewModel(IWeatherService weather, IScheduler? uiScheduler = null)
     {
         _weather = weather;
+        _uiScheduler = uiScheduler ?? RxApp.MainThreadScheduler;
+        _lifetimeToken = _lifetimeCts.Token;
         UpdateCalendar(DateTime.Now);
 
         // 30 分钟周期刷新（服务层有同周期缓存，命中时零网络）；异常全内吞
         _refreshTimer = Observable.Interval(TimeSpan.FromMinutes(30))
+            .ObserveOn(_uiScheduler)
             .Subscribe(tick => _ = RefreshWeatherAsync(_lastCity));
     }
 
     /// <summary>启动与设置页城市变更时触发；城市为空走 IP 定位。</summary>
     public async Task RefreshWeatherAsync(string? city)
     {
-        if (_lifetimeCts.IsCancellationRequested)
+        if (Volatile.Read(ref _disposed) != 0)
             return;
 
+        var generation = Interlocked.Increment(ref _generation);
         _lastCity = city;
+        WeatherInfo? result = null;
         try
         {
-            _lastWeather = await _weather.GetWeatherAsync(city, _lifetimeCts.Token);
+            result = await _weather.GetWeatherAsync(city, _lifetimeToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -59,9 +71,17 @@ public class WeatherViewModel : ViewModelBase, IDisposable
         catch
         {
             // 服务层已静默；这里防御 VM 层意外
-            _lastWeather = null;
         }
-        ApplyWeather();
+        if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _generation) != generation)
+            return;
+        await Observable.Start(() =>
+        {
+            // 城市切换、周期刷新和关闭均可能使请求过期；判定与属性更新一起在 UI 上执行。
+            if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _generation) != generation)
+                return;
+            _lastWeather = result;
+            ApplyWeather();
+        }, _uiScheduler).ToTask().ConfigureAwait(false);
     }
 
     /// <summary>日期变更时重算日历徽标（由主窗口 1s 时钟推进驱动）。</summary>
@@ -149,8 +169,12 @@ public class WeatherViewModel : ViewModelBase, IDisposable
         CalendarTooltip = string.Join(" · ", parts.Where(p => !string.IsNullOrEmpty(p)));
     }
 
+    /// <summary>停止刷新并作废全部在途结果，允许重复释放。</summary>
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        Interlocked.Increment(ref _generation);
         _lifetimeCts.Cancel();
         _refreshTimer.Dispose();
         _lifetimeCts.Dispose();

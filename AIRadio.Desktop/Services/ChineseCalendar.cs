@@ -49,13 +49,14 @@ public static class ChineseCalendar
         7.646, 23.042, 8.318, 23.438, 7.438, 22.36, 7.18, 21.94
     };
 
+    /// <summary>返回指定公历日期的农历、节日及节气信息。</summary>
     public static CalendarDayInfo? GetInfo(DateTime date)
     {
         if (!TryGetLunar(date, out var month, out var day, out var isLeap) || month < 1 || month > 12 || day is < 1 or > 30)
             return null;
 
         var monthName = (isLeap ? "闰" : string.Empty) + LunarMonths[month - 1];
-        var festival = GetFestival(date, month, day);
+        var festival = GetFestival(date, month, day, isLeap);
         var solarTerm = GetSolarTerm(date);
 
         // 距周六天数（周六为 0）
@@ -134,21 +135,26 @@ public static class ChineseCalendar
         _ => 12
     };
 
-    /// <summary>寿星通用公式：D = Y%100×0.2422 + C − Y%100/4（整除），21 世纪 C 值。</summary>
+    /// <summary>寿星近似公式：一二月只扣除此前已发生的闰日，特殊年份按年历校正。</summary>
     private static int SolarTermDay(int year, int termIndex)
     {
         var y = year % 100;
-        return (int)(y * 0.2422 + CenturyC[termIndex] - y / 4);
+        var leapDays = (termIndex < 4 ? y - 1 : y) / 4;
+        var day = (int)(y * 0.2422 + CenturyC[termIndex]) - leapDays;
+        // 香港天文台 2026 年历：雨水为 2 月 18 日，通用近似公式会多算一天。
+        // https://www.hko.gov.hk/tc/gts/time/calendar/pdf/files/2026.pdf
+        return year == 2026 && termIndex == 3 ? day - 1 : day;
     }
 
-    private static string? GetFestival(DateTime date, int lunarMonth, int lunarDay)
+    /// <summary>农历节日只在正月序出现；闰月仍可显示公历节日。</summary>
+    private static string? GetFestival(DateTime date, int lunarMonth, int lunarDay, bool isLeap)
     {
         // 除夕优先（腊月最后一日，次日为正月初一）
-        if (lunarMonth == 12 && TryGetLunar(date.AddDays(1), out var nextMonth, out var nextDay, out _) &&
-            nextMonth == 1 && nextDay == 1)
+        if (lunarMonth == 12 && TryGetLunar(date.AddDays(1), out var nextMonth, out var nextDay, out var nextIsLeap) &&
+            nextMonth == 1 && nextDay == 1 && !nextIsLeap)
             return "除夕";
 
-        var lunar = (lunarMonth, lunarDay) switch
+        var lunar = isLeap ? null : (lunarMonth, lunarDay) switch
         {
             (1, 1) => "春节",
             (1, 15) => "元宵节",

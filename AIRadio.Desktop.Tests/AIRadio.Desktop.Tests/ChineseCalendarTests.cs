@@ -6,6 +6,40 @@ namespace AIRadio.Desktop.Tests;
 
 public class ChineseCalendarTests
 {
+    /// <summary>香港天文台年历锚点：闰年的一二月尚未经历当年闰日。</summary>
+    [Theory]
+    [InlineData(2024, 1, 6, "小寒")]
+    [InlineData(2024, 1, 20, "大寒")]
+    [InlineData(2024, 2, 4, "立春")]
+    [InlineData(2024, 2, 19, "雨水")]
+    [InlineData(2028, 1, 6, "小寒")]
+    [InlineData(2028, 1, 20, "大寒")]
+    [InlineData(2028, 2, 4, "立春")]
+    [InlineData(2028, 2, 19, "雨水")]
+    [InlineData(2026, 2, 18, "雨水")]
+    public void GetInfo_EarlyYearSolarTerms_MatchAlmanac(int year, int month, int day, string term)
+    {
+        // 来源：https://www.hko.gov.hk/tc/gts/time/calendar/pdf/files/{year}.pdf
+        var date = new DateTime(year, month, day);
+        Assert.Equal(term, ChineseCalendar.GetInfo(date)!.SolarTerm);
+        Assert.NotEqual(term, ChineseCalendar.GetInfo(date.AddDays(-1))!.SolarTerm);
+        Assert.NotEqual(term, ChineseCalendar.GetInfo(date.AddDays(1))!.SolarTerm);
+    }
+
+    /// <summary>闰五月初五不重复庆祝端午，普通五月初五仍正常识别。</summary>
+    [Fact]
+    public void GetInfo_LeapFifthMonth_DoesNotRepeatDragonBoatFestival()
+    {
+        var calendar = new System.Globalization.ChineseLunisolarCalendar();
+        var leapMonth = calendar.GetLeapMonth(2028);
+        Assert.Equal(6, leapMonth);
+        var normalDay = calendar.ToDateTime(2028, 5, 5, 0, 0, 0, 0);
+        var leapDay = calendar.ToDateTime(2028, leapMonth, 5, 0, 0, 0, 0);
+        Assert.Equal("端午节", ChineseCalendar.GetInfo(normalDay)!.Festival);
+        Assert.Equal("闰五月初五", ChineseCalendar.GetInfo(leapDay)!.LunarText);
+        Assert.Null(ChineseCalendar.GetInfo(leapDay)!.Festival);
+    }
+
     [Fact]
     public void GetInfo_SpringFestival2026_IsFirstDayOfFirstLunarMonth()
     {
