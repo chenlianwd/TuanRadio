@@ -49,6 +49,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private readonly ILLMService _llm;
     private readonly string _profileFile;
     private readonly Func<DateTime> _clock;
+    private readonly Func<string, string, CancellationToken, Task> _writeAllTextAsync;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _digestGate = new(1, 1);
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -81,13 +82,23 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private Timer? _saveDebounce;
     private volatile bool _dirty;
     private int _epoch;
+    private long _changeVersion;
     private int _disposed;
 
+    /// <summary>创建本地画像服务，默认以异步文件写入保存快照。</summary>
     public ListeningProfileService(ILLMService llm, string? profileFile = null, Func<DateTime>? clock = null)
+        : this(llm, profileFile, clock, File.WriteAllTextAsync)
+    {
+    }
+
+    /// <summary>注入临时文件写入边界，便于验证慢磁盘与并发保存。</summary>
+    internal ListeningProfileService(ILLMService llm, string? profileFile, Func<DateTime>? clock,
+        Func<string, string, CancellationToken, Task> writeAllTextAsync)
     {
         _llm = llm;
         _profileFile = profileFile ?? Path.Combine(DefaultProfileDir, "listener-profile.json");
         _clock = clock ?? (() => DateTime.Now);
+        _writeAllTextAsync = writeAllTextAsync;
     }
 
     public bool Enabled
@@ -243,6 +254,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             ClearPlayingStateLocked();
     }
 
+    /// <summary>清空画像，并在同一把锁下作废旧快照及删除已发布文件。</summary>
     public void Reset()
     {
         lock (_gate)
@@ -258,34 +270,15 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             _dirty = false;
             ClearPlayingStateLocked();
             _lastPlayedKey = null;
-        }
-
-        // 先等在途防抖写盘结束再删文件：写盘方可能已过 dirty 检查且快照的是
-        // 清除前的旧状态，与删除并发会把旧画像复活到磁盘。
-        var gateHeld = false;
-        try
-        {
-            gateHeld = _saveGate.Wait(TimeSpan.FromSeconds(2));
-            if (!gateHeld)
-                Log.Warning("Listener profile save still in flight during reset; stale write may recreate the file");
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-
-        try
-        {
-            if (File.Exists(_profileFile))
+            // 保存方只在持有 _gate 且代次一致时发布临时文件，无需等待在途 I/O。
+            try
+            {
                 File.Delete(_profileFile);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to delete listener profile file {Path}", _profileFile);
-        }
-        finally
-        {
-            if (gateHeld)
-                _saveGate.Release();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to delete listener profile file {Path}", _profileFile);
+            }
         }
     }
 
@@ -427,7 +420,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             lock (_gate)
             {
                 // Reset 递增过代次：过期结果不得写回已清空的画像
-                if (_epoch != epoch)
+                if (_epoch != epoch || _disposed != 0)
                     return;
                 _digest = new TasteDigestData
                 {
@@ -440,9 +433,9 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 _digestFailureCount = 0;
                 _lastDigestFailureAt = null;
                 _dirty = true;
+                ScheduleSave();
                 Log.Debug("Listener taste digest refreshed at watermark {Watermark}", _digest.EventWatermark);
             }
-            ScheduleSave();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -467,17 +460,16 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
+    /// <summary>保存到最新变更版本；异步续体不依赖 UI，供退出时有界等待。</summary>
     public async Task FlushAsync(CancellationToken cancellationToken)
     {
         if (!_dirty)
             return;
-        await _saveGate.WaitAsync(cancellationToken);
+        await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!_dirty)
-                return;
-            await SaveCoreAsync(cancellationToken);
-            _dirty = false;
+            while (_dirty)
+                await SaveCoreAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -493,13 +485,17 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
+    /// <summary>停止采集与防抖，等待最后的画像快照落盘。</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _saveDebounce?.Dispose();
-        _saveDebounce = null;
+        lock (_gate)
+        {
+            _saveDebounce?.Dispose();
+            _saveDebounce = null;
+        }
         try
         {
             // 退出兜底落盘：小文件（≤1000 事件）写入毫秒级，有界等待防设备异常拖死关闭
@@ -513,7 +509,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
 
     public const int CurrentVersion = 1;
 
-    private bool CanIngestLocked() => _enabled && _loaded && !_futureFormatSkipped;
+    private bool CanIngestLocked() => _enabled && _loaded && !_futureFormatSkipped && _disposed == 0;
 
     private void IngestLocked(ListeningEventData eventData)
     {
@@ -644,9 +640,13 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         };
     }
 
+    /// <summary>在 _gate 内递增变更版本并安排防抖保存。</summary>
     private void ScheduleSave()
     {
+        _changeVersion++;
         _dirty = true;
+        if (_disposed != 0)
+            return;
         var debounce = _saveDebounce;
         if (debounce == null)
         {
@@ -682,13 +682,21 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
+    /// <summary>保存一个版本；发布时核对清空代次，并仅清除对应版本的脏标记。</summary>
     private async Task SaveCoreAsync(CancellationToken cancellationToken)
     {
         ListenerProfileData data;
+        long version;
+        int epoch;
         lock (_gate)
         {
             if (_futureFormatSkipped || !_loaded)
+            {
+                _dirty = false;
                 return;
+            }
+            version = _changeVersion;
+            epoch = _epoch;
             data = new ListenerProfileData
             {
                 Version = CurrentVersion,
@@ -702,8 +710,18 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         Directory.CreateDirectory(Path.GetDirectoryName(_profileFile)!);
         // 同目录临时文件 + 原子替换，避免应用退出/磁盘异常时留下半份 JSON（沿用 playlist/settings 先例）
         var tempPath = _profileFile + ".tmp";
-        await File.WriteAllTextAsync(tempPath, json, cancellationToken);
-        File.Move(tempPath, _profileFile, overwrite: true);
+        await _writeAllTextAsync(tempPath, json, cancellationToken).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (_epoch != epoch)
+            {
+                File.Delete(tempPath);
+                return;
+            }
+            File.Move(tempPath, _profileFile, overwrite: true);
+            if (_changeVersion == version)
+                _dirty = false;
+        }
     }
 
     private static string BuildDigestPrompt(DigestPromptInput input) => AppLanguage.Current == "en"

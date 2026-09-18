@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reactive.Concurrency;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
@@ -150,7 +151,7 @@ public class WeatherViewModelTests
         {
             Result = new WeatherInfo(WeatherKind.Snow, -3.4, "哈尔滨")
         };
-        using var vm = new WeatherViewModel(weather);
+        using var vm = new WeatherViewModel(weather, ImmediateScheduler.Instance);
 
         await vm.RefreshWeatherAsync("哈尔滨");
 
@@ -165,7 +166,7 @@ public class WeatherViewModelTests
     public async Task RefreshWeather_WithoutResult_HidesIcon()
     {
         var weather = new FakeWeatherService { Result = null };
-        using var vm = new WeatherViewModel(weather);
+        using var vm = new WeatherViewModel(weather, ImmediateScheduler.Instance);
 
         await vm.RefreshWeatherAsync(null);
 

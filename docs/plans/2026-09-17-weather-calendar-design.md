@@ -24,8 +24,8 @@
 `Services/ChineseCalendar.cs` 静态类：
 
 - 农历：`System.Globalization.ChineseLunisolarCalendar`（BCL，1901-2100 范围）取农历月/日/闰月，格式化为「冬月十七」「腊月廿三」式文本。
-- 节气：寿星通用公式（`day = Y%100*0.2422 + C − Y/4`，21 世纪 C 常量表 24 项），日期有效性按年计算；测试锚定已知节气（如冬至 2024-12-21）+ 各节气日期落在公认区间。
-- 节日：公历固定表（元旦/劳动节/国庆等）+ 农历节日（春节/元宵/端午/七夕/中秋/重阳，由农历日期判定）。
+- 节气：寿星近似公式（`day = floor(Y*0.2422+C) − L`，`Y=year%100`；一二月 `L=(Y-1)/4`，三月起 `L=Y/4`，均整除；例外见评审记录），日期有效性按年计算；测试锚定已知节气（如冬至 2024-12-21）+ 各节气日期落在公认区间。
+- 节日：公历固定表（元旦/劳动节/国庆等）+ 农历节日（春节/元宵/端午/七夕/中秋/重阳，闰月不重复）。
 - 输出 `CalendarDayInfo { LunarText, SolarTerm, Festival, DaysToWeekend }`；`Festival`/`SolarTerm` 非空时徽标高亮。
 
 ## 3. 天气
@@ -41,8 +41,8 @@
 
 - `ViewModels/WeatherViewModel`：持有天气状态与当日日历快照（日期变更时随 1s 时钟推进重算）；暴露 `IsWeatherVisible`、`WeatherTooltip`、`CalendarDayBadge`、`CalendarTooltip`、`IsCalendarHighlighted`、`WeatherIconKind`（供 ClockStage 选 Path）。
 - ClockStage 时钟图层角落：日历徽标（日号 TextBlock，高亮走主题强调色）+ 天气 Path 图标；`ToolTip.Tip` 绑定文本；歌词模式随时钟图层整体隐藏（互斥已存在）。
-- 设置页：`weather_city` 文本框（「城市名（如：上海），留空自动定位」），保存后触发重新取数。
-- DI：`IWeatherService` 单例；`WeatherViewModel` 由 MainWindowViewModel 组合并传入 ClockStage 绑定上下文（沿 Now 属性先例挂 MainWindowViewModel 或直接 DataContext 挂子 VM——实施取后者，ClockStage 内部区域 `DataContext="{Binding WeatherVM}"`）。
+- 设置页：`weather_city` 文本框（「城市名（如：上海），留空自动定位」），输入变化经 600ms 节流后重新取数，保存设置时持久化城市。
+- DI：`IWeatherService` 单例；`WeatherViewModel` 由 MainWindowViewModel 组合并传入 ClockStage 绑定上下文（挂在 MainWindowViewModel，ClockStage 使用 `{Binding WeatherVM.X}` 路径绑定，避免重定向 DataContext 破坏 XAML 预编译）。
 
 ## 5. 测试计划
 
@@ -59,3 +59,7 @@
 **第 1 轮（实施后代码评审，修正 4 处 + 补闰月锚定）**：设置页城市输入框逐键更新源会每个按键触发一次 geocoding 取数——城市订阅加 600ms 节流（Taskpool 节流 + 回 UI 线程）；WeatherService 失败日志从 Debug.WriteLine 统一为 Serilog Log.Debug；英文日历 Tooltip 缺日期（只有星期名），zh/en 均含日期；补 2025 闰六月锚定测试（初版测试日期选在正六月，代码行为正确、测试日期有误已修正——闰六月初一为 2025-07-25，锚定日改用 2025-08-01）。其余核对通过：寿星公式锚点（冬至/清明/立春/秋分）、缓存与失败静默链路、DI/释放顺序、语言重建回调、耐久测试断言确定性。
 
 **实施期已抓（记录在案）**：Avalonia 编译器陷阱（DataContext 重定向 + 编译绑定 → 程序集 XAML 预编译层静默击穿，经还原对照与逐元素二分定位，指示器子树改路径绑定）；耐久测试误用 UI 亲和 API（生产链路经 Dispatcher 编组核实无误）；测试辅助 HttpClient 自伤释放；聊天历史首轮下界断言；定时器 lambda 变量遮蔽。
+
+**2026-09-18 回归审查**：修复旧城市请求晚到覆盖新天气；请求代次与释放状态在 UI 调度器应用结果前再次核对，旧请求成功或失败均不得覆盖新城市。周期刷新也经 UI 调度器，关闭后的晚到结果丢弃。新增乱序成功/失败、忽略取消和 UI 派发回归测试。
+
+日历修正：一二月仅扣除此前已发生的闰日（`(Y-1)/4`，`Y=year%100`），三月起仍按 `Y/4`；2026 年雨水校正为 2 月 18 日；闰月不重复农历节日，公历节日仍正常显示。寿星公式仍是近似算法，本次锚点验证不代表逐日验证 2001–2099 全部天文日期。参考香港天文台 [2024 年历](https://www.hko.gov.hk/tc/gts/time/calendar/pdf/files/2024.pdf)、[2026 年历](https://www.hko.gov.hk/tc/gts/time/calendar/pdf/files/2026.pdf)、[2028 年历](https://www.hko.gov.hk/tc/gts/time/calendar/pdf/files/2028.pdf)。
