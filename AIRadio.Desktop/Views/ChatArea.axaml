@@ -60,9 +60,9 @@
                                FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFD8D8EA}"
                                VerticalAlignment="Center"/>
                     <Button Grid.Column="3" Command="{Binding ChatVM.DismissStatusNoticeCommand}"
-                            Content="x" Width="18" Height="18" Padding="0"
+                            Content="✕" Width="18" Height="18" Padding="0"
                             Background="{DynamicResource C_00000000}" Foreground="{DynamicResource C_FFB9FFE8}" BorderThickness="0"
-                            ToolTip.Tip="{DynamicResource S_TipCollapse}"/>
+                            ToolTip.Tip="{DynamicResource S_TipCollapse}" AutomationProperties.Name="{DynamicResource S_TipCollapse}"/>
                 </Grid>
                 <ToolTip.Tip>
                     <StackPanel MaxWidth="320" Spacing="4">
@@ -80,7 +80,8 @@
                     Command="{Binding ChatVM.RestoreStatusNoticeCommand}"
                     HorizontalAlignment="Right" Margin="22,10,22,0"
                     Padding="10,6" Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_3356F5C4}"
-                    BorderThickness="1" CornerRadius="4" ToolTip.Tip="{DynamicResource S_TipVoiceHint}">
+                    BorderThickness="1" CornerRadius="4" ToolTip.Tip="{DynamicResource S_TipVoiceHint}"
+                    AutomationProperties.Name="{DynamicResource S_TipVoiceHint}">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <Ellipse Width="6" Height="6" Fill="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
                     <TextBlock Text="VOICE" FontSize="11" FontFamily="Consolas" Foreground="{DynamicResource C_FFB9FFE8}"/>
@@ -98,8 +99,8 @@
                         <Border Width="3" Height="11" Background="{DynamicResource C_FF56F5C4}"/>
                         <Border Width="3" Height="19" Background="{DynamicResource C_FF56F5C4}"/>
                     </StackPanel>
-                    <TextBlock Text="Release to transcribe..." FontSize="12"
-                               FontFamily="Consolas" Foreground="{DynamicResource C_FFB9FFE8}"/>
+                    <TextBlock Text="{DynamicResource S_ReleaseToTranscribe}" FontSize="12"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFB9FFE8}"/>
                 </StackPanel>
             </Border>
 
@@ -109,8 +110,8 @@
                     CornerRadius="4" Padding="12,8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Ellipse Width="6" Height="6" Fill="{DynamicResource C_FFA783FF}" VerticalAlignment="Center"/>
-                    <TextBlock Text="Transcribing Chinese..." FontSize="12"
-                               FontFamily="Consolas" Foreground="{DynamicResource C_FFE4D9FF}"/>
+                    <TextBlock Text="{DynamicResource S_Transcribing}" FontSize="12"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFE4D9FF}"/>
                 </StackPanel>
             </Border>
         </Grid>
@@ -123,13 +124,13 @@
                 <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
                         Background="{DynamicResource C_33262835}"
                         PointerCaptureLost="OnMicPointerCaptureLost"
-                        ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="Microphone">
+                        ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="{DynamicResource S_HoldToTalk}">
                     <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
                 </Button>
                 <Button Grid.Column="2" FontSize="11"
                         Background="{DynamicResource C_FF7F7896}" Foreground="{DynamicResource C_FF111118}"
                         Command="{Binding ChatVM.SendMessageCommand}"
-                        ToolTip.Tip="{DynamicResource S_Send}" AutomationProperties.Name="Send">
+                        ToolTip.Tip="{DynamicResource S_Send}" AutomationProperties.Name="{DynamicResource S_Send}">
                     <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FF111118}" StrokeThickness="2.2" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
                 </Button>
             </Grid>

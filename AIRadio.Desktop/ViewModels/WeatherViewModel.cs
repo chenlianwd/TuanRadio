@@ -156,17 +156,95 @@ public class WeatherViewModel : ViewModelBase, IDisposable
         var weekText = AppLanguage.Current == "en"
             ? $"{_lastCalendarDate.ToString("M/d", System.Globalization.CultureInfo.GetCultureInfo("en-US"))} {_lastCalendarDate.ToString("dddd", System.Globalization.CultureInfo.GetCultureInfo("en-US"))}"
             : _lastCalendarDate.ToString("M月d日 dddd", System.Globalization.CultureInfo.GetCultureInfo("zh-CN"));
+        var solarTerm = LocalizeSolarTerm(info.SolarTerm);
+        var festival = LocalizeFestival(info.Festival);
         var parts = new[]
         {
             weekText,
-            AppLanguage.T($"农历 {info.LunarText}", $"Lunar {info.LunarText}"),
-            info.SolarTerm ?? string.Empty,
-            info.Festival ?? string.Empty,
+            AppLanguage.T($"农历 {info.LunarText}", $"Lunar {LocalizeLunarDate(info)}"),
+            solarTerm ?? string.Empty,
+            festival ?? string.Empty,
             info.DaysToSaturday == 0
                 ? AppLanguage.T("今天是周六", "It's Saturday")
                 : AppLanguage.T($"距周六 {info.DaysToSaturday} 天", $"{info.DaysToSaturday} day(s) to Saturday")
         };
         CalendarTooltip = string.Join(" · ", parts.Where(p => !string.IsNullOrEmpty(p)));
+    }
+
+    private static string LocalizeLunarDate(CalendarDayInfo info)
+    {
+        if (AppLanguage.Current != "en")
+            return info.LunarText;
+
+        var month = Ordinal(info.LunarMonth);
+        var day = Ordinal(info.LunarDay);
+        return info.IsLeapMonth ? $"leap {month} month, {day} day" : $"{month} month, {day} day";
+    }
+
+    private static string Ordinal(int n)
+    {
+        if (n % 100 is >= 11 and <= 13)
+            return $"{n}th";
+        var suffix = (n % 10) switch { 1 => "st", 2 => "nd", 3 => "rd", _ => "th" };
+        return $"{n}{suffix}";
+    }
+
+    private static string? LocalizeSolarTerm(string? term)
+    {
+        if (term == null || AppLanguage.Current != "en")
+            return term;
+
+        return term switch
+        {
+            "小寒" => "Minor Cold",
+            "大寒" => "Major Cold",
+            "立春" => "Beginning of Spring",
+            "雨水" => "Rain Water",
+            "惊蛰" => "Awakening of Insects",
+            "春分" => "Spring Equinox",
+            "清明" => "Qingming",
+            "谷雨" => "Grain Rain",
+            "立夏" => "Beginning of Summer",
+            "小满" => "Grain Buds",
+            "芒种" => "Grain in Ear",
+            "夏至" => "Summer Solstice",
+            "小暑" => "Minor Heat",
+            "大暑" => "Major Heat",
+            "立秋" => "Beginning of Autumn",
+            "处暑" => "End of Heat",
+            "白露" => "White Dew",
+            "秋分" => "Autumn Equinox",
+            "寒露" => "Cold Dew",
+            "霜降" => "Frost's Descent",
+            "立冬" => "Beginning of Winter",
+            "小雪" => "Minor Snow",
+            "大雪" => "Major Snow",
+            "冬至" => "Winter Solstice",
+            _ => term
+        };
+    }
+
+    private static string? LocalizeFestival(string? festival)
+    {
+        if (festival == null || AppLanguage.Current != "en")
+            return festival;
+
+        return festival switch
+        {
+            "除夕" => "New Year's Eve",
+            "春节" => "Spring Festival",
+            "元宵节" => "Lantern Festival",
+            "端午节" => "Dragon Boat Festival",
+            "七夕" => "Qixi Festival",
+            "中秋节" => "Mid-Autumn Festival",
+            "重阳节" => "Double Ninth Festival",
+            "腊八节" => "Laba Festival",
+            "元旦" => "New Year's Day",
+            "劳动节" => "Labour Day",
+            "儿童节" => "Children's Day",
+            "国庆节" => "National Day",
+            _ => festival
+        };
     }
 
     /// <summary>停止刷新并作废全部在途结果，允许重复释放。</summary>

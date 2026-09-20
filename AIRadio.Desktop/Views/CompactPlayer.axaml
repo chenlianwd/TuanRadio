@@ -29,17 +29,19 @@
 
                 <DockPanel Grid.Column="1" Margin="8,0,8,0">
                     <TextBlock DockPanel.Dock="Right" Text="{Binding PlayerVM.TrackArtist}"
+                               ToolTip.Tip="{Binding PlayerVM.TrackArtist}"
                                FontFamily="Consolas, Microsoft YaHei UI" FontSize="11"
                                Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" MaxWidth="110"/>
                     <TextBlock Text="{Binding PlayerVM.TrackTitle}"
+                               ToolTip.Tip="{Binding PlayerVM.TrackTitle}"
                                FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" FontWeight="700"
                                Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
                 </DockPanel>
 
                 <Button Grid.Column="2" Width="26" Height="24" Padding="0"
-                        Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="Favorite">
+                        Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}">
                     <Grid>
                         <PathIcon Width="14" Height="14" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
                                   Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
@@ -49,7 +51,7 @@
                 </Button>
                 <Button Grid.Column="3" Width="26" Height="24" Padding="0"
                         Command="{Binding ToggleCompactTopmostCommand}"
-                        ToolTip.Tip="{DynamicResource S_TopMost}" AutomationProperties.Name="Always on top">
+                        ToolTip.Tip="{DynamicResource S_TopMost}" AutomationProperties.Name="{DynamicResource S_TopMost}">
                     <Grid>
                         <PathIcon Width="14" Height="14" Foreground="{DynamicResource C_FF8A8A96}"
                                   IsVisible="{Binding SettingsVM.CompactModeTopmost, Converter={StaticResource InverseBoolConverter}}"
@@ -60,17 +62,17 @@
                     </Grid>
                 </Button>
                 <Button Grid.Column="4" Width="26" Height="24" Padding="0" Click="OnMinimizeClicked"
-                        ToolTip.Tip="{DynamicResource S_Minimize}" AutomationProperties.Name="Minimize">
+                        ToolTip.Tip="{DynamicResource S_Minimize}" AutomationProperties.Name="{DynamicResource S_Minimize}">
                     <Rectangle Width="12" Height="2" RadiusX="1" RadiusY="1" Fill="{DynamicResource C_FF8A8A96}"/>
                 </Button>
                 <Button Grid.Column="5" Width="26" Height="24" Padding="0" Click="OnCloseClicked"
-                        ToolTip.Tip="{DynamicResource S_Close}" AutomationProperties.Name="Close">
+                        ToolTip.Tip="{DynamicResource S_Close}" AutomationProperties.Name="{DynamicResource S_Close}">
                     <Path Width="13" Height="13" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
                           Data="M5 5 L19 19 M5 19 L19 5" Fill="Transparent" StrokeLineCap="Round"/>
                 </Button>
                 <Button Grid.Column="6" Width="26" Height="24" Padding="0"
                         Command="{Binding ToggleCompactModeCommand}"
-                        ToolTip.Tip="{DynamicResource S_Expand}" AutomationProperties.Name="Expand">
+                        ToolTip.Tip="{DynamicResource S_Expand}" AutomationProperties.Name="{DynamicResource S_Expand}">
                     <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FF8A8A96}" StrokeThickness="2"
                           Data="M15,3 L21,3 L21,9 M9,21 L3,21 L3,15 M21,3 L14,10 M3,21 L10,14" Fill="Transparent" StrokeLineCap="Round"/>
                 </Button>
@@ -79,11 +81,11 @@
             <!-- 行2：上一首/播放/下一首 + 时间 + 进度 + 迷你频谱 -->
             <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto" Margin="0,2,0,0">
                 <Button Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.PreviousCommand}"
-                        ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="Previous">
+                        ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="{DynamicResource S_Prev}">
                     <PathIcon Width="14" Height="14" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
                 </Button>
                 <Button Grid.Column="1" Width="32" Height="28" Padding="0" Command="{Binding PlayerVM.PlayCommand}"
-                        ToolTip.Tip="{DynamicResource S_PlayPause}" AutomationProperties.Name="Play/Pause">
+                        ToolTip.Tip="{DynamicResource S_PlayPause}" AutomationProperties.Name="{DynamicResource S_PlayPause}">
                     <Grid>
                         <PathIcon Width="13" Height="13" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
                                   Data="M8,5 L19,12 L8,19 Z"/>
@@ -92,7 +94,7 @@
                     </Grid>
                 </Button>
                 <Button Grid.Column="2" Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.NextCommand}"
-                        ToolTip.Tip="{DynamicResource S_Next}" AutomationProperties.Name="Next">
+                        ToolTip.Tip="{DynamicResource S_Next}" AutomationProperties.Name="{DynamicResource S_Next}">
                     <PathIcon Width="14" Height="14" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                 </Button>
                 <TextBlock Grid.Column="3" Text="{Binding PlayerVM.PositionText}" FontSize="10" FontFamily="Consolas"
@@ -106,7 +108,7 @@
                 <!-- 常驻仅一个音量按钮；点击后用轻量 Popup 展开横向滑杆。 -->
                 <Panel Grid.Column="6" Margin="0,0,6,0">
                     <ToggleButton x:Name="CompactVolumeButton" Width="26" Height="26" Padding="0"
-                                  ToolTip.Tip="{DynamicResource S_Volume}" AutomationProperties.Name="Volume">
+                                  ToolTip.Tip="{DynamicResource S_Volume}" AutomationProperties.Name="{DynamicResource S_Volume}">
                         <Path Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource AccentGreen}"
                               Data="M3,9 L7,9 L12,5 L12,19 L7,15 L3,15 Z M15,9 C16.6,10.7 16.6,13.3 15,15 L16.8,16.8 C19.4,14.1 19.4,9.9 16.8,7.2 Z"/>
                     </ToggleButton>

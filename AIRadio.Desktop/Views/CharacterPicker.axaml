@@ -18,6 +18,8 @@
             <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="models:CharacterProfile">
                     <Button Margin="0,0,8,8"
+                            ToolTip.Tip="{Binding Description}"
+                            AutomationProperties.Name="{Binding DisplayName}"
                             Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).SelectCharacterCommand}"
                             CommandParameter="{Binding}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
