@@ -309,4 +309,39 @@ public class LyricsViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void HasCurrentLine_ReflectsPresenceOfCurrentLineText()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        try
+        {
+            var track = Track("netease:1");
+            var (vm, tracks, positions, lyrics, dispose) = Create(track);
+            lyrics.Setup(x => x.GetLyricsAsync(track, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(LinesResult((5, "五秒开始唱"), (15, "十五秒第二句")));
+
+            tracks.OnNext(track);
+
+            Assert.True(vm.HasLyrics);
+            Assert.False(vm.HasCurrentLine); // 0s 前奏：尚未有当前句
+
+            positions.OnNext(TimeSpan.FromSeconds(6));
+            Assert.True(vm.HasCurrentLine);
+            Assert.Equal("五秒开始唱", vm.CurrentLineText);
+
+            // 切歌清理
+            tracks.OnNext(null);
+            Assert.False(vm.HasLyrics);
+            Assert.False(vm.HasCurrentLine);
+            Assert.Empty(vm.CurrentLineText);
+
+            dispose();
+        }
+        finally
+        {
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

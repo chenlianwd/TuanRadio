@@ -119,6 +119,7 @@ public static class AppLanguage
         ["S_PlayPause"] = "播放/暂停",
         ["S_Next"] = "下一首",
         ["S_Volume"] = "音量",
+        ["S_CompactLyricsTip"] = "点击在歌词与歌曲信息之间切换",
         // 标题栏
         ["S_CompactMode"] = "简洁模式",
         // 播放控制区
@@ -185,10 +186,12 @@ public static class AppLanguage
         ["S_WeatherCityHint"] = "天气仅显示在时钟舞台角落的图标，悬停查看详情；留空时按网络 IP 定位",
         ["S_TtsGroup"] = "语音播报",
         ["S_TtsLabel"] = "AI 回复自动语音播报",
+        ["S_RadioSoundFx"] = "复古收音机调频音效",
         ["S_Visuals"] = "视觉效果",
         ["S_Starfield"] = "星光背景随音乐呼吸",
         ["S_SpectrumStyle"] = "频谱样式",
         ["S_TopMostToggle"] = "简洁模式窗口置顶",
+        ["S_CompactShowLyricsToggle"] = "简洁模式显示歌词",
         ["S_ProfileGroup"] = "收听画像",
         ["S_ProfileLearn"] = "学习我的口味（本地保存，用于推荐）",
         ["S_ProfileHint"] = "画像只记录歌曲名、歌手和收听行为，保存在本机且不上传；关闭只暂停学习，清除后推荐从零重新学习",
@@ -219,6 +222,7 @@ public static class AppLanguage
         ["S_PlayPause"] = "Play/Pause",
         ["S_Next"] = "Next",
         ["S_Volume"] = "Volume",
+        ["S_CompactLyricsTip"] = "Click to toggle between lyrics and track info",
         // Title bar
         ["S_CompactMode"] = "Compact mode",
         // Player deck
@@ -285,10 +289,12 @@ public static class AppLanguage
         ["S_WeatherCityHint"] = "Weather shows as a corner icon on the clock stage; hover for details. Empty city locates by network IP",
         ["S_TtsGroup"] = "Voice",
         ["S_TtsLabel"] = "Auto speak AI replies",
+        ["S_RadioSoundFx"] = "Retro radio tuning sound FX",
         ["S_Visuals"] = "Visuals",
         ["S_Starfield"] = "Starfield breathes with the music",
         ["S_SpectrumStyle"] = "Spectrum style",
         ["S_TopMostToggle"] = "Keep compact player on top",
+        ["S_CompactShowLyricsToggle"] = "Show lyrics in compact mode",
         ["S_ProfileGroup"] = "Listening profile",
         ["S_ProfileLearn"] = "Learn my taste (stored locally, used for recommendations)",
         ["S_ProfileHint"] = "The profile only records song titles, artists and listening behavior; it stays on this device and is never uploaded. Turn off to pause learning; clear it to start over",

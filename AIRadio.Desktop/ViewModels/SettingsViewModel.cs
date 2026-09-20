@@ -81,6 +81,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool EnableStarfield { get; set; } = true;
     [Reactive] public string SelectedSpectrumStyle { get; set; } = "bars";
     [Reactive] public bool CompactModeTopmost { get; set; } = true;
+    [Reactive] public bool CompactShowLyrics { get; set; } = true;
+    [Reactive] public bool RadioSoundFxEnabled { get; set; } = true;
     [Reactive] public bool StartInCompactMode { get; set; }
     [Reactive] public bool ShowLyricsInStage { get; set; }
     [Reactive] public bool ListenerProfileEnabled { get; set; } = true;
@@ -456,6 +458,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("compact_mode_topmost", out var compactTopmost))
                     CompactModeTopmost = compactTopmost.GetBoolean();
+
+                if (root.TryGetProperty("compact_show_lyrics", out var compactLyrics))
+                    CompactShowLyrics = compactLyrics.GetBoolean();
+
+                if (root.TryGetProperty("radio_sound_fx_enabled", out var radioFx))
+                    RadioSoundFxEnabled = radioFx.GetBoolean();
 
                 if (root.TryGetProperty("start_in_compact_mode", out var startCompact))
                     StartInCompactMode = startCompact.GetBoolean();
@@ -1108,6 +1116,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 enable_starfield = EnableStarfield,
                 spectrum_style = NormalizeSpectrumStyle(SelectedSpectrumStyle),
                 compact_mode_topmost = CompactModeTopmost,
+                compact_show_lyrics = CompactShowLyrics,
+                radio_sound_fx_enabled = RadioSoundFxEnabled,
                 start_in_compact_mode = StartInCompactMode,
                 show_lyrics_in_stage = ShowLyricsInStage,
                 listener_profile_enabled = ListenerProfileEnabled,

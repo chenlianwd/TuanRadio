@@ -222,13 +222,13 @@ public class MultiSourceMusicService : IMusicSearchService
                 var results = await Task.WhenAll(tasks);
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // 跨源去重：同一首歌多源命中只保留首个（顺序即源优先级）
+                // 跨源合并不在此去重：同名不同版本的优劣要等 CandidateRanker 评分排序后才可知，
+                // 先按源优先级去重会把评分更高的副本提前丢掉；工作容量放宽到 3 倍，
+                // 排序去重后再截回 limit*2，保持原有"至多 limit*2 条"的对外语义
                 foreach (var track in results.SelectMany(r => r))
                 {
-                    if (merged.Count >= limit * 2)
+                    if (merged.Count >= limit * 3)
                         break;
-                    if (merged.Any(m => MusicIdentity.IsSameSongLoose(m.Title, m.Artist, track.Title, track.Artist)))
-                        continue;
                     merged.Add(track);
                 }
             }
@@ -273,6 +273,12 @@ public class MultiSourceMusicService : IMusicSearchService
             }
         }
 
+        // 基于 CandidateRanker 智能重排聚合搜索结果（低分与非预期版本后置），
+        // 再做智能跨源去重（每组宽松同曲身份保留评分最高的副本）并截回上限
+        merged = CandidateRanker.DeduplicateTracks(
+                CandidateRanker.RankSearchResults(merged, keyword))
+            .Take(limit * 2)
+            .ToList();
         Log.Information("Music search '{Keyword}' returned {Count} fallback result(s)", keyword, merged.Count);
         return merged;
     }
@@ -524,18 +530,10 @@ public class MultiSourceMusicService : IMusicSearchService
     }
 
     /// <summary>
-    /// 时长接近度：1 − |候选−目标|/目标，clamp ≥ 0；候选缺元数据时长记 −1（劣于任何
-    /// 带时长候选）；目标无时长时全体同分（取首个，与引入评分前的行为一致）。
-    /// DurationMs 是元数据时长（试听只是播放流截断），此评分防的是截断版/live 版/错曲。
+    /// 跨源回退候选评分：委托 CandidateRanker 综合评分（标题、歌手、时长接近度、版本冲突惩罚）。
     /// </summary>
     private static double ScoreFallbackCandidate(OnlineTrack candidate, OnlineTrack target)
-    {
-        if (target.DurationMs <= 0)
-            return 0;
-        if (candidate.DurationMs <= 0)
-            return -1;
-        return Math.Max(0, 1 - Math.Abs(candidate.DurationMs - target.DurationMs) / (double)target.DurationMs);
-    }
+        => CandidateRanker.ScoreFallbackCandidate(candidate, target);
 
     private async Task<List<OnlineTrack>> SearchWithFallback(
         IMusicSearchService source,

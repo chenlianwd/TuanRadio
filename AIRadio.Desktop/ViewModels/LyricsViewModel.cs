@@ -43,6 +43,7 @@ public class LyricsViewModel : ViewModelBase, IDisposable
     [Reactive] public string CurrentLineText { get; private set; } = string.Empty;
     [Reactive] public string NextLineText { get; private set; } = string.Empty;
     [Reactive] public bool HasLyrics { get; private set; }
+    [Reactive] public bool HasCurrentLine { get; private set; }
     [Reactive] public string LyricStatusText { get; private set; } = string.Empty;
     [Reactive] public bool HasStatusText { get; private set; }
 
@@ -147,12 +148,14 @@ public class LyricsViewModel : ViewModelBase, IDisposable
             PreviousLineText = string.Empty;
             CurrentLineText = string.Empty;
             NextLineText = _lines[0].Text;
+            HasCurrentLine = false;
         }
         else
         {
             PreviousLineText = index > 0 ? _lines[index - 1].Text : string.Empty;
             CurrentLineText = _lines[index].Text;
             NextLineText = index + 1 < _lines.Count ? _lines[index + 1].Text : string.Empty;
+            HasCurrentLine = !string.IsNullOrWhiteSpace(CurrentLineText);
         }
     }
 
@@ -181,6 +184,7 @@ public class LyricsViewModel : ViewModelBase, IDisposable
         PreviousLineText = string.Empty;
         CurrentLineText = string.Empty;
         NextLineText = string.Empty;
+        HasCurrentLine = false;
     }
 
     private void SetStatus(StatusKind kind)

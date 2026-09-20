@@ -15,6 +15,10 @@ public partial class CompactPlayer : UserControl
     private const float MinBarHeight = 2f;
     private const float MaxBarHeight = 18f;
     private MainWindowViewModel? _currentVm;
+    private Point? _infoPressPos;
+    private bool _infoPressed;
+    private bool _lastInfoTappedToggle;
+    private PointerPressedEventArgs? _lastPressedEventArgs;
 
     public CompactPlayer()
     {
@@ -88,13 +92,91 @@ public partial class CompactPlayer : UserControl
         }
     }
 
+    private void OnTrackInfoPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (InteractionGuards.IsOverButton(e.Source))
+            return;
+
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            _infoPressPos = e.GetPosition(this);
+            _infoPressed = true;
+            _lastPressedEventArgs = e;
+            // 不在此重置 _lastInfoTappedToggle：DoubleTapped 经 RouteFinished 在整条按下路由
+            // 完成后才触发，若此处重置，OnExpandDoubleTapped 的撤销分支永远读到 false
+            e.Handled = true;
+        }
+    }
+
+    private void OnTrackInfoMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_infoPressed || _infoPressPos == null)
+            return;
+
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            _infoPressed = false;
+            _lastPressedEventArgs = null;
+            return;
+        }
+
+        var current = e.GetPosition(this);
+        var distance = current - _infoPressPos.Value;
+        if (Math.Abs(distance.X) > 4 || Math.Abs(distance.Y) > 4)
+        {
+            _infoPressed = false;
+            var pressedArgs = _lastPressedEventArgs;
+            _lastPressedEventArgs = null;
+            if (pressedArgs != null && TopLevel.GetTopLevel(this) is Window window)
+            {
+                try { window.BeginMoveDrag(pressedArgs); }
+                catch { /* 平台在部分状态下可能拒绝拖动 */ }
+            }
+        }
+    }
+
+    private void OnTrackInfoReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _lastPressedEventArgs = null;
+        if (_infoPressed)
+        {
+            _infoPressed = false;
+            _lastInfoTappedToggle = true;
+            if (DataContext is MainWindowViewModel vm)
+            {
+                vm.ToggleCompactLyricsCommand?.Execute().Subscribe();
+            }
+            e.Handled = true;
+        }
+    }
+
+    private void OnTrackInfoCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        _infoPressed = false;
+        _lastPressedEventArgs = null;
+    }
+
     private void OnExpandDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (InteractionGuards.IsOverButton(e.Source))
             return;
 
+        e.Handled = true;
+
         if (DataContext is MainWindowViewModel vm && vm.IsCompactMode)
+        {
+            // 只撤销发生在本信息区上的双击（行内其余区域的双击不应吞掉早前单击的切换）
+            if (_lastInfoTappedToggle && ReferenceEquals(e.Source, TrackInfoArea))
+            {
+                // 双击还原：撤销第 1 次单击造成的歌词切换
+                vm.ToggleCompactLyricsCommand?.Execute().Subscribe();
+                _lastInfoTappedToggle = false;
+            }
+            // 展开会隐藏本控件：清掉按压态，防止隐藏后路由异常的游离 release 再次切换歌词
+            _infoPressed = false;
+            _lastPressedEventArgs = null;
             vm.ToggleCompactModeCommand.Execute(System.Reactive.Unit.Default).Subscribe();
+        }
     }
 
     private void OnMinimizeClicked(object? sender, RoutedEventArgs e)

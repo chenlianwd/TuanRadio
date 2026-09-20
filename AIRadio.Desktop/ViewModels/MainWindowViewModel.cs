@@ -34,6 +34,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
+    private readonly IDisposable _compactLyricsSub;
+    private readonly IDisposable _radioFxSub;
     private readonly IDisposable _languageTtsSub;
     private readonly IDisposable _speechMixSub;
     private readonly IDisposable _spectrumStyleSub;
@@ -81,6 +83,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         "Open Program and the DJ will curate the next set from your current listening style.");
     [Reactive] public string PlaybackRecoveryMessage { get; private set; } = string.Empty;
     [Reactive] public bool HasPlaybackRecoveryFailure { get; private set; }
+    [Reactive] public bool IsCompactLyricsVisible { get; private set; }
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
     [Reactive] public DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
@@ -114,6 +117,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ToggleCompactModeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleLyricsModeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactTopmostCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleCompactLyricsCommand { get; }
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCurrentFavoriteCommand { get; }
@@ -231,6 +235,18 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             SettingsVM.CompactModeTopmost = !SettingsVM.CompactModeTopmost;
             SettingsVM.SaveUiStateCommand.Execute().Subscribe();
         });
+        ToggleCompactLyricsCommand = ReactiveCommand.Create(() =>
+        {
+            SettingsVM.CompactShowLyrics = !SettingsVM.CompactShowLyrics;
+            SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+        });
+        _compactLyricsSub = this.WhenAnyValue(
+            x => x.SettingsVM.CompactShowLyrics,
+            x => x.LyricsVM.HasCurrentLine,
+            (show, hasLine) => show && hasLine)
+            .Subscribe(visible => IsCompactLyricsVisible = visible);
+        _radioFxSub = this.WhenAnyValue(x => x.SettingsVM.RadioSoundFxEnabled)
+            .Subscribe(enabled => _audioService.IsRadioSoundFxEnabled = enabled);
         UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
 
@@ -512,8 +528,12 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         // 进入 VM 前按当前语言统一重译，避免旧语言节目单经自动续播回灌并触发错误语言的 DJ 开场白
         if (program != null)
             RecommendationService.ApplyLocalization(program);
+        // 引用门控：自动续播每首都会回灌服务侧当前节目单，只有真正新生成的那份才触发台呼
+        var isNewProgram = program != null && !ReferenceEquals(program, CurrentRadioProgram);
         CurrentRadioProgram = program;
         HasCurrentRadioProgram = program?.Tracks.Any(track => track.IsPlayable) == true;
+        if (isNewProgram && HasCurrentRadioProgram)
+            _audioService.PlayRadioSoundFx(RadioFxKind.StationChime);
     }
 
     private void RefreshLocalizedProgramText()
@@ -1313,6 +1333,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _positionSampleSub?.Dispose();
         _playbackRecoverySub?.Dispose();
         _darkModePersistSub?.Dispose();
+        _compactLyricsSub?.Dispose();
+        _radioFxSub?.Dispose();
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();
         _spectrumStyleSub?.Dispose();

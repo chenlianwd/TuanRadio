@@ -27,18 +27,33 @@
                     </Border.Background>
                 </Border>
 
-                <DockPanel Grid.Column="1" Margin="8,0,8,0">
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding PlayerVM.TrackArtist}"
-                               ToolTip.Tip="{Binding PlayerVM.TrackArtist}"
-                               FontFamily="Consolas, Microsoft YaHei UI" FontSize="11"
-                               Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis" MaxWidth="110"/>
-                    <TextBlock Text="{Binding PlayerVM.TrackTitle}"
-                               ToolTip.Tip="{Binding PlayerVM.TrackTitle}"
-                               FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" FontWeight="700"
-                               Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"
+                <Panel x:Name="TrackInfoArea" Grid.Column="1" Margin="8,0,8,0" Background="Transparent"
+                       Cursor="Hand" ToolTip.Tip="{DynamicResource S_CompactLyricsTip}"
+                       AutomationProperties.Name="{DynamicResource S_CompactLyricsTip}"
+                       PointerPressed="OnTrackInfoPressed" PointerMoved="OnTrackInfoMoved"
+                       PointerReleased="OnTrackInfoReleased" PointerCaptureLost="OnTrackInfoCaptureLost"
+                       DoubleTapped="OnExpandDoubleTapped">
+                    <!-- 子元素不参与命中测试：单击切换歌词会交换可见子元素，若命中源随之改变，
+                         Avalonia 双击手势的同源校验（两次按下须命中同一元素）会失败，双击还原将失效 -->
+                    <TextBlock Text="{Binding LyricsVM.CurrentLineText}"
+                               IsVisible="{Binding IsCompactLyricsVisible}" IsHitTestVisible="False"
+                               FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" FontWeight="600"
+                               Foreground="{DynamicResource AccentGreen}" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
-                </DockPanel>
+
+                    <!-- 默认曲目信息：歌名 + 歌手 -->
+                    <DockPanel IsVisible="{Binding IsCompactLyricsVisible, Converter={StaticResource InverseBoolConverter}}"
+                               IsHitTestVisible="False">
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding PlayerVM.TrackArtist}"
+                                   FontFamily="Consolas, Microsoft YaHei UI" FontSize="11"
+                                   Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="110"/>
+                        <TextBlock Text="{Binding PlayerVM.TrackTitle}"
+                                   FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" FontWeight="700"
+                                   Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </Panel>
 
                 <Button Grid.Column="2" Width="26" Height="24" Padding="0"
                         Command="{Binding ToggleCurrentFavoriteCommand}" ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}">

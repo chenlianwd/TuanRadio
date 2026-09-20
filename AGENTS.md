@@ -39,10 +39,15 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - 音源体验增强：播放回退候选在身份匹配每遍内按时长接近度择优（ScoreFallbackCandidate：目标无时长取首个、候选缺时长记 -1，两遍次序与外层"高优先级源命中即停"不变——跨源不比时长是预算效率的有意取舍）；MusicSourceFailureKind 结构化分类（NotSignedIn/AuthExpired/RiskControl(20028)/ApiBroken/Unknown）由 MusicSourceBusinessException.Kind 携带，七处抛出点标注，经 SourceSearchStatus.FailureKind 透传（注意 AddSearchReport 脱敏重建必须保字段），搜索状态行按类型渲染；AuthExpired 文案须兼顾酷狗登录态失效与网易代理未就绪两类场景，风控文案注明自动验证仅播放路径且约 10 分钟冷却。
 - 天气/日历 + 耐久测试：ClockStage 角落环境指示器（WeatherService 走 Open-Meteo：设置页城市经 geocoding / 空 city 走 ip-api 定位，30 分钟缓存失败静默；ChineseCalendar 纯本地 BCL 农历 + 寿星公式节气 + 节日表，徽标节气/节日高亮，详情 Tooltip）；DurabilityTests 六场景（含真实 LibVLC 静音 WAV 四曲连播）。**Avalonia 编译器陷阱**：DataContext="{Binding VM}" 重定向 + 编译绑定组合会静默击穿程序集 XAML 预编译（ChatAreaMicButtonTests"找不到预编译 XAML"），ClockStage 指示器子树必须用 {Binding VM.X} 路径绑定，已注释锚定。
 - 产品化清理五件套：设置页音源逐源连接诊断（MultiSourceMusicService.DiagnoseAsync 独立 AsyncLocal 作用域报告不污染搜索状态，复用 FormatSourceStatus 分类渲染）；AI 控制协议旧文本尾标（【play:…】/【next】）从 ParseDjResponse 与两处 StripControlTags 移除，协议只认 JSON 控制块；弹层硬编码标题 SETTINGS/LIBRARY 迁 S_Settings/S_Library（VOL/LIVE 为复古电台设计元素有意保留英文）；Light 主题 WCAG 审计修正三处超标（提示字 #6A6478、LIVE 徽标 #146C4F、StatePlaying #0C6E4E，均 ≥4.5:1）；Node.js/yt-dlp 供应链校验确认已实现（EnvironmentManager 下载即 fail-closed 校验、YtdlpManager 固定版本+SHA256），技术债清单同步。
+- 复古电台三大核心体验增强（A/C/D）：
+  - **A 精简单行歌词**：CompactPlayer 行 1 荧光青绿单行动态歌词展示，无词/前奏平滑退回歌曲信息；支持单触点按切换、拖拽门限与双击还原撤销冲突；设置项 compact_show_lyrics 持久化。**双击手势时序坑（评审修复）**：Avalonia 的 Tapped/DoubleTapped 经 RouteFinished 在整条按下路由完成后才触发，且双击要求两次按下命中同一元素——歌词/信息两个子元素必须 IsHitTestVisible=False（否则单击切换歌词后第二次按下命中源改变，DoubleTapped 不触发、双击还原失效）；按下处理器不得重置 _lastInfoTappedToggle（否则撤销分支永远读到 false，双击展开会静默翻转设置）；OnExpandDoubleTapped 以 e.Source==TrackInfoArea 门控撤销（行内其它区域双击不得吞掉早前单击），并清 _infoPressed 防展开后游离 release 再翻转。CompactPlayerTrackInfoTests 三个 headless 场景锚定。浅色主题歌词色随 AccentGreen token 加深（#178A65→#0F6B57，SurfaceShell 上 4.24:1→6.3:1）。
+  - **C 智能排重打分引擎**：CandidateRanker 多维评分（标题 35%、歌手 30%、时长逼近 20%、源优先级 15%）；非预期特殊版本强惩罚约束（伴奏 -0.7、翻唱 -0.6、DJ/加速 -0.5、Live -0.3）；贯通跨源回退、聚合搜索重排与推荐候选净化。聚合回退搜索为"先评分排序、后宽松去重"：合并阶段不去重（工作容量 3 倍，排序去重后截回 limit*2），否则同名副本中评分更高的那份会在排序前被源优先级去重丢掉；推荐过滤 IsUnwantedVersion 不含 Live（有意保留，避免误杀）。
+  - **D 复古收音机调频音效**：RadioSoundFxService 纯程序化 NAudio 声学合成（零外部大资产依赖）；FM 快速调谐扫频（250Hz~1400Hz + 带通白噪，-18dB）在 DJ TTS 开口前自然淡入；台呼微鸣音（StationChime）接线到新节目单落地——UpdateCurrentProgram 以引用门控（自动续播每首都回灌服务侧当前节目单，只有真正新生成的那份才响）；设置页 radio_sound_fx_enabled 开关与双语字典。
 
 ## Architecture Notes
 
-- `AudioService` 管理播放和 TTS。
+- `AudioService` 管理播放、TTS 播报与 `RadioSoundFxService` 调频音效。
+- `CandidateRanker` 负责歌曲搜索与跨源回退的规范化多维打分、版本冲突惩罚与智能排重。
 - `PlaylistViewModel` 管理展示歌单、收藏和搜索结果。
 - `RecommendationService` 负责节目单候选生成、去重、可播状态和会话反馈。
 - `ListeningProfileService` 负责长期收听画像：事件采集/统计/持久化与 LLM 口味摘要，供 `RecommendationService` 跨会话消费。
