@@ -461,6 +461,36 @@ public class MultiSourceMusicServiceTests
         Assert.Equal(SourceHealthRegistry.FailureThreshold + 1, kugouRequests);
     }
 
+    [Fact]
+    public async Task SearchAsync_FallbackMergeKeepsHigherScoredDuplicateAfterRanking()
+    {
+        // 回归：合并阶段若先按源优先级去重，同名副本中评分更高的那份（源分更高）会被提前
+        // 丢掉；必须先评分排序再去重，每组宽松同曲身份保留最高分副本。
+        using var client = new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":0}")
+            })));
+        var lowScoreFirst = new FixedTracksMusicService("低分优先源", new OnlineTrack
+        {
+            Id = "yt:1", Title = "晴天", Artist = "周杰伦", Source = "youtube"
+        });
+        var highScoreSecond = new FixedTracksMusicService("高分后置源", new OnlineTrack
+        {
+            Id = "ne:1", Title = "晴天", Artist = "周杰伦", Source = "netease"
+        });
+        var service = new MultiSourceMusicService(client, lowScoreFirst, highScoreSecond);
+
+        var results = await service.SearchAsync(
+            "晴天 周杰伦",
+            5,
+            MusicSearchIntent.Automatic,
+            CancellationToken.None);
+
+        var track = Assert.Single(results);
+        Assert.Equal("netease", track.Source);
+    }
+
     private sealed class FallbackMusicService : IMusicSearchService
     {
         public string Name => "备用音源";
@@ -479,6 +509,26 @@ public class MultiSourceMusicServiceTests
 
         public Task<string?> GetPlayUrlAsync(string trackId)
             => Task.FromResult<string?>("https://fallback.invalid/test.mp3");
+    }
+
+    /// <summary>返回固定曲目集合的音源：用于验证聚合搜索的排序/去重次序。</summary>
+    private sealed class FixedTracksMusicService : IMusicSearchService
+    {
+        private readonly List<OnlineTrack> _tracks;
+
+        public FixedTracksMusicService(string name, params OnlineTrack[] tracks)
+        {
+            Name = name;
+            _tracks = tracks.ToList();
+        }
+
+        public string Name { get; }
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => Task.FromResult(_tracks.ToList());
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+            => Task.FromResult<string?>("https://fixed.invalid/test.mp3");
     }
 
     private sealed class IgnoringCancellationMusicService : IMusicSearchService

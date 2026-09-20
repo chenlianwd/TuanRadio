@@ -104,6 +104,10 @@ public class RecommendationService : IRecommendationService
                 if (IsExcluded(result, excluded) || tracks.Any(x => IsSameOnlineTrack(x.Track, result)))
                     continue;
 
+                // 过滤伴奏/翻唱/电音DJ/加速版等非预期特殊版本
+                if (CandidateRanker.IsUnwantedVersion(result, query))
+                    continue;
+
                 var url = await ResolvePlayUrlAsync(result, cancellationToken);
                 if (string.IsNullOrWhiteSpace(url))
                 {

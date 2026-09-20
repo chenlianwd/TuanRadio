@@ -52,6 +52,8 @@ public interface IAudioService
     void StopTts();
     IObservable<bool> TtsStateChanged { get; }
     IObservable<string> TtsError { get; }
+    bool IsRadioSoundFxEnabled { get; set; }
+    void PlayRadioSoundFx(RadioFxKind kind);
     void SetUrlResolver(Func<string, Task<string?>> resolver);
     void SetSpeechMixMode(string mode);
 }

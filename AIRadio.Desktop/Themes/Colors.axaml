@@ -81,7 +81,9 @@
             <Color x:Key="SurfaceHeader">#FFF1ECF7</Color>
             <Color x:Key="BorderShell">#FFC8C0D2</Color>
             <Color x:Key="ShellText">#FF26222E</Color>
-            <Color x:Key="AccentGreen">#FF178A65</Color>
+            <!-- 浅色文本用强调绿：在 SurfaceShell #FFFCFF 上需 ≥4.5:1（12px 普通文本门槛），
+                 #0F6B57 实测 6.3:1；与 StatePlayingColor #0C6E4E 同族 -->
+            <Color x:Key="AccentGreen">#FF0F6B57</Color>
             <Color x:Key="TitleText">#FF4C4656</Color>
             <Color x:Key="ChromeButton">#FF686171</Color>
             <Color x:Key="ChromeButtonClose">#FF5A5362</Color>

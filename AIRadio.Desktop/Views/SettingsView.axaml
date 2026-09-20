@@ -110,6 +110,12 @@
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
                               OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
             </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="{DynamicResource S_RadioSoundFx}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ToggleSwitch Grid.Column="1" IsChecked="{Binding RadioSoundFxEnabled, Mode=TwoWay}"
+                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+            </Grid>
             <ComboBox SelectedValue="{Binding SpeechMixMode}"
                       ItemsSource="{Binding SpeechMixModes}"
                       SelectedValueBinding="{Binding Id}"
@@ -138,6 +144,12 @@
                 <TextBlock Grid.Column="0" Text="{DynamicResource S_TopMostToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                            VerticalAlignment="Center"/>
                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactModeTopmost, Mode=TwoWay}"
+                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="{DynamicResource S_CompactShowLyricsToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                           VerticalAlignment="Center"/>
+                <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactShowLyrics, Mode=TwoWay}"
                               OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
             </Grid>
         </StackPanel>

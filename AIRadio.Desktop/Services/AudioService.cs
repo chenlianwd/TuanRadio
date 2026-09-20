@@ -27,6 +27,7 @@ public class AudioService : IAudioService, IDisposable
     private readonly MediaPlayer _player;
     private WaveOutEvent? _ttsOutput;
     private MediaFoundationReader? _ttsReader;
+    private readonly IRadioSoundFxService _soundFxService;
     private readonly Subject<float[]> _spectrumSubject = new();
     private readonly Subject<Track?> _trackChangedSubject = new();
     private readonly Subject<PlaybackState> _stateChangedSubject = new();
@@ -190,8 +191,23 @@ public class AudioService : IAudioService, IDisposable
             _speechMixMode = mode == "pause" ? "pause" : "duck";
     }
 
-    public AudioService()
+    public bool IsRadioSoundFxEnabled
     {
+        get => _soundFxService.IsEnabled;
+        set => _soundFxService.IsEnabled = value;
+    }
+
+    public void PlayRadioSoundFx(RadioFxKind kind)
+    {
+        if (IsDisposed)
+            return;
+        _soundFxService.PlayFx(kind);
+    }
+
+    public AudioService(IRadioSoundFxService? soundFxService = null)
+    {
+        _soundFxService = soundFxService ?? new RadioSoundFxService();
+
         // LibVLC 的全局 native 初始化/销毁不是并发安全的；测试、重启窗口或
         // 多个宿主同时创建 AudioService 时必须串行化，否则会在 LibVLCNew 处直接
         // 触发 0xC0000005，而不是一个可捕获的托管异常。
@@ -2052,6 +2068,7 @@ public class AudioService : IAudioService, IDisposable
 
         _ttsDuckSub.Dispose();
         _ttsPauseSub.Dispose();
+        _soundFxService?.Dispose();
 
         // NAudio 的 Stop/Dispose 也可能等待设备线程，不能再从 Avalonia 关闭线程
         // 同步调用。后台任务会被原生清理流程统一等待；即使超过 UI 的等待上限，
@@ -2225,6 +2242,11 @@ public class AudioService : IAudioService, IDisposable
             {
                 StopTtsInternalCore(notifyState: false);
                 return;
+            }
+
+            if (IsRadioSoundFxEnabled)
+            {
+                _soundFxService.PlayFx(RadioFxKind.TuningSweep);
             }
 
             _ttsStateSubject.OnNext(true);
