@@ -537,7 +537,7 @@ public class RecommendationService : IRecommendationService
                 $"This track fits a {LocalizeTimeOfDay(context.TimeOfDay)} TuanRadio session.")
             : AppLanguage.T(
                 $"它和“{userIntent}”的氛围接近，可以接在当前电台里。",
-                $"Its mood matches “{userIntent}” and fits naturally into this station.");
+                $"Its mood matches \"{userIntent}\" and fits naturally into this station.");
     }
 
     private static string GetLocalizedUserIntent(string? key, string? fallback)

@@ -191,11 +191,25 @@ public class PlaylistViewModelTests
 
         vm.Tracks.Add(track);
         vm.ToggleFavoriteCommand.Execute(track).Subscribe();
-        // 保存是 fire-and-forget：固定 150ms 在整机负载高时不够，轮询等待文件落盘
-        for (var waited = 0; !File.Exists(playlistFile) && waited < 5000; waited += 100)
+        // 保存是 fire-and-forget：轮询等待文件写入并包含预期内容，捕获写盘过程中的临时文件锁
+        string saved = string.Empty;
+        for (var waited = 0; waited < 50; waited++)
+        {
+            try
+            {
+                if (File.Exists(playlistFile))
+                {
+                    saved = await File.ReadAllTextAsync(playlistFile);
+                    if (saved.Contains("\"FavoriteIds\"") && saved.Contains("netease:ugly"))
+                        break;
+                }
+            }
+            catch (IOException)
+            {
+                // File.Move/WriteAllTextAsync 临时占用的文件锁，稍候重试
+            }
             await Task.Delay(100);
-
-        var saved = await File.ReadAllTextAsync(playlistFile);
+        }
         Assert.Contains("\"FavoriteIds\"", saved);
         Assert.Contains("netease:ugly", saved);
         // v3：在线曲目持久化稳定 Provider 身份与解析参数，不落盘临时播放直链

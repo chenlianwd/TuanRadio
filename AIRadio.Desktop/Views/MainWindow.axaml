@@ -146,7 +146,8 @@
                         <TextBlock Text="{DynamicResource S_Settings}" FontSize="18" FontWeight="700"
                                    FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"/>
                         <Button Grid.Column="1" Width="32" Height="28" Padding="0"
-                                Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="{DynamicResource S_CloseSettings}">
+                                Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="{DynamicResource S_CloseSettings}"
+                                AutomationProperties.Name="{DynamicResource S_CloseSettings}">
                             <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
                         </Button>
                     </Grid>

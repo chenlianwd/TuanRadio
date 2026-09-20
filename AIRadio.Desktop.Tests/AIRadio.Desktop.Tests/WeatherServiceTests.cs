@@ -202,4 +202,36 @@ public class WeatherViewModelTests
         vm.UpdateCalendar(new DateTime(2026, 10, 2));
         Assert.Equal("2", vm.CalendarDayBadge);
     }
+
+    [Fact]
+    public void UpdateCalendar_InEnglish_TranslatesFestivalAndSolarTerm()
+    {
+        var weather = new FakeWeatherService();
+        using var vm = new WeatherViewModel(weather);
+
+        try
+        {
+            // 构造时已按今天算过一次；先推进到相邻日期，避免目标日恰为“今天”时被同日早退
+            vm.UpdateCalendar(new DateTime(2026, 9, 30));
+            AppLanguage.Apply("en");
+            vm.UpdateCalendar(new DateTime(2026, 10, 1));
+
+            Assert.Equal("1", vm.CalendarDayBadge);
+            Assert.True(vm.IsCalendarHighlighted);
+            Assert.Contains("National Day", vm.CalendarTooltip);
+            Assert.Matches(@"Lunar (leap )?\d+(st|nd|rd|th) month, \d+(st|nd|rd|th) day", vm.CalendarTooltip);
+            Assert.Contains("Thursday", vm.CalendarTooltip);
+
+            // 运行时切换回中文并通过 RebuildTooltips 重新计算
+            AppLanguage.Apply("zh");
+            vm.RebuildTooltips();
+            Assert.Contains("国庆节", vm.CalendarTooltip);
+            Assert.Contains("农历", vm.CalendarTooltip);
+            Assert.Contains("星期四", vm.CalendarTooltip);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
 }

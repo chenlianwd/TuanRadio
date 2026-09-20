@@ -7,6 +7,9 @@ namespace AIRadio.Desktop.Services;
 public sealed record CalendarDayInfo(
     int Day,
     string LunarText,
+    int LunarMonth,
+    int LunarDay,
+    bool IsLeapMonth,
     string? SolarTerm,
     string? Festival,
     int DaysToSaturday)
@@ -65,6 +68,9 @@ public static class ChineseCalendar
         return new CalendarDayInfo(
             date.Day,
             $"{monthName}{LunarDays[day - 1]}",
+            month,
+            day,
+            isLeap,
             solarTerm,
             festival,
             daysToSaturday);
