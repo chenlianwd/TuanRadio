@@ -1,7 +1,7 @@
 # TuanRadio 音源架构演进计划
 
 > 日期：2026-08-25
-> 状态：待实施
+> 状态（2026-09-21 更新）：阶段 0 基本落地——0.1 yt-dlp 治理、0.2 稳定身份与歌单迁移、0.3 Cookie/日志边界、0.5 npm ci 均已完成，0.4 统一 deadline 的主体由 2026-09-01 可靠性专项 Release A（分级硬超时/熔断/连续失败阻断）覆盖，0.0 基线量化未单独执行；CandidateRanker 与 SourceHealthRegistry 已随各专项提前落地。阶段 1 已于 2026-09-21 实施完成（IMusicProvider 契约 + MusicSourceBroker + 适配器 + MediaUriPolicy + ResolvedMediaCache，MultiSourceMusicService 已删除；设计与实施记录见 `docs/plans/2026-09-20-music-source-broker-phase1-design.md`）。阶段 2-4 未实施。
 > 产品边界：个人工具、开源项目；项目方不经营商业音乐分发，但所选开源许可证仍允许依法商业使用
 > 实施原则：小步迁移、保持现有播放能力、每阶段独立 build/test、先修安全与正确性再扩展新源
 

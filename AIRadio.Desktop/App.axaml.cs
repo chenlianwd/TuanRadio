@@ -211,17 +211,22 @@ public partial class App : Application
             new MusicAccountStore(sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton(sp =>
             new KugouVerificationService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
-        services.AddSingleton<IMusicSearchService>(sp =>
+        services.AddSingleton<Services.Music.MusicSourceBroker>(sp =>
         {
             var accounts = sp.GetRequiredService<MusicAccountStore>();
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
             var ytSource = new YouTubeMusicService(ytdlpPath, accounts);
-            return new MultiSourceMusicService(
+            return new Services.Music.MusicSourceBroker(
                 sp.GetRequiredService<System.Net.Http.HttpClient>(),
                 accounts,
                 sp.GetRequiredService<KugouVerificationService>(),
                 ytSource);
         });
+        // 双接口指向同一 Broker 实例（docs/plans 2026-09-20 §3.3）
+        services.AddSingleton<IMusicSearchService>(
+            sp => sp.GetRequiredService<Services.Music.MusicSourceBroker>());
+        services.AddSingleton<Services.Music.IMusicSourceBroker>(
+            sp => sp.GetRequiredService<Services.Music.MusicSourceBroker>());
         services.AddSingleton<IDJService>(sp =>
             new DJService(
                 sp.GetRequiredService<ILLMService>(),

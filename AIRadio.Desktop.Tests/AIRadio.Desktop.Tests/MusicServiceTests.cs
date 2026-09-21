@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using Xunit;
 
 namespace AIRadio.Desktop.Tests;
@@ -54,7 +55,7 @@ public class MusicServiceTests : IDisposable
     {
         if (!IntegrationEnabled) return;
 
-        var service = new MultiSourceMusicService(_httpClient);
+        var service = new MusicSourceBroker(_httpClient);
         var results = await service.SearchAsync("周杰伦", 10);
         Assert.NotNull(results);
         // Note: API may return 0 results due to network/regional restrictions

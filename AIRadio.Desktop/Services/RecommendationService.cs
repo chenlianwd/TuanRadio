@@ -651,7 +651,7 @@ public class RecommendationService : IRecommendationService
         string query,
         int limit,
         CancellationToken cancellationToken)
-        => _musicSearch is MultiSourceMusicService multi
+        => _musicSearch is Music.IMusicSourceBroker multi
             ? multi.SearchAsync(query, limit, MusicSearchIntent.Automatic, cancellationToken)
             : _musicSearch.SearchAsync(query, limit)
                 .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
@@ -659,7 +659,7 @@ public class RecommendationService : IRecommendationService
     private Task<string?> ResolvePlayUrlAsync(
         OnlineTrack track,
         CancellationToken cancellationToken)
-        => _musicSearch is MultiSourceMusicService multi
+        => _musicSearch is Music.IMusicSourceBroker multi
             ? multi.GetPlayUrlAsync(track, cancellationToken)
             : _musicSearch.GetPlayUrlAsync(track.Id)
                 .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);

@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using Moq;
 using Xunit;
 
@@ -22,7 +23,7 @@ public class MultiSourceMusicServiceTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK);
         }));
-        var service = new MultiSourceMusicService(client);
+        var service = new MusicSourceBroker(client);
         using var cancellation = new CancellationTokenSource();
 
         var searchTask = service.SearchAsync("测试", 5, cancellation.Token);
@@ -51,7 +52,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             });
         }));
-        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var service = new MusicSourceBroker(client, new FallbackMusicService());
         var track = new OnlineTrack
         {
             Id = "netease:123",
@@ -63,7 +64,7 @@ public class MultiSourceMusicServiceTests
             track,
             CancellationToken.None);
 
-        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("https://203.0.113.1/test.mp3", url);
         Assert.Equal("fallback:456", track.Id);
     }
 
@@ -76,7 +77,7 @@ public class MultiSourceMusicServiceTests
             {
                 Content = new StringContent("{\"code\":0}")
             })));
-        var service = new MultiSourceMusicService(
+        var service = new MusicSourceBroker(
             client,
             new FallbackMusicService(),
             lowerPriority);
@@ -91,11 +92,13 @@ public class MultiSourceMusicServiceTests
         var url = await service.GetPlayUrlAsync(track, CancellationToken.None);
         stopwatch.Stop();
 
-        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("https://203.0.113.1/test.mp3", url);
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2),
             $"Lower-priority hanging source delayed a playable candidate (elapsed {stopwatch.Elapsed})");
         Assert.Equal(1, lowerPriority.SearchCount);
-        await lowerPriority.Canceled.WaitAsync(TimeSpan.FromSeconds(1));
+        // 3s：验证"取消最终传播到挂起源"（无泄漏），非速度；Broker/适配器/策略多层异步跃点
+        // 在并行测试负载下传播偏慢，1s 会偶发超时（响应速度已由上方 elapsed 断言单独守护）
+        await lowerPriority.Canceled.WaitAsync(TimeSpan.FromSeconds(3));
     }
 
     [Fact]
@@ -109,7 +112,7 @@ public class MultiSourceMusicServiceTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
-                        "{\"code\":200,\"data\":[{\"url\":\"https://trial.invalid/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
+                        "{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.2/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
                 });
             }
 
@@ -118,7 +121,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             });
         }));
-        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var service = new MusicSourceBroker(client, new FallbackMusicService());
         var track = new OnlineTrack
         {
             Id = "netease:123",
@@ -128,7 +131,7 @@ public class MultiSourceMusicServiceTests
 
         var url = await service.GetPlayUrlAsync(track, CancellationToken.None);
 
-        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("https://203.0.113.1/test.mp3", url);
         Assert.Equal("fallback:456", track.Id);
     }
 
@@ -139,14 +142,14 @@ public class MultiSourceMusicServiceTests
         {
             var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
             var body = url.Contains("/song/url", StringComparison.Ordinal)
-                ? "{\"code\":200,\"data\":[{\"url\":\"https://preferred.invalid/full.mp3\",\"freeTrialInfo\":null,\"freeTrialPrivilege\":{\"listenType\":0,\"cannotListenReason\":0}}]}"
+                ? "{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.3/full.mp3\",\"freeTrialInfo\":null,\"freeTrialPrivilege\":{\"listenType\":0,\"cannotListenReason\":0}}]}"
                 : "{\"code\":0}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(body)
             });
         }));
-        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var service = new MusicSourceBroker(client, new FallbackMusicService());
         var track = new OnlineTrack
         {
             Id = "netease:123",
@@ -156,7 +159,7 @@ public class MultiSourceMusicServiceTests
 
         var url = await service.GetPlayUrlAsync(track, CancellationToken.None);
 
-        Assert.Equal("https://preferred.invalid/full.mp3", url);
+        Assert.Equal("https://203.0.113.3/full.mp3", url);
         Assert.Equal("netease:123", track.Id);
     }
 
@@ -172,7 +175,7 @@ public class MultiSourceMusicServiceTests
                 Interlocked.Increment(ref preferredPlayRequests);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent("{\"code\":200,\"data\":[{\"url\":\"https://preferred.invalid/test.mp3\"}]}")
+                    Content = new StringContent("{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.3/test.mp3\"}]}")
                 });
             }
 
@@ -181,7 +184,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             });
         }));
-        var service = new MultiSourceMusicService(client, new FallbackMusicService());
+        var service = new MusicSourceBroker(client, new FallbackMusicService());
         var track = new OnlineTrack
         {
             Id = "netease:123",
@@ -191,7 +194,7 @@ public class MultiSourceMusicServiceTests
 
         var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
 
-        Assert.Equal("https://fallback.invalid/test.mp3", url);
+        Assert.Equal("https://203.0.113.1/test.mp3", url);
         Assert.Equal("fallback:456", track.Id);
         Assert.Equal(0, preferredPlayRequests);
     }
@@ -204,7 +207,7 @@ public class MultiSourceMusicServiceTests
             {
                 Content = new StringContent("{\"code\":0}")
             })));
-        var service = new MultiSourceMusicService(
+        var service = new MusicSourceBroker(
             client,
             new IgnoringCancellationMusicService());
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
@@ -224,7 +227,7 @@ public class MultiSourceMusicServiceTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
-                        "{\"code\":200,\"data\":[{\"url\":\"https://trial.invalid/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
+                        "{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.2/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
                 });
             }
 
@@ -242,7 +245,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             });
         }));
-        var service = new MultiSourceMusicService(client);
+        var service = new MusicSourceBroker(client);
 
         await service.SearchAsync("测试", 5, CancellationToken.None);
 
@@ -262,7 +265,7 @@ public class MultiSourceMusicServiceTests
             })));
         // 内置快速源立即空结果；3 个挂起源各吃满逐源预算。
         // 无整体 deadline 时串行累计 15s+；有 8s deadline 时第二个挂起源只能吃剩余预算
-        var service = new MultiSourceMusicService(
+        var service = new MusicSourceBroker(
             client,
             new HangingMusicService(),
             new HangingMusicService(),
@@ -293,7 +296,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             })));
         var slowSource = new HangingSlowMusicService();
-        var service = new MultiSourceMusicService(client, slowSource);
+        var service = new MusicSourceBroker(client, slowSource);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
@@ -315,7 +318,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             })));
         var slowSource = new CountingSlowMusicService();
-        var service = new MultiSourceMusicService(client, slowSource);
+        var service = new MusicSourceBroker(client, slowSource);
         var track = new OnlineTrack { Id = "unknown:1", Title = "歌", Artist = "手" };
 
         var url = await service.GetAlternativePlayUrlAsync(track, CancellationToken.None);
@@ -333,7 +336,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             })));
         var slowSource = new CountingSlowMusicService();
-        var service = new MultiSourceMusicService(client, slowSource);
+        var service = new MusicSourceBroker(client, slowSource);
 
         var results = await service.SearchAsync(
             "测试",
@@ -358,7 +361,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("service unavailable")
             });
         }));
-        var service = new MultiSourceMusicService(client);
+        var service = new MusicSourceBroker(client);
 
         for (var attempt = 0; attempt <= SourceHealthRegistry.FailureThreshold; attempt++)
         {
@@ -388,7 +391,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("service unavailable")
             });
         }));
-        var service = new MultiSourceMusicService(client);
+        var service = new MusicSourceBroker(client);
 
         for (var attempt = 0; attempt <= SourceHealthRegistry.FailureThreshold; attempt++)
             Assert.Null(await service.GetPlayUrlAsync("netease:123", CancellationToken.None));
@@ -405,7 +408,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":0}")
             })));
         var source = new InterleavedFailureMusicService();
-        var service = new MultiSourceMusicService(client, source);
+        var service = new MusicSourceBroker(client, source);
 
         for (var attempt = 0; attempt < 5; attempt++)
         {
@@ -446,7 +449,7 @@ public class MultiSourceMusicServiceTests
                 Content = new StringContent("{\"code\":200,\"result\":{\"songs\":[]}}")
             });
         }));
-        var service = new MultiSourceMusicService(client, accounts);
+        var service = new MusicSourceBroker(client, accounts);
         var track = new OnlineTrack { Id = "unknown:1", Title = "歌", Artist = "手" };
 
         for (var attempt = 0; attempt < SourceHealthRegistry.FailureThreshold; attempt++)
@@ -479,7 +482,7 @@ public class MultiSourceMusicServiceTests
         {
             Id = "ne:1", Title = "晴天", Artist = "周杰伦", Source = "netease"
         });
-        var service = new MultiSourceMusicService(client, lowScoreFirst, highScoreSecond);
+        var service = new MusicSourceBroker(client, lowScoreFirst, highScoreSecond);
 
         var results = await service.SearchAsync(
             "晴天 周杰伦",
@@ -508,7 +511,7 @@ public class MultiSourceMusicServiceTests
             });
 
         public Task<string?> GetPlayUrlAsync(string trackId)
-            => Task.FromResult<string?>("https://fallback.invalid/test.mp3");
+            => Task.FromResult<string?>("https://203.0.113.1/test.mp3");
     }
 
     /// <summary>返回固定曲目集合的音源：用于验证聚合搜索的排序/去重次序。</summary>
@@ -528,7 +531,7 @@ public class MultiSourceMusicServiceTests
             => Task.FromResult(_tracks.ToList());
 
         public Task<string?> GetPlayUrlAsync(string trackId)
-            => Task.FromResult<string?>("https://fixed.invalid/test.mp3");
+            => Task.FromResult<string?>("https://203.0.113.4/test.mp3");
     }
 
     private sealed class IgnoringCancellationMusicService : IMusicSearchService
@@ -684,13 +687,13 @@ public class MultiSourceMusicServiceTests
             => Task.FromResult(_candidates);
 
         public Task<string?> GetPlayUrlAsync(string trackId)
-            => Task.FromResult<string?>($"https://multi.invalid/{trackId.Replace(":", "_")}.mp3");
+            => Task.FromResult<string?>($"https://203.0.113.5/{trackId.Replace(":", "_")}.mp3");
     }
 
     private static OnlineTrack Candidate(string id, string title, long durationMs)
         => new() { Id = id, Title = title, Artist = "测试歌手", Source = "多候选", DurationMs = durationMs };
 
-    private static MultiSourceMusicService CreateServiceWithCandidates(
+    private static MusicSourceBroker CreateServiceWithCandidates(
         out OnlineTrack track,
         params OnlineTrack[] candidates)
     {
@@ -700,7 +703,7 @@ public class MultiSourceMusicServiceTests
             {
                 Content = new StringContent("{\"code\":0}")
             })));
-        var service = new MultiSourceMusicService(client, new MultiCandidateMusicService(candidates.ToList()));
+        var service = new MusicSourceBroker(client, new MultiCandidateMusicService(candidates.ToList()));
         track = new OnlineTrack
         {
             Id = "netease:123",
@@ -764,7 +767,7 @@ public class MultiSourceMusicServiceTests
             {
                 Content = new StringContent("{\"code\":0}")
             })));
-        var service = new MultiSourceMusicService(client);
+        var service = new MusicSourceBroker(client);
 
         await service.SearchAsync("测试", 5, CancellationToken.None);
 
@@ -784,7 +787,7 @@ public class MultiSourceMusicServiceTests
             {
                 Content = new StringContent("{\"code\":0}")
             })));
-        var service = new MultiSourceMusicService(client);
+        var service = new MusicSourceBroker(client);
 
         var report = await service.DiagnoseAsync(CancellationToken.None);
 

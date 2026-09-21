@@ -733,7 +733,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         string keyword,
         int limit)
     {
-        if (_musicSearchService is Services.MultiSourceMusicService multi)
+        if (_musicSearchService is Services.Music.IMusicSourceBroker multi)
         {
             // 用作用域报告：并发搜索（电台推荐/DJ 点歌）不会覆盖本次搜索的逐源状态
             var outcome = await multi.SearchWithReportAsync(keyword, limit, _lifetimeCts.Token);
@@ -745,7 +745,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     }
 
     private Task<string?> ResolvePlayUrlAsync(OnlineTrack track)
-        => _musicSearchService is Services.MultiSourceMusicService multi
+        => _musicSearchService is Services.Music.IMusicSourceBroker multi
             ? multi.GetPlayUrlAsync(track, _lifetimeCts.Token)
             : _musicSearchService.GetPlayUrlAsync(track.Id);
 

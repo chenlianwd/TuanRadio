@@ -2,6 +2,7 @@
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -1331,7 +1332,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         int limit,
         CancellationToken cancellationToken)
     {
-        if (_musicSearchService is MultiSourceMusicService multi)
+        if (_musicSearchService is IMusicSourceBroker multi)
             return multi.SearchAsync(query, limit, cancellationToken);
 
         return _musicSearchService.SearchAsync(query, limit)
@@ -1342,7 +1343,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
         OnlineTrack track,
         CancellationToken cancellationToken)
     {
-        if (_musicSearchService is MultiSourceMusicService multi)
+        if (_musicSearchService is IMusicSourceBroker multi)
             return multi.GetPlayUrlAsync(track, cancellationToken);
 
         return _musicSearchService.GetPlayUrlAsync(track.Id)

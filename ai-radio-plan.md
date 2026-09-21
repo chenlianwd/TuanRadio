@@ -37,6 +37,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 音源体验增强（2026-09-15）：播放回退候选在身份匹配每遍内按时长接近度择优（1−|候选−目标|/目标，目标无时长退化为取首个，候选缺时长劣后，两遍次序与源间"命中即停"优先级不变）；`MusicSourceFailureKind` 结构化分类（未登录/登录态或代理失效/风控验证/接口失效）经业务异常携带、聚合层透传、搜索状态行按类型渲染用户可读文案与恢复建议（风控文案注明自动验证仅播放路径且约 10 分钟冷却）。
 - 产品化清理五件套（2026-09-15）：设置页新增音源逐源连接诊断（`DiagnoseAsync` 独立作用域报告 + 分类渲染，不污染搜索状态）；AI 控制协议旧文本尾标格式（【play:…】/【next】等）从解析与剥离链路移除，协议只认 JSON 控制块；MainWindow/PlaylistDrawer 弹层硬编码标题迁移到 S_* 本地化资源（VOL/LIVE 为复古电台设计元素有意保留）；Light 主题经 WCAG 对比度审计修正三处超标 token（聊天/时钟提示 #B9B1C4→#6A6478、LIVE 徽标 #167A5B→#146C4F、StatePlaying #0E7B58→#0C6E4E）；确认 Node.js/yt-dlp 供应链校验已实现（下载即 fail-closed 校验官方 SHA 值 + 固定版本，文档同步勾销技术债）。
 - 天气/日历 + 自动化耐久测试（2026-09-17）：ClockStage 角落环境指示器——天气走 Open-Meteo（IP 定位/设置页城市经 geocoding，30 分钟缓存，失败静默隐藏图标），日历徽标纯本地（BCL 农历 + 寿星公式节气 + 农历/公历节日，节气/节日当天高亮），详情悬停 Tooltip；DurabilityTests 固化六项耐久场景（30 轮续播/自然结束并发单飞/真实 LibVLC 四曲连播/画像 30 会话/播放列表混合并发落盘/聊天 60 轮长对话注入）。实施规避 Avalonia 编译器陷阱：DataContext="{Binding VM}" 重定向与编译绑定组合会静默击穿程序集 XAML 预编译层，指示器子树改用 {Binding VM.X} 路径绑定（ChatAreaMicButtonTests 锚定）。
+- 音源架构演进阶段 1（2026-09-21）：`IMusicProvider` 契约 + `MusicSourceBroker`（聚合/逐源报告/跨源回退/诊断自 MultiSourceMusicService 平移，源路由改按 Descriptor.Id）；五个既有音源经 `MusicSearchServiceAdapter` 包装接入（音源实现零改动）；业务调用方 10 处 cast 全部迁移到 `IMusicSourceBroker` 接口；`MediaUriPolicy` 播放 URL 进 LibVLC 前统一校验（scheme 白名单 + 私网/回环/链路本地/组播/云元数据禁段，DNS 解析后检查、解析失败 fail-closed，全部解析路径在 Broker 单点收口）；`ResolvedMediaCache` 播放解析内存缓存（默认 TTL 10 分钟、恢复路径 forceRefresh 逐出防陈旧、酷狗/网易凭据变化清空，`MusicAccountStore` 新增 NeteaseCookieChanged 事件）；`MultiSourceMusicService` 兼容壳完成使命删除，新代码位于 `Services/Music/`（Contracts/Broker/Playback/Adapters），`SourceSearchStatus`/`SearchOutcome` 迁至 Contracts 且命名空间不变。设计经两轮评审，实施记录见 docs/plans/2026-09-20-music-source-broker-phase1-design.md §8。
 
 ## 当前流程
 
@@ -126,6 +127,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像已落地（见「已完成」）；后续仅评估跨设备同步与画像维度扩展（时段偏好、语种配比等）。
+- 音源架构演进阶段 1 已落地（2026-09-21，见「已完成」）；阶段 2（本地曲库/OpenSubsonic 稳定主源）、阶段 3（Provider 包与构建瘦身）、阶段 4（开放曲库与管理 UI）待排期，总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
 - 音源体验增强与设置页逐源连接诊断均已落地（2026-09-15，见「已完成」）。
 - Node.js/yt-dlp 供应链校验已落地（下载即 fail-closed 校验官方 SHA 值 + 固定 release 版本）。
 - 自动化耐久测试已落地（2026-09-17，见「已完成」）；发布前仍需人工执行：长时间真实在线播放、进程退出/内存观察、无输出设备/睡眠唤醒。
