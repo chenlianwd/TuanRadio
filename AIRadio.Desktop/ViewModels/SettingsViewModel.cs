@@ -2,6 +2,7 @@ using ReactiveUI;
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using Avalonia.Media;
 using Serilog;
 using System;
@@ -546,7 +547,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     /// </summary>
     private async Task DiagnoseSourcesAsync()
     {
-        if (_musicSearch is not MultiSourceMusicService multi)
+        if (_musicSearch is not IMusicSourceBroker multi)
         {
             SetSourceDiagnostics(() => AppLanguage.T(
                 "聚合音源服务不可用。", "The aggregated music service is unavailable."));

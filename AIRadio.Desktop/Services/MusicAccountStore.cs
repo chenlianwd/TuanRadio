@@ -24,6 +24,9 @@ public sealed class MusicAccountStore
     public KugouDeviceIdentity KugouDevice { get; private set; } = KugouDeviceIdentity.Create();
     public bool IsLoaded { get; private set; }
     public event EventHandler? KugouCredentialChanged;
+    /// <summary>网易 Cookie 变化（含登出）：ResolvedMediaCache 据此清空网易缓存，
+    /// 防止登出后 VIP 直链残留（docs/plans 2026-09-20 §3.5）。</summary>
+    public event EventHandler? NeteaseCookieChanged;
 
     /// <summary>yt-dlp --cookies-from-browser 的浏览器标识；空表示不使用浏览器 cookies。</summary>
     public string YtdlpCookieBrowser { get; set; } = "";
@@ -106,6 +109,8 @@ public sealed class MusicAccountStore
             await _storage.SaveApiKeyAsync(NeteaseCredentialService, sanitized);
             NeteaseCookie = sanitized;
         }
+
+        NotifyNeteaseCookieChanged();
     }
 
     public async Task SetKugouCookieAsync(string? cookie)
@@ -154,6 +159,25 @@ public sealed class MusicAccountStore
             {
                 // 凭据已经成功持久化；单个观察者的清理失败不能把登录结果回滚成失败。
                 Log.Warning(ex, "Kugou credential change observer failed");
+            }
+        }
+    }
+
+    private void NotifyNeteaseCookieChanged()
+    {
+        var handlers = NeteaseCookieChanged;
+        if (handlers == null)
+            return;
+
+        foreach (EventHandler handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Netease cookie change observer failed");
             }
         }
     }

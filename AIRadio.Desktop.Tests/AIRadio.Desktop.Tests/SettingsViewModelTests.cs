@@ -8,6 +8,7 @@ using System.Reactive.Linq;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using AIRadio.Desktop.ViewModels;
 using Moq;
 using Xunit;
@@ -813,7 +814,7 @@ public class SettingsViewModelTests
         // 聚合服务双源：网易 code=0 → 登录态/代理失效；酷狗未登录 → 未登录分类文案
         var handler = new StaticResponseHandler("{\"code\":0}");
         using var client = new HttpClient(handler);
-        var musicSearch = new MultiSourceMusicService(client);
+        var musicSearch = new MusicSourceBroker(client);
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
             musicSearch: musicSearch);
 

@@ -2,6 +2,7 @@ using ReactiveUI;
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -393,7 +394,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         CancellationToken cancellationToken)
     {
         var sourceId = track.SourceId ?? track.Id;
-        if (_musicSearchService is not MultiSourceMusicService multi)
+        if (_musicSearchService is not IMusicSourceBroker multi)
         {
             if (requireAlternative)
                 return null;
@@ -416,9 +417,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 StringComparer.OrdinalIgnoreCase)
         };
 
+        // AudioService 的 _trackUrlResolver 委托只在刷新/恢复语境被调用（重试前刷新、
+        // 播放前后台换新直链），必须 forceRefresh 绕过缓存——否则重试会拿到刚失败的陈旧 URL
         var url = requireAlternative
             ? await multi.GetAlternativePlayUrlAsync(onlineTrack, cancellationToken)
-            : await multi.GetPlayUrlAsync(onlineTrack, cancellationToken);
+            : (await multi.ResolveTrackAsync(onlineTrack, forceRefresh: true, cancellationToken))?.Url;
 
         return string.IsNullOrWhiteSpace(url)
             ? null
@@ -688,7 +691,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         new DJService(new LLMService(new System.Net.Http.HttpClient()), new EdgeTtsService(new System.Net.Http.HttpClient())),
         new LLMService(new System.Net.Http.HttpClient()),
         new WindowsSecureStorage(),
-        new MultiSourceMusicService(new System.Net.Http.HttpClient()),
+        new MusicSourceBroker(new System.Net.Http.HttpClient()),
         new WhisperSttService(),
         PlaylistViewModel.DefaultPlaylistFile,
         SettingsViewModel.DefaultSettingsFile)

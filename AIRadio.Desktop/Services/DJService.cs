@@ -503,7 +503,7 @@ Response rules:
         CancellationToken cancellationToken)
     {
         var searchQuery = string.IsNullOrWhiteSpace(artist) ? title : $"{title} {artist}";
-        var results = _musicSearch is MultiSourceMusicService multiSearch
+        var results = _musicSearch is Music.IMusicSourceBroker multiSearch
             ? await multiSearch.SearchAsync(
                 searchQuery,
                 10,
@@ -520,7 +520,7 @@ Response rules:
                 continue;
             }
 
-            var url = _musicSearch is MultiSourceMusicService multi
+            var url = _musicSearch is Music.IMusicSourceBroker multi
                 ? await multi.GetPlayUrlAsync(item, cancellationToken)
                 : await _musicSearch.GetPlayUrlAsync(item.Id)
                     .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
