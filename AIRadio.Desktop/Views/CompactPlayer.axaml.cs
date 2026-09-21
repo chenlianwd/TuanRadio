@@ -80,7 +80,7 @@ public partial class CompactPlayer : UserControl
 
     private void OnDragAreaPressed(object? sender, PointerPressedEventArgs e)
     {
-        // 命中行内按钮（收藏/最小化/关闭/展开）时不启动窗口拖动
+        // 命中行内按钮（收藏/置顶/展开/最小化/关闭）时不启动窗口拖动
         if (InteractionGuards.IsOverButton(e.Source))
             return;
 
