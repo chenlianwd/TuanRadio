@@ -1,7 +1,12 @@
 using System;
 using System.Linq;
+using System.Reactive;
 using AIRadio.Desktop.ViewModels;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using ReactiveUI;
 
 namespace AIRadio.Desktop.Views;
@@ -18,6 +23,7 @@ public partial class ClockStage : UserControl
         InitializeComponent();
         FillClockDots();
         DataContextChanged += OnDataContextChanged;
+        AddHandler(Gestures.TappedEvent, OnStageTapped, RoutingStrategies.Bubble);
     }
 
     private void FillClockDots()
@@ -46,4 +52,24 @@ public partial class ClockStage : UserControl
                 .Subscribe(v => { if (Starfield != null) Starfield.IsVisible = v; });
         }
     }
+
+    /// <summary>
+    /// 点击舞台切换 时钟↔歌词（与简洁模式单曲区"单触点按切歌词"同一手势语义，
+    /// 与标题栏按钮共用 ToggleLyricsModeCommand 与记忆）。环境指示器（悬停 Tooltip）
+    /// 区域点击不触发；无在播曲目不进入空歌词层。
+    /// </summary>
+    private void OnStageTapped(object? sender, TappedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm || !vm.HasCurrentTrack)
+            return;
+
+        if (e.Source is Visual source && EnvironmentIndicators is { } indicators
+            && IsWithin(source, indicators))
+            return;
+
+        vm.ToggleLyricsModeCommand.Execute(Unit.Default).Subscribe();
+    }
+
+    private static bool IsWithin(Visual source, Visual ancestor)
+        => ReferenceEquals(source, ancestor) || source.GetVisualAncestors().Contains(ancestor);
 }
