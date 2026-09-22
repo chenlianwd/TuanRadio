@@ -597,18 +597,34 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         => value.StartsWith("暂时没有找到可播放", StringComparison.Ordinal) ||
            value.StartsWith("No playable candidates", StringComparison.OrdinalIgnoreCase);
 
+    // 空闲引导（反馈行与 STORY 共用）：静默早退会被当成"按钮无效"
+    private static string NoTrackGuidanceText => AppLanguage.T(
+        "现在没有在播的歌，先点一首或让我开个台吧。",
+        "Nothing is playing yet — pick a song or ask me to start the station.");
+
     private async Task TellSongStoryAsync()
     {
         if (IsDisposed)
             return;
 
         var current = _audioService.CurrentTrack;
-        if (current == null) return;
+        if (current == null)
+        {
+            ChatVM.AddAssistantMessage(NoTrackGuidanceText);
+            return;
+        }
         var story = await _djService.GenerateSongStoryAsync(current, _lifetimeCts.Token);
         if (IsDisposed)
             return;
 
-        if (story.Lines.Count == 0) return;
+        if (story.Lines.Count == 0)
+        {
+            // LLM 失败/未配置时静默返回同样会被当成"按钮无效"
+            ChatVM.AddAssistantMessage(AppLanguage.T(
+                "这首的故事暂时没组织好，稍后再试试。",
+                "Couldn't piece together a story for this one — try again in a bit."));
+            return;
+        }
         var joined = string.Join(" ", story.Lines.Select(l => l.Text));
         ChatVM.AddAssistantMessage(joined);
         await SpeakDjTextAsync(joined);
@@ -621,7 +637,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrWhiteSpace(trackId))
             trackId = current?.Id;
         if (string.IsNullOrWhiteSpace(trackId))
+        {
+            ChatVM.AddAssistantMessage(NoTrackGuidanceText);
             return;
+        }
 
         _recommendationService.RecordFeedback(new UserMusicFeedback
         {
@@ -657,8 +676,28 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         else if (action == MusicFeedbackAction.Energetic)
             _recommendationService.SetMoodBias("energetic");
 
-        if (action == MusicFeedbackAction.Dislike)
-            ChatVM.AddAssistantMessage(AppLanguage.T("收到，这首本轮先避开。", "Got it. I will avoid this track in the current session."));
+        // 反馈只影响后续节目单，用户无感即"按钮无效"：每个动作给一句即时可见回应
+        var ack = action switch
+        {
+            MusicFeedbackAction.Like => AppLanguage.T(
+                "记下了，这类歌会多出现在你的电台里。",
+                "Noted — more of this vibe will show up on your station."),
+            MusicFeedbackAction.Dislike => AppLanguage.T(
+                "收到，这首本轮先避开。",
+                "Got it. I will avoid this track in the current session."),
+            MusicFeedbackAction.Similar => AppLanguage.T(
+                "收到，往后多安排些和这首气质相近的歌。",
+                "Got it — I'll line up more tracks with a similar vibe."),
+            MusicFeedbackAction.Calmer => AppLanguage.T(
+                "好，接下来把氛围调得舒缓一点。",
+                "Sure — easing the vibe down from here."),
+            MusicFeedbackAction.Energetic => AppLanguage.T(
+                "收到，接下来往燃一点的方向调。",
+                "Got it — turning the energy up from here."),
+            _ => string.Empty,
+        };
+        if (!string.IsNullOrEmpty(ack))
+            ChatVM.AddAssistantMessage(ack);
     }
 
     private void SwitchCharacter(CharacterProfile character)
