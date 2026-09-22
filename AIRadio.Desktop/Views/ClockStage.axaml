@@ -25,7 +25,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid Background="{DynamicResource C_F008080D}">
+    <Grid Background="{DynamicResource C_F008080D}" Cursor="Hand">
         <TextBlock x:Name="ClockDots"
                    IsHitTestVisible="False"
                    Opacity="0.20"
@@ -36,11 +36,11 @@
                    TextWrapping="Wrap"/>
         <local:StarfieldView x:Name="Starfield"
                              IsHitTestVisible="False"/>
-        <Grid ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding !IsLyricsMode}">
-            <local:SpectrumView Grid.Column="0" DataContext="{Binding SpectrumVM}"
+        <Grid x:Name="ClockLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding !IsLyricsMode}">
+            <local:SpectrumView x:Name="ClockSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
                                 HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                 Height="118" Margin="0,0,18,0"/>
-            <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+            <StackPanel x:Name="ClockPanel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
                 <TextBlock Text="{Binding Now, StringFormat='HH:mm'}" FontSize="56" FontWeight="700"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"
                            HorizontalAlignment="Center"/>
@@ -49,15 +49,14 @@
                 <TextBlock Text="{Binding LocalizedDate}" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF858594}" HorizontalAlignment="Center"/>
             </StackPanel>
-            <local:SpectrumView Grid.Column="2" DataContext="{Binding SpectrumVM}"
+            <local:SpectrumView x:Name="ClockSpectrumRight" Grid.Column="2" DataContext="{Binding SpectrumVM}"
                                 HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                 Height="118" Margin="18,0,0,0"/>
         </Grid>
 
-        <!-- 环境指示器（天气 + 日历徽标）：与时钟图层同显隐，歌词模式避让；默认仅图标，悬停出详情 -->
-    <StackPanel Orientation="Horizontal" Spacing="12"
-                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,18,10"
-                IsVisible="{Binding !IsLyricsMode}">
+        <!-- 环境指示器（天气 + 日历徽标）：时钟/歌词两种模式常显；默认仅图标，悬停出详情 -->
+        <StackPanel x:Name="EnvironmentIndicators" Orientation="Horizontal" Spacing="12" Cursor="Arrow"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,18,10">
         <Border Classes="calendar-badge" Classes.highlighted="{Binding WeatherVM.IsCalendarHighlighted}"
                 ToolTip.Tip="{Binding WeatherVM.CalendarTooltip}">
             <TextBlock Text="{Binding WeatherVM.CalendarDayBadge}" FontSize="10" FontFamily="Consolas"
@@ -70,21 +69,30 @@
                    IsVisible="{Binding WeatherVM.IsWeatherVisible}"/>
     </StackPanel>
 
-    <!-- 歌词图层：与三栏时钟/频谱互斥；星空与 ClockDots 继续作为背景 -->
-        <StackPanel IsVisible="{Binding IsLyricsMode}" IsHitTestVisible="False"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" Margin="48,0">
-            <TextBlock Text="{Binding LyricsVM.PreviousLineText}" FontSize="12" Opacity="0.7"
-                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
-                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="540"/>
-            <TextBlock Text="{Binding LyricsVM.CurrentLineText}" FontSize="19" FontWeight="700"
-                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"
-                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="600"/>
-            <TextBlock Text="{Binding LyricsVM.NextLineText}" FontSize="12" Opacity="0.7"
-                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
-                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="540"/>
-            <TextBlock Text="{Binding LyricsVM.LyricStatusText}" FontSize="10" Margin="0,6,0,0"
-                       FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
-                       HorizontalAlignment="Center" IsVisible="{Binding LyricsVM.HasStatusText}"/>
-        </StackPanel>
+    <!-- 歌词图层：仅替换中栏时钟，两侧频谱与星空常驻（频谱/歌词共存）；
+         中栏固定宽防逐行长度变化带动频谱抖动；点击舞台或标题栏按钮切换 -->
+        <Grid x:Name="LyricsLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding IsLyricsMode}">
+            <local:SpectrumView x:Name="LyricsSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                Height="118" Margin="0,0,18,0"/>
+            <StackPanel x:Name="LyricsPanel" Grid.Column="1" Width="540" IsHitTestVisible="False"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+                <TextBlock Text="{Binding LyricsVM.PreviousLineText}" FontSize="12" Opacity="0.7"
+                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="460"/>
+                <TextBlock Text="{Binding LyricsVM.CurrentLineText}" FontSize="19" FontWeight="700"
+                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="520"/>
+                <TextBlock Text="{Binding LyricsVM.NextLineText}" FontSize="12" Opacity="0.7"
+                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="460"/>
+                <TextBlock Text="{Binding LyricsVM.LyricStatusText}" FontSize="10" Margin="0,6,0,0"
+                           FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
+                           HorizontalAlignment="Center" IsVisible="{Binding LyricsVM.HasStatusText}"/>
+            </StackPanel>
+            <local:SpectrumView x:Name="LyricsSpectrumRight" Grid.Column="2" DataContext="{Binding SpectrumVM}"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                Height="118" Margin="18,0,0,0"/>
+        </Grid>
     </Grid>
 </UserControl>

@@ -1,6 +1,6 @@
 # TuanRadio
 
-TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电台界面、AI DJ 对话和串场、Edge TTS 播报、多平台在线音乐搜索、节目单推荐、收藏歌单、星空/频谱视觉反馈。本地文件导入仅作为兼容能力，不是产品主流程。
+TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电台界面、AI DJ 对话和串场、Edge TTS 播报、多平台在线音乐搜索、节目单推荐、收藏歌单、歌词逐行同步、星空/频谱视觉反馈。本地文件导入仅作为兼容能力，不是产品主流程。
 
 ## 技术栈
 
@@ -21,16 +21,18 @@ TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电
 - 库抽屉四类视图：歌单、收藏、搜索、当前节目单（含推荐标签）。
 - AI DJ 聊天、点歌、串场、TTS 播报和 TTS 中断，DJ 角色可切换（名称/声音/人设）。
 - SongStory：STORY 按钮触发现曲 3-5 句 DJ 讲述，走 LLM 生成 + TTS 播报。
+- 歌词模式：经本地代理双源取词（网易单步、酷狗两步 + 关键词兜底 + 时长过滤），ClockStage 中栏在时钟与歌词间切换、两侧频谱常驻共显，点击舞台或标题栏按钮均可切换并记忆偏好，按播放进度逐行滚动显示。
+- 复古收音机调频音效：纯程序化 NAudio 声学合成（无外部音频资产），DJ 开口前 FM 调谐扫频自然淡入，新节目单落地时台呼微鸣；设置页开关。
 - 设置页可配置 LLM 提供商、API Key、Base URL、模型、回复语言、语音播报和说话混音方式，带连接测试与失败原因提示；音源账号区提供逐源连接诊断（按结构化分类渲染各源状态与恢复建议）。
 - Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
 - 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
 - 长期收听画像：播放/完播/跳过/按钮反馈/氛围指令持久化到 `%APPDATA%\AIRadio\listener-profile.json`，派生歌手亲和度（30 天半衰期）、Dislike 曲目黑名单（180 天过期、音乐身份跨源匹配）与 LLM 口味摘要，注入节目单搜索词生成与排除逻辑（冷启动门槛 ≥30 事件且 ≥3 歌手，强制 1 个探索方向防茧房）；DJ 聊天的 system 上下文同样注入口味段与黑名单避雷（可自然提及但受克制约束，跟随「学习我的口味」开关）；设置页提供「学习我的口味」开关与二次确认清除。
-- 多平台音乐搜索：网易云优先，酷我/酷狗/咪咕并行 fallback，YouTube 作为最低优先级兜底；每个源有独立硬超时，搜索状态逐源显示成功/超时/失败，业务失败按结构化分类（未登录/登录态或代理失效/风控验证/接口失效）渲染用户可读文案与恢复建议。
-- 播放 URL 失效或返回明确试听流时会依据歌名和歌手跨源重新匹配（同遍候选按时长接近度择优，防截断版/live 版误选），并同步实际生效的音源 ID。
+- 多平台音乐搜索：网易云优先，酷我/酷狗/咪咕并行 fallback，YouTube 作为最低优先级兜底；每个源有独立硬超时，搜索状态逐源显示成功/超时/失败，业务失败按结构化分类（未登录/登录态或代理失效/风控验证/接口失效）渲染用户可读文案与恢复建议；酷狗风控触发时自动弹出浏览器滑块验证（约 10 分钟冷却），设置页提供手动验证入口。
+- CandidateRanker 智能排重打分：标题/歌手/时长逼近/源优先级四维加权（35%/30%/20%/15%），伴奏/翻唱/DJ 加速版等非预期特殊版本强惩罚，贯通聚合搜索重排、跨源回退与推荐候选净化；播放 URL 失效或返回明确试听流时依据歌名和歌手跨源重新匹配（同遍候选按时长接近度择优，防截断版/live 版误选），并同步实际生效的音源 ID。
 - 真实 FFT 频谱：WasapiLoopbackCapture 采集系统输出 + 1024 点 FFT 转 32 频段；无有效回环数据时启用播放态视觉兜底，并限制幅度与刷新分配。
 - 统一电台状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error），StatusBar 实时显示。
 - Light/Dark 双主题，全部颜色走 `Themes/Colors.axaml` token。
-- 简洁播放模式：一键收缩为两行紧凑卡（曲目信息/播放控制/进度/收藏/迷你频谱/窗口控制），拖动、双击或 Esc 还原；窗口模式记忆，置顶可选（设置页开关）。
+- 简洁播放模式：一键收缩为两行紧凑卡（曲目信息/播放控制/进度/收藏/迷你频谱/窗口控制），行 1 单行动态歌词、无词或前奏时平滑退回歌曲信息（设置开关）；拖动、双击或 Esc 还原，窗口模式记忆，置顶可选（设置页开关）。
 - 时钟舞台环境指示器：天气（Open-Meteo，IP 自动定位或设置页手填城市）常驻图标显示阴晴雨雪，悬停显示温度与位置；日历徽标显示公历日号，农历节气/节日当天高亮，悬停显示农历与节日详情；取数失败只隐藏图标，不打扰播放。
 - 自动化耐久测试：电台 30 轮连续续播、自然结束并发单飞、真实 LibVLC 四曲连播、画像 30 会话跨会话积累、播放列表混合并发落盘、聊天 60 轮长对话注入（发布前人工清单中的设备/睡眠/内存项仍需真人执行）。
 - 收藏持久化到 `FavoriteIds`，并兼容旧的 `IsFavorite` 数据。
@@ -39,6 +41,8 @@ TuanRadio 是一个在线优先的 Windows 桌面 AI 电台播放器：复古电
 ## 稳定性设计
 
 - URL 刷新和音量排空在后台执行；在线歌曲提前结束时依次刷新当前源、尝试替代源、再进入续播，避免同一试听片段循环重放。
+- 播放 URL 进 LibVLC 前经 `MediaUriPolicy` 统一安全校验（scheme 白名单、IPv4/IPv6 字节级禁段、DNS 解析后复查，全部 fail-closed），在 `MusicSourceBroker` 解析路径单点收口；校验对象是播放 URL 而非 API 请求，本地代理回环地址例外放行。
+- `ResolvedMediaCache` 播放解析内存缓存（默认 10 分钟 TTL）：点歌/推荐/歌单重复解析直接命中，播放刷新与恢复链路强制刷新并先逐出旧条目防陈旧 URL，音源凭据变化自动清空对应源。
 - LibVLC 播放器操作统一串行，自动续播与聊天入口停止 TTS 时采用 2 秒有界后台等待，避免设备异常拖死 Avalonia UI。
 - 在线搜索、LLM、推荐、Edge TTS、Whisper 和 yt-dlp 支持超时或应用生命周期取消；关闭窗口后不再继续更新 ViewModel。
 - LibVLC、WASAPI 与 NAudio 的释放采用有界等待和后台续清理，窗口关闭不会无限等待原生回调。
@@ -54,7 +58,8 @@ AIRadio.Desktop/
   Assets/                  应用图标
   Converters/              共享 XAML Converter
   Models/                  Track、ChatMessage、DJProfile、推荐模型等
-  Services/                播放、AI DJ、LLM、TTS、推荐、搜索、ASR、环境服务
+  Services/                播放、AI DJ、LLM、TTS、推荐、歌词、搜索、ASR、环境服务
+  Services/Music/          音源子系统：Contracts（IMusicProvider/IMusicSourceBroker 契约）、Broker（MusicSourceBroker 聚合 + ResolvedMediaCache）、Playback（MediaUriPolicy URL 安全校验）、Adapters（既有音源服务适配接入）
   Themes/                  Colors.axaml 主题 token（Light/Dark）
   ViewModels/              ReactiveUI ViewModel
   Views/                   Avalonia 视图（TitleBar/ClockStage/PlayerDeck/CompactPlayer/ChatArea/PlaylistDrawer/StatusBar 等 UserControl）

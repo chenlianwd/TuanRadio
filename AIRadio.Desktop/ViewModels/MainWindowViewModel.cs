@@ -76,6 +76,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsCurrentFavorite { get; set; }
     [Reactive] public bool IsCompactMode { get; set; }
     [Reactive] public bool IsLyricsMode { get; set; }
+
+    /// <summary>舞台点击切歌词的守门：无在播曲目时点击舞台不进入空歌词层（标题栏按钮不受限）。</summary>
+    public bool HasCurrentTrack => _audioService.CurrentTrack is not null;
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
     [Reactive] public bool HasCurrentRadioProgram { get; set; }
     [Reactive] public bool IsProgramLoading { get; set; }
