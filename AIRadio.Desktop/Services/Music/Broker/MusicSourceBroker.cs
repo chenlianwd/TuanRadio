@@ -776,10 +776,36 @@ public class MusicSourceBroker : IMusicSourceBroker
             // 播放 URL 进 LibVLC 前统一过 MediaUriPolicy（docs/plans §3.4）：
             // 本处是全部解析路径的收口点（id 级/曲目级/跨源回退/可播性探针都经此）。
             // 拒绝不记熔断（策略事件不是音源健康事件），按"无可播地址"处理让回退链继续。
-            if (!await MediaUriPolicy.ValidateAsync(
-                    provider.Descriptor.NetworkScope,
-                    media.Uri,
-                    cancellationToken).ConfigureAwait(false))
+            // 策略内的 DNS 复查同样受预算约束：解析器无内在超时，病态域名不能击穿整体 deadline。
+            bool allowed;
+            try
+            {
+                allowed = await MediaUriPolicy.ValidateAsync(
+                        provider.Descriptor.NetworkScope,
+                        media.Uri,
+                        timeoutCts.Token)
+                    .WaitAsync(budget, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                timeoutCts.Cancel();
+                Log.Warning(
+                    "Source {Name} play URL policy check timed out after {Seconds}s for {Id}",
+                    provider.Descriptor.DisplayName, budget.TotalSeconds, bareTrackId);
+                return null;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 常态路径：timeoutCts（方法入口武装）先于 WaitAsync 自己的计时器触发，
+                // DNS 尊重 token 时抛出的是 OCE 而非 TimeoutException。
+                // 策略校验超时不是音源健康事件，同样不记熔断。
+                Log.Warning(
+                    "Source {Name} play URL policy check timed out after {Seconds}s for {Id}",
+                    provider.Descriptor.DisplayName, budget.TotalSeconds, bareTrackId);
+                return null;
+            }
+
+            if (!allowed)
             {
                 Log.Warning(
                     "Provider {Name} play URL rejected by MediaUriPolicy for {Id}: {Uri}",

@@ -2068,13 +2068,16 @@ public class AudioService : IAudioService, IDisposable
 
         _ttsDuckSub.Dispose();
         _ttsPauseSub.Dispose();
-        _soundFxService?.Dispose();
 
         // NAudio 的 Stop/Dispose 也可能等待设备线程，不能再从 Avalonia 关闭线程
-        // 同步调用。后台任务会被原生清理流程统一等待；即使超过 UI 的等待上限，
-        // 资源稍后恢复时仍会继续完成清理。
+        // 同步调用（音效的 WaveOutEvent 同理，不能例外）。后台任务会被原生清理
+        // 流程统一等待；即使超过 UI 的等待上限，资源稍后恢复时仍会继续完成清理。
         _shutdownTtsCleanupTask = Task.Factory.StartNew(
-            () => StopTtsInternal(notifyState: false),
+            () =>
+            {
+                StopTtsInternal(notifyState: false);
+                _soundFxService?.Dispose();
+            },
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);

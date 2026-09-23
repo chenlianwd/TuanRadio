@@ -84,6 +84,41 @@ public class ResolvedMediaCacheTests
         Assert.False(cache.TryGet(key, out _));
     }
 
+    [Fact]
+    public void Capacity_SweepsExpiredThenEvictsSoonestExpiry()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var cache = new ResolvedMediaCache(() => now);
+
+        // 257 条同 TTL：超过 256 上限时最先插入的条目（剩余寿命并列最短，稳定排序逐出）应被清出
+        for (var i = 0; i < 257; i++)
+            cache.Set(new ProviderTrackRef("netease", $"cap-{i}"), MakeResult("https://203.0.113.9/a.mp3"), null);
+
+        Assert.False(cache.TryGet(new ProviderTrackRef("netease", "cap-0"), out _));
+        Assert.True(cache.TryGet(new ProviderTrackRef("netease", "cap-1"), out _));
+        Assert.True(cache.TryGet(new ProviderTrackRef("netease", "cap-256"), out _));
+
+        // 已过期条目在超限清扫时优先整体让位，不动存活条目
+        now += TimeSpan.FromMinutes(11);
+        cache.Set(new ProviderTrackRef("netease", "fresh"), MakeResult("https://203.0.113.9/b.mp3"), null);
+        Assert.True(cache.TryGet(new ProviderTrackRef("netease", "fresh"), out _));
+    }
+
+    [Fact]
+    public void Capacity_SameKeyOverwrite_DoesNotSweepOthers()
+    {
+        var cache = new ResolvedMediaCache();
+
+        // 同 key 反复覆盖是计数不变路径（ContainsKey 短路），不得触发清扫逐出其它条目
+        var stable = new ProviderTrackRef("netease", "stable");
+        cache.Set(stable, MakeResult("https://203.0.113.9/a.mp3"), null);
+        for (var i = 0; i < 300; i++)
+            cache.Set(new ProviderTrackRef("kugou", "hot"), MakeResult("https://203.0.113.9/h.mp3"), null);
+
+        Assert.True(cache.TryGet(stable, out _));
+        Assert.True(cache.TryGet(new ProviderTrackRef("kugou", "hot"), out _));
+    }
+
     private static ResolveTrackResult MakeResult(string url)
         => new(url, new ProviderTrackRef("netease", "1"), "网易", new Dictionary<string, string>(0));
 }
