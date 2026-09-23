@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using Xunit;
 
@@ -164,4 +165,51 @@ public class CandidateRankerTests
         Assert.True(liveScore > 0.80, $"Live Forever score should be high, was {liveScore}");
         Assert.True(normalScore > 0.80, $"Wonderwall score should be high, was {normalScore}");
     }
+
+    [Fact]
+    public void ScoreSearchResult_ContainmentTitle_RewardsExplainedRatio()
+    {
+        // "歌手+歌名"查询下所有正常候选标题都是查询的子串，恒定地板会把标题维度压成常数
+        //（"Love" 与 "Love Story" 完全并列，只靠源优先级定胜负）。包含分必须随解释比例单调。
+        var fullTitle = MakeTrack("Love Story", "Taylor Swift");
+        var fragment = MakeTrack("Love", "Taylor Swift");
+
+        Assert.True(
+            CandidateRanker.ScoreSearchResult(fullTitle, "Taylor Swift Love Story") >
+            CandidateRanker.ScoreSearchResult(fragment, "Taylor Swift Love Story") + 0.05,
+            "完整歌名候选应排在同歌手的短标题碎片之前");
+    }
+
+    [Fact]
+    public void ScoreSearchResult_ContainmentStillBeatsNonContained()
+    {
+        // 包含关系的下限（0.55）仍须明显高于走 Dice 相似度的非包含候选
+        var exact = MakeTrack("晴天", "周杰伦");
+        var padded = MakeTrack("晴天与她的小故事", "周杰伦");
+
+        Assert.True(
+            CandidateRanker.ScoreSearchResult(exact, "周杰伦 晴天") >
+            CandidateRanker.ScoreSearchResult(padded, "周杰伦 晴天") + 0.05,
+            "包含匹配的标题应稳定排在部分字重合的非包含标题之前");
+    }
+
+    [Fact]
+    public void FullWidthTitles_MatchHalfWidth_AfterFolding()
+    {
+        // 全角字母/数字标题（日系与部分接口常见）折叠后应可与半角跨源匹配
+        Assert.True(MusicIdentity.IsSameSongLoose("Ｌｏｖｅ Ｓｔｏｒｙ", "Taylor Swift", "Love Story", "Taylor Swift"));
+        Assert.True(MusicIdentity.IsSameMusicIdentity("Ｌｏｖｅ Ｓｔｏｒｙ", "Taylor Swift", "Love Story", "Taylor Swift"));
+
+        var half = MakeTrack("Love Story", "Taylor Swift", source: "netease");
+        var full = MakeTrack("Ｌｏｖｅ Ｓｔｏｒｙ", "Taylor Swift", source: "kugou");
+        Assert.Single(CandidateRanker.DeduplicateTracks(new List<OnlineTrack> { half, full }));
+    }
+
+    [Theory]
+    [InlineData("晴天 (音乐节现场)", true)]
+    [InlineData("晴天 音乐节版", true)]
+    [InlineData("音乐节", false)]
+    [InlineData("我们的音乐节", false)]
+    public void HasLiveTag_RequiresFestivalVersionMarker(string title, bool expected)
+        => Assert.Equal(expected, CandidateRanker.HasLiveTag($"{title} 周杰伦"));
 }

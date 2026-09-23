@@ -93,20 +93,21 @@ public static class MediaUriPolicy
         => Dns.GetHostAddressesAsync(host, cancellationToken);
 
     /// <summary>
-    /// 禁段判定：loopback、RFC1918 私网、链路本地（含云元数据 169.254.169.254）、
-    /// 组播、未指定地址；IPv6 同口径（含 IPv4 映射地址解包）。全部按字节判定，
-    /// 不依赖 IPAddress 的 Is* 属性面。
+    /// 禁段判定：loopback（127/8 全段）、RFC1918 私网、链路本地（含云元数据 169.254.169.254）、
+    /// 组播、240/4 保留段（含受限广播 255.255.255.255）、未指定地址；IPv6 同口径
+    /// （含 IPv4 映射/兼容地址解包）。全部按字节判定，不依赖 IPAddress 的 Is* 属性面。
     /// </summary>
     internal static bool IsForbiddenAddress(IPAddress address)
     {
-        // IPv4-mapped IPv6（::ffff:a.b.c.d）解包后按 IPv4 判定
+        // IPv4-mapped（::ffff:a.b.c.d）与已弃用的 IPv4-compatible（::a.b.c.d）解包后按 IPv4 判定
         if (address.AddressFamily == AddressFamily.InterNetworkV6)
         {
             var v6 = address.GetAddressBytes();
             if (v6.Length == 16 &&
                 v6[0] == 0 && v6[1] == 0 && v6[2] == 0 && v6[3] == 0 &&
                 v6[4] == 0 && v6[5] == 0 && v6[6] == 0 && v6[7] == 0 &&
-                v6[8] == 0 && v6[9] == 0 && v6[10] == 0xFF && v6[11] == 0xFF)
+                v6[8] == 0 && v6[9] == 0 &&
+                ((v6[10] == 0xFF && v6[11] == 0xFF) || (v6[10] == 0 && v6[11] == 0)))
                 address = new IPAddress(v6[12..16]);
         }
 
@@ -118,11 +119,13 @@ public static class MediaUriPolicy
         if (bytes.Length == 4)
         {
             return bytes[0] == 0 ||                                    // 0.0.0.0/8 未指定
+                   bytes[0] == 127 ||                                  // 127/8 回环段（Windows 整段路由本机，只封 127.0.0.1 会留绕过面）
                    bytes[0] == 10 ||                                   // 10/8 RFC1918
                    (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || // 172.16/12 RFC1918
                    bytes[0] == 192 && bytes[1] == 168 ||               // 192.168/16 RFC1918
                    bytes[0] == 169 && bytes[1] == 254 ||               // 169.254/16 链路本地+云元数据
-                   (bytes[0] & 0xF0) == 0xE0;                          // 224/4 组播
+                   (bytes[0] & 0xF0) == 0xE0 ||                        // 224/4 组播
+                   (bytes[0] & 0xF0) == 0xF0;                          // 240/4 保留段（含受限广播 255.255.255.255）
         }
 
         if (bytes.Length == 16)

@@ -29,7 +29,7 @@ public static class MusicIdentity
     }
 
     public static string NormalizeMusicText(string value)
-        => Regex.Replace(value.ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
+        => Regex.Replace(new string(value.Select(FoldFullWidth).ToArray()).ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
 
     /// <summary>
     /// 宽松同曲判定（跨源播放回退、搜索合并去重用）：标题全等 + 歌手双向包含。
@@ -54,7 +54,11 @@ public static class MusicIdentity
 
     /// <summary>宽松归一化：仅保留字母数字并小写（括号、Live 标记等修饰全部剥离）。</summary>
     public static string NormalizeLoose(string value)
-        => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+        => new(value.Where(char.IsLetterOrDigit).Select(c => char.ToLowerInvariant(FoldFullWidth(c))).ToArray());
+
+    /// <summary>全角→半角折叠（U+FF01–U+FF5E 平移 −0xFEE0）：日系/部分接口标题混用全半角，不折叠则跨源比对必不相等。</summary>
+    private static char FoldFullWidth(char c)
+        => c is >= '\uFF01' and <= '\uFF5E' ? (char)(c - 0xFEE0) : c;
 
     // 括号类标题修饰：版本/发行类标记（live、official、官方MV、高清版、MV、4k 等）与 feat 署名。
     // 刻意不含 remix/cover/伴奏/纯音乐——那些是不同版本的歌曲，误配会播错曲。

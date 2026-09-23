@@ -26,7 +26,7 @@ public static class CandidateRanker
         RegexOptions.Compiled);
 
     private static readonly Regex LiveRegex = new(
-        @"(?i)(?:现场版?|演唱会版?|音乐节|[(\[【]\s*live[^)\]】]*[)\]】]|[\s\-_/]+live$)",
+        @"(?i)(?:现场版?|演唱会版?|音乐节(?:现场|版)|[(\[【]\s*live[^)\]】]*[)\]】]|[\s\-_/]+live$)",
         RegexOptions.Compiled);
 
     private static readonly char[] ArtistSeparators = { '/', ',', '&', '、', '，', ';', '|' };
@@ -223,8 +223,12 @@ public static class CandidateRanker
 
         if (targetNorm.Contains(candNorm, StringComparison.Ordinal) || candNorm.Contains(targetNorm, StringComparison.Ordinal))
         {
+            // 包含关系说明候选标题可信，但恒定地板会把标题维度压成常数："歌手+歌名"查询
+            // （如"周杰伦晴天"）下所有正常候选都是子串，"Love" 与 "Love Story" 将完全并列。
+            // 仿射映射 ratio → [0.55, 1.0]：包含仍稳定优于 Dice 相似度（典型 0.2~0.4），
+            // 同时对解释比例（短串/长串长度）单调，恢复候选间的区分度。
             var ratio = (double)Math.Min(targetNorm.Length, candNorm.Length) / Math.Max(targetNorm.Length, candNorm.Length);
-            return Math.Max(0.70, ratio);
+            return 0.55 + 0.45 * ratio;
         }
 
         return CalculateStringSimilarity(targetNorm, candNorm);

@@ -54,6 +54,8 @@ public class MediaUriPolicyTests
         var forbidden = new[]
         {
             "http://127.0.0.1/stream",
+            "http://127.0.0.2/stream",
+            "http://127.199.1.1/stream",
             "http://10.1.2.3/stream",
             "http://172.16.0.1/stream",
             "http://172.31.255.255/stream",
@@ -61,11 +63,15 @@ public class MediaUriPolicyTests
             "http://169.254.169.254/latest/meta-data",
             "http://224.0.0.1/stream",
             "http://0.0.0.0/stream",
+            "http://255.255.255.255/stream",
+            "http://240.0.0.1/stream",
             "http://[::1]/stream",
             "http://[fe80::1]/stream",
             "http://[fc00::1]/stream",
             "http://[ff02::1]/stream",
             "http://[::ffff:127.0.0.1]/stream",
+            "http://[::ffff:127.0.0.2]/stream",
+            "http://[::127.0.0.2]/stream",
             "http://[::]/stream"
         };
 

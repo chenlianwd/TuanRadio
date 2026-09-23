@@ -28,11 +28,21 @@
                 </Border>
 
                 <Panel x:Name="TrackInfoArea" Grid.Column="1" Margin="8,0,8,0" Background="Transparent"
-                       Cursor="Hand" ToolTip.Tip="{DynamicResource S_CompactLyricsTip}"
+                       Cursor="Hand"
                        AutomationProperties.Name="{DynamicResource S_CompactLyricsTip}"
                        PointerPressed="OnTrackInfoPressed" PointerMoved="OnTrackInfoMoved"
                        PointerReleased="OnTrackInfoReleased" PointerCaptureLost="OnTrackInfoCaptureLost"
                        DoubleTapped="OnExpandDoubleTapped">
+                    <!-- 行内文字被截断时，悬停可看完整曲目信息；手势提示保留在最末行 -->
+                    <ToolTip.Tip>
+                        <StackPanel MaxWidth="360">
+                            <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontWeight="Bold" TextWrapping="Wrap"/>
+                            <TextBlock Text="{Binding PlayerVM.TrackArtist}" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource C_FF9A9AA6}"/>
+                            <TextBlock Text="{DynamicResource S_CompactLyricsTip}" Margin="0,6,0,0" FontSize="11"
+                                       Foreground="{DynamicResource C_FF858594}"/>
+                        </StackPanel>
+                    </ToolTip.Tip>
                     <!-- 子元素不参与命中测试：单击切换歌词会交换可见子元素，若命中源随之改变，
                          Avalonia 双击手势的同源校验（两次按下须命中同一元素）会失败，双击还原将失效 -->
                     <TextBlock Text="{Binding LyricsVM.CurrentLineText}"
