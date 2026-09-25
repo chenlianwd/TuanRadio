@@ -34,6 +34,41 @@ public class SettingsViewModelTests
         => Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
 
     [Fact]
+    public async Task MusicProviderOrderAndDisabledState_RoundTripThroughSettings()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var broker = new MusicSourceBroker(
+                new LocalLibraryProvider(settingsFile + ".library"),
+                new OpenSubsonicProvider(_mockStorage.Object));
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+                       settingsFile, musicSearch: broker))
+            {
+                await vm.MoveMusicProviderAsync("opensubsonic", -1);
+                Assert.Equal("opensubsonic", vm.MusicProviders[0].Id);
+                vm.MusicProviders[0].Enabled = false;
+                await vm.ApplyMusicProviderOptionsAsync();
+            }
+
+            var restoredBroker = new MusicSourceBroker(
+                new LocalLibraryProvider(settingsFile + ".library"),
+                new OpenSubsonicProvider(_mockStorage.Object));
+            using var restored = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+                settingsFile, musicSearch: restoredBroker);
+            await restored.LoadAsync();
+            Assert.Equal("opensubsonic", restored.MusicProviders[0].Id);
+            Assert.False(restored.MusicProviders[0].Enabled);
+            Assert.True(restored.MusicProviders[1].Enabled);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
     public void GetOverride_ReturnsStoredOverride()
     {
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
@@ -824,10 +859,15 @@ public class SettingsViewModelTests
             Assert.Contains("未登录", vm.SourceDiagnosticsText);
             Assert.Contains("登录态或本地服务异常", vm.SourceDiagnosticsText);
             Assert.False(vm.IsDiagnosingSources);
+
+            vm.SelectedLanguage = "en";
+            Assert.Contains("NetEase account:", vm.SourceDiagnosticsText);
+            Assert.DoesNotContain("网易云账号：", vm.SourceDiagnosticsText);
         }
         finally
         {
             vm.Dispose();
+            AppLanguage.Apply("zh");
         }
     }
 

@@ -31,7 +31,7 @@
         <StackPanel Spacing="6">
             <TextBlock Text="{DynamicResource S_Accounts}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
 
-            <StackPanel Spacing="4">
+            <StackPanel Spacing="4" IsVisible="{Binding HasExperimentalProviders}">
                 <TextBlock Text="{DynamicResource S_NeteaseTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button Command="{Binding NeteaseQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
@@ -47,7 +47,7 @@
                 <TextBlock Text="{DynamicResource S_NeteaseHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <StackPanel Spacing="4" Margin="0,6,0,0">
+            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
                 <TextBlock Text="{DynamicResource S_KugouTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button Command="{Binding KugouQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
@@ -66,6 +66,23 @@
             </StackPanel>
 
             <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="{DynamicResource S_OpenSubsonicTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <TextBox Text="{Binding OpenSubsonicServerUrl, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUrl}"/>
+                <TextBox Text="{Binding OpenSubsonicUsername, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUser}"/>
+                <TextBox Text="{Binding OpenSubsonicPassword, Mode=TwoWay}" PasswordChar="●"
+                         Watermark="{DynamicResource S_OpenSubsonicPassword}"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Command="{Binding ConnectOpenSubsonicCommand}"
+                            Content="{DynamicResource S_OpenSubsonicConnect}"
+                            IsEnabled="{Binding !IsConnectingOpenSubsonic}" Padding="14,6" FontSize="12"/>
+                    <Button Command="{Binding DisconnectOpenSubsonicCommand}"
+                            Content="{DynamicResource S_OpenSubsonicDisconnect}" Padding="14,6" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="{Binding OpenSubsonicStatus}" Foreground="{DynamicResource C_FFFFC86B}"
+                           FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
                 <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
                           ItemsSource="{Binding YtdlpBrowsers}"
@@ -75,6 +92,29 @@
                 <TextBlock Text="{DynamicResource S_YtdlpHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
                 <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
                            Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="{DynamicResource S_MusicProviderPriority}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <TextBlock Text="{DynamicResource S_MusicProviderPriorityHint}" Foreground="{DynamicResource C_FF666666}"
+                           FontSize="11" TextWrapping="Wrap"/>
+                <ItemsControl ItemsSource="{Binding MusicProviders}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:MusicProviderOption">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5" Margin="0,2">
+                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="12"
+                                           Foreground="{DynamicResource C_FFB3B3B3}"/>
+                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"
+                                              Click="OnMusicProviderToggle"/>
+                                <Button Grid.Column="2" Content="↑" Click="OnMusicProviderUp"
+                                        ToolTip.Tip="{DynamicResource S_MusicProviderUp}" Padding="5,2"/>
+                                <Button Grid.Column="3" Content="↓" Click="OnMusicProviderDown"
+                                        ToolTip.Tip="{DynamicResource S_MusicProviderDown}" Padding="5,2"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </StackPanel>
 
             <!-- Per-source connection diagnostics -->

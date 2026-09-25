@@ -1334,7 +1334,7 @@ public class AudioService : IAudioService, IDisposable
             if (isUrl && (!Uri.TryCreate(filePath, UriKind.Absolute, out var uri) ||
                           (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
             {
-                Log.Warning("Invalid or unsupported URL for track {Track}: {Url}", track.Title, filePath);
+                Log.Warning("Invalid or unsupported URL for track {Track}", track.Title);
                 // 不能在持有 _playerOperationGate 时同步 Next()：NextAsync 会取 _playbackIntentGate，
                 // 与播放入口"先 intent 后 playerOp"的顺序构成 AB-BA 死锁。
                 ScheduleNextTrack(requestId, "invalid or unsupported track URL");

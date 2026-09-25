@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "NeteaseCloudMusicApi": "^4.28.0"
+    "NeteaseCloudMusicApi": "4.32.0"
+  },
+  "overrides": {
+    "qs": "6.16.0"
   }
 }

@@ -266,7 +266,7 @@ public class MusicSourceBrokerCacheTests
         public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken)
             => Task.FromResult(new List<OnlineTrack>());
 
-        public Task<ResolvedMedia?> ResolveAsync(
+        public Task<MediaResolutionResult> ResolveAsync(
             ProviderTrackRef track,
             IReadOnlyDictionary<string, string>? providerMetadata,
             CancellationToken cancellationToken)
@@ -275,8 +275,8 @@ public class MusicSourceBrokerCacheTests
             var url = _urlForAttempt(attempt);
             return Task.FromResult(
                 url != null && Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                    ? new ResolvedMedia(track, uri)
-                    : null);
+                    ? MediaResolutionResult.Playable(new ResolvedMedia(track, uri))
+                    : MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound));
         }
     }
 
@@ -300,7 +300,7 @@ public class MusicSourceBrokerCacheTests
         public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken)
             => Task.FromResult(SearchResults);
 
-        public Task<ResolvedMedia?> ResolveAsync(
+        public Task<MediaResolutionResult> ResolveAsync(
             ProviderTrackRef track,
             IReadOnlyDictionary<string, string>? providerMetadata,
             CancellationToken cancellationToken)
@@ -309,8 +309,8 @@ public class MusicSourceBrokerCacheTests
             var url = _resolveByUrl(track.TrackId);
             return Task.FromResult(
                 url != null && Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                    ? new ResolvedMedia(track, uri)
-                    : null);
+                    ? MediaResolutionResult.Playable(new ResolvedMedia(track, uri))
+                    : MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound));
         }
     }
 }

@@ -152,7 +152,10 @@ public class NeteaseMusicService : IMusicSearchService
                 if (IsTrialOrRestricted(first))
                 {
                     Log.Information("Netease returned a trial-only stream for {Id}; trying another source", trackId);
-                    return null;
+                    throw new MusicSourceBusinessException(AppLanguage.T(
+                        "网易云当前账号仅获得试听片段，正在尝试其他音源",
+                        "NetEase returned a preview for this account; trying another source"),
+                        MusicSourceFailureKind.PreviewOnly);
                 }
 
                 if (first.TryGetProperty("url", out var urlEl))

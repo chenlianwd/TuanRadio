@@ -2,6 +2,7 @@ using ReactiveUI;
 using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using Serilog;
 using System;
 using System.Collections.ObjectModel;
@@ -22,6 +23,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
     private readonly IKugouPlaylistService? _kugouPlaylistService;
+    private readonly LocalLibraryProvider? _localLibrary;
     private readonly string _playlistDir;
     private readonly string _playlistFile;
     private readonly Func<string, string, Task> _writeAllTextAsync;
@@ -29,12 +31,16 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly CancellationTokenSource _lifetimeCts = new();
     // 常驻按钮文案随语言切换重置；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
+    private readonly IDisposable _searchTextSub;
     private int _disposed;
     private bool _isPlayingOnline;
     private bool _isLoading;
     private bool _isSearching;
+    private CancellationTokenSource? _slowSearchCts;
+    private long _searchGeneration;
     private Func<string>? _searchStatusFactory;
     private Func<string>? _kugouStatusFactory;
+    private int? _localLibraryCount;
     private readonly IDisposable _selectedTrackSub;
     private readonly IDisposable _selectedKugouPlaylistSub;
     private readonly IDisposable _kugouFilterSub;
@@ -67,6 +73,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public bool HasSearchStatus { get; set; }
     [Reactive] public string SearchStatusMessage { get; set; } = string.Empty;
     [Reactive] public string SearchButtonText { get; set; } = AppLanguage.T("搜索", "Search");
+    [Reactive] public string LocalLibraryStatus { get; set; } = string.Empty;
+    [Reactive] public bool IsLocalLibraryScanning { get; set; }
     [Reactive] public KugouPlaylistInfo? SelectedKugouPlaylist { get; set; }
     [Reactive] public bool IsKugouLoading { get; set; }
     [Reactive] public bool HasKugouPlaylists { get; set; }
@@ -104,11 +112,13 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         IMusicSearchService musicSearchService,
         string? playlistFile = null,
         Func<string, string, Task>? writeAllTextAsync = null,
-        IKugouPlaylistService? kugouPlaylistService = null)
+        IKugouPlaylistService? kugouPlaylistService = null,
+        LocalLibraryProvider? localLibrary = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
         _kugouPlaylistService = kugouPlaylistService;
+        _localLibrary = localLibrary;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
         _customWriter = writeAllTextAsync != null;
@@ -188,6 +198,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
         AddOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(async track =>
         {
+            CancelSlowSearch();
             try
             {
                 SetSearchStatus(() => AppLanguage.T($"正在添加《{track.Title}》...", $"Adding \"{track.Title}\"..."));
@@ -292,8 +303,18 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 SearchStatusMessage = _searchStatusFactory();
             if (_kugouStatusFactory != null)
                 KugouStatusMessage = _kugouStatusFactory();
+            if (_localLibraryCount is { } count)
+                LocalLibraryStatus = FormatLocalLibraryCount(count);
         };
         AppLanguage.Changed += _onLanguageChanged;
+        _searchTextSub = this.WhenAnyValue(x => x.SearchText).Skip(1)
+            .Subscribe(_ =>
+            {
+                if (!_isSearching && Volatile.Read(ref _slowSearchCts) == null) return;
+                CancelSlowSearch();
+                SetSearchStatus(() => AppLanguage.T(
+                    "搜索词已更改，请重新搜索。", "Query changed; search again."));
+            });
     }
 
     /// <summary>清空并重添同一批 OnlineTrack：触发集合通知让行模板重新读取计算型显示属性。</summary>
@@ -670,6 +691,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private async Task PlayOnlineAsync(OnlineTrack track)
     {
         if (_isPlayingOnline) return;
+        CancelSlowSearch();
         _isPlayingOnline = true;
         try
         {
@@ -736,7 +758,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         if (_musicSearchService is Services.Music.IMusicSourceBroker multi)
         {
             // 用作用域报告：并发搜索（电台推荐/DJ 点歌）不会覆盖本次搜索的逐源状态
-            var outcome = await multi.SearchWithReportAsync(keyword, limit, _lifetimeCts.Token);
+            var outcome = await multi.SearchFastWithReportAsync(keyword, limit, _lifetimeCts.Token);
             return (outcome.Tracks, outcome.Report);
         }
 
@@ -1111,21 +1133,37 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         // 防重入：双击并发搜索时后完成者会互相覆盖结果与状态
         if (_isSearching) return;
 
+        CancelSlowSearch();
+        var generation = Interlocked.Read(ref _searchGeneration);
+        var query = SearchText.Trim();
+
         _isSearching = true;
         IsSearching = true;
         SearchButtonText = AppLanguage.T("搜索中...", "Searching...");
-        SetSearchStatus(() => AppLanguage.T($"正在搜索“{SearchText}”...", $"Searching \"{SearchText}\"..."));
+        SetSearchStatus(() => AppLanguage.T($"正在搜索“{query}”...", $"Searching \"{query}\"..."));
         try
         {
-            var (results, report) = await SearchMusicAsync(SearchText, 20);
+            var (results, report) = await SearchMusicAsync(query, 20);
+            if (generation != Interlocked.Read(ref _searchGeneration) || Volatile.Read(ref _disposed) != 0)
+                return;
             SearchResults.Clear();
             foreach (var track in results)
             {
                 SearchResults.Add(track);
             }
             TabIndex = 2; // auto-switch to search results
-            SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count, report));
-            Log.Information("Search '{Query}' returned {Count} results", SearchText, results.Count);
+            if (results.Count == 0 && _musicSearchService is Services.Music.IMusicSourceBroker broker)
+            {
+                SetSearchStatus(() => AppLanguage.T(
+                    $"快速音源未找到“{query}”，正在后台尝试慢源。",
+                    $"No fast-source results for \"{query}\"; checking slow sources in the background."));
+                var slowCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+                Interlocked.Exchange(ref _slowSearchCts, slowCts);
+                _ = SearchSlowAndPublishAsync(broker, query, 20, generation, report, slowCts);
+            }
+            else
+                SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count, report));
+            Log.Information("Search '{Query}' returned {Count} fast result(s)", query, results.Count);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -1134,7 +1172,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Search failed");
-            SetSearchStatus(() => AppLanguage.T("搜索失败，可能是网络异常或音乐 API 服务不可用。", "Search failed; check the network or the music API service."));
+            if (generation == Interlocked.Read(ref _searchGeneration) && Volatile.Read(ref _disposed) == 0)
+                SetSearchStatus(() => AppLanguage.T("搜索失败，可能是网络异常或音乐 API 服务不可用。", "Search failed; check the network or the music API service."));
         }
         finally
         {
@@ -1142,6 +1181,49 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             IsSearching = false;
             SearchButtonText = AppLanguage.T("搜索", "Search");
         }
+    }
+
+    private async Task SearchSlowAndPublishAsync(Services.Music.IMusicSourceBroker broker,
+        string query, int limit, long generation,
+        IReadOnlyList<Services.SourceSearchStatus> fastReport, CancellationTokenSource source)
+    {
+        try
+        {
+            var outcome = await broker.SearchSlowWithReportAsync(query, limit, source.Token);
+            if (source.IsCancellationRequested || Volatile.Read(ref _disposed) != 0 ||
+                generation != Interlocked.Read(ref _searchGeneration) ||
+                !string.Equals(SearchText.Trim(), query, StringComparison.Ordinal))
+                return;
+            SearchResults.Clear();
+            foreach (var track in outcome.Tracks)
+                SearchResults.Add(track);
+            var combinedReport = fastReport.Concat(outcome.Report).ToArray();
+            SetSearchStatus(() => BuildSearchStatusMessage(outcome.Tracks.Count, combinedReport));
+        }
+        catch (OperationCanceledException) when (source.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Slow music search failed");
+            if (generation == Interlocked.Read(ref _searchGeneration) && Volatile.Read(ref _disposed) == 0)
+                SetSearchStatus(() => AppLanguage.T(
+                    "慢源搜索失败，请稍后重试。", "Slow-source search failed; try again later."));
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _slowSearchCts, null, source), source))
+                source.Dispose();
+        }
+    }
+
+    private void CancelSlowSearch()
+    {
+        Interlocked.Increment(ref _searchGeneration);
+        var previous = Interlocked.Exchange(ref _slowSearchCts, null);
+        if (previous == null) return;
+        previous.Cancel();
+        previous.Dispose();
     }
 
     /// <summary>构造搜索状态消息：透传各音源成功/超时/失败（子项目 5）。</summary>
@@ -1178,6 +1260,11 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     private static string FormatFailedSourceStatus(Services.SourceSearchStatus status)
     {
         var name = AppLanguage.MusicSourceName(status.Name);
+        if (string.Equals(status.Name, "OpenSubsonic", StringComparison.OrdinalIgnoreCase) &&
+            status.FailureKind is MusicSourceFailureKind.NotSignedIn or MusicSourceFailureKind.AuthExpired)
+            return AppLanguage.T(
+                $"{name}认证失败，请到设置检查私有曲库地址和账号",
+                $"{name} authentication failed; check the private library server and account in Settings");
         return status.FailureKind switch
         {
             MusicSourceFailureKind.NotSignedIn => AppLanguage.T(
@@ -1256,6 +1343,37 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
 
     public void AddFiles(string[] filePaths)
     {
+        var added = AddFilesCore(filePaths);
+        _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+        if (_localLibrary != null && added.Count > 0)
+            _ = _localLibrary.AddFilesAsync(added.Select(track => track.FilePath))
+                .ContinueWith(t => Log.Warning(t.Exception, "Local library index failed"),
+                    TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    public async Task AddFilesAndIndexAsync(string[] filePaths, CancellationToken cancellationToken = default)
+    {
+        var added = AddFilesCore(filePaths);
+        if (added.Count == 0) return;
+        IsLocalLibraryScanning = true;
+        try
+        {
+            var save = SaveAsync();
+            var index = _localLibrary == null
+                ? Task.FromResult(0)
+                : _localLibrary.AddFilesAsync(added.Select(track => track.FilePath), cancellationToken);
+            await Task.WhenAll(save, index);
+            if (_localLibrary != null)
+            {
+                _localLibraryCount = index.Result;
+                LocalLibraryStatus = FormatLocalLibraryCount(index.Result);
+            }
+        }
+        finally { IsLocalLibraryScanning = false; }
+    }
+
+    private List<Track> AddFilesCore(string[] filePaths)
+    {
         var added = new List<Track>();
         foreach (var path in filePaths)
         {
@@ -1271,8 +1389,37 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             _audioService.AddTracks(added);
 
         TabIndex = 0;
-        _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+        return added;
     }
+
+    public async Task AddLocalFolderAsync(string folder, CancellationToken cancellationToken = default)
+    {
+        if (_localLibrary == null) return;
+        IsLocalLibraryScanning = true;
+        try
+        {
+            var count = await _localLibrary.AddFolderAsync(folder, cancellationToken);
+            _localLibraryCount = count;
+            LocalLibraryStatus = FormatLocalLibraryCount(count);
+        }
+        finally { IsLocalLibraryScanning = false; }
+    }
+
+    public async Task RescanLocalLibraryAsync(CancellationToken cancellationToken = default)
+    {
+        if (_localLibrary == null) return;
+        IsLocalLibraryScanning = true;
+        try
+        {
+            var count = await _localLibrary.RescanAsync(cancellationToken);
+            _localLibraryCount = count;
+            LocalLibraryStatus = FormatLocalLibraryCount(count);
+        }
+        finally { IsLocalLibraryScanning = false; }
+    }
+
+    private static string FormatLocalLibraryCount(int count)
+        => AppLanguage.T($"本地曲库已收录 {count} 首", $"Local library: {count} tracks");
 
     public void Dispose()
     {
@@ -1280,10 +1427,12 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             return;
 
         _lifetimeCts.Cancel();
+        CancelSlowSearch();
         _selectedTrackSub.Dispose();
         _selectedKugouPlaylistSub.Dispose();
         _kugouFilterSub.Dispose();
         _selectedSyncedPlaylistSub.Dispose();
+        _searchTextSub.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
         AppLanguage.Changed -= _onLanguageChanged;
         // _lifetimeCts/_saveGate/_kugouGate 不显式释放：均为无定时器的纯托管对象，
