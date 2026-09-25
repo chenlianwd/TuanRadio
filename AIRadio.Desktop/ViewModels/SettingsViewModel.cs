@@ -24,8 +24,33 @@ public class VoiceOption
     public string DisplayName { get; init; } = "";
 }
 
+public sealed class MusicProviderOption : ReactiveObject
+{
+    private bool _enabled;
+    public string Id { get; }
+    public string DisplayName => AppLanguage.MusicSourceName(Id);
+    public bool Enabled
+    {
+        get => _enabled;
+        set => this.RaiseAndSetIfChanged(ref _enabled, value);
+    }
+
+    public MusicProviderOption(string id, bool enabled)
+    {
+        Id = id;
+        _enabled = enabled;
+    }
+
+    public void RefreshLanguage() => this.RaisePropertyChanged(nameof(DisplayName));
+}
+
 public class SettingsViewModel : ViewModelBase, IDisposable
 {
+#if TUANRADIO_SLIM_CORE
+    public bool HasExperimentalProviders => false;
+#else
+    public bool HasExperimentalProviders => true;
+#endif
     private const string LlmCredentialService = "llm";
     private const string LegacyMinimaxCredentialService = "minimax";
     private readonly ILLMService _llmService;
@@ -42,6 +67,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly KugouVerificationService? _kugouVerification;
     private readonly IListeningProfileService? _listeningProfile;
     private readonly IMusicSearchService? _musicSearch;
+    private readonly OpenSubsonicProvider? _openSubsonic;
+    private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
@@ -89,6 +116,11 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public bool ListenerProfileEnabled { get; set; } = true;
     // 天气城市：留空时按 IP 自动定位（见 WeatherService）
     [Reactive] public string WeatherCity { get; set; } = string.Empty;
+    [Reactive] public string OpenSubsonicServerUrl { get; set; } = string.Empty;
+    [Reactive] public string OpenSubsonicUsername { get; set; } = string.Empty;
+    [Reactive] public string OpenSubsonicPassword { get; set; } = string.Empty;
+    [Reactive] public string OpenSubsonicStatus { get; set; } = string.Empty;
+    [Reactive] public bool IsConnectingOpenSubsonic { get; set; }
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     // 音源逐源连接诊断结果（随语言切换重建）
@@ -135,11 +167,14 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public List<VoiceOption> SpectrumStyles { get; set; } = new();
 
     [Reactive] public List<VoiceOption> YtdlpBrowsers { get; set; } = new();
+    [Reactive] public List<MusicProviderOption> MusicProviders { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
     public ReactiveCommand<Unit, Unit> ResetListenerProfileCommand { get; }
     public ReactiveCommand<Unit, Unit> DiagnoseSourcesCommand { get; }
+    public ReactiveCommand<Unit, Unit> ConnectOpenSubsonicCommand { get; }
+    public ReactiveCommand<Unit, Unit> DisconnectOpenSubsonicCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
@@ -161,7 +196,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         System.Net.Http.HttpClient? httpClient = null,
         KugouVerificationService? kugouVerification = null,
         IListeningProfileService? listeningProfile = null,
-        IMusicSearchService? musicSearch = null)
+        IMusicSearchService? musicSearch = null,
+        OpenSubsonicProvider? openSubsonic = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -174,6 +210,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _kugouVerification = kugouVerification;
         _listeningProfile = listeningProfile;
         _musicSearch = musicSearch;
+        _openSubsonic = openSubsonic;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
@@ -183,6 +220,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         DiagnoseSourcesCommand = ReactiveCommand.CreateFromTask(
             DiagnoseSourcesAsync,
             this.WhenAnyValue(x => x.IsDiagnosingSources).Select(running => !running));
+        ConnectOpenSubsonicCommand = ReactiveCommand.CreateFromTask(ConnectOpenSubsonicAsync);
+        DisconnectOpenSubsonicCommand = ReactiveCommand.Create(DisconnectOpenSubsonic);
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
@@ -241,8 +280,6 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         {
             TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
             DiagnoseSourcesButtonText = AppLanguage.T("音源连接诊断", "Diagnose music sources");
-            if (_sourceDiagnosticsFactory != null)
-                SourceDiagnosticsText = _sourceDiagnosticsFactory();
             ResetProfileButtonText = Volatile.Read(ref _listenerProfileResetArmed) != 0
                 ? AppLanguage.T("再次点击确认清除", "Click again to confirm")
                 : AppLanguage.T("清除收听画像", "Clear listening profile");
@@ -254,14 +291,57 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 NeteaseAccountStatus = _neteaseAccountStatusFactory();
             if (_kugouAccountStatusFactory != null)
                 KugouAccountStatus = _kugouAccountStatusFactory();
+            if (_sourceDiagnosticsFactory != null)
+                SourceDiagnosticsText = _sourceDiagnosticsFactory();
+            if (_openSubsonicStatusFactory != null)
+                OpenSubsonicStatus = _openSubsonicStatusFactory();
             if (IsYtdlpCookieNoticeVisible && SelectedYtdlpBrowser is { Id.Length: > 0 } browser)
                 YtdlpCookieNotice = BuildYtdlpCookieNotice(browser.Id);
             RebuildLocalizedOptionLists();
+            foreach (var option in MusicProviders) option.RefreshLanguage();
         };
         AppLanguage.Changed += _onLanguageChanged;
 
         // Default selection
         SelectedCharacter = Characters[0];
+        RebuildMusicProviders(Array.Empty<string>(), Array.Empty<string>());
+    }
+
+    private void RebuildMusicProviders(IReadOnlyList<string> orderedIds, IReadOnlyCollection<string> disabledIds)
+    {
+        if (_musicSearch is not IMusicSourceBroker broker) return;
+        var order = orderedIds.Select((id, index) => (id, index))
+            .Where(item => !string.IsNullOrWhiteSpace(item.id))
+            .GroupBy(item => item.id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        var disabled = new HashSet<string>(disabledIds, StringComparer.OrdinalIgnoreCase);
+        MusicProviders = broker.GetProviderDescriptors()
+            .Select((descriptor, index) => (descriptor, index))
+            .OrderBy(item => order.TryGetValue(item.descriptor.Id, out var rank) ? rank : int.MaxValue)
+            .ThenBy(item => item.index)
+            .Select(item => new MusicProviderOption(item.descriptor.Id, !disabled.Contains(item.descriptor.Id)))
+            .ToList();
+        broker.ConfigureProviders(MusicProviders.Select(item => item.Id).ToArray(),
+            MusicProviders.Where(item => !item.Enabled).Select(item => item.Id).ToArray());
+    }
+
+    public async Task ApplyMusicProviderOptionsAsync()
+    {
+        if (_musicSearch is not IMusicSourceBroker broker) return;
+        broker.ConfigureProviders(MusicProviders.Select(item => item.Id).ToArray(),
+            MusicProviders.Where(item => !item.Enabled).Select(item => item.Id).ToArray());
+        await SaveAsync(persistLlmFields: false);
+    }
+
+    public async Task MoveMusicProviderAsync(string id, int direction)
+    {
+        var index = MusicProviders.FindIndex(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+        var target = index + direction;
+        if (index < 0 || target < 0 || target >= MusicProviders.Count) return;
+        var reordered = MusicProviders.ToList();
+        (reordered[index], reordered[target]) = (reordered[target], reordered[index]);
+        MusicProviders = reordered;
+        await ApplyMusicProviderOptionsAsync();
     }
 
     /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
@@ -428,6 +508,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 ApiKey = key;
             }
 
+            string[] savedMusicOrder = Array.Empty<string>();
+            string[] disabledMusicProviders = Array.Empty<string>();
             using var doc = await OpenSettingsDocumentAsync(cancellationToken);
             if (doc != null)
             {
@@ -483,6 +565,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 if (root.TryGetProperty("weather_city", out var weatherCity))
                     WeatherCity = weatherCity.GetString() ?? string.Empty;
 
+                if (root.TryGetProperty("music_provider_order", out var musicOrder) &&
+                    musicOrder.ValueKind == JsonValueKind.Array)
+                    savedMusicOrder = musicOrder.EnumerateArray()
+                        .Where(item => item.ValueKind == JsonValueKind.String)
+                        .Select(item => item.GetString() ?? string.Empty).ToArray();
+                if (root.TryGetProperty("music_provider_disabled", out var disabledSources) &&
+                    disabledSources.ValueKind == JsonValueKind.Array)
+                    disabledMusicProviders = disabledSources.EnumerateArray()
+                        .Where(item => item.ValueKind == JsonValueKind.String)
+                        .Select(item => item.GetString() ?? string.Empty).ToArray();
+
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
 
@@ -506,6 +599,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 }
             }
 
+            RebuildMusicProviders(savedMusicOrder, disabledMusicProviders);
+
             // 画像开关初值在设置加载完成后同步给服务（主窗口加载路径也会再同步一次）
             if (_listeningProfile != null)
                 _listeningProfile.Enabled = ListenerProfileEnabled;
@@ -522,6 +617,23 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 SetNeteaseAccountStatus(() => AppLanguage.T("已登录", "Signed in"));
             if (!string.IsNullOrEmpty(_accounts.KugouCookie))
                 SetKugouAccountStatus(() => AppLanguage.T("已登录", "Signed in"));
+
+            if (_openSubsonic != null)
+            {
+                try
+                {
+                    await _openSubsonic.LoadAsync(cancellationToken);
+                    OpenSubsonicServerUrl = _openSubsonic.ServerUrl;
+                    OpenSubsonicUsername = _openSubsonic.Username;
+                    if (_openSubsonic.IsConfigured)
+                        SetOpenSubsonicStatus(() => AppLanguage.T("已配置私有曲库", "Private library configured"));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning(ex, "OpenSubsonic configuration could not be loaded");
+                    SetOpenSubsonicStatus(() => AppLanguage.T("私有曲库配置读取失败", "Could not load private library configuration"));
+                }
+            }
 
             // 加载完成即建立角色签名基线：启动后的第一次无关保存（主题/简洁模式）不会误触发事件
             _lastCharacterSignature = BuildCharacterSignature();
@@ -541,6 +653,52 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         return _overrides.TryGetValue(characterId, out var ov) ? ov : null;
     }
 
+    private async Task ConnectOpenSubsonicAsync()
+    {
+        if (_openSubsonic == null) return;
+        IsConnectingOpenSubsonic = true;
+        SetOpenSubsonicStatus(() => AppLanguage.T("正在测试私有曲库连接…", "Testing private library connection…"));
+        try
+        {
+            await _openSubsonic.ConnectAsync(OpenSubsonicServerUrl, OpenSubsonicUsername,
+                OpenSubsonicPassword, _lifetimeCts.Token);
+            OpenSubsonicPassword = string.Empty;
+            SetOpenSubsonicStatus(() => AppLanguage.T("连接成功，配置已安全保存", "Connected; configuration saved securely"));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("OpenSubsonic connection test failed: {Type}", ex.GetType().Name);
+            SetOpenSubsonicStatus(() => AppLanguage.T("连接失败，请检查地址、账号和网络", "Connection failed; check server, credentials and network"));
+        }
+        finally { IsConnectingOpenSubsonic = false; }
+    }
+
+    private void DisconnectOpenSubsonic()
+    {
+        if (_openSubsonic == null) return;
+        try
+        {
+            _openSubsonic.Disconnect();
+            OpenSubsonicPassword = string.Empty;
+            SetOpenSubsonicStatus(() => AppLanguage.T("已断开私有曲库", "Private library disconnected"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("OpenSubsonic disconnect failed: {Type}", ex.GetType().Name);
+            SetOpenSubsonicStatus(() => AppLanguage.T("断开失败，请重试", "Could not disconnect; try again"));
+        }
+    }
+
+    private void SetOpenSubsonicStatus(Func<string> factory)
+    {
+        _openSubsonicStatusFactory = factory;
+        OpenSubsonicStatus = factory();
+    }
+
     /// <summary>
     /// 音源逐源连接诊断：聚合服务对每个源做 limit 1 轻量探测，结果按结构化分类渲染
     /// （复用搜索状态行的 FormatSourceStatus，含未登录/风控/接口失效等恢复建议）。
@@ -557,11 +715,25 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         IsDiagnosingSources = true;
         try
         {
+            if (HasExperimentalProviders)
+                await RefreshAccountStatusAsync();
             var report = (await multi.DiagnoseAsync(_lifetimeCts.Token)).ToList();
+            var health = multi.GetHealthSnapshots()
+                .ToDictionary(item => item.SourceName, StringComparer.OrdinalIgnoreCase);
             // 文案在工厂里现算：语言切换时经 _onLanguageChanged 重建成当前语言
-            SetSourceDiagnostics(() => report.Count == 0
-                ? AppLanguage.T("没有可诊断的音源。", "No music sources to diagnose.")
-                : string.Join("\n", report.Select(PlaylistViewModel.FormatSourceStatus)));
+            SetSourceDiagnostics(() =>
+            {
+                var sourceLines = report.Count == 0
+                    ? AppLanguage.T("没有可诊断的音源。", "No music sources to diagnose.")
+                    : string.Join("\n", report.Select(item =>
+                        PlaylistViewModel.FormatSourceStatus(item) +
+                        (health.TryGetValue(item.Name, out var snapshot)
+                            ? "\n  " + FormatSourceHealth(snapshot) : string.Empty)));
+                if (!HasExperimentalProviders) return sourceLines;
+                return sourceLines + "\n" + AppLanguage.T("网易云账号：", "NetEase account: ") +
+                    NeteaseAccountStatus + "\n" +
+                    AppLanguage.T("酷狗账号：", "Kugou account: ") + KugouAccountStatus;
+            });
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -581,6 +753,21 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     {
         _sourceDiagnosticsFactory = factory;
         SourceDiagnosticsText = factory();
+    }
+
+    private static string FormatSourceHealth(SourceHealthSnapshot snapshot)
+    {
+        var search = snapshot.LastSearchSuccessUtc?.ToLocalTime().ToString("g") ??
+            AppLanguage.T("无记录", "none");
+        var resolution = snapshot.LastResolutionSuccessUtc?.ToLocalTime().ToString("g") ??
+            AppLanguage.T("无记录", "none");
+        var circuit = snapshot.CircuitRemaining > TimeSpan.Zero
+            ? AppLanguage.T($"熔断 {Math.Ceiling(snapshot.CircuitRemaining.TotalSeconds):0} 秒",
+                $"circuit open {Math.Ceiling(snapshot.CircuitRemaining.TotalSeconds):0}s")
+            : AppLanguage.T("熔断关闭", "circuit closed");
+        return AppLanguage.T(
+            $"近 20 条记录 {snapshot.RecentSuccessCount}/{snapshot.RecentRequestCount} 次接口正常响应；搜索成功 {search}；播放解析成功 {resolution}；{circuit}",
+            $"Valid API responses {snapshot.RecentSuccessCount}/{snapshot.RecentRequestCount} in recent 20 records; search success {search}; media resolution success {resolution}; {circuit}");
     }
 
     /// <summary>
@@ -1126,6 +1313,9 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
+                music_provider_order = MusicProviders.Select(item => item.Id).ToArray(),
+                music_provider_disabled = MusicProviders.Where(item => !item.Enabled)
+                    .Select(item => item.Id).ToArray(),
                 character_overrides = overridesJson
             };
             // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager

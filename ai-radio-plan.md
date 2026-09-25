@@ -21,7 +21,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 收藏持久化与旧数据迁移到 `FavoriteIds`。
 - DJ 角色配置、声音覆盖、人格提示词覆盖和设置保存。
 - 推荐服务 v1 模型与服务骨架。
-- JSON DJ 控制块解析，兼容旧文本尾标。
+- JSON DJ 控制块解析；旧文本尾标协议已移除。
 - 启动欢迎语、启动推荐、TTS 中断和 DJ 视觉 cue。
 - 视图重构 + 统一状态机：MainWindow 拆 7 个 UserControl，`RadioState` 状态机驱动 StatusBar。
 - Theme 全量 token 化（Light/Dark 双套，`Themes/Colors.axaml`）。
@@ -52,7 +52,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### 点歌流程
 
 1. `ChatViewModel` 识别明确点歌输入或 JSON 控制块。
-2. `MultiSourceMusicService` 搜索在线音源。
+2. `MusicSourceBroker` 经现有 Provider 适配器搜索在线音源。
 3. 获取首选源播放 URL；失效时按歌名/歌手到其他源重新匹配。
 4. 加入 `PlaylistViewModel` 和 `AudioService`。
 5. 播放目标曲目，并避免重复加入同一首歌。
@@ -88,7 +88,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 用户反馈动作影响当前会话推荐。
 - Radio Mode 优先消耗当前节目单，节目单耗尽后再生成新节目单。
 
-### P2 产品化：进行中
+### P2 产品化：本节列出的工作已完成
 
 **已完成（播放、音源和生命周期稳定性，2026-08-19~20）：**
 - 播放恢复统一以请求代次去重；提前结束依次刷新当前源、按元数据切换替代源，仍失败才进入自动续播。
@@ -127,7 +127,8 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像已落地（见「已完成」）；后续仅评估跨设备同步与画像维度扩展（时段偏好、语种配比等）。
-- 音源架构演进阶段 1 已落地（2026-09-21，见「已完成」）；阶段 2（本地曲库/OpenSubsonic 稳定主源）、阶段 3（Provider 包与构建瘦身）、阶段 4（开放曲库与管理 UI）待排期，总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
+- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。独立 Provider 程序集、开放曲库 PoC 与音质偏好仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
+- 在线音源可靠性专项已接入结构化解析结果、后三首队列预检与逐首状态、最近 20 次请求健康度；网易云代理升级到 4.32.0。完整权益/设备/版本诊断、带请求版本隔离的 YouTube 后台候选代理仍待实现，代理的上游依赖链仍有 3 项 npm audit 告警。
 - 音源体验增强与设置页逐源连接诊断均已落地（2026-09-15，见「已完成」）。
 - Node.js/yt-dlp 供应链校验已落地（下载即 fail-closed 校验官方 SHA 值 + 固定 release 版本）。
 - 自动化耐久测试已落地（2026-09-17，见「已完成」）；发布前仍需人工执行：长时间真实在线播放、进程退出/内存观察、无输出设备/睡眠唤醒。

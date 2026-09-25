@@ -75,6 +75,8 @@ public enum MusicSourceFailureKind
     AuthExpired,
     /// <summary>酷狗风控验证（error_code 20028）。</summary>
     RiskControl,
+    /// <summary>播放接口只返回试听片段，不能当完整曲目播放。</summary>
+    PreviewOnly,
     /// <summary>网页接口/工具链失效（酷我、咪咕门户劫持、yt-dlp 不可用）。</summary>
     ApiBroken,
     Unknown

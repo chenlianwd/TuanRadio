@@ -24,6 +24,9 @@
          可在无 Node.js 环境构建核心；关闭后不执行 npm，也不复制代理目录 -->
     <TuanRadioEnableNodeProviders Condition="'$(TuanRadioEnableNodeProviders)' == ''">true</TuanRadioEnableNodeProviders>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(TuanRadioEnableNodeProviders)' != 'true'">
+    <DefineConstants>$(DefineConstants);TUANRADIO_SLIM_CORE</DefineConstants>
+  </PropertyGroup>
 
   <!-- npm ci 严格按 lockfile 安装且失败不留"看似完整"的 node_modules（隐藏 lockfile 仅在装完时落盘）；
        普通/CI 构建都不会隐式更新 lockfile -->
@@ -35,11 +38,18 @@
     <Exec Command="npm ci --omit=dev" WorkingDirectory="server-kugou" />
   </Target>
 
+  <Target Name="GenerateProviderManifest" AfterTargets="Build" Condition="'$(TuanRadioEnableNodeProviders)' == 'true'">
+    <Exec Command="node &quot;$(MSBuildProjectDirectory)\scripts\generate-provider-manifest.js&quot; &quot;$(TargetDir)providers-manifest.json&quot;" />
+  </Target>
+
   <ItemGroup Condition="'$(TuanRadioEnableNodeProviders)' == 'true'">
-    <Content Include="server\**" Exclude="server\node_modules\.package-lock.json">
+    <Content Include="server\start.js;server\package.json;server\package-lock.json;server\node_modules\**"
+             Exclude="server\node_modules\.package-lock.json;server\node_modules\**\README*;server\node_modules\**\test\**;server\node_modules\**\docs\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="server-kugou\**" Exclude="server-kugou\node_modules\.package-lock.json">
+    <!-- 桌面端实际请求的路由及其静态依赖；新增路由时须同步此清单并做包内启动检查。 -->
+    <Content Include="server-kugou\start.js;server-kugou\app.js;server-kugou\server.js;server-kugou\util\**;server-kugou\module\search.js;server-kugou\module\song_url.js;server-kugou\module\song_url_auth_merge.js;server-kugou\module\song_url_auth.js;server-kugou\module\song_auth.js;server-kugou\module\login_qr_key.js;server-kugou\module\login_qr_check.js;server-kugou\module\login_token.js;server-kugou\module\register_dev.js;server-kugou\module\user_verify.js;server-kugou\module\user_vip_detail.js;server-kugou\module\user_detail.js;server-kugou\module\user_playlist.js;server-kugou\module\playlist_track_all_new.js;server-kugou\module\verify_bridge_start.js;server-kugou\module\verify_bridge_info.js;server-kugou\module\verify_bridge_submit.js;server-kugou\module\get_verify_info.js;server-kugou\module\verify_user_info.js;server-kugou\public\verify_auto.html;server-kugou\package.json;server-kugou\package-lock.json;server-kugou\LICENSE;server-kugou\VENDOR.md;server-kugou\node_modules\**"
+             Exclude="server-kugou\node_modules\.package-lock.json;server-kugou\node_modules\**\README*;server-kugou\node_modules\**\test\**;server-kugou\node_modules\**\docs\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

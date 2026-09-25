@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using Moq;
 using Xunit;
 using PlaylistViewModel = AIRadio.Desktop.ViewModels.PlaylistViewModel;
@@ -18,6 +19,95 @@ namespace AIRadio.Desktop.Tests;
 
 public class PlaylistViewModelTests
 {
+    [Fact]
+    public async Task DeferredSlowSearch_CannotOverwriteNewerSearch()
+    {
+        var audio = new Mock<IAudioService>();
+        audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        var broker = new Mock<IMusicSourceBroker>();
+        var late = new TaskCompletionSource<SearchOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        broker.Setup(x => x.SearchFastWithReportAsync("first", 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchOutcome(new List<OnlineTrack>(), Array.Empty<SourceSearchStatus>()));
+        broker.Setup(x => x.SearchSlowWithReportAsync("first", 20, It.IsAny<CancellationToken>()))
+            .Returns(late.Task);
+        broker.Setup(x => x.SearchFastWithReportAsync("second", 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchOutcome(new List<OnlineTrack>
+            {
+                new() { Id = "fast:second", Title = "Second song" }
+            }, Array.Empty<SourceSearchStatus>()));
+        using var vm = new PlaylistViewModel(audio.Object, broker.Object, CreateTempPlaylistFile());
+
+        vm.SearchText = "first";
+        await vm.SearchCommand.Execute();
+        vm.SearchText = "second";
+        await vm.SearchCommand.Execute();
+        late.SetResult(new SearchOutcome(new List<OnlineTrack>
+        {
+            new() { Id = "slow:first", Title = "Old song" }
+        }, Array.Empty<SourceSearchStatus>()));
+        await Task.Delay(50);
+
+        Assert.Equal("fast:second", Assert.Single(vm.SearchResults).Id);
+        Assert.Contains("Second", vm.SearchResults[0].Title);
+    }
+
+    [Fact]
+    public async Task DeferredSlowSearch_QueryEditCancelsPendingResult()
+    {
+        var audio = new Mock<IAudioService>();
+        audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        var broker = new Mock<IMusicSourceBroker>();
+        var late = new TaskCompletionSource<SearchOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        broker.Setup(x => x.SearchFastWithReportAsync("first", 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchOutcome(new List<OnlineTrack>(), Array.Empty<SourceSearchStatus>()));
+        broker.Setup(x => x.SearchSlowWithReportAsync("first", 20, It.IsAny<CancellationToken>()))
+            .Returns(late.Task);
+        using var vm = new PlaylistViewModel(audio.Object, broker.Object, CreateTempPlaylistFile());
+
+        vm.SearchText = "first";
+        await vm.SearchCommand.Execute();
+        vm.SearchText = "edited";
+        Assert.Contains("搜索词已更改", vm.SearchStatusMessage);
+        late.SetResult(new SearchOutcome(new List<OnlineTrack>
+        {
+            new() { Id = "slow:first", Title = "Old song" }
+        }, Array.Empty<SourceSearchStatus>()));
+        await Task.Delay(50);
+
+        Assert.Empty(vm.SearchResults);
+        Assert.Contains("搜索词已更改", vm.SearchStatusMessage);
+    }
+
+    [Fact]
+    public async Task DeferredSlowSearch_PreservesFastSourceDiagnostics()
+    {
+        var audio = new Mock<IAudioService>();
+        audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        var broker = new Mock<IMusicSourceBroker>();
+        broker.Setup(x => x.SearchFastWithReportAsync("song", 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchOutcome(new List<OnlineTrack>(),
+                new[] { new SourceSearchStatus("Fast", "failed", 0, "offline") }));
+        broker.Setup(x => x.SearchSlowWithReportAsync("song", 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchOutcome(new List<OnlineTrack>
+            {
+                new() { Id = "slow:1", Title = "Song" }
+            }, new[] { new SourceSearchStatus("YouTube", "ok", 1, null) }));
+        using var vm = new PlaylistViewModel(audio.Object, broker.Object, CreateTempPlaylistFile());
+
+        vm.SearchText = "song";
+        await vm.SearchCommand.Execute();
+
+        Assert.Equal("slow:1", Assert.Single(vm.SearchResults).Id);
+        Assert.Contains("Fast失败:offline", vm.SearchStatusMessage);
+        Assert.Contains("YouTube成功1条", vm.SearchStatusMessage);
+    }
+
     private static (PlaylistViewModel vm, Mock<IAudioService> audioMock, Mock<IMusicSearchService> searchMock)
         CreateVm(string? playlistFile = null, Func<string, string, Task>? writeAllTextAsync = null)
     {

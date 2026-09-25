@@ -31,4 +31,14 @@ public static class FilePickerHelper
             .Select(p => p!)
             .ToArray();
     }
+
+    public static async Task<string?> PickAudioFolderAsync(TopLevel topLevel)
+    {
+        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = AppLanguage.T("选择本地音乐文件夹", "Select a local music folder"),
+            AllowMultiple = false
+        });
+        return folders.FirstOrDefault()?.TryGetLocalPath();
+    }
 }

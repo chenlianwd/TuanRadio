@@ -13,11 +13,25 @@ namespace AIRadio.Desktop.Services.Music;
 /// </summary>
 public interface IMusicSourceBroker : IMusicSearchService
 {
+    event EventHandler? ProviderConfigurationChanged;
     /// <summary>带逐源报告作用域的搜索：报告与结果同源，并发搜索互不串扰。</summary>
     Task<SearchOutcome> SearchWithReportAsync(string keyword, int limit, CancellationToken cancellationToken);
 
+    /// <summary>仅搜索快速音源，供界面先返回结果；不会启动 yt-dlp 等慢源。</summary>
+    Task<SearchOutcome> SearchFastWithReportAsync(string keyword, int limit, CancellationToken cancellationToken);
+
+    /// <summary>仅搜索慢源，供界面在快速源无结果后按请求代次异步补充。</summary>
+    Task<SearchOutcome> SearchSlowWithReportAsync(string keyword, int limit, CancellationToken cancellationToken);
+
     /// <summary>设置页逐源连接诊断（独立报告作用域，不污染搜索状态）。</summary>
     Task<IReadOnlyList<SourceSearchStatus>> DiagnoseAsync(CancellationToken cancellationToken);
+
+    /// <summary>每个已注册音源的最近请求健康度快照；只包含本地分类与时间，不包含凭据或播放地址。</summary>
+    IReadOnlyList<SourceHealthSnapshot> GetHealthSnapshots();
+
+    /// <summary>注册音源和用户可调顺序；禁用的源仍列在注册列表中供设置页恢复。</summary>
+    IReadOnlyList<MusicProviderDescriptor> GetProviderDescriptors();
+    void ConfigureProviders(IReadOnlyList<string> orderedIds, IReadOnlyCollection<string> disabledIds);
 
     /// <summary>跨源回退解析：成功时回写 track 身份（Id/Source/ProviderMetadata）。</summary>
     Task<string?> GetAlternativePlayUrlAsync(OnlineTrack track, CancellationToken cancellationToken);
@@ -28,6 +42,10 @@ public interface IMusicSourceBroker : IMusicSearchService
     /// （AudioService 的播放刷新委托只在刷新语境调用，读缓存会重试刚失败的 URL）。
     /// </summary>
     Task<ResolveTrackResult?> ResolveTrackAsync(OnlineTrack track, bool forceRefresh, CancellationToken cancellationToken);
+
+    /// <summary>供队列预检和界面使用的结构化解析状态。</summary>
+    Task<PlaybackResolutionOutcome> ResolveTrackDetailedAsync(
+        OnlineTrack track, bool forceRefresh, CancellationToken cancellationToken);
 
     /// <summary>意图化搜索：Automatic 链路挡 YouTube 等慢源，防止顶穿续播预算。</summary>
     Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, MusicSearchIntent intent, CancellationToken cancellationToken);

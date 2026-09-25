@@ -35,6 +35,9 @@ public static class MediaUriPolicy
     {
         if (uri == null || !uri.IsAbsoluteUri)
             return Task.FromResult(false);
+        // 用户名/密码形式的 URL 不进入播放器，也避免其意外出现在底层日志中。
+        if (!string.IsNullOrEmpty(uri.UserInfo))
+            return Task.FromResult(false);
 
         switch (scope)
         {
@@ -43,8 +46,7 @@ public static class MediaUriPolicy
                 return Task.FromResult(uri.Scheme == Uri.UriSchemeFile);
 
             case ProviderNetworkScope.UserConfiguredPrivateNetwork:
-                // 阶段 2 OpenSubsonic：允许的私网范围绑定到 Provider 配置后再收紧，
-                // 本阶段先只做 scheme 白名单（当前无此类 Provider）
+                // 具体的 scheme、主机、端口和路径由 IPrivateMediaOriginPolicy 再收紧。
                 return Task.FromResult(IsHttpScheme(uri));
 
             case ProviderNetworkScope.PublicInternet:

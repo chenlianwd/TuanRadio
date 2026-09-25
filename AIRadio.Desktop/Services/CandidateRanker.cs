@@ -302,6 +302,8 @@ public static class CandidateRanker
 
         return source.Trim().ToLowerInvariant() switch
         {
+            "local" or "local library" or "本地曲库" => 1.0,
+            "opensubsonic" => 1.0,
             "netease" or "网易" => 1.0,
             "kugou" or "酷狗" => 0.95,
             "kuwo" or "酷我" => 0.90,

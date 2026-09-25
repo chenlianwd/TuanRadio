@@ -14,10 +14,13 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - AI DJ 角色保留为名称、声音、人设提示和轻量头像动效。
 - 长期用户画像已落地并双链路消费（推荐 + DJ 聊天），本地文件级，不做云端数据库。
 - 天气、日历已交付（ClockStage 环境指示器）；歌词模式此前已交付；供应链校验、旧协议清理、本地化与对比度修正均已落地。
+- 本地曲库与 OpenSubsonic 已进入音源 Broker；支持无 Node 核心构建、裁剪代理包及设置页音源启停/排序。开放曲库、音质偏好和完整播放传输适配仍在计划中。
 - 剩余人工事项：发布前真实设备耐久验证（长时间在线播放、进程退出/内存观察、无输出设备/睡眠唤醒）。
 
 ## Recent Work
 
+- 音源架构阶段 2/3 增量（2026-09-25）：LocalLibraryProvider 将选定文件/文件夹索引到 `%APPDATA%\AIRadio\local-library.json`，支持搜索和手动重扫；OpenSubsonicProvider 使用系统安全存储保存配置，连接前 ping 验证，搜索/stream 保持配置的私有服务器来源；Broker 先排本地/私有源，设置页可启停并排序。`TuanRadioEnableNodeProviders=false` 生成不含 Node 代理目录的核心输出；正常构建裁剪酷狗路由并生成 `providers-manifest.json`。`IMusicProvider.ResolveAsync` 统一返回 `MediaResolutionResult`；后三首队列预检按代次取消并显示分类状态；音源诊断显示最近 20 次请求和熔断快照。网易云代理固定 4.32.0，兼容范围依赖已更新，但 `npm audit --omit=dev` 仍有 3 项上游告警（1 中危、2 高危）；酷狗生产依赖审计 0 项。自动化测试不替代真实设备验收。
+- 显式搜索页在快速源无结果时后台尝试 YouTube 等慢源；新搜索、修改搜索词和选择歌曲会取消旧请求，代次校验阻止迟到结果覆盖当前搜索。自动电台与播放恢复仍不启动慢源。
 - 视图重构 + 统一状态机落地：MainWindow 拆为 TitleBar/ClockStage/PlayerDeck/ChatArea/PlaylistDrawer/StatusBar/CharacterPicker UserControl，`RadioState` 状态机驱动 StatusBar。
 - Theme 全量 token 化：全部颜色走 `Themes/Colors.axaml`，Light/Dark 切换可用。
 - 真实 FFT 频谱：WasapiLoopbackCapture + FFT 替换模拟数据，驱动频谱与星空。
@@ -38,7 +41,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - DJ 聊天画像注入：GenerateChatResponseAsync 在历史快照副本的人设 system 尾部拼画像段（LLMService.BuildMessages 恒前置内置小音 system，双 system 合并是现状常态，注入不新增第三条；Take(1) 恒保首条 system 故长对话裁剪不丢）；口味段（digest+歌手+氛围）走冷启动门槛、黑名单避雷不走门槛；文案跟随 DJ 人设语言；拼接只在快照副本上，持久历史不落画像、角色切换 Initialize 重建无残留。
 - 音源体验增强：播放回退候选在身份匹配每遍内按时长接近度择优（ScoreFallbackCandidate：目标无时长取首个、候选缺时长记 -0.1，两遍次序与外层"高优先级源命中即停"不变——跨源不比时长是预算效率的有意取舍）；MusicSourceFailureKind 结构化分类（NotSignedIn/AuthExpired/RiskControl(20028)/ApiBroken/Unknown）由 MusicSourceBusinessException.Kind 携带，七处抛出点标注，经 SourceSearchStatus.FailureKind 透传（注意 AddSearchReport 脱敏重建必须保字段），搜索状态行按类型渲染；AuthExpired 文案须兼顾酷狗登录态失效与网易代理未就绪两类场景，风控文案注明自动验证仅播放路径且约 10 分钟冷却。
 - 天气/日历 + 耐久测试：ClockStage 角落环境指示器（WeatherService 走 Open-Meteo：设置页城市经 geocoding / 空 city 走 ip-api 定位，30 分钟缓存失败静默；ChineseCalendar 纯本地 BCL 农历 + 寿星公式节气 + 节日表，徽标节气/节日高亮，详情 Tooltip）；DurabilityTests 六场景（含真实 LibVLC 静音 WAV 四曲连播）。**Avalonia 编译器陷阱**：DataContext="{Binding VM}" 重定向 + 编译绑定组合会静默击穿程序集 XAML 预编译（ChatAreaMicButtonTests"找不到预编译 XAML"），ClockStage 指示器子树必须用 {Binding VM.X} 路径绑定，已注释锚定。
-- 产品化清理五件套：设置页音源逐源连接诊断（MultiSourceMusicService.DiagnoseAsync 独立 AsyncLocal 作用域报告不污染搜索状态，复用 FormatSourceStatus 分类渲染）；AI 控制协议旧文本尾标（【play:…】/【next】）从 ParseDjResponse 与两处 StripControlTags 移除，协议只认 JSON 控制块；弹层硬编码标题 SETTINGS/LIBRARY 迁 S_Settings/S_Library（VOL/LIVE 为复古电台设计元素有意保留英文）；Light 主题 WCAG 审计修正三处超标（提示字 #6A6478、LIVE 徽标 #146C4F、StatePlaying #0C6E4E，均 ≥4.5:1）；Node.js/yt-dlp 供应链校验确认已实现（EnvironmentManager 下载即 fail-closed 校验、YtdlpManager 固定版本+SHA256），技术债清单同步。
+- 产品化清理五件套：设置页音源逐源连接诊断（MusicSourceBroker.DiagnoseAsync 独立 AsyncLocal 作用域报告不污染搜索状态，复用 FormatSourceStatus 分类渲染）；AI 控制协议旧文本尾标（【play:…】/【next】）从 ParseDjResponse 与两处 StripControlTags 移除，协议只认 JSON 控制块；弹层硬编码标题 SETTINGS/LIBRARY 迁 S_Settings/S_Library（VOL/LIVE 为复古电台设计元素有意保留英文）；Light 主题 WCAG 审计修正三处超标（提示字 #6A6478、LIVE 徽标 #146C4F、StatePlaying #0C6E4E，均 ≥4.5:1）；Node.js/yt-dlp 供应链校验确认已实现（EnvironmentManager 下载即 fail-closed 校验、YtdlpManager 固定版本+SHA256），技术债清单同步。
 - 复古电台三大核心体验增强（A/C/D）：
   - **A 精简单行歌词**：CompactPlayer 行 1 荧光青绿单行动态歌词展示，无词/前奏平滑退回歌曲信息；支持单触点按切换、拖拽门限与双击还原撤销冲突；设置项 compact_show_lyrics 持久化。**双击手势时序坑（评审修复）**：Avalonia 的 Tapped/DoubleTapped 经 RouteFinished 在整条按下路由完成后才触发，且双击要求两次按下命中同一元素——歌词/信息两个子元素必须 IsHitTestVisible=False（否则单击切换歌词后第二次按下命中源改变，DoubleTapped 不触发、双击还原失效）；按下处理器不得重置 _lastInfoTappedToggle（否则撤销分支永远读到 false，双击展开会静默翻转设置）；OnExpandDoubleTapped 以 e.Source==TrackInfoArea 门控撤销（行内其它区域双击不得吞掉早前单击），并清 _infoPressed 防展开后游离 release 再翻转。CompactPlayerTrackInfoTests 三个 headless 场景锚定。浅色主题歌词色随 AccentGreen token 加深（#178A65→#0F6B57，SurfaceShell 上 4.24:1→6.3:1）。
   - **C 智能排重打分引擎**：CandidateRanker 多维评分（标题 35%、歌手 30%、时长逼近 20%、源优先级 15%）；非预期特殊版本强惩罚约束（伴奏 -0.7、翻唱 -0.6、DJ/加速 -0.5、Live -0.3）；贯通跨源回退、聚合搜索重排与推荐候选净化。聚合回退搜索为"先评分排序、后宽松去重"：合并阶段不去重（工作容量 3 倍，排序去重后截回 limit*2），否则同名副本中评分更高的那份会在排序前被源优先级去重丢掉；推荐过滤 IsUnwantedVersion 不含 Live（有意保留，避免误杀）。
@@ -51,7 +54,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 
 - `AudioService` 管理播放、TTS 播报与 `RadioSoundFxService` 调频音效。
 - `CandidateRanker` 负责歌曲搜索与跨源回退的规范化多维打分、版本冲突惩罚与智能排重。
-- `MusicSourceBroker`（`Services/Music/`）承接音源聚合：多源搜索编排、逐源状态报告（AsyncLocal 作用域）、跨源回退择优、连接诊断与熔断；五个音源以 `IMusicProvider` 契约经 `MusicSearchServiceAdapter` 接入；`MediaUriPolicy` 在全部播放解析路径收口校验 URL；`ResolvedMediaCache` 提供播放解析缓存（forceRefresh 供恢复链路绕过）。业务层依赖 `IMusicSourceBroker`，不得对聚合器做具体类型 cast。
+- `MusicSourceBroker`（`Services/Music/`）承接音源聚合：多源搜索编排、逐源状态报告（AsyncLocal 作用域）、跨源回退择优、连接诊断与熔断；本地曲库/OpenSubsonic 为原生 Provider，五个实验性音源经 `MusicSearchServiceAdapter` 接入；`MediaUriPolicy` 在播放解析路径收口校验初始 URL，`ResolvedMediaCache` 提供解析缓存，`PlaybackPreflightService` 检查后三首。业务层依赖 `IMusicSourceBroker`，不得对聚合器做具体类型 cast。
 - `PlaylistViewModel` 管理展示歌单、收藏和搜索结果。
 - `RecommendationService` 负责节目单候选生成、去重、可播状态和会话反馈。
 - `ListeningProfileService` 负责长期收听画像：事件采集/统计/持久化与 LLM 口味摘要，供 `RecommendationService` 跨会话消费。

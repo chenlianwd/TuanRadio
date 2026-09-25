@@ -35,7 +35,7 @@ public sealed class MusicSearchServiceAdapter : IMusicProvider
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken)
         => _inner.SearchAsync(keyword, limit, cancellationToken);
 
-    public async Task<ResolvedMedia?> ResolveAsync(
+    public async Task<MediaResolutionResult> ResolveAsync(
         ProviderTrackRef track,
         IReadOnlyDictionary<string, string>? providerMetadata,
         CancellationToken cancellationToken)
@@ -51,11 +51,28 @@ public sealed class MusicSearchServiceAdapter : IMusicProvider
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         };
 
-        var url = await _inner.GetPlayUrlAsync(carrier, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return null;
-
-        return new ResolvedMedia(track, uri);
+        try
+        {
+            var url = await _inner.GetPlayUrlAsync(carrier, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(url))
+                return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound);
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.TransportRejected);
+            return MediaResolutionResult.Playable(new ResolvedMedia(track, uri));
+        }
+        catch (MusicSourceBusinessException ex)
+        {
+            var failure = ex.Kind switch
+            {
+                MusicSourceFailureKind.NotSignedIn or MusicSourceFailureKind.AuthExpired => PlaybackFailureKind.AuthRequired,
+                MusicSourceFailureKind.RiskControl => PlaybackFailureKind.RiskVerificationRequired,
+                MusicSourceFailureKind.PreviewOnly => PlaybackFailureKind.PreviewOnly,
+                MusicSourceFailureKind.ApiBroken => PlaybackFailureKind.SourceUnavailable,
+                _ => PlaybackFailureKind.SourceUnavailable
+            };
+            return MediaResolutionResult.Failed(track.ProviderId, failure,
+                retryable: failure == PlaybackFailureKind.SourceUnavailable);
+        }
     }
 
     /// <summary>与原 FindSource 路由规则逐字一致的 ProviderId 派生（A3 回归锚点）。</summary>

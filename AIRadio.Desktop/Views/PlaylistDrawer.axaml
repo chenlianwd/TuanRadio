@@ -46,12 +46,21 @@
                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L14,18"/>
                     </Button>
                     <Button Width="32" Height="28" Padding="0" Command="{Binding OpenKugouPlaylistsCommand}"
+                            IsVisible="{Binding HasExperimentalProviders}"
                             ToolTip.Tip="{DynamicResource S_KugouPlaylistsTab}" AutomationProperties.Name="{DynamicResource S_KugouPlaylistsTab}"
                             FontFamily="Consolas" FontSize="10" FontWeight="700" Content="KG"/>
                     <Button Width="32" Height="28" Padding="0" Click="OnImportFiles"
                             ToolTip.Tip="{DynamicResource S_Import}" AutomationProperties.Name="{DynamicResource S_Import}">
                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,3 L12,15 M7,10 L12,15 L17,10 M5,21 L19,21"/>
                     </Button>
+                    <Button Width="32" Height="28" Padding="0" Click="OnImportFolder"
+                            IsEnabled="{Binding PlaylistVM.IsLocalLibraryScanning, Converter={StaticResource InverseBoolConverter}}"
+                            ToolTip.Tip="{DynamicResource S_ImportFolder}" AutomationProperties.Name="{DynamicResource S_ImportFolder}"
+                            Content="+📁"/>
+                    <Button Width="32" Height="28" Padding="0" Click="OnRescanLocalLibrary"
+                            IsEnabled="{Binding PlaylistVM.IsLocalLibraryScanning, Converter={StaticResource InverseBoolConverter}}"
+                            ToolTip.Tip="{DynamicResource S_RescanLocalLibrary}" AutomationProperties.Name="{DynamicResource S_RescanLocalLibrary}"
+                            Content="↻"/>
                 </StackPanel>
                 <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8"
                       IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
@@ -122,6 +131,10 @@
                            IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}"
                            Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
                            FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Grid.Row="3" Text="{Binding PlaylistVM.LocalLibraryStatus}"
+                           IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}"
+                           Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
+                           FontSize="11" TextWrapping="Wrap"/>
             </Grid>
 
             <Grid Grid.Row="2">
@@ -140,6 +153,9 @@
                                         <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
                                                    FontFamily="Consolas, Microsoft YaHei UI"
                                                    Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding PlayabilityText}" IsVisible="{Binding HasPlayability}"
+                                                   FontFamily="Microsoft YaHei UI" FontSize="10"
+                                                   Foreground="{DynamicResource C_FFFFC86B}"/>
                                     </StackPanel>
                                     <TextBlock Grid.Column="1" Text="{Binding Duration, StringFormat={}{0:m\\:ss}}"
                                                FontSize="11" FontFamily="Consolas"

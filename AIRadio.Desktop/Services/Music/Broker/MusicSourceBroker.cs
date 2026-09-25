@@ -31,6 +31,8 @@ public class MusicSourceBroker : IMusicSourceBroker
     private static readonly TimeSpan MinSourceBudget = TimeSpan.FromSeconds(1);
 
     private readonly IReadOnlyList<IMusicProvider> _providers;
+    private IMusicProvider[] _activeProviders = Array.Empty<IMusicProvider>();
+    public event EventHandler? ProviderConfigurationChanged;
     private readonly SourceHealthRegistry _healthRegistry = new();
     private readonly ResolvedMediaCache _mediaCache = new();
     private readonly object _reportGate = new();
@@ -42,8 +44,46 @@ public class MusicSourceBroker : IMusicSourceBroker
     // 逐源报告绑定到“发起搜索的异步上下文”，避免并发搜索互相覆盖状态。
     // 未设置时（直接调 SearchAsync 的旧路径）回落到共享的 _lastSearchReport。
     private static readonly AsyncLocal<List<SourceSearchStatus>?> CurrentSearchReport = new();
+    private static readonly AsyncLocal<ResolutionCapture?> CurrentResolutionCapture = new();
+
+    private sealed class ResolutionCapture
+    {
+        public PlaybackFailureKind Failure { get; private set; } = PlaybackFailureKind.NotFound;
+
+        public void Record(PlaybackFailureKind failure)
+        {
+            if (failure != PlaybackFailureKind.None &&
+                (Failure == PlaybackFailureKind.NotFound || failure != PlaybackFailureKind.NotFound))
+                Failure = failure;
+        }
+    }
 
     public string Name => "多平台聚合";
+
+    public IReadOnlyList<SourceHealthSnapshot> GetHealthSnapshots()
+        => _providers.Select(provider => _healthRegistry.Snapshot(provider.Descriptor.DisplayName)).ToArray();
+
+    public IReadOnlyList<MusicProviderDescriptor> GetProviderDescriptors()
+        => _providers.Select(provider => provider.Descriptor).ToArray();
+
+    public void ConfigureProviders(IReadOnlyList<string> orderedIds, IReadOnlyCollection<string> disabledIds)
+    {
+        var order = orderedIds.Select((id, index) => (id, index))
+            .Where(item => !string.IsNullOrWhiteSpace(item.id))
+            .GroupBy(item => item.id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        var disabled = new HashSet<string>(disabledIds, StringComparer.OrdinalIgnoreCase);
+        var active = _providers.Select((provider, index) => (provider, index))
+            .Where(item => !disabled.Contains(item.provider.Descriptor.Id))
+            .OrderBy(item => order.TryGetValue(item.provider.Descriptor.Id, out var rank) ? rank : int.MaxValue)
+            .ThenBy(item => item.index)
+            .Select(item => item.provider)
+            .ToArray();
+        foreach (var id in disabled)
+            _mediaCache.ClearProvider(id);
+        Volatile.Write(ref _activeProviders, active);
+        ProviderConfigurationChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     /// <summary>最近一次搜索的各源状态（供 UI 透传具体失败原因）。
     /// 注意并发搜索下这是“最后一次旧式调用”的快照；需要精确归属请用 <see cref="SearchWithReportAsync"/>。</summary>
@@ -82,6 +122,34 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
     }
 
+    public Task<SearchOutcome> SearchFastWithReportAsync(string keyword, int limit, CancellationToken cancellationToken)
+        => SearchInReportScopeAsync(() => SearchCoreAsync(
+            keyword, limit, MusicSearchIntent.Explicit, cancellationToken, includeSlow: false));
+
+    public Task<SearchOutcome> SearchSlowWithReportAsync(string keyword, int limit, CancellationToken cancellationToken)
+        => SearchInReportScopeAsync(async () =>
+        {
+            var results = await SearchSlowProvidersAsync(keyword, limit, cancellationToken);
+            return RankResults(results, keyword, limit);
+        });
+
+    private async Task<SearchOutcome> SearchInReportScopeAsync(Func<Task<List<OnlineTrack>>> search)
+    {
+        var previous = CurrentSearchReport.Value;
+        var report = new List<SourceSearchStatus>();
+        CurrentSearchReport.Value = report;
+        try
+        {
+            var tracks = await search();
+            lock (_reportGate)
+                return new SearchOutcome(tracks, report.ToArray());
+        }
+        finally
+        {
+            CurrentSearchReport.Value = previous;
+        }
+    }
+
     /// <summary>
     /// 设置页逐源连接诊断：按源序独立探测（limit 1 的轻量搜索），复用逐源状态与
     /// 结构化失败分类（含熔断/超时/业务失败 Kind）。报告走独立作用域，
@@ -96,6 +164,18 @@ public class MusicSourceBroker : IMusicSourceBroker
             foreach (var provider in _providers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!Volatile.Read(ref _activeProviders).Contains(provider))
+                {
+                    AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
+                        "disabled", 0, AppLanguage.T("已在设置中停用", "Disabled in settings")));
+                    continue;
+                }
+                if (provider is OpenSubsonicProvider { IsConfigured: false })
+                {
+                    AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
+                        "disabled", 0, AppLanguage.T("尚未配置服务器", "Server not configured")));
+                    continue;
+                }
                 // 慢源（yt-dlp 子进程）给独立短预算：诊断是手动触发，总时长需有界
                 var budget = provider.Descriptor.IsSlowSource ? TimeSpan.FromSeconds(10) : SourceTimeout;
                 await SearchWithFallback(provider, "周杰伦", 1, budget, cancellationToken);
@@ -111,7 +191,11 @@ public class MusicSourceBroker : IMusicSourceBroker
 
     /// <summary>按 Provider 列表组装（数组顺序即源优先级）。</summary>
     public MusicSourceBroker(params IMusicProvider[] providers)
-        => _providers = providers.ToList();
+    {
+        _providers = providers.ToList();
+        _activeProviders = _providers.ToArray();
+        SubscribeToPrivateProviders(_providers);
+    }
 
     public MusicSourceBroker(HttpClient httpClient, params IMusicSearchService[] extraSources)
         : this(httpClient, accounts: null, extraSources)
@@ -126,15 +210,24 @@ public class MusicSourceBroker : IMusicSourceBroker
     /// <summary>与原 MultiSourceMusicService 兼容的默认五源组装（自壳构造函数平移）。</summary>
     public MusicSourceBroker(HttpClient httpClient, MusicAccountStore? accounts,
         KugouVerificationService? kugouVerification, params IMusicSearchService[] extraSources)
+        : this(httpClient, accounts, kugouVerification, Array.Empty<IMusicProvider>(), extraSources)
+    {
+    }
+
+    /// <summary>生产组合根可将本地曲库和用户配置的私有服务器排在在线源前面。</summary>
+    public MusicSourceBroker(HttpClient httpClient, MusicAccountStore? accounts,
+        KugouVerificationService? kugouVerification, IEnumerable<IMusicProvider> preferredProviders,
+        params IMusicSearchService[] extraSources)
     {
         var kugouSource = new KugouMusicService(httpClient, accounts, kugouVerification);
         var neteaseProvider = new MusicSearchServiceAdapter(new NeteaseMusicService(httpClient, accounts));
         var kugouProvider = new MusicSearchServiceAdapter(kugouSource);
-        var providers = new List<IMusicProvider>
+        var providers = new List<IMusicProvider>(preferredProviders)
         {
             neteaseProvider,
             kugouProvider
         };
+        SubscribeToPrivateProviders(providers);
         if (accounts != null)
         {
             // 凭据变化：重置酷狗熔断（订阅归属随聚合体落在 Broker，docs/plans §3.5）+
@@ -158,6 +251,13 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
         providers.AddRange(extraSources.Select(source => new MusicSearchServiceAdapter(source))); // YouTube 等额外源作为最低优先级
         _providers = providers;
+        _activeProviders = _providers.ToArray();
+    }
+
+    private void SubscribeToPrivateProviders(IEnumerable<IMusicProvider> providers)
+    {
+        foreach (var privateProvider in providers.OfType<OpenSubsonicProvider>())
+            privateProvider.ConfigurationChanged += (_, _) => _mediaCache.ClearProvider(privateProvider.Descriptor.Id);
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
@@ -169,11 +269,19 @@ public class MusicSourceBroker : IMusicSourceBroker
         CancellationToken cancellationToken)
         => SearchAsync(keyword, limit, MusicSearchIntent.Explicit, cancellationToken);
 
-    public async Task<List<OnlineTrack>> SearchAsync(
+    public Task<List<OnlineTrack>> SearchAsync(
         string keyword,
         int limit,
         MusicSearchIntent intent,
         CancellationToken cancellationToken)
+        => SearchCoreAsync(keyword, limit, intent, cancellationToken, includeSlow: true);
+
+    private async Task<List<OnlineTrack>> SearchCoreAsync(
+        string keyword,
+        int limit,
+        MusicSearchIntent intent,
+        CancellationToken cancellationToken,
+        bool includeSlow)
     {
         lock (_reportGate)
         {
@@ -184,6 +292,9 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        var providers = Volatile.Read(ref _activeProviders);
+        // 慢源即使被用户排到最前，也只能在显式搜索的独立预算阶段执行。
+        var fastProviders = providers.Where(provider => !provider.Descriptor.IsSlowSource).ToArray();
         // 快速源优先使用 8s 整体 deadline；后续慢源只能使用其剩余部分
         var deadline = DateTimeOffset.UtcNow + SearchOverallDeadline;
         using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -192,7 +303,7 @@ public class MusicSourceBroker : IMusicSourceBroker
         var merged = new List<OnlineTrack>();
         try
         {
-            var primary = _providers.FirstOrDefault();
+            var primary = fastProviders.FirstOrDefault();
             if (primary != null)
             {
                 var primaryResults = await SearchWithFallback(
@@ -226,8 +337,7 @@ public class MusicSourceBroker : IMusicSourceBroker
             var fallbackBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
             if (fallbackBudget >= MinSourceBudget)
             {
-                var tasks = _providers.Skip(1)
-                    .Where(p => !p.Descriptor.IsSlowSource)
+                var tasks = fastProviders.Skip(1)
                     .Select(p => SearchWithFallback(
                         p,
                         keyword,
@@ -262,41 +372,43 @@ public class MusicSourceBroker : IMusicSourceBroker
 
         // 慢源只允许显式用户操作进入。自动电台/DJ 推荐即使快速源为空也必须立即返回，
         // 否则 30s 搜索与 30s URL 解析会顶满下一首回调的 60s 上限。
-        if (merged.Count == 0 && intent == MusicSearchIntent.Explicit)
-        {
-            var slowDeadline = DateTimeOffset.UtcNow + SlowSourceTimeout;
-            foreach (var slowProvider in _providers.Where(p => p.Descriptor.IsSlowSource))
-            {
-                var slowBudget = CapBudget(SlowSourceTimeout, RemainingBudget(slowDeadline));
-                if (slowBudget < MinSourceBudget)
-                {
-                    Log.Debug("Slow source budget exhausted for '{Keyword}'", keyword);
-                    break;
-                }
-
-                var slowResults = await SearchWithFallback(
-                    slowProvider,
-                    keyword,
-                    limit,
-                    slowBudget,
-                    cancellationToken);
-                if (slowResults.Count > 0)
-                {
-                    merged.AddRange(slowResults.Take(limit * 2));
-                    break;
-                }
-            }
-        }
+        if (merged.Count == 0 && intent == MusicSearchIntent.Explicit && includeSlow)
+            merged.AddRange(await SearchSlowProvidersAsync(keyword, limit, cancellationToken));
 
         // 基于 CandidateRanker 智能重排聚合搜索结果（低分与非预期版本后置），
         // 再做智能跨源去重（每组宽松同曲身份保留评分最高的副本）并截回上限
-        merged = CandidateRanker.DeduplicateTracks(
-                CandidateRanker.RankSearchResults(merged, keyword))
-            .Take(limit * 2)
-            .ToList();
+        merged = RankResults(merged, keyword, limit);
         Log.Information("Music search '{Keyword}' returned {Count} fallback result(s)", keyword, merged.Count);
         return merged;
     }
+
+    private async Task<List<OnlineTrack>> SearchSlowProvidersAsync(
+        string keyword, int limit, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var slowDeadline = DateTimeOffset.UtcNow + SlowSourceTimeout;
+        foreach (var slowProvider in Volatile.Read(ref _activeProviders).Where(p => p.Descriptor.IsSlowSource))
+        {
+            var slowBudget = CapBudget(SlowSourceTimeout, RemainingBudget(slowDeadline));
+            if (slowBudget < MinSourceBudget)
+            {
+                Log.Debug("Slow source budget exhausted for '{Keyword}'", keyword);
+                break;
+            }
+
+            var slowResults = await SearchWithFallback(
+                slowProvider, keyword, limit, slowBudget, cancellationToken);
+            if (slowResults.Count > 0)
+                return slowResults.Take(limit * 2).ToList();
+        }
+        return new List<OnlineTrack>();
+    }
+
+    private static List<OnlineTrack> RankResults(IEnumerable<OnlineTrack> results, string keyword, int limit)
+        => CandidateRanker.DeduplicateTracks(
+                CandidateRanker.RankSearchResults(results.ToList(), keyword))
+            .Take(limit * 2)
+            .ToList();
 
     public Task<string?> GetPlayUrlAsync(string trackId)
         => GetPlayUrlAsync(trackId, CancellationToken.None);
@@ -307,6 +419,9 @@ public class MusicSourceBroker : IMusicSourceBroker
         var deadline = DateTimeOffset.UtcNow + ResolveOverallDeadline;
         // trackId format: "source:id"：Descriptor.Id OrdinalIgnoreCase 匹配（自 FindSource 平移改写）
         var prefixedProvider = FindProvider(trackId);
+        if (prefixedProvider == null && trackId.Contains(':') &&
+            _providers.Any(provider => trackId.StartsWith(provider.Descriptor.Id + ":", StringComparison.OrdinalIgnoreCase)))
+            return null;
         if (prefixedProvider != null)
         {
             var budget = prefixedProvider.Descriptor.IsSlowSource
@@ -318,7 +433,7 @@ public class MusicSourceBroker : IMusicSourceBroker
 
         // Try all sources：无前缀时才逐源尝试，且必须剥离可能存在的前缀，
         // 否则 "kugou:abc" 整串被喂给网易等源拼出无意义请求
-        foreach (var provider in _providers)
+        foreach (var provider in Volatile.Read(ref _activeProviders))
         {
             var budget = CapBudget(SourceTimeout, RemainingBudget(deadline));
             if (budget < MinSourceBudget)
@@ -366,6 +481,22 @@ public class MusicSourceBroker : IMusicSourceBroker
             : BuildResolveResult(url, track, beforeId);
     }
 
+    public async Task<PlaybackResolutionOutcome> ResolveTrackDetailedAsync(
+        OnlineTrack track, bool forceRefresh, CancellationToken cancellationToken)
+    {
+        var previous = CurrentResolutionCapture.Value;
+        var capture = new ResolutionCapture();
+        CurrentResolutionCapture.Value = capture;
+        try
+        {
+            var result = await ResolveTrackAsync(track, forceRefresh, cancellationToken).ConfigureAwait(false);
+            return result == null
+                ? new PlaybackResolutionOutcome(null, capture.Failure)
+                : new PlaybackResolutionOutcome(result, PlaybackFailureKind.None);
+        }
+        finally { CurrentResolutionCapture.Value = previous; }
+    }
+
     /// <summary>曲目解析缓存漏斗：命中直接返回；forceRefresh 读跳过且解析前逐出；
     /// 回退结果不入缓存（缓存命中不重放身份回写，防"Id 指向 A 源/URL 是 B 源直链"错位）。</summary>
     private async Task<string?> GetPlayUrlCoreAsync(
@@ -376,7 +507,10 @@ public class MusicSourceBroker : IMusicSourceBroker
         var inputKey = ProviderTrackRef.FromSourceId(track.Id);
         if (inputKey != null)
         {
-            if (!forceRefresh && _mediaCache.TryGet(inputKey, out var cached) && cached != null)
+            if (!forceRefresh &&
+                Volatile.Read(ref _activeProviders).Any(provider =>
+                    provider.Descriptor.Id.Equals(inputKey.ProviderId, StringComparison.OrdinalIgnoreCase)) &&
+                _mediaCache.TryGet(inputKey, out var cached) && cached != null)
                 return cached.Url;
             if (forceRefresh)
                 _mediaCache.Evict(inputKey);
@@ -397,7 +531,9 @@ public class MusicSourceBroker : IMusicSourceBroker
                 preferredId,
                 track.ProviderMetadata,
                 preferredBudget,
-                cancellationToken);
+                  cancellationToken);
+            if (!Volatile.Read(ref _activeProviders).Contains(preferred))
+                url = null;
         }
 
         var beforeId = track.Id;
@@ -447,7 +583,7 @@ public class MusicSourceBroker : IMusicSourceBroker
 
         // 快速源共享同一段搜索预算并发查询；仍按 _providers 的既定优先级选择候选。
         // 这样单个坏源不会在串行链路里吃光总预算，同时不改变正常情况下的选源顺序。
-        var fastSources = _providers
+        var fastSources = Volatile.Read(ref _activeProviders)
             .Where(provider => !ReferenceEquals(provider, excludedProvider) && !provider.Descriptor.IsSlowSource)
             .ToArray();
         var fastSearchBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
@@ -603,6 +739,14 @@ public class MusicSourceBroker : IMusicSourceBroker
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        if (!Volatile.Read(ref _activeProviders).Contains(provider))
+            return new List<OnlineTrack>();
+        if (provider is OpenSubsonicProvider { IsConfigured: false })
+        {
+            AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
+                "disabled", 0, AppLanguage.T("尚未配置服务器", "Server not configured")));
+            return new List<OnlineTrack>();
+        }
         if (!_healthRegistry.CanRequest(provider.Descriptor.DisplayName, out var remaining))
         {
             var note = AppLanguage.T(
@@ -619,21 +763,23 @@ public class MusicSourceBroker : IMusicSourceBroker
         {
             var list = await provider.SearchAsync(keyword, limit, timeoutCts.Token)
                 .WaitAsync(timeout, cancellationToken);
-            _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName);
+            if (!Volatile.Read(ref _activeProviders).Contains(provider))
+                return new List<OnlineTrack>();
+            _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName, SourceOperation.Search);
             AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName, "ok", list.Count, null));
             return list;
         }
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
-            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName);
+            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Search);
             AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName, "timeout", 0, AppLanguage.T($"超时({timeout.TotalSeconds}s)", $"timed out ({timeout.TotalSeconds}s)")));
             Log.Warning("Source {Name} search timed out after {Seconds}s", provider.Descriptor.DisplayName, timeout.TotalSeconds);
             return new List<OnlineTrack>();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName);
+            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Search);
             AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName, "timeout", 0, AppLanguage.T($"超时({timeout.TotalSeconds}s)", $"timed out ({timeout.TotalSeconds}s)")));
             Log.Warning("Source {Name} search timed out after {Seconds}s", provider.Descriptor.DisplayName, timeout.TotalSeconds);
             return new List<OnlineTrack>();
@@ -644,7 +790,7 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
         catch (Exception ex)
         {
-            RecordSourceOutcome(provider.Descriptor.DisplayName, ex);
+            RecordSourceOutcome(provider.Descriptor.DisplayName, ex, SourceOperation.Search);
             AddSearchReport(new SourceSearchStatus(
                 provider.Descriptor.DisplayName, "failed", 0, ex.Message, FailureKind: ClassifyFailure(ex)));
             Log.Warning(ex, "Source {Name} search failed", provider.Descriptor.DisplayName);
@@ -698,6 +844,8 @@ public class MusicSourceBroker : IMusicSourceBroker
         TimeSpan budget,
         CancellationToken cancellationToken)
     {
+        if (!Volatile.Read(ref _activeProviders).Contains(provider))
+            return new List<OnlineTrack>();
         if (!_healthRegistry.CanRequest(provider.Descriptor.DisplayName, out var remaining))
         {
             Log.Debug(
@@ -713,19 +861,21 @@ public class MusicSourceBroker : IMusicSourceBroker
         {
             var results = await provider.SearchAsync(query, 5, timeoutCts.Token)
                 .WaitAsync(budget, cancellationToken);
-            _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName);
+            if (!Volatile.Read(ref _activeProviders).Contains(provider))
+                return new List<OnlineTrack>();
+            _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName, SourceOperation.Search);
             return results;
         }
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
-            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName);
+            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Search);
             Log.Debug("Playback fallback search timed out for source {Source}", provider.Descriptor.DisplayName);
             return new List<OnlineTrack>();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName);
+            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Search);
             Log.Debug("Playback fallback search timed out for source {Source}", provider.Descriptor.DisplayName);
             return new List<OnlineTrack>();
         }
@@ -735,7 +885,7 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
         catch (Exception ex)
         {
-            RecordSourceOutcome(provider.Descriptor.DisplayName, ex);
+            RecordSourceOutcome(provider.Descriptor.DisplayName, ex, SourceOperation.Search);
             Log.Debug(ex, "Playback fallback search failed for source {Source}", provider.Descriptor.DisplayName);
             return new List<OnlineTrack>();
         }
@@ -754,8 +904,11 @@ public class MusicSourceBroker : IMusicSourceBroker
         TimeSpan budget,
         CancellationToken cancellationToken)
     {
+        if (!Volatile.Read(ref _activeProviders).Contains(provider))
+            return null;
         if (!_healthRegistry.CanRequest(provider.Descriptor.DisplayName, out var remaining))
         {
+            CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.SourceUnavailable);
             Log.Debug("Source {Name} play URL skipped while circuit is open for {Seconds}s", provider.Descriptor.DisplayName, remaining.TotalSeconds);
             return null;
         }
@@ -764,15 +917,24 @@ public class MusicSourceBroker : IMusicSourceBroker
         timeoutCts.CancelAfter(budget);
         try
         {
-            var media = await provider.ResolveAsync(
+            var resolution = await provider.ResolveAsync(
                     new ProviderTrackRef(provider.Descriptor.Id, bareTrackId),
                     metadata,
                     timeoutCts.Token)
-                .WaitAsync(budget, cancellationToken);
-            _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName);
-            if (media == null)
+                  .WaitAsync(budget, cancellationToken);
+            if (!Volatile.Read(ref _activeProviders).Contains(provider))
                 return null;
-
+            var media = resolution.Media;
+            if (media == null)
+            {
+                CurrentResolutionCapture.Value?.Record(resolution.Failure);
+                if (resolution.Failure is PlaybackFailureKind.SourceUnavailable or PlaybackFailureKind.Timeout)
+                    _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Resolution);
+                else
+                    // 曲目不存在、需登录或仅试听仍说明接口有正常响应，不能延续传输故障熔断计数。
+                    _healthRegistry.RecordBusinessResponse(provider.Descriptor.DisplayName);
+                return null;
+            }
             // 播放 URL 进 LibVLC 前统一过 MediaUriPolicy（docs/plans §3.4）：
             // 本处是全部解析路径的收口点（id 级/曲目级/跨源回退/可播性探针都经此）。
             // 拒绝不记熔断（策略事件不是音源健康事件），按"无可播地址"处理让回退链继续。
@@ -788,6 +950,7 @@ public class MusicSourceBroker : IMusicSourceBroker
             }
             catch (TimeoutException)
             {
+                CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.Timeout);
                 timeoutCts.Cancel();
                 Log.Warning(
                     "Source {Name} play URL policy check timed out after {Seconds}s for {Id}",
@@ -796,6 +959,7 @@ public class MusicSourceBroker : IMusicSourceBroker
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
+                CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.Timeout);
                 // 常态路径：timeoutCts（方法入口武装）先于 WaitAsync 自己的计时器触发，
                 // DNS 尊重 token 时抛出的是 OCE 而非 TimeoutException。
                 // 策略校验超时不是音源健康事件，同样不记熔断。
@@ -807,24 +971,39 @@ public class MusicSourceBroker : IMusicSourceBroker
 
             if (!allowed)
             {
-                Log.Warning(
-                    "Provider {Name} play URL rejected by MediaUriPolicy for {Id}: {Uri}",
-                    provider.Descriptor.DisplayName, bareTrackId, media.Uri);
+                CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.TransportRejected);
+                Log.Warning("Provider {Name} play URL rejected by MediaUriPolicy for {Id}",
+                    provider.Descriptor.DisplayName, bareTrackId);
                 return null;
             }
 
-            return media.RawUrl;
+            if (provider.Descriptor.NetworkScope == ProviderNetworkScope.UserConfiguredPrivateNetwork &&
+                (provider is not IPrivateMediaOriginPolicy privateOrigin ||
+                 !privateOrigin.IsAllowedMediaUri(media.Uri)))
+            {
+                CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.TransportRejected);
+                Log.Warning("Provider {Name} play URL is outside configured server for {Id}",
+                    provider.Descriptor.DisplayName, bareTrackId);
+                return null;
+            }
+
+            _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName, SourceOperation.Resolution);
+            return provider.Descriptor.NetworkScope == ProviderNetworkScope.LocalFileOnly
+                ? media.Uri.LocalPath
+                : media.RawUrl;
         }
         catch (TimeoutException)
         {
+            CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.Timeout);
             timeoutCts.Cancel();
-            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName);
+            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Resolution);
             Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", provider.Descriptor.DisplayName, budget.TotalSeconds, bareTrackId);
             return null;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName);
+            CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.Timeout);
+            _healthRegistry.RecordTransportFailure(provider.Descriptor.DisplayName, SourceOperation.Resolution);
             Log.Warning("Source {Name} play URL timed out after {Seconds}s for {Id}", provider.Descriptor.DisplayName, budget.TotalSeconds, bareTrackId);
             return null;
         }
@@ -834,19 +1013,20 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
         catch (Exception ex)
         {
-            RecordSourceOutcome(provider.Descriptor.DisplayName, ex);
+            CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.SourceUnavailable);
+            RecordSourceOutcome(provider.Descriptor.DisplayName, ex, SourceOperation.Resolution);
             Log.Debug(ex, "Source {Name} play URL failed for {Id}", provider.Descriptor.DisplayName, bareTrackId);
             return null;
         }
     }
 
-    private void RecordSourceOutcome(string sourceName, Exception exception)
+    private void RecordSourceOutcome(string sourceName, Exception exception, SourceOperation operation)
     {
         // 业务拒绝仍证明请求/响应链路健康，应打断此前的连续传输失败计数。
         if (exception is MusicSourceBusinessException)
-            _healthRegistry.RecordSuccess(sourceName);
+            _healthRegistry.RecordBusinessResponse(sourceName);
         else
-            _healthRegistry.RecordTransportFailure(sourceName);
+            _healthRegistry.RecordTransportFailure(sourceName, operation);
     }
 
     private static MusicSourceFailureKind ClassifyFailure(Exception exception)
@@ -865,7 +1045,7 @@ public class MusicSourceBroker : IMusicSourceBroker
         if (parts.Length != 2)
             return null;
 
-        return _providers.FirstOrDefault(p =>
+        return Volatile.Read(ref _activeProviders).FirstOrDefault(p =>
             p.Descriptor.Id.Equals(parts[0], StringComparison.OrdinalIgnoreCase));
     }
 

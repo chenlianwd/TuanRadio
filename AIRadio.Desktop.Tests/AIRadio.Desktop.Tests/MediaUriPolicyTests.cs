@@ -41,6 +41,12 @@ public class MediaUriPolicyTests
     public async Task PublicInternet_NonHttpScheme_Rejected(string url)
         => Assert.False(await Validate(ProviderNetworkScope.PublicInternet, url));
 
+    [Theory]
+    [InlineData(ProviderNetworkScope.PublicInternet, "https://alice:secret@media.example.com/song.mp3")]
+    [InlineData(ProviderNetworkScope.UserConfiguredPrivateNetwork, "http://alice:secret@127.0.0.1:4533/rest/stream.view")]
+    public async Task EmbeddedCredentials_Rejected(ProviderNetworkScope scope, string url)
+        => Assert.False(await Validate(scope, url));
+
     [Fact]
     public async Task PublicInternet_IpLiteralForbiddenRanges_RejectedWithoutDns()
     {

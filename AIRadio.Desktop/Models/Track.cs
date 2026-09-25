@@ -2,8 +2,18 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 
 namespace AIRadio.Desktop.Models;
+
+public enum TrackPlayability
+{
+    Unchecked,
+    Checking,
+    Playable,
+    Limited,
+    Failed
+}
 
 // Track is intentionally mutable — instances are owned by ViewModels and mutated in-place
 // for performance (e.g., IsFavorite toggle, FilePath URL refresh). Converting to a record
@@ -17,6 +27,8 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     private bool _isFavorite;
+    private TrackPlayability _playability;
+    private PlaybackFailureKind _playbackFailure;
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
@@ -30,6 +42,66 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     /// 不得放入 Cookie、token 或带签名的临时 URL。
     /// </summary>
     public Dictionary<string, string> ProviderMetadata { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TrackPlayability Playability
+    {
+        get => _playability;
+        set
+        {
+            if (_playability == value) return;
+            _playability = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Playability)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasPlayability)));
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(PlayabilityText)));
+        }
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasPlayability => Playability != TrackPlayability.Unchecked;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public PlaybackFailureKind PlaybackFailure => _playbackFailure;
+
+    public void SetPlaybackFailure(PlaybackFailureKind failure)
+    {
+        _playbackFailure = failure;
+        Playability = failure switch
+        {
+            PlaybackFailureKind.None => TrackPlayability.Playable,
+            PlaybackFailureKind.PreviewOnly or PlaybackFailureKind.SubscriptionRequired or
+                PlaybackFailureKind.PurchaseRequired or PlaybackFailureKind.RegionRestricted or
+                PlaybackFailureKind.AuthRequired or PlaybackFailureKind.RiskVerificationRequired
+                => TrackPlayability.Limited,
+            _ => TrackPlayability.Failed
+        };
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(PlayabilityText)));
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string PlayabilityText => Playability switch
+    {
+        TrackPlayability.Checking => AppLanguage.T("检查中", "Checking"),
+        TrackPlayability.Playable => AppLanguage.T("可播放", "Playable"),
+        TrackPlayability.Limited => PlaybackFailure switch
+        {
+            PlaybackFailureKind.PreviewOnly => AppLanguage.T("仅试听", "Preview only"),
+            PlaybackFailureKind.SubscriptionRequired => AppLanguage.T("需要会员", "Subscription required"),
+            PlaybackFailureKind.PurchaseRequired => AppLanguage.T("需要单独购买", "Purchase required"),
+            PlaybackFailureKind.RegionRestricted => AppLanguage.T("地区受限", "Region restricted"),
+            PlaybackFailureKind.AuthRequired => AppLanguage.T("需要登录", "Sign in required"),
+            PlaybackFailureKind.RiskVerificationRequired => AppLanguage.T("需要安全验证", "Verification required"),
+            _ => AppLanguage.T("播放受限", "Restricted")
+        },
+        TrackPlayability.Failed => PlaybackFailure switch
+        {
+            PlaybackFailureKind.Timeout => AppLanguage.T("音源超时", "Source timed out"),
+            PlaybackFailureKind.TransportRejected => AppLanguage.T("地址不安全", "Unsafe media address"),
+            PlaybackFailureKind.NotFound => AppLanguage.T("未找到音频", "Media not found"),
+            _ => AppLanguage.T("暂不可播", "Unavailable")
+        },
+        _ => string.Empty
+    };
 
     public bool IsFavorite
     {
@@ -87,6 +159,7 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DisplayArtist)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(DisplayAlbum)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(PlayabilityText)));
     }
 
     public override string ToString() => $"{Title} - {DisplayArtist}";

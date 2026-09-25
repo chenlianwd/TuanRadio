@@ -19,8 +19,10 @@ namespace AIRadio.Desktop;
 public partial class App : Application
 {
     private IServiceProvider? _serviceProvider;
+#if !TUANRADIO_SLIM_CORE
     private MusicApiServer? _musicApiServer;
     private MusicApiServer? _kugouApiServer;
+#endif
     private MainWindowViewModel? _mainVm;
     private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
@@ -83,6 +85,7 @@ public partial class App : Application
 
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
+#if !TUANRADIO_SLIM_CORE
                 // 网易代理上游默认反射任意 Origin：固定 CORS 封死浏览器跨域访问本地端口
                 _musicApiServer = new MusicApiServer(
                     environmentFactory: () => MusicApiServer.RestrictedCorsEnvironment);
@@ -97,6 +100,7 @@ public partial class App : Application
                     logTag: "KugouApi",
                     // 工厂在 StartAsync 前求值；此时 MusicAccountStore.LoadAsync 已恢复稳定设备身份。
                     environmentFactory: musicAccounts.GetKugouProxyEnvironment);
+#endif
                 _initializationTask = StartMusicAndInitializeAsync(_lifetimeCts.Token);
 
                 Log.Information("AI Radio shell started successfully");
@@ -140,6 +144,7 @@ public partial class App : Application
                 }
             }
 
+#if !TUANRADIO_SLIM_CORE
             // 两个本地代理彼此独立并行启动：网易健康检查可能因外网响应较慢，
             // 不应把酷狗歌单请求留在端口尚未监听的窗口中。歌单服务自身仍有
             // 有限重试，覆盖 Node 进程刚创建但尚未开始监听的极短竞态。
@@ -147,6 +152,7 @@ public partial class App : Application
                                   ?? Task.CompletedTask;
             var kugouServerTask = StartKugouApiAsync(cancellationToken);
             await Task.WhenAll(musicServerTask, kugouServerTask);
+#endif
 
             cancellationToken.ThrowIfCancellationRequested();
             // 会话开场（欢迎语/开播推荐/账号昵称）依赖音源代理就绪，放在代理之后
@@ -155,6 +161,7 @@ public partial class App : Application
 
             Log.Information("AI Radio initialized successfully");
 
+#if !TUANRADIO_SLIM_CORE
             // yt-dlp 首次下载约 20s，若发生在搜索兜底时会吃掉 YouTube 源的 30s 预算导致必然超时；
             // 启动后台预热，失败只记日志，真正用到 YouTube 时仍会按需重试
             try
@@ -168,6 +175,7 @@ public partial class App : Application
             {
                 Log.Warning(ex, "yt-dlp prewarm failed");
             }
+#endif
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -179,6 +187,7 @@ public partial class App : Application
         }
     }
 
+#if !TUANRADIO_SLIM_CORE
     private async Task StartKugouApiAsync(CancellationToken cancellationToken)
     {
         if (_kugouApiServer == null)
@@ -198,6 +207,7 @@ public partial class App : Application
             Log.Warning(ex, "Kugou API server startup failed");
         }
     }
+#endif
 
     private void ConfigureServices(IServiceCollection services)
     {
@@ -211,8 +221,16 @@ public partial class App : Application
             new MusicAccountStore(sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton(sp =>
             new KugouVerificationService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<Services.Music.LocalLibraryProvider>();
+        services.AddSingleton<Services.Music.OpenSubsonicProvider>(sp =>
+            new Services.Music.OpenSubsonicProvider(sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<Services.Music.MusicSourceBroker>(sp =>
         {
+#if TUANRADIO_SLIM_CORE
+            return new Services.Music.MusicSourceBroker(
+                sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
+                sp.GetRequiredService<Services.Music.OpenSubsonicProvider>());
+#else
             var accounts = sp.GetRequiredService<MusicAccountStore>();
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
             var ytSource = new YouTubeMusicService(ytdlpPath, accounts);
@@ -220,7 +238,13 @@ public partial class App : Application
                 sp.GetRequiredService<System.Net.Http.HttpClient>(),
                 accounts,
                 sp.GetRequiredService<KugouVerificationService>(),
+                new Services.Music.IMusicProvider[]
+                {
+                    sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
+                    sp.GetRequiredService<Services.Music.OpenSubsonicProvider>()
+                },
                 ytSource);
+#endif
         });
         // 双接口指向同一 Broker 实例（docs/plans 2026-09-20 §3.3）
         services.AddSingleton<IMusicSearchService>(
@@ -260,7 +284,9 @@ public partial class App : Application
             kugouVerification: sp.GetRequiredService<KugouVerificationService>(),
             lyricService: sp.GetRequiredService<ILyricService>(),
             listeningProfile: sp.GetRequiredService<IListeningProfileService>(),
-            weatherService: sp.GetRequiredService<IWeatherService>()));
+            weatherService: sp.GetRequiredService<IWeatherService>(),
+            localLibrary: sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
+            openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
@@ -268,8 +294,10 @@ public partial class App : Application
         Log.Information("AI Radio shutting down...");
         _lifetimeCts.Cancel();
         _mainVm?.Dispose();
+#if !TUANRADIO_SLIM_CORE
         _kugouApiServer?.Dispose();
         _musicApiServer?.Dispose();
+#endif
         (_serviceProvider as IDisposable)?.Dispose();
         Log.CloseAndFlush();
     }

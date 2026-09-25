@@ -20,7 +20,10 @@ public sealed record ResolvedMedia(
     Uri Uri,
     DateTimeOffset? ExpiresAt = null,
     PlaybackHeaders? Headers = null,
-    bool IsPreview = false)
+    bool IsPreview = false,
+    string? Codec = null,
+    string? Container = null,
+    int? BitrateKbps = null)
 {
     /// <summary>解析得到的原始 URL 字符串，与音源返回逐字一致。</summary>
     public string RawUrl => Uri.OriginalString;
@@ -37,3 +40,8 @@ public sealed record ResolveTrackResult(
     string SourceName,
     IReadOnlyDictionary<string, string> ProviderMetadata,
     bool FellBack = false);
+
+/// <summary>Broker 聚合解析的最终状态；预检只消费分类，不保存播放 URL。</summary>
+public sealed record PlaybackResolutionOutcome(
+    ResolveTrackResult? Track,
+    PlaybackFailureKind Failure);

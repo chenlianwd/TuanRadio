@@ -34,8 +34,8 @@ public sealed record MusicProviderDescriptor(
 /// <summary>
 /// 音源 Provider 契约（docs/plans/2026-09-20-music-source-broker-phase1-design.md §3.1）：
 /// 只负责本源搜索与解析；跨源回退、逐源报告、熔断与预算编排都在 Broker 聚合层。
-/// ResolveAsync 返回 null = 无可播地址（与既有 GetPlayUrlAsync 返回 null 语义一致）；
-/// 业务失败抛 MusicSourceBusinessException，传输异常照抛。
+/// ResolveAsync 用 MediaResolutionResult 区分无可播地址和业务限制；
+/// 传输异常照抛，由 Broker 归类并计入音源健康度。
 /// </summary>
 public interface IMusicProvider
 {
@@ -43,7 +43,7 @@ public interface IMusicProvider
 
     Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken);
 
-    Task<ResolvedMedia?> ResolveAsync(
+    Task<MediaResolutionResult> ResolveAsync(
         ProviderTrackRef track,
         IReadOnlyDictionary<string, string>? providerMetadata,
         CancellationToken cancellationToken);

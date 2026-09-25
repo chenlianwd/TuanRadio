@@ -1,7 +1,7 @@
 # TuanRadio 音源架构演进计划
 
 > 日期：2026-08-25
-> 状态（2026-09-21 更新）：阶段 0 基本落地——0.1 yt-dlp 治理、0.2 稳定身份与歌单迁移、0.3 Cookie/日志边界、0.5 npm ci 均已完成，0.4 统一 deadline 的主体由 2026-09-01 可靠性专项 Release A（分级硬超时/熔断/连续失败阻断）覆盖，0.0 基线量化未单独执行；CandidateRanker 与 SourceHealthRegistry 已随各专项提前落地。阶段 1 已于 2026-09-21 实施完成（IMusicProvider 契约 + MusicSourceBroker + 适配器 + MediaUriPolicy + ResolvedMediaCache，MultiSourceMusicService 已删除；设计与实施记录见 `docs/plans/2026-09-20-music-source-broker-phase1-design.md`）。阶段 2-4 未实施。
+> 状态（2026-09-25 同步）：阶段 0 基本落地，0.0 基线量化未单独执行；阶段 1 已完成。阶段 2 已接入可搜索 JSON 本地索引、手动重扫、OpenSubsonic 认证/搜索/播放流与安全存储，自动化测试通过，真实设备端到端验收待用户执行。阶段 3 已实现无 Node 核心构建、代理路由裁剪和 providers-manifest.json，独立 Provider 程序集尚未拆分。阶段 4 的设置页音源启停/排序已实现，开放曲库 PoC 与音质偏好仍未实现。当前 URL 校验仅覆盖初始播放地址；逐跳重定向复检、完整 DNS 重绑定防护与请求头传输适配仍待实现。
 > 产品边界：个人工具、开源项目；项目方不经营商业音乐分发，但所选开源许可证仍允许依法商业使用
 > 实施原则：小步迁移、保持现有播放能力、每阶段独立 build/test、先修安全与正确性再扩展新源
 
@@ -16,7 +16,7 @@ TuanRadio 不重写现有 LibVLC 播放核心和播放恢复状态机。当前�
 1. **保留现有五源能力，但不再把它们视为播放器核心。** 网易云、酷我、酷狗、咪咕、YouTube/yt-dlp 逐步迁移为可启停的实验性 Provider。
 2. **核心仓库先建立稳定 Provider 契约。** 搜索结果、可用性、音质、临时 URL、过期时间、必要请求头和逐源诊断都使用显式模型表达。
 3. **播放列表只持久化稳定身份。** 在线曲目保存 Provider ID、曲目 ID 和元数据，不再依赖或使用临时 URL 判断重复。
-4. **本地曲库和 OpenSubsonic 作为长期稳定主路径。** 用户自有内容最符合个人工具、开源项目边界，也能完整支持 AI DJ、TTS 插播和频谱。
+4. **本地曲库和 OpenSubsonic 是优先接入的稳定路径。** 用户自有内容与实验性在线源共同进入 Broker；完整播放链仍待真实设备端到端验收。
 5. **开放曲库作为可选补充。** 后续优先评估 Audius、SoundCloud、Jamendo 等有公开开发接口或明确开放许可的来源。
 6. **不直接复制 MusicFree 式远程 JavaScript 任意执行机制。** 仓库内随官方构建发布的 Provider 可以使用进程内 .NET 契约；任何用户自行安装的社区 Provider 必须进程外运行，并通过带版本协商的 JSON-RPC 通信。第一轮不开放动态社区插件安装。
 7. **不开发表面上的付费限制绕过。** Provider 必须保留试听、登录、会员、地区限制等真实可用性状态；无法完整播放时返回明确失败或切换合法可用候选。
@@ -121,6 +121,8 @@ MainWindowViewModel / PlaylistViewModel / RecommendationService
 - Provider 禁用、退出登录、Cookie/凭据变化、服务器地址变化时清空该 Provider 的缓存；应用关闭时释放包含敏感请求头的对象。
 
 #### `MediaUriPolicy`
+
+以下为最终架构目标。当前阶段 1 只校验交给 LibVLC 的初始播放 URL；重定向逐跳复检、完整 DNS 重绑定防护和请求头传输适配尚未实现，见阶段 1 实施计划 §3.4。
 
 - 在 URL 交给 LibVLC 前统一校验 scheme、主机、解析后的 IP 和每一次重定向。
 - `PublicInternet` Provider 禁止访问 loopback、link-local、RFC1918 私网、组播、未指定地址和云元数据端点。
@@ -379,7 +381,9 @@ git diff --check
 
 ### 阶段 1：Provider 契约与 Broker
 
-> 目标：把硬编码聚合器迁移为可测试、可配置的 Provider 系统，暂不追求动态插件安装。
+> 原目标：把硬编码聚合器迁移为可测试、可配置的 Provider 系统，暂不追求动态插件安装。
+>
+> 实施边界（2026-09-25 同步）：阶段 1 按 `2026-09-20-music-source-broker-phase1-design.md` 收窄为 Provider 契约、Broker、既有音源适配器、初始播放 URL 校验和内存缓存；复用 `OnlineTrack`，没有引入 `MusicCandidate`。以下目录、设置与搜索协调条目保留原始目标，并非阶段 1 全部完成声明。后续已补充 Provider 启停/排序的用户配置。独立包、`PlaybackTransportAdapter`、音质及跨源替代偏好和逐跳重定向防护仍未落地；Broker 的默认兼容构造仍直接组装既有具体音源，聚合执行路径使用 `IMusicProvider`。
 
 #### 1.1 建议目录
 
@@ -458,19 +462,23 @@ AIRadio.Desktop/Services/Music/
 - 成功请求逐步恢复健康度，不永久惩罚单次抖动。
 - `LastSearchReport` 改为每次请求自带的不可变报告，避免并发搜索共享全局可变列表。
 
-#### 阶段 1 验收
+#### 阶段 1 原始验收目标
 
-- `MusicSourceBroker` 不依赖任何具体 Provider 类型。
+本清单保留原计划口径，不代表每项均已完成；阶段 1 的实际交付和测试边界见 `2026-09-20-music-source-broker-phase1-design.md` §8。
+
+- 聚合执行路径通过 `IMusicProvider` 调用音源；默认兼容构造仍直接实例化既有具体音源，完整组装解耦留待后续阶段。
 - 相同测试输入不受 Provider 完成先后顺序影响，排名结果稳定。
 - 并发两次搜索不会串用逐源状态报告。
 - 批量搜索返回后没有后台 Provider 再修改结果；取消后不存在遗留搜索任务。
 - 单一 Provider 熔断不影响其他 Provider。
-- 公网 Provider 返回私网/回环/重定向私网 URL 时在进入 LibVLC 前被拒绝；用户配置的 OpenSubsonic 私网地址仍可按显式信任范围访问。
-- 切换账号、Cookie 或服务器配置后不会命中旧 `ResolvedMedia` 缓存。
+- 公网 Provider 的初始播放 URL 指向私网或回环时，在进入 LibVLC 前被拒绝；重定向逐跳校验和 OpenSubsonic 显式私网范围属于后续阶段，不作为阶段 1 已完成验收。
+- 已接入音源的账号或 Cookie 变化后不会命中旧 `ResolvedMedia` 缓存；服务器配置变化的失效规则留待阶段 2 OpenSubsonic 接入时验收。
 - 除临时兼容层外，业务服务不再具体依赖或转换 `MultiSourceMusicService`。
 - 原有搜索、点歌、推荐和自动续播行为保持可用。
 
 ### 阶段 2：稳定主源
+
+> 2026-09-25 进度：2.1/2.2 的索引、配置、搜索与解析已实现；2.3 的自动化契约测试通过，禁用五个实验性源后的完整 UI/播放/AI DJ 耐久验收尚未进行。
 
 > 目标：让 TuanRadio 在所有实验性在线源都失效时仍是完整可用的个人 AI 电台。
 
@@ -495,6 +503,8 @@ AIRadio.Desktop/Services/Music/
 - TTS duck/pause、频谱、seek、上一首/下一首对两类稳定源行为一致。
 
 ### 阶段 3：Provider 包与构建瘦身
+
+> 2026-09-25 进度：TuanRadioEnableNodeProviders=false 可生成无代理目录的核心输出；正常输出裁剪酷狗模块和演示文件并生成依赖清单。独立 .NET Provider 项目/包、版本更新检测和最终发布包验证未完成。
 
 > 目标：把高变动、重依赖的第三方适配器从核心运行时中隔离。
 
@@ -526,11 +536,13 @@ AIRadio.Desktop/Services/Music/
 
 ### 阶段 4：开放曲库与体验完善
 
+> 2026-09-25 进度：未接入开放曲库 Provider；设置页已有音源启停/排序、连接诊断与最近 20 条健康记录（区分正常接口响应和实际播放解析成功）；音质偏好和实际播放音质展示仍未实现。
+
 > 目标：在不依赖主流平台私有接口的情况下扩充可合法访问的在线候选池。
 
 按以下顺序评估，不要求全部实现：
 
-1. **AudiusProvider**：公开搜索和流式能力与 AI 电台契合，先做技术 PoC。
+1. **AudiusProvider**：公开搜索和流式能力与 AI 电台契合，先做技术 PoC。官方当前要求先申请 API Key；SDK 的桌面/客户端接入只使用 API Key，不把可代表应用执行用户授权操作的 Bearer Token 打包进客户端。待取得测试 Key 后验证搜索、可流式标记与实际播放跳转，再决定接入。参考 [Audius SDK 入门](https://docs.audius.co/sdk/) 与 [曲目接口](https://docs.audius.co/sdk/tracks/)。
 2. **SoundCloudProvider**：遵守署名、来源链接和可播放状态要求，只使用允许站外播放的曲目。
 3. **JamendoProvider**：适合作为独立音乐、氛围音乐和 Creative Commons 候选池。
 4. **RadioBrowserProvider**：作为真实网络电台模式，不参与精确点歌和逐曲节目单替换。

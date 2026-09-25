@@ -19,6 +19,11 @@ namespace AIRadio.Desktop.ViewModels;
 
 public class MainWindowViewModel : ViewModelBase, IDisposable
 {
+#if TUANRADIO_SLIM_CORE
+    public bool HasExperimentalProviders => false;
+#else
+    public bool HasExperimentalProviders => true;
+#endif
     private readonly IAudioService _audioService;
     private readonly IDJService _djService;
     private readonly ILLMService _llmService;
@@ -53,6 +58,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly MusicAccountStore? _accountStore;
     private readonly KugouVerificationService? _kugouVerification;
+    private readonly LocalLibraryProvider? _localLibrary;
+    private readonly PlaybackPreflightService? _playbackPreflight;
 
     public PlayerViewModel PlayerVM { get; }
     public PlaylistViewModel PlaylistVM { get; }
@@ -147,7 +154,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         KugouVerificationService? kugouVerification = null,
         ILyricService? lyricService = null,
         IListeningProfileService? listeningProfile = null,
-        IWeatherService? weatherService = null)
+        IWeatherService? weatherService = null,
+        LocalLibraryProvider? localLibrary = null,
+        OpenSubsonicProvider? openSubsonic = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -157,6 +166,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         _recommendationService = recommendationService ?? new RecommendationService(llmService, musicSearchService);
         _accountStore = accountStore;
         _kugouVerification = kugouVerification;
+        _localLibrary = localLibrary;
         _listeningProfile = listeningProfile;
 
         SelectedCharacter = Characters[0];
@@ -169,11 +179,14 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             _audioService,
             musicSearchService,
             playlistFile,
-            kugouPlaylistService: kugouPlaylistService);
+            kugouPlaylistService: kugouPlaylistService,
+            localLibrary: localLibrary);
+        if (musicSearchService is IMusicSourceBroker broker)
+            _playbackPreflight = new PlaybackPreflightService(_audioService, broker, accountStore, openSubsonic);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService, listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
-            listeningProfile, musicSearchService);
+            listeningProfile, musicSearchService, openSubsonic);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));
@@ -762,6 +775,21 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
             return;
+
+        if (_localLibrary != null)
+        {
+            await _localLibrary.LoadAsync(cancellationToken);
+            // 补录 playlist.json 中尚未进入索引的本地文件；已有曲库时也不能漏掉旧导入项。
+            var missingFiles = PlaylistVM.Tracks
+                .Where(track => string.IsNullOrWhiteSpace(track.SourceId) &&
+                                !string.IsNullOrWhiteSpace(track.FilePath) &&
+                                System.IO.File.Exists(track.FilePath) &&
+                                !_localLibrary.ContainsFile(track.FilePath))
+                .Select(track => track.FilePath)
+                .ToArray();
+            if (missingFiles.Length > 0)
+                await _localLibrary.AddFilesAsync(missingFiles, cancellationToken);
+        }
 
         // 长期收听画像：本地文件读取失败按空画像运行，不阻塞启动；
         // 开关初值在 settings 加载完成后推送（DI 构造顺序不保证 settings 先就绪）
@@ -1373,6 +1401,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         // 关闭线程同步 Stop NAudio，否则设备线程异常时会再次把窗口关闭卡住。
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
+        _playbackPreflight?.Dispose();
         _profileTrackChangedSub?.Dispose();
         _playbackHistorySub?.Dispose();
         _positionSampleSub?.Dispose();
