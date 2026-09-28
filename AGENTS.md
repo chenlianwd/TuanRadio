@@ -14,11 +14,12 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器。
 - AI DJ 角色保留为名称、声音、人设提示和轻量头像动效。
 - 长期用户画像已落地并双链路消费（推荐 + DJ 聊天），本地文件级，不做云端数据库。
 - 天气、日历已交付（ClockStage 环境指示器）；歌词模式此前已交付；供应链校验、旧协议清理、本地化与对比度修正均已落地。
-- 本地曲库与 OpenSubsonic 已进入音源 Broker；支持无 Node 核心构建、裁剪代理包及设置页音源启停/排序。开放曲库、音质偏好和完整播放传输适配仍在计划中。
+- 本地曲库、OpenSubsonic 与 Audius 无 Key 只读曲库已进入音源 Broker；支持无 Node 核心构建、裁剪代理包、音源启停/排序及 OpenSubsonic 传输音质偏好。实际播放编码/码率展示和完整播放传输适配仍在计划中。
 - 剩余人工事项：发布前真实设备耐久验证（长时间在线播放、进程退出/内存观察、无输出设备/睡眠唤醒）。
 
 ## Recent Work
 
+- 音源架构阶段 4 增量（2026-09-28）：AudiusProvider 无 Key 只读搜索和曲目详情复核，过滤门控/不可流播结果，stream URL 仍经 Broker 初始公网校验；默认排在网易/酷狗后。OpenSubsonic 音质偏好（自动、原始 format=raw、省流量 maxBitRate=128）持久化并在变更时清除该源解析缓存；搜索页和播放区显示实际音源。公开 API 已实测搜索/详情 200、stream 302，跟随跳转后以 Range 请求取得 206 audio/mpeg；真实 LibVLC 播放、逐跳重定向/DNS 防护及实际码率显示未完成。
 - 音源架构阶段 2/3 增量（2026-09-25）：LocalLibraryProvider 将选定文件/文件夹索引到 `%APPDATA%\AIRadio\local-library.json`，支持搜索和手动重扫；OpenSubsonicProvider 使用系统安全存储保存配置，连接前 ping 验证，搜索/stream 保持配置的私有服务器来源；Broker 先排本地/私有源，设置页可启停并排序。`TuanRadioEnableNodeProviders=false` 生成不含 Node 代理目录的核心输出；正常构建裁剪酷狗路由并生成 `providers-manifest.json`。`IMusicProvider.ResolveAsync` 统一返回 `MediaResolutionResult`；后三首队列预检按代次取消并显示分类状态；音源诊断显示最近 20 次请求和熔断快照。网易云代理固定 4.32.0，兼容范围依赖已更新，但 `npm audit --omit=dev` 仍有 3 项上游告警（1 中危、2 高危）；酷狗生产依赖审计 0 项。自动化测试不替代真实设备验收。
 - 显式搜索页在快速源无结果时后台尝试 YouTube 等慢源；新搜索、修改搜索词和选择歌曲会取消旧请求，代次校验阻止迟到结果覆盖当前搜索。自动电台与播放恢复仍不启动慢源。
 - 视图重构 + 统一状态机落地：MainWindow 拆为 TitleBar/ClockStage/PlayerDeck/ChatArea/PlaylistDrawer/StatusBar/CharacterPicker UserControl，`RadioState` 状态机驱动 StatusBar。

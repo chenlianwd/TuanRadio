@@ -82,6 +82,7 @@ public static class AppLanguage
             "youtube" or "youtube music" => "YouTube",
             "local" or "local library" or "本地曲库" => T("本地曲库", "Local library"),
             "opensubsonic" => "OpenSubsonic",
+            "audius" => "Audius",
             "多平台聚合" or "multi-source" or "multi-source music" => T("多平台聚合", "Multi-source"),
             _ => source
         };
@@ -163,6 +164,8 @@ public static class AppLanguage
         ["S_OpenSubsonicPassword"] = "密码；留空沿用已保存的密码",
         ["S_OpenSubsonicConnect"] = "测试连接并保存",
         ["S_OpenSubsonicDisconnect"] = "断开",
+        ["S_OpenSubsonicQuality"] = "私有曲库音质偏好",
+        ["S_OpenSubsonicQualityHint"] = "原始音质请求原文件；省流量请求服务端最高 128 kbps。实际编码取决于服务器。",
         ["S_MusicProviderPriority"] = "音源启用与优先级",
         ["S_MusicProviderPriorityHint"] = "列表从上到下优先；停用的音源不会参与搜索或解析。",
         ["S_MusicProviderUp"] = "提高音源优先级",
@@ -278,6 +281,8 @@ public static class AppLanguage
         ["S_OpenSubsonicPassword"] = "Password; leave blank to keep the saved password",
         ["S_OpenSubsonicConnect"] = "Test connection and save",
         ["S_OpenSubsonicDisconnect"] = "Disconnect",
+        ["S_OpenSubsonicQuality"] = "Private library quality",
+        ["S_OpenSubsonicQualityHint"] = "Original requests the source file; data saver asks the server for up to 128 kbps. Actual encoding depends on the server.",
         ["S_MusicProviderPriority"] = "Music sources and priority",
         ["S_MusicProviderPriorityHint"] = "Sources higher in the list take priority; disabled sources are skipped for search and resolution.",
         ["S_MusicProviderUp"] = "Move source up",

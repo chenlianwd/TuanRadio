@@ -1560,6 +1560,11 @@ public class AudioService : IAudioService, IDisposable
                 requestId == Volatile.Read(ref _playRequestId) &&
                 IsPlaylistEntryAt(_currentIndex, track))
             {
+                // 播放器此刻仍持有旧媒体；后台预刷新只能更新同源 URL。
+                // 跨源候选留给播放失败后的重试路径，避免曲目身份提前变成尚未播出的来源。
+                if (!string.IsNullOrWhiteSpace(resolution.SourceId) &&
+                    !string.Equals(track.SourceId, resolution.SourceId, StringComparison.Ordinal))
+                    return;
                 var changed = ApplyTrackUrlResolution(track, resolution);
                 if (changed)
                     Log.Debug("Refreshed URL for track {Track}", track.Title);

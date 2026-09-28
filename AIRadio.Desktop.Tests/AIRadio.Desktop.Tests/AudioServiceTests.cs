@@ -600,6 +600,48 @@ public class AudioServiceTests
     }
 
     [Fact]
+    public async Task BackgroundRefresh_DoesNotPublishAlternativeSourceBeforeItPlays()
+    {
+        var svc = new AudioService();
+        try
+        {
+            var track = new Track
+            {
+                Title = "Original",
+                SourceId = "netease:123",
+                FilePath = "https://current.invalid/song.mp3"
+            };
+            svc.LoadTracks(new[] { track });
+            svc.SetTrackUrlResolver((_, _) => Task.FromResult<TrackUrlResolution?>(
+                new TrackUrlResolution("https://fallback.invalid/song.mp3", "audius:456")));
+
+            var requestIdField = typeof(AudioService).GetField(
+                "_playRequestId", BindingFlags.NonPublic | BindingFlags.Instance);
+            var refreshMethod = typeof(AudioService).GetMethod(
+                "RefreshTrackUrlAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(requestIdField);
+            Assert.NotNull(refreshMethod);
+
+            var requestId = (int)requestIdField!.GetValue(svc)!;
+            var refreshTask = (Task)refreshMethod!.Invoke(svc, new object[] { track, requestId })!;
+            await refreshTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal("netease:123", track.SourceId);
+            Assert.Equal("https://current.invalid/song.mp3", track.FilePath);
+
+            svc.SetTrackUrlResolver((_, _) => Task.FromResult<TrackUrlResolution?>(
+                new TrackUrlResolution("https://renewed.invalid/song.mp3", "netease:123")));
+            refreshTask = (Task)refreshMethod.Invoke(svc, new object[] { track, requestId })!;
+            await refreshTask.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("https://renewed.invalid/song.mp3", track.FilePath);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
     public void RecoveryBudget_AnchorsOnceAndCapsSubsequentSteps()
     {
         var svc = new AudioService();

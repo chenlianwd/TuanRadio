@@ -218,6 +218,15 @@ public class MusicSourceBroker : IMusicSourceBroker
     public MusicSourceBroker(HttpClient httpClient, MusicAccountStore? accounts,
         KugouVerificationService? kugouVerification, IEnumerable<IMusicProvider> preferredProviders,
         params IMusicSearchService[] extraSources)
+        : this(httpClient, accounts, kugouVerification, preferredProviders,
+            Array.Empty<IMusicProvider>(), extraSources)
+    {
+    }
+
+    /// <summary>开放曲库等补充源排在成熟在线源后、慢源前，避免改变既有默认优先级。</summary>
+    public MusicSourceBroker(HttpClient httpClient, MusicAccountStore? accounts,
+        KugouVerificationService? kugouVerification, IEnumerable<IMusicProvider> preferredProviders,
+        IEnumerable<IMusicProvider> supplementalProviders, params IMusicSearchService[] extraSources)
     {
         var kugouSource = new KugouMusicService(httpClient, accounts, kugouVerification);
         var neteaseProvider = new MusicSearchServiceAdapter(new NeteaseMusicService(httpClient, accounts));
@@ -227,7 +236,6 @@ public class MusicSourceBroker : IMusicSourceBroker
             neteaseProvider,
             kugouProvider
         };
-        SubscribeToPrivateProviders(providers);
         if (accounts != null)
         {
             // 凭据变化：重置酷狗熔断（订阅归属随聚合体落在 Broker，docs/plans §3.5）+
@@ -249,7 +257,9 @@ public class MusicSourceBroker : IMusicSourceBroker
             providers.Add(new MusicSearchServiceAdapter(new KuwoMusicService(httpClient), isExperimental: true));
             providers.Add(new MusicSearchServiceAdapter(new MiguMusicService(httpClient), isExperimental: true));
         }
+        providers.AddRange(supplementalProviders);
         providers.AddRange(extraSources.Select(source => new MusicSearchServiceAdapter(source))); // YouTube 等额外源作为最低优先级
+        SubscribeToPrivateProviders(providers);
         _providers = providers;
         _activeProviders = _providers.ToArray();
     }

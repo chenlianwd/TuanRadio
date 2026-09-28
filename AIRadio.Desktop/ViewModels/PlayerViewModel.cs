@@ -23,6 +23,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
 
     [Reactive] public string TrackTitle { get; set; } = AppLanguage.T("未播放", "Nothing playing");
     [Reactive] public string TrackArtist { get; set; } = "";
+    [Reactive] public string TrackSource { get; set; } = "";
     [Reactive] public bool IsPlaying { get; set; }
     [Reactive] public string PlayPauseText { get; set; } = "▶";
     [Reactive] public double CurrentSeconds { get; set; }
@@ -89,6 +90,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                 {
                     TrackTitle = track.Title;
                     TrackArtist = track.DisplayArtist;
+                    TrackSource = GetTrackSource(track);
                     TotalSeconds = track.Duration.TotalSeconds;
                     DurationText = FormatTime(track.Duration);
                 }
@@ -96,6 +98,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                 {
                     TrackTitle = AppLanguage.T("未播放", "Nothing playing");
                     TrackArtist = "";
+                    TrackSource = "";
                     TotalSeconds = 0;
                     DurationText = "0:00";
                 }
@@ -133,12 +136,21 @@ public class PlayerViewModel : ViewModelBase, IDisposable
             {
                 currentTrack.RefreshLocalization();
                 TrackArtist = currentTrack.DisplayArtist;
+                TrackSource = GetTrackSource(currentTrack);
             }
             // 仅重置占位文案；有曲目在播时保留真实标题
             if (TrackTitle is "未播放" or "Nothing playing")
                 TrackTitle = AppLanguage.T("未播放", "Nothing playing");
         };
         AppLanguage.Changed += _onLanguageChanged;
+    }
+
+    private static string GetTrackSource(Track track)
+    {
+        var sourceId = track.SourceId;
+        if (string.IsNullOrWhiteSpace(sourceId)) return string.Empty;
+        var separator = sourceId.IndexOf(':');
+        return separator > 0 ? AppLanguage.MusicSourceName(sourceId[..separator]) : string.Empty;
     }
 
     public void SeekTo(double seconds)

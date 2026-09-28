@@ -60,6 +60,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly IDisposable _selectedCharacterSub;
     private readonly IDisposable _selectedYtdlpBrowserSub;
+    private readonly IDisposable _openSubsonicQualitySub;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly MusicAccountStore _accounts;
     private readonly NeteaseAccountService _neteaseAccount;
@@ -78,6 +79,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private bool _neteaseQrRunning;
     private bool _kugouQrRunning;
     private bool _loadingYtdlpBrowser;
+    private bool _loadingOpenSubsonicQuality;
     private bool _ytdlpCookieNoticeShown;
     private readonly IDisposable _selectedLanguageSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
@@ -120,6 +122,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public string OpenSubsonicUsername { get; set; } = string.Empty;
     [Reactive] public string OpenSubsonicPassword { get; set; } = string.Empty;
     [Reactive] public string OpenSubsonicStatus { get; set; } = string.Empty;
+    [Reactive] public string SelectedOpenSubsonicQuality { get; set; } = "auto";
     [Reactive] public bool IsConnectingOpenSubsonic { get; set; }
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
@@ -168,6 +171,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
     [Reactive] public List<VoiceOption> YtdlpBrowsers { get; set; } = new();
     [Reactive] public List<MusicProviderOption> MusicProviders { get; set; } = new();
+    [Reactive] public List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -270,6 +274,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 _ = SaveUiStateCommand.Execute().Subscribe();
             });
 
+        _openSubsonicQualitySub = this.WhenAnyValue(x => x.SelectedOpenSubsonicQuality)
+            .Skip(1)
+            .Subscribe(id =>
+            {
+                if (id is not ("auto" or "original" or "data-saver"))
+                    return;
+                if (_openSubsonic != null)
+                    _openSubsonic.Quality = ParseOpenSubsonicQuality(id);
+                if (!_loadingOpenSubsonicQuality)
+                    _ = SaveUiStateCommand.Execute().Subscribe();
+            });
         // 界面显示语言严格跟随本选项：加载读到旧值与用户切换时都经 Apply 生效
         _selectedLanguageSub = this.WhenAnyValue(x => x.SelectedLanguage)
             .Skip(1)
@@ -344,6 +359,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         await ApplyMusicProviderOptionsAsync();
     }
 
+    private static string NormalizeOpenSubsonicQuality(string? id)
+        => id is "original" or "data-saver" ? id : "auto";
+
+    private static OpenSubsonicQuality ParseOpenSubsonicQuality(string? id)
+        => id switch
+        {
+            "original" => OpenSubsonicQuality.Original,
+            "data-saver" => OpenSubsonicQuality.DataSaver,
+            _ => OpenSubsonicQuality.Automatic
+        };
+
     /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
     private void RebuildLocalizedOptionLists()
     {
@@ -381,6 +407,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             new() { Id = "particles", DisplayName = AppLanguage.T("星点粒子", "Star particles") },
         };
 
+        OpenSubsonicQualities = new List<VoiceOption>
+        {
+            new() { Id = "auto", DisplayName = AppLanguage.T("自动", "Automatic") },
+            new() { Id = "original", DisplayName = AppLanguage.T("原始音质", "Original quality") },
+            new() { Id = "data-saver", DisplayName = AppLanguage.T("省流量（最高 128 kbps）", "Data saver (up to 128 kbps)") },
+        };
         var browserId = SelectedYtdlpBrowser?.Id;
         _loadingYtdlpBrowser = true;
         try
@@ -576,6 +608,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                         .Where(item => item.ValueKind == JsonValueKind.String)
                         .Select(item => item.GetString() ?? string.Empty).ToArray();
 
+                if (root.TryGetProperty("open_subsonic_quality", out var quality) &&
+                    quality.ValueKind == JsonValueKind.String)
+                {
+                    _loadingOpenSubsonicQuality = true;
+                    SelectedOpenSubsonicQuality = NormalizeOpenSubsonicQuality(quality.GetString());
+                    _loadingOpenSubsonicQuality = false;
+                }
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
 
@@ -1313,6 +1352,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
+                open_subsonic_quality = NormalizeOpenSubsonicQuality(SelectedOpenSubsonicQuality),
                 music_provider_order = MusicProviders.Select(item => item.Id).ToArray(),
                 music_provider_disabled = MusicProviders.Where(item => !item.Enabled)
                     .Select(item => item.Id).ToArray(),
@@ -1395,6 +1435,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _lifetimeCts.Cancel();
         _selectedCharacterSub.Dispose();
         _selectedYtdlpBrowserSub.Dispose();
+        _openSubsonicQualitySub.Dispose();
         _selectedLanguageSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;

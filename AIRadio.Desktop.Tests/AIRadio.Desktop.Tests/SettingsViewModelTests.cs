@@ -69,6 +69,39 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task OpenSubsonicQuality_RoundTripsAndUpdatesProvider()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var provider = new OpenSubsonicProvider(_mockStorage.Object);
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+                       settingsFile, openSubsonic: provider))
+            {
+                vm.SelectedOpenSubsonicQuality = "original";
+                Assert.Equal(OpenSubsonicQuality.Original, provider.Quality);
+                AppLanguage.Apply("en");
+                Assert.Equal("original", vm.SelectedOpenSubsonicQuality);
+                Assert.Equal("Original quality", vm.OpenSubsonicQualities.Single(x => x.Id == "original").DisplayName);
+                AppLanguage.Apply("zh");
+                await vm.SaveUiStateCommand.Execute();
+            }
+            var restoredProvider = new OpenSubsonicProvider(_mockStorage.Object);
+            using var restored = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+                settingsFile, openSubsonic: restoredProvider);
+            await restored.LoadAsync();
+            Assert.Equal("original", restored.SelectedOpenSubsonicQuality);
+            Assert.Equal(OpenSubsonicQuality.Original, restoredProvider.Quality);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
     public void GetOverride_ReturnsStoredOverride()
     {
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
