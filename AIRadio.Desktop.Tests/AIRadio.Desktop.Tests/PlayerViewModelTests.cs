@@ -46,6 +46,42 @@ public class PlayerViewModelTests
         Assert.Equal("电台模式", vm.RepeatModeTip);
     }
 
+    [Fact]
+    public void TrackSource_FollowsPlaybackIdentityAndLanguage()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        AppLanguage.Apply("zh");
+        try
+        {
+            var tracks = new Subject<Track?>();
+            Track? current = null;
+            var audio = new Mock<IAudioService>();
+            audio.SetupGet(x => x.CurrentTrack).Returns(() => current);
+            audio.SetupGet(x => x.RepeatMode).Returns("radio");
+            audio.SetupGet(x => x.TrackChanged).Returns(tracks);
+            audio.SetupGet(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+            audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+            using var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(audio.Object);
+            current = new Track { Title = "Song", SourceId = "netease:1" };
+            tracks.OnNext(current);
+            Assert.Equal("网易云音乐", vm.TrackSource);
+            AppLanguage.Apply("en");
+            Assert.Equal("NetEase Cloud Music", vm.TrackSource);
+            current = new Track { Title = "Song", SourceId = "audius:2" };
+            tracks.OnNext(current);
+            Assert.Equal("Audius", vm.TrackSource);
+            current = null;
+            tracks.OnNext(null);
+            Assert.Equal("", vm.TrackSource);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
     private static Mock<IAudioService> CreatePositionalAudioMock(Subject<TimeSpan> positions)
     {
         var audio = new Mock<IAudioService>();

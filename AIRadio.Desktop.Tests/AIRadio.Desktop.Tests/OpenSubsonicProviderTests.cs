@@ -41,6 +41,20 @@ public sealed class OpenSubsonicProviderTests
         Assert.Equal("/navidrome/rest/stream.view", media.Uri.AbsolutePath);
         Assert.Equal("mp3", media.Codec);
         Assert.Equal(192, media.BitrateKbps);
+        var qualityChanges = 0;
+        provider.ConfigurationChanged += (_, _) => qualityChanges++;
+        provider.Quality = OpenSubsonicQuality.Original;
+        var original = (await provider.ResolveAsync(new ProviderTrackRef("opensubsonic", "song-1"),
+            song.ProviderMetadata, CancellationToken.None)).Media!;
+        Assert.Contains("format=raw", original.Uri.Query);
+        Assert.Equal("flac", original.Codec);
+        Assert.Null(original.BitrateKbps);
+        provider.Quality = OpenSubsonicQuality.DataSaver;
+        var saver = (await provider.ResolveAsync(new ProviderTrackRef("opensubsonic", "song-1"),
+            song.ProviderMetadata, CancellationToken.None)).Media!;
+        Assert.Contains("maxBitRate=128", saver.Uri.Query);
+        Assert.Null(saver.BitrateKbps);
+        Assert.Equal(2, qualityChanges);
         Assert.DoesNotContain("secret", media.Uri.OriginalString);
         Assert.False(provider.IsAllowedMediaUri(new Uri("http://127.0.0.1:4534/navidrome/rest/stream.view")));
         Assert.False(provider.IsAllowedMediaUri(new Uri("http://127.0.0.1:4533/other/rest/stream.view")));

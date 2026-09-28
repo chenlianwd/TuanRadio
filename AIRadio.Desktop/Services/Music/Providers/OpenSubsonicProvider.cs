@@ -11,6 +11,14 @@ using AIRadio.Desktop.Models;
 
 namespace AIRadio.Desktop.Services.Music;
 
+/// <summary>私有曲库传输偏好。服务端仍可按自身能力决定实际编码。</summary>
+public enum OpenSubsonicQuality
+{
+    Automatic,
+    Original,
+    DataSaver
+}
+
 /// <summary>OpenSubsonic 兼容服务器。账号配置整体保存于系统凭据库。</summary>
 public sealed class OpenSubsonicProvider : IMusicProvider, IPrivateMediaOriginPolicy
 {
@@ -18,6 +26,18 @@ public sealed class OpenSubsonicProvider : IMusicProvider, IPrivateMediaOriginPo
     private readonly HttpClient _http;
     private readonly ISecureStorage _storage;
     private ServerConfig? _config;
+    private int _quality;
+
+    public OpenSubsonicQuality Quality
+    {
+        get => (OpenSubsonicQuality)Volatile.Read(ref _quality);
+        set
+        {
+            if (!Enum.IsDefined(value)) throw new ArgumentOutOfRangeException(nameof(value));
+            if (Interlocked.Exchange(ref _quality, (int)value) != (int)value)
+                ConfigurationChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
     public MusicProviderDescriptor Descriptor { get; } = new(
         "opensubsonic", "OpenSubsonic", ProviderNetworkScope.UserConfiguredPrivateNetwork);
@@ -126,10 +146,21 @@ public sealed class OpenSubsonicProvider : IMusicProvider, IPrivateMediaOriginPo
         if (!string.Equals(track.ProviderId, Descriptor.Id, StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(track.TrackId))
             return Task.FromResult(MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound));
-        // stream 是二进制端点；LibVLC 需要可直接拉取的 URL，故只放一次性盐值及哈希令牌。
-        var uri = BuildRequestUri(config, "stream", new Dictionary<string, string> { ["id"] = track.TrackId });
-        var suffix = ReadMetadata(providerMetadata, "transcodedSuffix") ?? ReadMetadata(providerMetadata, "suffix");
-        var bitrate = int.TryParse(ReadMetadata(providerMetadata, "transcodedBitRate"), out var kbps)
+        // stream 是二进制端点；URL 只包含一次性盐值及哈希令牌，不暴露原始密码。
+        var parameters = new Dictionary<string, string> { ["id"] = track.TrackId };
+        var quality = Quality;
+        if (quality == OpenSubsonicQuality.Original)
+            parameters["format"] = "raw";
+        else if (quality == OpenSubsonicQuality.DataSaver)
+            parameters["maxBitRate"] = "128";
+        var uri = BuildRequestUri(config, "stream", parameters);
+        var suffix = quality == OpenSubsonicQuality.Original
+            ? ReadMetadata(providerMetadata, "suffix")
+            : quality == OpenSubsonicQuality.Automatic
+                ? ReadMetadata(providerMetadata, "transcodedSuffix") ?? ReadMetadata(providerMetadata, "suffix")
+                : null;
+        var bitrate = quality == OpenSubsonicQuality.Automatic &&
+                      int.TryParse(ReadMetadata(providerMetadata, "transcodedBitRate"), out var kbps)
             ? kbps : (int?)null;
         return Task.FromResult(MediaResolutionResult.Playable(new ResolvedMedia(track, uri,
             Codec: suffix, Container: suffix, BitrateKbps: bitrate)));

@@ -78,6 +78,14 @@
                     <Button Command="{Binding DisconnectOpenSubsonicCommand}"
                             Content="{DynamicResource S_OpenSubsonicDisconnect}" Padding="14,6" FontSize="12"/>
                 </StackPanel>
+                <TextBlock Text="{DynamicResource S_OpenSubsonicQuality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <ComboBox SelectedValue="{Binding SelectedOpenSubsonicQuality, Mode=TwoWay}"
+                          ItemsSource="{Binding OpenSubsonicQualities}"
+                          SelectedValueBinding="{Binding Id}"
+                          DisplayMemberBinding="{Binding DisplayName}"
+                          HorizontalAlignment="Stretch"/>
+                <TextBlock Text="{DynamicResource S_OpenSubsonicQualityHint}" Foreground="{DynamicResource C_FF666666}"
+                           FontSize="11" TextWrapping="Wrap"/>
                 <TextBlock Text="{Binding OpenSubsonicStatus}" Foreground="{DynamicResource C_FFFFC86B}"
                            FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>

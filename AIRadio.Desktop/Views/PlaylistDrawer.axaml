@@ -223,6 +223,8 @@
                                         <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
                                                    FontFamily="Consolas, Microsoft YaHei UI"
                                                    Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding DisplaySource}" FontSize="10"
+                                                   Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="{DynamicResource S_Play}"
                                             Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayOnlineCommand}"

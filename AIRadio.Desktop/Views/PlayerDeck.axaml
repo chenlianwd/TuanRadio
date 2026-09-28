@@ -25,6 +25,9 @@
                                FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF9A9AA8}"
                                TextTrimming="CharacterEllipsis" MaxWidth="128"
                                ToolTip.Tip="{Binding PlayerVM.TrackArtist}"/>
+                    <TextBlock Text="{Binding PlayerVM.TrackSource}" FontSize="10"
+                               Foreground="{DynamicResource C_FF9A9AA8}" TextTrimming="CharacterEllipsis"
+                               MaxWidth="128"/>
                 </StackPanel>
             </StackPanel>
 

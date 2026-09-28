@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -33,6 +34,18 @@ public sealed class MusicProviderPreferencesTests
         Assert.Equal("https://203.0.113.1/stream.mp3",
             await broker.GetPlayUrlAsync(cachedTrack, CancellationToken.None));
         Assert.Equal(secondResolves, second.ResolveCalls);
+    }
+
+    [Fact]
+    public void SupplementalProvider_FollowsEstablishedOnlineProviders()
+    {
+        using var http = new System.Net.Http.HttpClient();
+        var broker = new MusicSourceBroker(http, null, null,
+            new IMusicProvider[] { new StubProvider("private") },
+            new IMusicProvider[] { new StubProvider("open") });
+        var ids = broker.GetProviderDescriptors().Select(item => item.Id).ToArray();
+        Assert.Equal("private", ids[0]);
+        Assert.True(Array.IndexOf(ids, "open") > Array.IndexOf(ids, "kugou"));
     }
 
     [Fact]

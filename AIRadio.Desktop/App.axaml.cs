@@ -222,6 +222,7 @@ public partial class App : Application
         services.AddSingleton(sp =>
             new KugouVerificationService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         services.AddSingleton<Services.Music.LocalLibraryProvider>();
+        services.AddSingleton<Services.Music.AudiusProvider>();
         services.AddSingleton<Services.Music.OpenSubsonicProvider>(sp =>
             new Services.Music.OpenSubsonicProvider(sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<Services.Music.MusicSourceBroker>(sp =>
@@ -229,7 +230,8 @@ public partial class App : Application
 #if TUANRADIO_SLIM_CORE
             return new Services.Music.MusicSourceBroker(
                 sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
-                sp.GetRequiredService<Services.Music.OpenSubsonicProvider>());
+                sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
+                sp.GetRequiredService<Services.Music.AudiusProvider>());
 #else
             var accounts = sp.GetRequiredService<MusicAccountStore>();
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
@@ -242,6 +244,10 @@ public partial class App : Application
                 {
                     sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
                     sp.GetRequiredService<Services.Music.OpenSubsonicProvider>()
+                },
+                new Services.Music.IMusicProvider[]
+                {
+                    sp.GetRequiredService<Services.Music.AudiusProvider>()
                 },
                 ytSource);
 #endif
