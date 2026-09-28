@@ -90,6 +90,22 @@
                            FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
 
+            <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <TextBox Text="{Binding AudiusApiKeyInput, Mode=TwoWay}" PasswordChar="●"
+                         Watermark="{DynamicResource S_AudiusApiKey}"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Command="{Binding SaveAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusSave}"
+                            Padding="14,6" FontSize="12"/>
+                    <Button Command="{Binding ClearAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusClear}"
+                            Padding="14,6" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="{DynamicResource S_AudiusHint}" Foreground="{DynamicResource C_FF666666}"
+                           FontSize="11" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding AudiusStatus}" Foreground="{DynamicResource C_FFFFC86B}"
+                           FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
             <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
                 <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"

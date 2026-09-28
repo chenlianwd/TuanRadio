@@ -69,6 +69,47 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task AudiusKey_SavesToSecureStorageAndNeverToSettingsJson()
+    {
+        string? stored = null;
+        _mockStorage.Setup(x => x.SaveApiKeyAsync("audius-api-key-v1", It.IsAny<string>()))
+            .Callback<string, string>((_, key) => stored = key)
+            .Returns(Task.CompletedTask);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("audius-api-key-v1"))
+            .ReturnsAsync(() => stored);
+        _mockStorage.Setup(x => x.DeleteApiKey("audius-api-key-v1"))
+            .Callback(() => stored = null);
+        var settingsFile = CreateTempSettingsFile();
+        var provider = new AudiusProvider(storage: _mockStorage.Object);
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+                settingsFile, audius: provider);
+            vm.AudiusApiKeyInput = "local-test-key";
+            await vm.SaveAudiusApiKeyCommand.Execute();
+            Assert.Equal("local-test-key", stored);
+            Assert.True(provider.HasApiKey);
+            Assert.Empty(vm.AudiusApiKeyInput);
+            await vm.SaveUiStateCommand.Execute();
+            Assert.DoesNotContain("local-test-key", await File.ReadAllTextAsync(settingsFile));
+
+            AppLanguage.Apply("en");
+            Assert.Equal("API Key saved securely", vm.AudiusStatus);
+            using var restored = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+                settingsFile, audius: new AudiusProvider(storage: _mockStorage.Object));
+            await restored.LoadAsync();
+            Assert.Equal("API Key saved securely", restored.AudiusStatus);
+            restored.ClearAudiusApiKeyCommand.Execute().Subscribe();
+            Assert.Null(stored);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+    [Fact]
     public async Task OpenSubsonicQuality_RoundTripsAndUpdatesProvider()
     {
         var settingsFile = CreateTempSettingsFile();

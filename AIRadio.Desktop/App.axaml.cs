@@ -222,7 +222,8 @@ public partial class App : Application
         services.AddSingleton(sp =>
             new KugouVerificationService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         services.AddSingleton<Services.Music.LocalLibraryProvider>();
-        services.AddSingleton<Services.Music.AudiusProvider>();
+        services.AddSingleton<Services.Music.AudiusProvider>(sp =>
+            new Services.Music.AudiusProvider(storage: sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<Services.Music.OpenSubsonicProvider>(sp =>
             new Services.Music.OpenSubsonicProvider(sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<Services.Music.MusicSourceBroker>(sp =>
@@ -292,7 +293,8 @@ public partial class App : Application
             listeningProfile: sp.GetRequiredService<IListeningProfileService>(),
             weatherService: sp.GetRequiredService<IWeatherService>(),
             localLibrary: sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
-            openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>()));
+            openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
+            audius: sp.GetRequiredService<Services.Music.AudiusProvider>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
