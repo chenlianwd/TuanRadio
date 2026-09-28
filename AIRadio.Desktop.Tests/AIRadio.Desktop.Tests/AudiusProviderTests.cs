@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
+using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.Music;
 
 namespace AIRadio.Desktop.Tests;
@@ -62,6 +64,55 @@ public sealed class AudiusProviderTests
         Assert.Equal(PlaybackFailureKind.NotFound, invalid.Failure);
     }
 
+    [Fact]
+    public async Task ApiKey_IsStoredAndUsedForReadOnlyRequests_ButNeverEmbeddedInPlaybackUrl()
+    {
+        var storage = new MemoryStorage();
+        var requests = new List<Uri>();
+        var keys = new List<string?>();
+        using var http = new HttpClient(new Handler(request =>
+        {
+            requests.Add(request.RequestUri!);
+            keys.Add(request.Headers.TryGetValues("x-api-key", out var values) ? values.Single() : null);
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+                ? """{"data":[{"id":"aB123","title":"Open song","is_streamable":true}]}"""
+                : """{"data":{"id":"aB123","is_streamable":true}}""";
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
+        }));
+        var provider = new AudiusProvider(http, storage);
+        await provider.SaveApiKeyAsync("client-key");
+        Assert.True(provider.HasApiKey);
+        var song = Assert.Single(await provider.SearchAsync("Open", 1, CancellationToken.None));
+        var resolution = await provider.ResolveAsync(new ProviderTrackRef("audius", "aB123"),
+            null, CancellationToken.None);
+        Assert.All(keys, key => Assert.Equal("client-key", key));
+        Assert.All(requests, uri => Assert.DoesNotContain("client-key", uri.OriginalString));
+        Assert.DoesNotContain("client-key", resolution.Media!.RawUrl);
+
+        var restored = new AudiusProvider(http, storage);
+        await restored.LoadAsync();
+        Assert.True(restored.HasApiKey);
+        restored.ClearApiKey();
+        Assert.False(restored.HasApiKey);
+        requests.Clear();
+        keys.Clear();
+        await restored.SearchAsync("Open", 1, CancellationToken.None);
+        Assert.Equal("TuanRadio", System.Web.HttpUtility.ParseQueryString(requests[0].Query)["app_name"]);
+        Assert.Null(keys[0]);
+        Assert.Null(storage.Value);
+    }
+
+    private sealed class MemoryStorage : ISecureStorage
+    {
+        public string? Value { get; private set; }
+        public Task SaveApiKeyAsync(string service, string apiKey)
+        {
+            Value = apiKey;
+            return Task.CompletedTask;
+        }
+        public Task<string?> GetApiKeyAsync(string service) => Task.FromResult(Value);
+        public void DeleteApiKey(string service) => Value = null;
+    }
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,

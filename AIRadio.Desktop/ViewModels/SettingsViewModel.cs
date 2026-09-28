@@ -69,6 +69,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IListeningProfileService? _listeningProfile;
     private readonly IMusicSearchService? _musicSearch;
     private readonly OpenSubsonicProvider? _openSubsonic;
+    private readonly AudiusProvider? _audius;
+    private Func<string>? _audiusStatusFactory;
     private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
     private bool _loadingProfileToggle;
@@ -124,6 +126,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public string OpenSubsonicStatus { get; set; } = string.Empty;
     [Reactive] public string SelectedOpenSubsonicQuality { get; set; } = "auto";
     [Reactive] public bool IsConnectingOpenSubsonic { get; set; }
+    [Reactive] public string AudiusApiKeyInput { get; set; } = string.Empty;
+    [Reactive] public string AudiusStatus { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     // 音源逐源连接诊断结果（随语言切换重建）
@@ -179,6 +183,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> DiagnoseSourcesCommand { get; }
     public ReactiveCommand<Unit, Unit> ConnectOpenSubsonicCommand { get; }
     public ReactiveCommand<Unit, Unit> DisconnectOpenSubsonicCommand { get; }
+    public ReactiveCommand<Unit, Unit> SaveAudiusApiKeyCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearAudiusApiKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
@@ -201,7 +207,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         KugouVerificationService? kugouVerification = null,
         IListeningProfileService? listeningProfile = null,
         IMusicSearchService? musicSearch = null,
-        OpenSubsonicProvider? openSubsonic = null)
+        OpenSubsonicProvider? openSubsonic = null,
+        AudiusProvider? audius = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -215,6 +222,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _listeningProfile = listeningProfile;
         _musicSearch = musicSearch;
         _openSubsonic = openSubsonic;
+        _audius = audius;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
@@ -226,6 +234,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             this.WhenAnyValue(x => x.IsDiagnosingSources).Select(running => !running));
         ConnectOpenSubsonicCommand = ReactiveCommand.CreateFromTask(ConnectOpenSubsonicAsync);
         DisconnectOpenSubsonicCommand = ReactiveCommand.Create(DisconnectOpenSubsonic);
+        SaveAudiusApiKeyCommand = ReactiveCommand.CreateFromTask(SaveAudiusApiKeyAsync);
+        ClearAudiusApiKeyCommand = ReactiveCommand.Create(ClearAudiusApiKey);
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
@@ -310,6 +320,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 SourceDiagnosticsText = _sourceDiagnosticsFactory();
             if (_openSubsonicStatusFactory != null)
                 OpenSubsonicStatus = _openSubsonicStatusFactory();
+            if (_audiusStatusFactory != null)
+                AudiusStatus = _audiusStatusFactory();
             if (IsYtdlpCookieNoticeVisible && SelectedYtdlpBrowser is { Id.Length: > 0 } browser)
                 YtdlpCookieNotice = BuildYtdlpCookieNotice(browser.Id);
             RebuildLocalizedOptionLists();
@@ -657,6 +669,22 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(_accounts.KugouCookie))
                 SetKugouAccountStatus(() => AppLanguage.T("已登录", "Signed in"));
 
+            if (_audius != null)
+            {
+                try
+                {
+                    await _audius.LoadAsync(cancellationToken);
+                    SetAudiusStatus(_audius.HasApiKey
+                        ? () => AppLanguage.T("API Key 已安全保存", "API Key saved securely")
+                        : () => AppLanguage.T("公开无 Key 模式", "Public mode without an API Key"));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning("Audius API Key could not be loaded: {Type}", ex.GetType().Name);
+                    SetAudiusStatus(() => AppLanguage.T("API Key 读取失败", "Could not load API Key"));
+                }
+            }
+
             if (_openSubsonic != null)
             {
                 try
@@ -730,6 +758,52 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             Log.Warning("OpenSubsonic disconnect failed: {Type}", ex.GetType().Name);
             SetOpenSubsonicStatus(() => AppLanguage.T("断开失败，请重试", "Could not disconnect; try again"));
         }
+    }
+
+    private async Task SaveAudiusApiKeyAsync()
+    {
+        if (_audius == null) return;
+        if (string.IsNullOrWhiteSpace(AudiusApiKeyInput))
+        {
+            SetAudiusStatus(() => AppLanguage.T("请输入 Audius API Key", "Enter an Audius API Key"));
+            return;
+        }
+        try
+        {
+            await _audius.SaveApiKeyAsync(AudiusApiKeyInput, _lifetimeCts.Token);
+            AudiusApiKeyInput = string.Empty;
+            SetAudiusStatus(() => AppLanguage.T("API Key 已安全保存", "API Key saved securely"));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Audius API Key save failed: {Type}", ex.GetType().Name);
+            SetAudiusStatus(() => AppLanguage.T("保存失败，请检查 Key 并重试", "Could not save the API Key; check it and retry"));
+        }
+    }
+
+    private void ClearAudiusApiKey()
+    {
+        if (_audius == null) return;
+        try
+        {
+            _audius.ClearApiKey();
+            AudiusApiKeyInput = string.Empty;
+            SetAudiusStatus(() => AppLanguage.T("已切换到公开无 Key 模式", "Switched to public mode without an API Key"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Audius API Key clear failed: {Type}", ex.GetType().Name);
+            SetAudiusStatus(() => AppLanguage.T("清除失败，请重试", "Could not clear the API Key; try again"));
+        }
+    }
+
+    private void SetAudiusStatus(Func<string> factory)
+    {
+        _audiusStatusFactory = factory;
+        AudiusStatus = factory();
     }
 
     private void SetOpenSubsonicStatus(Func<string> factory)

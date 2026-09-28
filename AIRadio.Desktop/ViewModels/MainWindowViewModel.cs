@@ -156,7 +156,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IListeningProfileService? listeningProfile = null,
         IWeatherService? weatherService = null,
         LocalLibraryProvider? localLibrary = null,
-        OpenSubsonicProvider? openSubsonic = null)
+        OpenSubsonicProvider? openSubsonic = null,
+        AudiusProvider? audius = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -186,7 +187,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             track => PlaylistVM.AddExternalTrack(track), _recommendationService, listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
-            listeningProfile, musicSearchService, openSubsonic);
+            listeningProfile, musicSearchService, openSubsonic, audius);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));

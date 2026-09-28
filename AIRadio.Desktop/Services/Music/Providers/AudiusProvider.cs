@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -12,17 +13,49 @@ namespace AIRadio.Desktop.Services.Music;
 /// <summary>Audius 公开只读曲库。只使用无需账号的搜索与完整曲目播放接口。</summary>
 public sealed class AudiusProvider : IMusicProvider
 {
+    private const string CredentialService = "audius-api-key-v1";
     private static readonly Uri ApiRoot = new("https://api.audius.co/v1/");
     private readonly HttpClient _http;
+    private readonly ISecureStorage? _storage;
+    private string? _apiKey;
 
     public MusicProviderDescriptor Descriptor { get; } = new(
         "audius", "Audius", IsExperimental: true);
 
-    public AudiusProvider(HttpClient? httpClient = null)
+    public bool HasApiKey => !string.IsNullOrWhiteSpace(Volatile.Read(ref _apiKey));
+
+    public AudiusProvider(HttpClient? httpClient = null, ISecureStorage? storage = null)
     {
+        _storage = storage;
         // 搜索只读取 JSON；重定向不交给 HttpClient 自动跟随。
         _http = httpClient ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(10) };
+    }
+
+    public async Task LoadAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_storage == null) return;
+        var key = await _storage.GetApiKeyAsync(CredentialService).ConfigureAwait(false);
+        Volatile.Write(ref _apiKey, string.IsNullOrWhiteSpace(key) ? null : key.Trim());
+    }
+
+    public async Task SaveApiKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_storage == null) throw new InvalidOperationException("Audius secure storage is unavailable");
+        var key = apiKey.Trim();
+        if (key.Length is < 1 or > 512 || key.Any(char.IsWhiteSpace))
+            throw new ArgumentException("Invalid Audius API key", nameof(apiKey));
+        await _storage.SaveApiKeyAsync(CredentialService, key).ConfigureAwait(false);
+        Volatile.Write(ref _apiKey, key);
+    }
+
+    public void ClearApiKey()
+    {
+        if (_storage == null) throw new InvalidOperationException("Audius secure storage is unavailable");
+        _storage.DeleteApiKey(CredentialService);
+        Volatile.Write(ref _apiKey, null);
     }
 
     public async Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken)
@@ -30,7 +63,8 @@ public sealed class AudiusProvider : IMusicProvider
         if (string.IsNullOrWhiteSpace(keyword) || limit <= 0) return new List<OnlineTrack>();
         var uri = new Uri(ApiRoot, "tracks/search?query=" + Uri.EscapeDataString(keyword.Trim()) +
             "&limit=" + Math.Min(limit, 100).ToString(CultureInfo.InvariantCulture) + "&app_name=TuanRadio");
-        using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        using var request = CreateReadOnlyRequest(uri);
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         if ((int)response.StatusCode is >= 300 and < 400)
             throw new HttpRequestException("Audius search redirected the request");
@@ -84,7 +118,8 @@ public sealed class AudiusProvider : IMusicProvider
 
         // 收藏/历史曲目可能在搜索后变为门控；缓存未命中时重新核验当前可播状态。
         var detailUri = new Uri(ApiRoot, "tracks/" + track.TrackId + "?app_name=TuanRadio");
-        using var response = await _http.GetAsync(detailUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        using var request = CreateReadOnlyRequest(detailUri);
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound);
@@ -117,4 +152,17 @@ public sealed class AudiusProvider : IMusicProvider
 
     private static bool IsFalse(JsonElement item, string name)
         => item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.False;
+
+    private HttpRequestMessage CreateReadOnlyRequest(Uri uri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        var key = Volatile.Read(ref _apiKey);
+        if (!string.IsNullOrWhiteSpace(key) &&
+            !request.Headers.TryAddWithoutValidation("x-api-key", key))
+        {
+            request.Dispose();
+            throw new InvalidOperationException("Audius API key header could not be set");
+        }
+        return request;
+    }
 }
