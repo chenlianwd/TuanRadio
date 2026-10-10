@@ -25,6 +25,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI 
 - 歌词模式：经本地代理双源取词（网易单步、酷狗两步 + 关键词兜底 + 时长过滤），ClockStage 中栏在时钟与歌词间切换、两侧频谱常驻共显，点击舞台或标题栏按钮均可切换并记忆偏好，按播放进度逐行滚动显示。
 - 复古收音机调频音效：纯程序化 NAudio 声学合成（无外部音频资产），DJ 开口前 FM 调谐扫频自然淡入，新节目单落地时台呼微鸣；设置页开关。
 - 设置页可配置 LLM 提供商、API Key、Base URL、模型、回复语言、语音播报和说话混音方式，带连接测试与失败原因提示；音源区可启停及上下调整每个已注册音源；搜索结果与播放区显示实际音源，并显示逐源连接诊断、最近 20 条健康记录中的正常接口响应数、搜索/解析成功时间和熔断状态。
+- 播放区显示实际播放编码/码率（如 `MP3 · 320 kbps`）：以 LibVLC 解析在播媒体的实际音频轨道为准（覆盖全部音源与本地文件），音源声明值（OpenSubsonic 等）兜底；简洁模式行 2 短徽标 + 曲目 Tooltip 显示采样率/声道。
 - Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
 - 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
 - 长期收听画像：播放/完播/跳过/按钮反馈/氛围指令持久化到 `%APPDATA%\AIRadio\listener-profile.json`，派生歌手亲和度（30 天半衰期）、Dislike 曲目黑名单（180 天过期、音乐身份跨源匹配）与 LLM 口味摘要，注入节目单搜索词生成与排除逻辑（冷启动门槛 ≥30 事件且 ≥3 歌手，强制 1 个探索方向防茧房）；DJ 聊天的 system 上下文同样注入口味段与黑名单避雷（可自然提及但受克制约束，跟随「学习我的口味」开关）；设置页提供「学习我的口味」开关与二次确认清除。
@@ -86,7 +87,7 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 ## 已知技术债
 
 - 长期收听画像已落地且推荐/聊天双链路注入（见 docs/plans/2026-09-14 与 2026-09-15 设计文档），但画像纯本地、不跨设备同步（有意不做云端）。
-- 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级。可搜索本地曲库、OpenSubsonic、Audius 无 Key 只读 PoC、无 Node 核心构建、裁剪后的代理包、音源启停/排序与 OpenSubsonic 传输音质偏好已实现；Provider 独立程序集、实际播放编码/码率展示和完整播放传输适配仍待完成，详见 `docs/plans/2026-08-25-music-source-architecture-evolution-plan.md`。
+- 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级。可搜索本地曲库、OpenSubsonic、Audius 无 Key 只读 PoC、无 Node 核心构建、裁剪后的代理包、音源启停/排序、OpenSubsonic 传输音质偏好与实际播放编码/码率展示已实现；Provider 独立程序集、完整播放传输适配与网易声明值采集（首播声明值缺口）仍待完成，详见 `docs/plans/2026-08-25-music-source-architecture-evolution-plan.md`。
 - 网易云代理固定 `NeteaseCloudMusicApi` 4.32.0，生产依赖经过兼容更新并生成 `providers-manifest.json`；当前 `npm audit --omit=dev` 仍报告上游 `music-metadata`/`file-type` 链上的 3 项告警（1 中危、2 高危），升级到不兼容旧接口的版本前需单独评估。
 - 酷狗代理生产锁文件已在兼容范围内更新，`npm ci --omit=dev --ignore-scripts` 与 `npm audit --omit=dev` 验证通过（0 项告警）；代理源码基线与本地补丁记录在 `server-kugou/VENDOR.md`。
 - 当前 `MediaUriPolicy` 校验交给 LibVLC 的初始播放 URL；LibVLC 内部重定向无法逐跳复检，完整 DNS 重绑定防护与请求头传输适配仍属后续工作。
