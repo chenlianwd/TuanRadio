@@ -1418,6 +1418,9 @@ public class AudioService : IAudioService, IDisposable
     {
         if (isUrl && !CollectMediaInfoForOnlineTracks)
             return;
+        // await 前快照曲目身份：解析等待期间跨源回退可能改写 track.Id，
+        // 媒体信息必须绑定启动采集时的那份身份（requestId 守卫之外的补充）
+        var trackId = track.Id;
         try
         {
             var options = isUrl ? MediaParseOptions.ParseNetwork : MediaParseOptions.ParseLocal;
@@ -1442,7 +1445,7 @@ public class AudioService : IAudioService, IDisposable
                 : (int?)null;
             var audio = audioTrack.Data.Audio;
             _trackMediaInfoSubject.OnNext(new TrackMediaInfo(
-                track.Id,
+                trackId,
                 codec,
                 bitrateKbps,
                 audio.Rate > 0 ? (int)audio.Rate : null,
