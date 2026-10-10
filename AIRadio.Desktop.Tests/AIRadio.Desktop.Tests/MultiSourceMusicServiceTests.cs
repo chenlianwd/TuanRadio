@@ -81,6 +81,10 @@ public class MultiSourceMusicServiceTests
             client,
             new FallbackMusicService(),
             lowerPriority);
+        // 本测试守护"低优先级挂起源不得拖慢可用候选"的解析时序，与重定向探测无关：
+        // 注入即时 200 的探测客户端，避免默认探测对不可达的 TEST-NET 地址消耗 2s 预算
+        service.RedirectGuard = new PlaybackRedirectGuard(new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)))));
         var track = new OnlineTrack
         {
             Id = "unknown:1",
