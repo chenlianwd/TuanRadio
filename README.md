@@ -43,7 +43,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI 
 ## 稳定性设计
 
 - URL 刷新和音量排空在后台执行；在线歌曲提前结束时依次刷新当前源、尝试替代源、再进入续播，避免同一试听片段循环重放。
-- 播放 URL 进 LibVLC 前经 `MediaUriPolicy` 统一安全校验（scheme 白名单、IPv4/IPv6 字节级禁段、DNS 解析后复查、禁止 URL 内嵌凭据，全部 fail-closed），在 `MusicSourceBroker` 解析路径单点收口；用户配置的 OpenSubsonic 私有服务器只允许同源 stream 路径。当前校验只覆盖初始播放 URL，LibVLC 内部重定向逐跳复检仍待实现。本地代理回环地址属于 API 通道，不是播放 URL。
+- 播放 URL 进 LibVLC 前经 `MediaUriPolicy` 统一安全校验（scheme 白名单、IPv4/IPv6 字节级禁段、DNS 解析后复查、禁止 URL 内嵌凭据，全部 fail-closed），在 `MusicSourceBroker` 解析路径单点收口；用户配置的 OpenSubsonic 私有服务器只允许同源 stream 路径。解析期另经 `PlaybackRedirectGuard` 主动跟随重定向链并逐跳复检（观察型：只拒绝观察到的违规跳转，探测超时/不可得放行原 URL）。本地代理回环地址属于 API 通道，不是播放 URL。
 - `ResolvedMediaCache` 播放解析内存缓存（默认 10 分钟 TTL）：点歌/推荐/歌单重复解析直接命中，播放刷新与恢复链路强制刷新并先逐出旧条目防陈旧 URL，音源凭据变化自动清空对应源。
 - LibVLC 播放器操作统一串行，自动续播与聊天入口停止 TTS 时采用 2 秒有界后台等待，避免设备异常拖死 Avalonia UI。
 - 在线搜索、LLM、推荐、Edge TTS、Whisper 和 yt-dlp 支持超时或应用生命周期取消；关闭窗口后不再继续更新 ViewModel。
@@ -90,7 +90,7 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 - 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级。可搜索本地曲库、OpenSubsonic、Audius 无 Key 只读 PoC、无 Node 核心构建、裁剪后的代理包、音源启停/排序、OpenSubsonic 传输音质偏好与实际播放编码/码率展示已实现；Provider 独立程序集、完整播放传输适配与网易声明值采集（首播声明值缺口）仍待完成，详见 `docs/plans/2026-08-25-music-source-architecture-evolution-plan.md`。
 - 网易云代理固定 `NeteaseCloudMusicApi` 4.32.0，生产依赖经过兼容更新并生成 `providers-manifest.json`；当前 `npm audit --omit=dev` 仍报告上游 `music-metadata`/`file-type` 链上的 3 项告警（1 中危、2 高危），升级到不兼容旧接口的版本前需单独评估。
 - 酷狗代理生产锁文件已在兼容范围内更新，`npm ci --omit=dev --ignore-scripts` 与 `npm audit --omit=dev` 验证通过（0 项告警）；代理源码基线与本地补丁记录在 `server-kugou/VENDOR.md`。
-- 当前 `MediaUriPolicy` 校验交给 LibVLC 的初始播放 URL；LibVLC 内部重定向无法逐跳复检，完整 DNS 重绑定防护与请求头传输适配仍属后续工作。
+- 播放 URL 安全校验分两层：`MediaUriPolicy` fail-closed 校验初始地址（scheme/禁段/DNS/凭据）；`PlaybackRedirectGuard` 在解析期主动跟随重定向并逐跳复检（观察型，只拒绝观察到的违规跳转，探测超时/不可得放行原 URL，残余风险为恶意源停滞探测规避与 TOCTOU 窗口，已文档化）。请求头传输适配（PlaybackHeaders 端到端）仍属后续工作。
 - Node.js 便携包下载即按官方 SHASUMS256 值做 fail-closed 校验，yt-dlp 固定官方 release 版本 + SHA256 校验（不追随 latest）。
 - 原生音频设备异常属于运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试。
 - Light/Dark 双主题经 WCAG 对比度审计（文字对 ≥4.5:1，Light 主题三处超标 token 已修正）；后续视觉调整需保持该标准。

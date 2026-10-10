@@ -1,7 +1,7 @@
 # TuanRadio 音源架构演进计划
 
 > 日期：2026-08-25
-> 状态（2026-10-10 同步）：阶段 0 基本落地，0.0 基线量化未单独执行；阶段 1 已完成。阶段 2 已接入可搜索 JSON 本地索引、手动重扫、OpenSubsonic 认证/搜索/播放流与安全存储，新增自动/原始/省流量传输偏好；自动化测试通过，真实设备端到端验收待用户执行。阶段 3 已实现无 Node 核心构建、代理路由裁剪和 providers-manifest.json，独立 Provider 程序集尚未拆分。阶段 4 已有音源启停/排序、Audius 公开只读 PoC 与可选 API Key 本机安全存储、搜索与播放区实际音源展示；实际播放编码/码率展示已落地（LibVLC 解析为准 + 声明值兜底，试听徽标为前瞻性接线，2026-10-10）；全局源策略与完整传输适配仍待实现。当前 URL 校验仅覆盖初始播放地址；逐跳重定向复检、完整 DNS 重绑定防护与请求头传输适配仍待实现。
+> 状态（2026-10-10 同步）：阶段 0 基本落地，0.0 基线量化未单独执行；阶段 1 已完成。阶段 2 已接入可搜索 JSON 本地索引、手动重扫、OpenSubsonic 认证/搜索/播放流与安全存储，新增自动/原始/省流量传输偏好；自动化测试通过，真实设备端到端验收待用户执行。阶段 3 已实现无 Node 核心构建、代理路由裁剪和 providers-manifest.json，独立 Provider 程序集尚未拆分。阶段 4 已有音源启停/排序、Audius 公开只读 PoC 与可选 API Key 本机安全存储、搜索与播放区实际音源展示；实际播放编码/码率展示已落地（LibVLC 解析为准 + 声明值兜底，试听徽标为前瞻性接线，2026-10-10）；全局源策略与完整传输适配仍待实现。URL 校验已在解析期覆盖重定向链（PlaybackRedirectGuard 观察型逐跳复检，2026-10-10；LibVLC 内部跳转仍有停滞探测规避与 TOCTOU 残余窗口）；请求头传输适配仍待实现。
 > 产品边界：个人工具、开源项目；项目方不经营商业音乐分发，但所选开源许可证仍允许依法商业使用
 > 实施原则：小步迁移、保持现有播放能力、每阶段独立 build/test、先修安全与正确性再扩展新源
 
@@ -122,7 +122,7 @@ MainWindowViewModel / PlaylistViewModel / RecommendationService
 
 #### `MediaUriPolicy`
 
-以下为最终架构目标。当前阶段 1 只校验交给 LibVLC 的初始播放 URL；重定向逐跳复检、完整 DNS 重绑定防护和请求头传输适配尚未实现，见阶段 1 实施计划 §3.4。
+以下为最终架构目标。阶段 1 当时只校验交给 LibVLC 的初始播放 URL；重定向逐跳复检已于 2026-10-10 以观察型 `PlaybackRedirectGuard` 落地（探测不可得放行，残余窗口文档化），请求头传输适配仍待实现，见阶段 1 实施计划 §3.4。
 
 - 在 URL 交给 LibVLC 前统一校验 scheme、主机、解析后的 IP 和每一次重定向。
 - `PublicInternet` Provider 禁止访问 loopback、link-local、RFC1918 私网、组播、未指定地址和云元数据端点。
@@ -383,7 +383,7 @@ git diff --check
 
 > 原目标：把硬编码聚合器迁移为可测试、可配置的 Provider 系统，暂不追求动态插件安装。
 >
-> 实施边界（2026-09-25 阶段 1 记录，2026-09-28 补充）：阶段 1 按 `2026-09-20-music-source-broker-phase1-design.md` 收窄为 Provider 契约、Broker、既有音源适配器、初始播放 URL 校验和内存缓存；复用 `OnlineTrack`，没有引入 `MusicCandidate`。以下目录、设置与搜索协调条目保留原始目标，并非阶段 1 全部完成声明。后续已补充 Provider 启停/排序、Audius 无 Key 只读 PoC 及 OpenSubsonic 传输音质偏好。独立包、`PlaybackTransportAdapter`、跨源替代偏好和逐跳重定向防护仍未落地；Broker 的默认兼容构造仍直接组装既有具体音源，聚合执行路径使用 `IMusicProvider`。
+> 实施边界（2026-09-25 阶段 1 记录，2026-09-28 补充，2026-10-10 再补）：阶段 1 按 `2026-09-20-music-source-broker-phase1-design.md` 收窄为 Provider 契约、Broker、既有音源适配器、初始播放 URL 校验和内存缓存；复用 `OnlineTrack`，没有引入 `MusicCandidate`。以下目录、设置与搜索协调条目保留原始目标，并非阶段 1 全部完成声明。后续已补充 Provider 启停/排序、Audius 无 Key 只读 PoC、OpenSubsonic 传输音质偏好与逐跳重定向防护（观察型 PlaybackRedirectGuard，2026-10-10）。独立包、`PlaybackTransportAdapter`、跨源替代偏好仍未落地；Broker 的默认兼容构造仍直接组装既有具体音源，聚合执行路径使用 `IMusicProvider`。
 
 #### 1.1 建议目录
 
