@@ -114,6 +114,34 @@ public sealed class MusicProviderPreferencesTests
         Assert.True(cached.IsPreview);
     }
 
+    [Fact]
+    public async Task RedirectProbe_RejectsPrivateHopWithoutTransportFailureCount()
+    {
+        var provider = new StubProvider("redir", mediaUrl: "https://203.0.113.7/stream.mp3");
+        var broker = new MusicSourceBroker(provider)
+        {
+            // 初始 URL 公网放行，但探测发现第一跳 302 指向私网
+            RedirectGuard = new PlaybackRedirectGuard(new HttpClient(new RedirectToPrivateHandler()))
+        };
+
+        Assert.Null(await broker.GetPlayUrlAsync("redir:1", CancellationToken.None));
+        var health = Assert.Single(broker.GetHealthSnapshots());
+        // 策略事件不记熔断：无传输故障累计、无成功记录
+        Assert.Equal(0, health.ConsecutiveTransportFailures);
+        Assert.Null(health.LastResolutionSuccessUtc);
+        Assert.Equal(0, health.RecentSuccessCount);
+    }
+
+    private sealed class RedirectToPrivateHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Found)
+            {
+                Headers = { Location = new Uri("http://192.168.0.9/stream.mp3") }
+            });
+    }
+
     private sealed class StubProvider(string id, bool isSlow = false, string? mediaUrl = null,
         string? codec = null, int? bitrateKbps = null, bool isPreview = false) : IMusicProvider
     {

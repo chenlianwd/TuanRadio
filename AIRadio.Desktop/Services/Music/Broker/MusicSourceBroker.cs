@@ -35,6 +35,21 @@ public class MusicSourceBroker : IMusicSourceBroker
     public event EventHandler? ProviderConfigurationChanged;
     private readonly SourceHealthRegistry _healthRegistry = new();
     private readonly ResolvedMediaCache _mediaCache = new();
+    // 重定向探测客户端：禁用自动跟随（跟随与逐跳校验由 PlaybackRedirectGuard 手动完成）；
+    // 10s 客户端兜底，实际预算由 ResolveWithTimeout 的 WaitAsync 约束。随 Broker 单例存活到进程结束。
+    private readonly HttpClient _redirectProbeClient = new(
+        new SocketsHttpHandler { AllowAutoRedirect = false })
+    {
+        Timeout = TimeSpan.FromSeconds(10)
+    };
+    private PlaybackRedirectGuard? _defaultRedirectGuard;
+    // 重定向探测独立短预算：CDN 响应头通常 <500ms，2s 足够完成跟随；
+    // 超时按"探测不可得"放行，最坏只给解析主链路增加 2s
+    private static readonly TimeSpan RedirectProbeBudget = TimeSpan.FromSeconds(2);
+    /// <summary>测试注入口：以受控 HttpClient 替换默认重定向探测。</summary>
+    internal PlaybackRedirectGuard? RedirectGuard { get; set; }
+    private PlaybackRedirectGuard EffectiveRedirectGuard
+        => RedirectGuard ?? (_defaultRedirectGuard ??= new PlaybackRedirectGuard(_redirectProbeClient));
     private readonly object _reportGate = new();
     // 跨源回退对共享 track 实例的身份变更互斥（见 TryResolveFallbackCandidateAsync 内注释）
     private readonly object _fallbackMutationGate = new();
@@ -841,7 +856,10 @@ public class MusicSourceBroker : IMusicSourceBroker
                         sourceId,
                         track.ProviderMetadata,
                         budget,
-                        playabilityCts.Token));
+                        playabilityCts.Token,
+                        // 搜索期可播性探针不做重定向探测：避免对网易/酷狗 CDN 成倍多发 GET
+                        // （酷狗 20028 风控敏感）；真正播放解析时仍会逐跳复检
+                        verifyRedirects: false));
                 if (!string.IsNullOrWhiteSpace(url))
                     return PrimaryProbeResult.Playable;
             }
@@ -928,6 +946,17 @@ public class MusicSourceBroker : IMusicSourceBroker
                 ? media.Uri.LocalPath
                 : media.RawUrl;
 
+    /// <summary>重定向每跳校验器：私有源要求跳转后仍逐字来自配置服务器；其余按公网策略校验。</summary>
+    private static Func<Uri, CancellationToken, Task<bool>> BuildRedirectHopValidator(IMusicProvider provider)
+    {
+        if (provider.Descriptor.NetworkScope == ProviderNetworkScope.UserConfiguredPrivateNetwork &&
+            provider is IPrivateMediaOriginPolicy privateOrigin)
+        {
+            return (uri, _) => Task.FromResult(privateOrigin.IsAllowedMediaUri(uri));
+        }
+        return (uri, token) => MediaUriPolicy.ValidateAsync(ProviderNetworkScope.PublicInternet, uri, token);
+    }
+
     /// <summary>单源解析带硬超时与熔断（自 GetPlayUrlWithTimeout 两个重载合并平移：元数据可空即覆盖原字符串路径）。
     /// 成功返回已过 MediaUriPolicy 校验的 ResolvedMedia（含声明的编码/码率/试听标记），URL 形态由调用方按需转换。</summary>
     private async Task<ResolvedMedia?> ResolveWithTimeout(
@@ -935,7 +964,8 @@ public class MusicSourceBroker : IMusicSourceBroker
         string bareTrackId,
         IReadOnlyDictionary<string, string>? metadata,
         TimeSpan budget,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool verifyRedirects = true)
     {
         if (!Volatile.Read(ref _activeProviders).Contains(provider))
             return null;
@@ -1018,6 +1048,28 @@ public class MusicSourceBroker : IMusicSourceBroker
                 Log.Warning("Provider {Name} play URL is outside configured server for {Id}",
                     provider.Descriptor.DisplayName, bareTrackId);
                 return null;
+            }
+
+            if (verifyRedirects && provider.Descriptor.NetworkScope != ProviderNetworkScope.LocalFileOnly)
+            {
+                // 重定向逐跳复检（观察型）：独立 2s 短预算快速失败——探测不可得（超时/异常/4xx/5xx）
+                // 一律放行原 URL，只拒绝"观察到的违规跳转"，不拖慢解析主链路也不因探测惩罚播放
+                using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
+                probeCts.CancelAfter(RedirectProbeBudget);
+                var redirectWalk = await EffectiveRedirectGuard.VerifyAsync(
+                        media.Uri,
+                        BuildRedirectHopValidator(provider),
+                        probeCts.Token)
+                    .WaitAsync(budget, cancellationToken).ConfigureAwait(false);
+
+                if (redirectWalk == RedirectWalkResult.Rejected)
+                {
+                    // 与初始策略拒绝同口径：策略事件不是音源健康事件，不记熔断，让回退链继续
+                    CurrentResolutionCapture.Value?.Record(PlaybackFailureKind.TransportRejected);
+                    Log.Warning("Provider {Name} play URL redirect chain rejected for {Id}",
+                        provider.Descriptor.DisplayName, bareTrackId);
+                    return null;
+                }
             }
 
             _healthRegistry.RecordSuccess(provider.Descriptor.DisplayName, SourceOperation.Resolution);
