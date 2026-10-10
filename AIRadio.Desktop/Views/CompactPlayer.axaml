@@ -39,6 +39,12 @@
                             <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontWeight="Bold" TextWrapping="Wrap"/>
                             <TextBlock Text="{Binding PlayerVM.TrackArtist}" TextWrapping="Wrap"
                                        Foreground="{DynamicResource C_FF9A9AA6}"/>
+                            <TextBlock Text="{Binding PlayerVM.TrackQualityDetail}" TextWrapping="Wrap" FontSize="11"
+                                       Foreground="{DynamicResource C_FF858594}"
+                                       IsVisible="{Binding PlayerVM.HasQuality}"/>
+                            <TextBlock Text="{Binding PlayerVM.TrackPreviewText}" FontSize="11"
+                                       Foreground="{DynamicResource C_FF858594}"
+                                       IsVisible="{Binding PlayerVM.TrackIsPreview}"/>
                             <TextBlock Text="{DynamicResource S_CompactLyricsTip}" Margin="0,6,0,0" FontSize="11"
                                        Foreground="{DynamicResource C_FF858594}"/>
                         </StackPanel>
@@ -104,8 +110,8 @@
                 </Button>
             </Grid>
 
-            <!-- 行2：上一首/播放/下一首 + 时间 + 进度 + 迷你频谱 -->
-            <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto" Margin="0,2,0,0">
+            <!-- 行2：上一首/播放/下一首 + 时间 + 进度 + 实际码率 + 迷你频谱 -->
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto" Margin="0,2,0,0">
                 <Button Width="28" Height="28" Padding="0" Command="{Binding PlayerVM.PreviousCommand}"
                         ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="{DynamicResource S_Prev}">
                     <PathIcon Width="14" Height="14" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
@@ -130,9 +136,14 @@
                         Foreground="{DynamicResource AccentGreen}"
                         Value="{Binding PlayerVM.CurrentSeconds}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="5" Text="{Binding PlayerVM.DurationText}" FontSize="10" FontFamily="Consolas"
-                           Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                           Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <!-- 实际播放编码/码率短徽标：完整信息（采样率/声道）见曲目 Tooltip -->
+                <TextBlock x:Name="CompactQualityBadge" Grid.Column="6" Text="{Binding PlayerVM.TrackQualityShort}" FontSize="9" FontFamily="Consolas"
+                           Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,6,0"
+                           IsVisible="{Binding PlayerVM.HasQuality}"
+                           ToolTip.Tip="{Binding PlayerVM.TrackQualityDetail}"/>
                 <!-- 常驻仅一个音量按钮；点击后用轻量 Popup 展开横向滑杆。 -->
-                <Panel Grid.Column="6" Margin="0,0,6,0">
+                <Panel Grid.Column="7" Margin="0,0,6,0">
                     <ToggleButton x:Name="CompactVolumeButton" Width="26" Height="26" Padding="0"
                                   ToolTip.Tip="{DynamicResource S_Volume}" AutomationProperties.Name="{DynamicResource S_Volume}">
                         <Path Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource AccentGreen}"
@@ -155,7 +166,7 @@
                     </Popup>
                 </Panel>
                 <!-- 迷你频谱：8 段，code-behind 订阅 SpectrumVM.SpectrumReceived 更新高度 -->
-                <StackPanel x:Name="SpectrumPanel" Grid.Column="7" Orientation="Horizontal" Spacing="2"
+                <StackPanel x:Name="SpectrumPanel" Grid.Column="8" Orientation="Horizontal" Spacing="2"
                             Width="46" Height="20" VerticalAlignment="Center">
                     <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
                     <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>

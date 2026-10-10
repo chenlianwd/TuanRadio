@@ -3,6 +3,7 @@ using ReactiveUI.Fody.Helpers;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using System;
+using System.Collections.Generic;
 using System.Reactive;
 using System.Reactive.Linq;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
@@ -16,6 +17,9 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _stateSub;
     private readonly IDisposable _posSub;
     private readonly IDisposable _volSub;
+    private readonly IDisposable? _mediaInfoSub;
+    // 最近一次 LibVLC 实际轨道信息；语言切换重算文案时判断是否仍属当前曲目
+    private TrackMediaInfo? _lastMediaInfo;
     // 常驻文案随语言切换重算；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
 
@@ -24,6 +28,13 @@ public class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public string TrackTitle { get; set; } = AppLanguage.T("未播放", "Nothing playing");
     [Reactive] public string TrackArtist { get; set; } = "";
     [Reactive] public string TrackSource { get; set; } = "";
+    // 实际播放编码/码率：LibVLC 解析值为准，音源声明值（OpenSubsonic 等）作兜底；空串隐藏徽标
+    [Reactive] public string TrackQualityText { get; set; } = "";
+    [Reactive] public string TrackQualityShort { get; set; } = "";
+    [Reactive] public string TrackQualityDetail { get; set; } = "";
+    [Reactive] public bool HasQuality { get; set; }
+    [Reactive] public string TrackPreviewText { get; set; } = AppLanguage.T("试听片段", "Preview");
+    [Reactive] public bool TrackIsPreview { get; set; }
     [Reactive] public bool IsPlaying { get; set; }
     [Reactive] public string PlayPauseText { get; set; } = "▶";
     [Reactive] public double CurrentSeconds { get; set; }
@@ -86,6 +97,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(track =>
             {
+                _lastMediaInfo = null;
                 if (track != null)
                 {
                     TrackTitle = track.Title;
@@ -93,6 +105,7 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                     TrackSource = GetTrackSource(track);
                     TotalSeconds = track.Duration.TotalSeconds;
                     DurationText = FormatTime(track.Duration);
+                    RefreshQualityTexts(track);
                 }
                 else
                 {
@@ -101,7 +114,24 @@ public class PlayerViewModel : ViewModelBase, IDisposable
                     TrackSource = "";
                     TotalSeconds = 0;
                     DurationText = "0:00";
+                    TrackQualityText = "";
+                    TrackQualityShort = "";
+                    TrackQualityDetail = "";
+                    HasQuality = false;
+                    TrackIsPreview = false;
                 }
+            });
+
+        // Moq 宽松 mock 对未 Setup 的 IObservable 返回 null，此处用 ?. 容忍
+        _mediaInfoSub = _audioService.TrackMediaInfo
+            ?.ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(info =>
+            {
+                // 快切歌时旧媒体的解析结果可能晚到，按 TrackId 丢弃
+                if (_audioService.CurrentTrack is not { } current || info.TrackId != current.Id)
+                    return;
+                _lastMediaInfo = info;
+                RefreshQualityTexts(current);
             });
 
         _stateSub = _audioService.StateChanged
@@ -132,11 +162,13 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         _onLanguageChanged = () =>
         {
             UpdateRepeatMode(RepeatMode);
+            TrackPreviewText = AppLanguage.T("试听片段", "Preview");
             if (_audioService.CurrentTrack is { } currentTrack)
             {
                 currentTrack.RefreshLocalization();
                 TrackArtist = currentTrack.DisplayArtist;
                 TrackSource = GetTrackSource(currentTrack);
+                RefreshQualityTexts(currentTrack);
             }
             // 仅重置占位文案；有曲目在播时保留真实标题
             if (TrackTitle is "未播放" or "Nothing playing")
@@ -175,7 +207,49 @@ public class PlayerViewModel : ViewModelBase, IDisposable
         _stateSub?.Dispose();
         _posSub?.Dispose();
         _volSub?.Dispose();
+        _mediaInfoSub?.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
+    }
+
+    /// <summary>组装播放质量文案：LibVLC 实际值优先，未到达时回落音源声明值。</summary>
+    private void RefreshQualityTexts(Track track)
+    {
+        var info = _lastMediaInfo is { } i && i.TrackId == track.Id ? i : null;
+        var codec = info?.Codec ?? track.DeclaredCodec;
+        var bitrateKbps = info?.BitrateKbps ?? track.DeclaredBitrateKbps;
+        TrackQualityText = FormatQualityText(codec, bitrateKbps);
+        TrackQualityShort = FormatQualityText(codec, bitrateKbps, shortForm: true);
+        TrackQualityDetail = FormatQualityDetail(codec, bitrateKbps, info?.SampleRateHz, info?.Channels);
+        HasQuality = !string.IsNullOrEmpty(TrackQualityText);
+        TrackIsPreview = track.IsPreviewStream;
+    }
+
+    private static string FormatQualityText(string? codec, int? bitrateKbps, bool shortForm = false)
+    {
+        if (string.IsNullOrEmpty(codec))
+            return string.Empty;
+        return bitrateKbps is > 0
+            ? shortForm ? $"{codec} {bitrateKbps}k" : $"{codec} · {bitrateKbps} kbps"
+            : codec;
+    }
+
+    private static string FormatQualityDetail(string? codec, int? bitrateKbps, int? sampleRateHz, int? channels)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(codec))
+            parts.Add(codec);
+        if (bitrateKbps is > 0)
+            parts.Add($"{bitrateKbps} kbps");
+        if (sampleRateHz is > 0)
+            parts.Add($"{sampleRateHz / 1000d:0.#} kHz");
+        if (channels is > 0)
+            parts.Add(channels switch
+            {
+                1 => AppLanguage.T("单声道", "mono"),
+                2 => AppLanguage.T("立体声", "stereo"),
+                _ => $"{channels} ch"
+            });
+        return string.Join(" · ", parts);
     }
 
     private static string FormatTime(TimeSpan ts)
