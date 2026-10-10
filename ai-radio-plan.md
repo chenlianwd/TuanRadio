@@ -32,12 +32,19 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 退出与资源治理：应用级取消链路覆盖推荐/LLM/TTS/STT/搜索，LibVLC/WASAPI/NAudio 后台续清理。
 - 频谱稳定性加固：真实 FFT 幅度改为 dB 映射、无回环数据视觉兜底、复用 FFT 工作缓冲区。
 - 简洁播放模式：CompactPlayer 两行紧凑卡，窗口收缩还原、模式记忆与可选置顶。
+- 歌词模式（2026-09-13，2026-09-22 增强）：`LyricService` 经本地代理双源取词（网易 /lyric 单步、酷狗 /search/lyric 两步 + 关键词兜底 + 时长过滤）、LrcParser 解析、`LyricsViewModel` 按 PositionChanged 逐行滚动（generation+SourceId 双卫兵防旧词晚到覆盖）；ClockStage 时钟/歌词图层切换经 BrandHeader 按钮并记忆 show_lyrics_in_stage。2026-09-22 增强为歌词与频谱共存：歌词只替换中栏时钟、两侧频谱与星空常驻共显，点击舞台空白处切换时钟/歌词（与标题栏按钮共用切换命令与偏好记忆），歌词中栏固定宽度防两侧频谱抖动，无在播曲目不进入空歌词层。
 - 长期用户画像 v1（2026-09-14）：`ListeningProfileService` 把播放/完播/跳过/按钮反馈/氛围指令持久化为本地收听画像（`listener-profile.json`，事件为唯一事实），派生歌手亲和度（30 天半衰期、−5 下限）、Dislike 黑名单（180 天、音乐身份匹配）与 LLM 口味摘要（水位 25 条/老化 7 天/语言不匹配每会话一次触发、失败 3 次退避 24h、Reset 代次隔离）；跳过判定三重前置（前曲播放态 + 新曲身份不同 + 进度样本绑定本曲）；推荐侧注入画像提示词段与探索要求（冷启动门槛 ≥30 事件且 ≥3 歌手），黑名单拼入排除集；设置页「学习我的口味」开关 + 二次确认清除。
 - DJ 聊天画像注入（2026-09-15）：`GenerateChatResponseAsync` 在历史快照副本的人设 system 尾部拼接画像段（每次取最新、不落持久历史、长对话裁剪不丢）；口味段走冷启动门槛，黑名单避雷不走门槛；DJ 可自然提及口味但受"不每句提、不播报清单"约束；跟随「学习我的口味」开关，无新设置项。
 - 音源体验增强（2026-09-15）：播放回退候选在身份匹配每遍内按时长接近度择优（1−|候选−目标|/目标，目标无时长退化为取首个，候选缺时长劣后，两遍次序与源间"命中即停"优先级不变）；`MusicSourceFailureKind` 结构化分类（未登录/登录态或代理失效/风控验证/接口失效）经业务异常携带、聚合层透传、搜索状态行按类型渲染用户可读文案与恢复建议（风控文案注明自动验证仅播放路径且约 10 分钟冷却）。
 - 产品化清理五件套（2026-09-15）：设置页新增音源逐源连接诊断（`DiagnoseAsync` 独立作用域报告 + 分类渲染，不污染搜索状态）；AI 控制协议旧文本尾标格式（【play:…】/【next】等）从解析与剥离链路移除，协议只认 JSON 控制块；MainWindow/PlaylistDrawer 弹层硬编码标题迁移到 S_* 本地化资源（VOL/LIVE 为复古电台设计元素有意保留）；Light 主题经 WCAG 对比度审计修正三处超标 token（聊天/时钟提示 #B9B1C4→#6A6478、LIVE 徽标 #167A5B→#146C4F、StatePlaying #0E7B58→#0C6E4E）；确认 Node.js/yt-dlp 供应链校验已实现（下载即 fail-closed 校验官方 SHA 值 + 固定版本，文档同步勾销技术债）。
 - 天气/日历 + 自动化耐久测试（2026-09-17）：ClockStage 角落环境指示器——天气走 Open-Meteo（IP 定位/设置页城市经 geocoding，30 分钟缓存，失败静默隐藏图标），日历徽标纯本地（BCL 农历 + 寿星公式节气 + 农历/公历节日，节气/节日当天高亮），详情悬停 Tooltip；DurabilityTests 固化六项耐久场景（30 轮续播/自然结束并发单飞/真实 LibVLC 四曲连播/画像 30 会话/播放列表混合并发落盘/聊天 60 轮长对话注入）。实施规避 Avalonia 编译器陷阱：DataContext="{Binding VM}" 重定向与编译绑定组合会静默击穿程序集 XAML 预编译层，指示器子树改用 {Binding VM.X} 路径绑定（ChatAreaMicButtonTests 锚定）。
+- 界面无障碍与双语文案产品化打磨（2026-09-20）：图标按钮 AutomationProperties.Name 全面接入本地化资源（聊天语音提示两处硬编码英文迁语言表）；日历 Tooltip 补齐 24 节气/12 节日与农历日期英译，切语言经 RebuildTooltips 即时重算；中文称谓"数字人"改"主播"、弯引号改直引号；歌名/歌手截断处与角色卡补悬停提示、酷狗歌单下拉限宽、设置页去重标题等细节收敛。
+- 复古电台三大核心体验增强 A/C/D（2026-09-20）：**A 精简单行歌词**——CompactPlayer 行 1 荧光青绿单行动态歌词，无词/前奏平滑退回歌曲信息；单触点按切换、拖拽门限与双击还原撤销冲突（歌词/信息子元素 IsHitTestVisible=False 保双击同源校验，撤销分支以命中源门控），compact_show_lyrics 持久化，浅色主题歌词色随 AccentGreen 加深至 6.3:1；**C 智能排重打分引擎**——CandidateRanker 多维评分（标题 35%/歌手 30%/时长逼近 20%/源优先级 15%）与非预期特殊版本强惩罚（伴奏/翻唱/DJ 加速/Live），贯通跨源回退、聚合搜索重排与推荐候选净化；聚合搜索"先评分排序、后宽松去重"，同名副本保留评分最高版本；**D 复古收音机调频音效**——RadioSoundFxService 纯程序化 NAudio 合成 FM 调谐扫频（DJ TTS 开口前淡入）与台呼微鸣音（新节目单落地触发，引用门控防自动续播回灌重复鸣响），设置页 radio_sound_fx_enabled 开关。
 - 音源架构演进阶段 1（2026-09-21）：`IMusicProvider` 契约 + `MusicSourceBroker`（聚合/逐源报告/跨源回退/诊断自 MultiSourceMusicService 平移，源路由改按 Descriptor.Id）；五个既有音源经 `MusicSearchServiceAdapter` 包装接入（音源实现零改动）；业务调用方 10 处 cast 全部迁移到 `IMusicSourceBroker` 接口；`MediaUriPolicy` 播放 URL 进 LibVLC 前统一校验（scheme 白名单 + 私网/回环/链路本地/组播/云元数据禁段，DNS 解析后检查、解析失败 fail-closed，全部解析路径在 Broker 单点收口）；`ResolvedMediaCache` 播放解析内存缓存（默认 TTL 10 分钟、恢复路径 forceRefresh 逐出防陈旧、酷狗/网易凭据变化清空，`MusicAccountStore` 新增 NeteaseCookieChanged 事件）；`MultiSourceMusicService` 兼容壳完成使命删除，新代码位于 `Services/Music/`（Contracts/Broker/Playback/Adapters），`SourceSearchStatus`/`SearchOutcome` 迁至 Contracts 且命名空间不变。设计经两轮评审，实施记录见 docs/plans/2026-09-20-music-source-broker-phase1-design.md §8。
+- 反馈行即时确认与交互统一（2026-09-21~22）：PlayerDeck 反馈行六按钮（LIKE/NOPE/SIM/CALM/FIRE/STORY）每个动作经 DJ 气泡双语即时确认，空闲统一引导气泡，STORY 空产出兜底提示，消除"按钮无效"体感（PlayerDeckFeedbackButtonTests 三场景锚定）；简洁模式行 1 按钮顺序与正常模式标题栏对齐（收藏/置顶/展开/最小化/关闭，关闭恒居最右）。headless 测试确立"绑定断言 + 命令直驱 Execute()"模式（未渲染窗口无法投递指针输入，勿再尝试模拟按钮点击）。
+- 阶段 1 审查修复包（2026-09-23，审查 76d6f08 往前 6 笔）：MediaUriPolicy 禁段补齐（127/8 全段、240/4 保留段、IPv4-compatible ::/96 解包）；策略内 DNS 复查套单源预算 WaitAsync（病态域名不再击穿 8s deadline，超时按拒绝不记熔断）；AudioService 关闭路径的音效清理并入 TTS 后台清理任务；CandidateRanker.ScoreTitle 包含分支改仿射映射 0.55+0.45×ratio（原恒定 0.70 地板把标题维度压成常数）；LiveRegex"音乐节"收紧为"音乐节(现场|版)"；NormalizeMusicText/NormalizeLoose 增加全半角折叠（U+FF01–FF5E 平移）；ResolvedMediaCache 容量上限 256（超限先清过期、仍满逐出 ExpiresAt 最早）；CompactPlayer 行 1 Tooltip 恢复完整曲目信息。
+- 音源架构演进阶段 2/3（2026-09-25）：LocalLibraryProvider 将选定文件/文件夹索引到 %APPDATA%\AIRadio\local-library.json（支持搜索与手动重扫）；OpenSubsonicProvider 配置存系统安全存储、连接前 ping 验证、保持配置私有服务器同源 stream；Broker 先排本地/私有源，设置页音源启停与排序；`TuanRadioEnableNodeProviders=false` 生成不含 Node 代理目录的核心输出，正常构建裁剪酷狗路由并生成 providers-manifest.json；`IMusicProvider.ResolveAsync` 统一返回 `MediaResolutionResult`；后三首队列预检按代次取消并显示分类状态；音源诊断显示最近 20 次请求和熔断快照。
+- 音源架构演进阶段 4（2026-09-28）：AudiusProvider 无 Key 只读搜索与曲目详情复核，过滤门控/不可流播结果，默认排在网易/酷狗后；可选 API Key 由设置页存入系统安全存储，仅搜索/详情的 x-api-key 请求头携带，播放 URL 不含 Key，未配置时保留无 Key 模式；OpenSubsonic 传输音质偏好（自动/原始 format=raw/省流量 maxBitRate=128）持久化，变更时清除该源解析缓存；搜索页和播放区显示实际音源。实际播放编码/码率展示与完整播放传输适配仍在计划中。
 
 ## 当前流程
 
@@ -127,7 +134,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像已落地（见「已完成」）；后续仅评估跨设备同步与画像维度扩展（时段偏好、语种配比等）。
-- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。独立 Provider 程序集、开放曲库 PoC 与音质偏好仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
+- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28）已接入 Audius 开放曲库（无 Key 只读 + 可选 API Key 本机安全存储）与 OpenSubsonic 传输音质偏好。独立 Provider 程序集拆分、实际播放编码/码率展示与完整播放传输适配仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
 - 在线音源可靠性专项已接入结构化解析结果、后三首队列预检与逐首状态、最近 20 次请求健康度；网易云代理升级到 4.32.0。完整权益/设备/版本诊断、带请求版本隔离的 YouTube 后台候选代理仍待实现，代理的上游依赖链仍有 3 项 npm audit 告警。
 - 音源体验增强与设置页逐源连接诊断均已落地（2026-09-15，见「已完成」）。
 - Node.js/yt-dlp 供应链校验已落地（下载即 fail-closed 校验官方 SHA 值 + 固定 release 版本）。
