@@ -80,6 +80,48 @@ public class CompactPlayerTrackInfoTests
             KeyModifiers.None, MouseButton.Left));
 
     [AvaloniaFact]
+    public void QualityBadge_BindsTrackQualityShortAndHidesWithoutData()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var (vm, tracks, _, track) = CreateViewModel();
+        Window? window = null;
+        try
+        {
+            var view = new CompactPlayer { DataContext = vm };
+            window = new Window { Content = view };
+            window.Show();
+
+            var badge = view.FindNameScope()?.Find<TextBlock>("CompactQualityBadge")
+                ?? throw new InvalidOperationException("CompactQualityBadge not found in CompactPlayer");
+
+            // 无质量数据：徽标隐藏
+            tracks.OnNext(track);
+            Assert.False(vm.PlayerVM.HasQuality);
+            Assert.False(badge.IsVisible);
+
+            // 声明值（音源解析路径落到 Track）驱动短徽标
+            track.DeclaredCodec = "MP3";
+            track.DeclaredBitrateKbps = 320;
+            tracks.OnNext(track);
+            Assert.True(vm.PlayerVM.HasQuality);
+            Assert.True(badge.IsVisible);
+            Assert.Equal("MP3 320k", badge.Text);
+
+            // 切换曲目回到无数据状态：徽标重新隐藏
+            tracks.OnNext(null);
+            Assert.False(vm.PlayerVM.HasQuality);
+            Assert.False(badge.IsVisible);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [AvaloniaFact]
     public void TrackInfo_DoubleTapWhileLyricsVisible_RestoresToggleAndExpands()
     {
         var originalScheduler = RxApp.MainThreadScheduler;

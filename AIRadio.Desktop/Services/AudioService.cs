@@ -18,7 +18,18 @@ namespace AIRadio.Desktop.Services;
 public sealed record TrackUrlResolution(
     string Url,
     string? SourceId,
-    IReadOnlyDictionary<string, string>? ProviderMetadata = null);
+    IReadOnlyDictionary<string, string>? ProviderMetadata = null,
+    string? Codec = null,
+    int? BitrateKbps = null,
+    bool IsPreview = false);
+
+/// <summary>LibVLC 解析得到的实际播放轨道技术信息；采集尽力而为，任何字段可为空。</summary>
+public sealed record TrackMediaInfo(
+    string TrackId,
+    string? Codec,
+    int? BitrateKbps = null,
+    int? SampleRateHz = null,
+    int? Channels = null);
 
 public class AudioService : IAudioService, IDisposable
 {
@@ -35,6 +46,7 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<Track?> _trackEndedSubject = new();
     private readonly Subject<string> _ttsErrorSubject = new();
     private readonly Subject<PlaybackRecoveryNotice> _playbackRecoverySubject = new();
+    private readonly Subject<TrackMediaInfo> _trackMediaInfoSubject = new();
     private readonly AutomaticSkipGuard _automaticSkipGuard = new();
     private readonly List<Track> _playlist = new();
     // UI 线程（增删/清空）与后台续播线程（NextAsync 追加）并发访问 _playlist/_currentIndex，
@@ -96,6 +108,11 @@ public class AudioService : IAudioService, IDisposable
     private const float TtsDuckVolumeRatio = 0.35f;
     private static readonly TimeSpan PlaybackCallbackReleaseDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan UrlRefreshTimeout = TimeSpan.FromSeconds(8);
+    // 实际轨道信息解析预算：在线流要经网络预解析（对音源 CDN 多发一次 GET），本地文件快速返回
+    private const int LocalMediaParseTimeoutMs = 2500;
+    private const int NetworkMediaParseTimeoutMs = 8000;
+    // 收缩点：若诊断显示在线采集与音源风控/播放故障相关，置 false 后仅本地文件采集，声明值兜底
+    private const bool CollectMediaInfoForOnlineTracks = true;
     // 0.4：单曲恢复总预算（刷新当前源 + 替代源共享）；到期后明确进入下一首，
     // 避免"内层每步 8s、多步叠加"突破 12s 的整体恢复门禁
     private static readonly TimeSpan RecoveryTotalBudget = TimeSpan.FromSeconds(12);
@@ -176,6 +193,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<TimeSpan> PositionChanged => _positionChangedSubject.AsObservable();
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
     public IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices => _playbackRecoverySubject.AsObservable();
+    public IObservable<TrackMediaInfo> TrackMediaInfo => _trackMediaInfoSubject.AsObservable();
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
     public IObservable<string> TtsError => _ttsErrorSubject.AsObservable();
 
@@ -467,6 +485,7 @@ public class AudioService : IAudioService, IDisposable
         _positionChangedSubject.Dispose();
         _trackEndedSubject.Dispose();
         _playbackRecoverySubject.Dispose();
+        _trackMediaInfoSubject.Dispose();
         _ttsStateSubject.Dispose();
         _ttsErrorSubject.Dispose();
         // 不释放 _lifetimeCts：后台延迟任务（重试/续播/旧 Media 释放）在 IsDisposed 检查
@@ -1369,6 +1388,8 @@ public class AudioService : IAudioService, IDisposable
             NotifyTrackChanged();
             StartFadeIn();
             Log.Information("Playing: {Track}", track);
+            if (mediaAssigned && newMedia != null)
+                _ = CollectTrackMediaInfoAsync(newMedia, track, requestId, isUrl);
         }
         catch (Exception ex)
         {
@@ -1386,6 +1407,51 @@ public class AudioService : IAudioService, IDisposable
             // 不能只覆盖正常路径，否则最后一次换曲的旧 Media 悬挂到进程结束
             if (oldMedia != null)
                 _ = DisposeMediaAfterDelayAsync(oldMedia, _lifetimeCts.Token);
+        }
+    }
+
+    /// <summary>
+    /// 解析在播媒体的实际音频轨道信息（编码/码率/采样率/声道）。在线流经
+    /// ParseNetwork 预解析（对音源多一次 GET）；采集尽力而为，任何异常不影响播放。
+    /// </summary>
+    private async Task CollectTrackMediaInfoAsync(Media media, Track track, int requestId, bool isUrl)
+    {
+        if (isUrl && !CollectMediaInfoForOnlineTracks)
+            return;
+        try
+        {
+            var options = isUrl ? MediaParseOptions.ParseNetwork : MediaParseOptions.ParseLocal;
+            var timeoutMs = isUrl ? NetworkMediaParseTimeoutMs : LocalMediaParseTimeoutMs;
+            await media.Parse(options, timeoutMs, _lifetimeCts.Token);
+            if (IsDisposed || requestId != Volatile.Read(ref _playRequestId))
+                return;
+
+            var audioTrack = media.Tracks.FirstOrDefault(t => t.TrackType == TrackType.Audio);
+            if (audioTrack.Codec == 0)
+                return;
+
+            var codec = MediaCodecNames.ToShortName(audioTrack.Codec);
+            if (codec == null)
+            {
+                var description = media.CodecDescription(TrackType.Audio, audioTrack.Codec);
+                codec = string.IsNullOrWhiteSpace(description) ? $"0x{audioTrack.Codec:X8}" : description;
+            }
+
+            var bitrateKbps = audioTrack.Bitrate > 0
+                ? (int)Math.Round(audioTrack.Bitrate / 1000d)
+                : (int?)null;
+            var audio = audioTrack.Data.Audio;
+            _trackMediaInfoSubject.OnNext(new TrackMediaInfo(
+                track.Id,
+                codec,
+                bitrateKbps,
+                audio.Rate > 0 ? (int)audio.Rate : null,
+                audio.Channels > 0 ? (int)audio.Channels : null));
+        }
+        catch (Exception ex)
+        {
+            // 媒体可能在解析等待期间被换曲延迟释放；只记录不上抛
+            Log.Debug(ex, "Skipped collecting media info for {Track}", track.Title);
         }
     }
 
@@ -1822,6 +1888,9 @@ public class AudioService : IAudioService, IDisposable
                                resolution.ProviderMetadata.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)));
         track.FilePath = resolution.Url;
         track.SourceId = resolvedSourceId;
+        track.DeclaredCodec = resolution.Codec;
+        track.DeclaredBitrateKbps = resolution.BitrateKbps;
+        track.IsPreviewStream = resolution.IsPreview;
         if (resolution.ProviderMetadata != null)
             track.ProviderMetadata = new Dictionary<string, string>(
                 resolution.ProviderMetadata,

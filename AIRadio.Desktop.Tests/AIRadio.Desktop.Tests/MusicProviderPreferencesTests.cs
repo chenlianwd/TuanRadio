@@ -92,7 +92,30 @@ public sealed class MusicProviderPreferencesTests
         Assert.Equal(0, health.RecentSuccessCount);
     }
 
-    private sealed class StubProvider(string id, bool isSlow = false, string? mediaUrl = null) : IMusicProvider
+    [Fact]
+    public async Task DeclaredMediaInfo_FlowsThroughResolveResultAndCache()
+    {
+        var provider = new StubProvider("decl", codec: "FLAC", bitrateKbps: 900, isPreview: true);
+        var broker = new MusicSourceBroker(provider);
+        var track = new OnlineTrack { Id = "decl:1", Title = "Song", Artist = "Artist", Source = "decl" };
+
+        var result = await broker.ResolveTrackAsync(track, forceRefresh: true, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.False(result.FellBack);
+        Assert.Equal("FLAC", result.Codec);
+        Assert.Equal(900, result.BitrateKbps);
+        Assert.True(result.IsPreview);
+
+        // 缓存读路径（GetPlayUrlAsync 之外的曲目级入口）同样携带声明值
+        var cached = await broker.ResolveTrackAsync(track, forceRefresh: false, CancellationToken.None);
+        Assert.NotNull(cached);
+        Assert.Equal("FLAC", cached.Codec);
+        Assert.Equal(900, cached.BitrateKbps);
+        Assert.True(cached.IsPreview);
+    }
+
+    private sealed class StubProvider(string id, bool isSlow = false, string? mediaUrl = null,
+        string? codec = null, int? bitrateKbps = null, bool isPreview = false) : IMusicProvider
     {
         public MusicProviderDescriptor Descriptor { get; } = new(id, id,
             ProviderNetworkScope.PublicInternet, IsSlowSource: isSlow);
@@ -114,7 +137,8 @@ public sealed class MusicProviderPreferencesTests
             ResolveCalls++;
             return Task.FromResult(MediaResolutionResult.Playable(
                 new ResolvedMedia(track, new Uri(mediaUrl ?? ("https://203.0.113." +
-                    (id == "second" ? "2" : "1") + "/stream.mp3")))));
+                    (id == "second" ? "2" : "1") + "/stream.mp3")),
+                    Codec: codec, BitrateKbps: bitrateKbps, IsPreview: isPreview)));
         }
     }
 }

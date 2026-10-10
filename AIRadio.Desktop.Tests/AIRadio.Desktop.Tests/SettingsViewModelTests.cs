@@ -935,8 +935,12 @@ public class SettingsViewModelTests
             Assert.False(vm.IsDiagnosingSources);
 
             vm.SelectedLanguage = "en";
-            Assert.Contains("NetEase account:", vm.SourceDiagnosticsText);
-            Assert.DoesNotContain("网易云账号：", vm.SourceDiagnosticsText);
+            // 账号状态后缀仅存在于含实验性源（Node 代理）的构建；无 Node 核心构建下不拼接
+            if (vm.HasExperimentalProviders)
+            {
+                Assert.Contains("NetEase account:", vm.SourceDiagnosticsText);
+                Assert.DoesNotContain("网易云账号：", vm.SourceDiagnosticsText);
+            }
         }
         finally
         {

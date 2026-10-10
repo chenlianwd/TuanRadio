@@ -82,6 +82,74 @@ public class PlayerViewModelTests
         }
     }
 
+    [Fact]
+    public void TrackQuality_PrefersActualInfoOverDeclared_AndDropsStaleEvents()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        AppLanguage.Apply("zh");
+        try
+        {
+            var tracks = new Subject<Track?>();
+            var mediaInfo = new Subject<TrackMediaInfo>();
+            Track? current = null;
+            var audio = new Mock<IAudioService>();
+            audio.SetupGet(x => x.CurrentTrack).Returns(() => current);
+            audio.SetupGet(x => x.RepeatMode).Returns("radio");
+            audio.SetupGet(x => x.TrackChanged).Returns(tracks);
+            audio.SetupGet(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+            audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+            audio.SetupGet(x => x.TrackMediaInfo).Returns(mediaInfo);
+            using var vm = new AIRadio.Desktop.ViewModels.PlayerViewModel(audio.Object);
+
+            // 声明值兜底（OpenSubsonic 刷新路径落到 Track 的 Declared* 字段）
+            current = new Track
+            {
+                Title = "Song", SourceId = "opensubsonic:1",
+                DeclaredCodec = "FLAC", DeclaredBitrateKbps = 900, IsPreviewStream = true
+            };
+            tracks.OnNext(current);
+            Assert.Equal("FLAC · 900 kbps", vm.TrackQualityText);
+            Assert.Equal("FLAC 900k", vm.TrackQualityShort);
+            Assert.True(vm.HasQuality);
+            Assert.True(vm.TrackIsPreview);
+            Assert.Equal("试听片段", vm.TrackPreviewText);
+
+            // LibVLC 实际值到达后覆盖声明值
+            mediaInfo.OnNext(new TrackMediaInfo(current.Id, "MP3", 320, 44100, 2));
+            Assert.Equal("MP3 · 320 kbps", vm.TrackQualityText);
+            Assert.Equal("MP3 320k", vm.TrackQualityShort);
+            Assert.Contains("44.1 kHz", vm.TrackQualityDetail);
+            Assert.Contains("立体声", vm.TrackQualityDetail);
+
+            // 语言切换重算试听徽标与声道文案
+            AppLanguage.Apply("en");
+            Assert.Equal("Preview", vm.TrackPreviewText);
+            Assert.Contains("stereo", vm.TrackQualityDetail);
+            AppLanguage.Apply("zh");
+
+            // 快切歌：新曲目回到声明值（无声明则为空），旧媒体迟到信息被 TrackId 卫兵丢弃
+            var next = new Track { Title = "Next", SourceId = "local:2" };
+            current = next;
+            tracks.OnNext(next);
+            Assert.False(vm.HasQuality);
+            mediaInfo.OnNext(new TrackMediaInfo("stale-id", "MP3", 320, 44100, 2));
+            Assert.False(vm.HasQuality);
+
+            // 新曲目的实际值正常生效；无编码时徽标保持隐藏
+            mediaInfo.OnNext(new TrackMediaInfo(next.Id, "FLAC", null, 48000, 2));
+            Assert.Equal("FLAC", vm.TrackQualityText);
+            Assert.True(vm.HasQuality);
+            mediaInfo.OnNext(new TrackMediaInfo(next.Id, null, null, null, null));
+            Assert.False(vm.HasQuality);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
     private static Mock<IAudioService> CreatePositionalAudioMock(Subject<TimeSpan> positions)
     {
         var audio = new Mock<IAudioService>();

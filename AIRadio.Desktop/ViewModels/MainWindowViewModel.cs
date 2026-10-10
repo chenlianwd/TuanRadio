@@ -436,13 +436,26 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         // AudioService 的 _trackUrlResolver 委托只在刷新/恢复语境被调用（重试前刷新、
         // 播放前后台换新直链），必须 forceRefresh 绕过缓存——否则重试会拿到刚失败的陈旧 URL
-        var url = requireAlternative
-            ? await multi.GetAlternativePlayUrlAsync(onlineTrack, cancellationToken)
-            : (await multi.ResolveTrackAsync(onlineTrack, forceRefresh: true, cancellationToken))?.Url;
+        string? url;
+        ResolveTrackResult? resolved = null;        if (requireAlternative)
+        {
+            url = await multi.GetAlternativePlayUrlAsync(onlineTrack, cancellationToken);
+        }
+        else
+        {
+            resolved = await multi.ResolveTrackAsync(onlineTrack, forceRefresh: true, cancellationToken);
+            url = resolved?.Url;
+        }
 
         return string.IsNullOrWhiteSpace(url)
             ? null
-            : new TrackUrlResolution(url, onlineTrack.Id, onlineTrack.ProviderMetadata);
+            : new TrackUrlResolution(
+                url,
+                onlineTrack.Id,
+                onlineTrack.ProviderMetadata,
+                resolved?.Codec,
+                resolved?.BitrateKbps,
+                resolved?.IsPreview ?? false);
     }
 
     private void ToggleCurrentFavorite()

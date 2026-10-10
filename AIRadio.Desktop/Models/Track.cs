@@ -43,6 +43,15 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     /// </summary>
     public Dictionary<string, string> ProviderMetadata { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    // 以下三项为音源在解析播放地址时声明的媒体信息（展示兜底用，不落盘：
+    // 临时 URL 刷新后声明值随之变化，持久化只会引入陈旧值）。实际播放编码/码率以 LibVLC 解析为准。
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeclaredCodec { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int? DeclaredBitrateKbps { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPreviewStream { get; set; }
+
     [System.Text.Json.Serialization.JsonIgnore]
     public TrackPlayability Playability
     {
