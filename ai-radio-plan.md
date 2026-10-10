@@ -45,6 +45,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 阶段 1 审查修复包（2026-09-23，审查 76d6f08 往前 6 笔）：MediaUriPolicy 禁段补齐（127/8 全段、240/4 保留段、IPv4-compatible ::/96 解包）；策略内 DNS 复查套单源预算 WaitAsync（病态域名不再击穿 8s deadline，超时按拒绝不记熔断）；AudioService 关闭路径的音效清理并入 TTS 后台清理任务；CandidateRanker.ScoreTitle 包含分支改仿射映射 0.55+0.45×ratio（原恒定 0.70 地板把标题维度压成常数）；LiveRegex"音乐节"收紧为"音乐节(现场|版)"；NormalizeMusicText/NormalizeLoose 增加全半角折叠（U+FF01–FF5E 平移）；ResolvedMediaCache 容量上限 256（超限先清过期、仍满逐出 ExpiresAt 最早）；CompactPlayer 行 1 Tooltip 恢复完整曲目信息。
 - 音源架构演进阶段 2/3（2026-09-25）：LocalLibraryProvider 将选定文件/文件夹索引到 %APPDATA%\AIRadio\local-library.json（支持搜索与手动重扫）；OpenSubsonicProvider 配置存系统安全存储、连接前 ping 验证、保持配置私有服务器同源 stream；Broker 先排本地/私有源，设置页音源启停与排序；`TuanRadioEnableNodeProviders=false` 生成不含 Node 代理目录的核心输出，正常构建裁剪酷狗路由并生成 providers-manifest.json；`IMusicProvider.ResolveAsync` 统一返回 `MediaResolutionResult`；后三首队列预检按代次取消并显示分类状态；音源诊断显示最近 20 次请求和熔断快照。
 - 音源架构演进阶段 4（2026-09-28）：AudiusProvider 无 Key 只读搜索与曲目详情复核，过滤门控/不可流播结果，默认排在网易/酷狗后；可选 API Key 由设置页存入系统安全存储，仅搜索/详情的 x-api-key 请求头携带，播放 URL 不含 Key，未配置时保留无 Key 模式；OpenSubsonic 传输音质偏好（自动/原始 format=raw/省流量 maxBitRate=128）持久化，变更时清除该源解析缓存；搜索页和播放区显示实际音源。实际播放编码/码率展示与完整播放传输适配仍在计划中。
+- 实际播放编码/码率展示 + 试听状态接线（2026-10-10）：AudioService 媒体挂载后经 Media.Parse（在线 ParseNetwork/本地 ParseLocal 分级预算）读取实际音频轨道，fourcc 短名映射（MediaCodecNames），以 TrackMediaInfo 事件发布（requestId 代次守卫、异常静默；在线预解析多发一次 CDN GET，常量留收缩点）；ResolvedMedia 声明字段（Codec/BitrateKbps/IsPreview）经 ResolveWithTimeout→GetPlayUrlCoreAsync→ResolveTrackResult→TrackUrlResolution 贯通到 Track（JsonIgnore 运行时字段，仅首选源命中与刷新路径，回退路径无声明值、首播徽标在解析事件前为空）；PlayerViewModel 组装质量文案（实际值覆盖声明值、TrackId 卫兵防旧值、双语重算）与试听徽标（前瞻性，当前无生产者）；PlayerDeck 音源行合并展示 + 试听芯片，CompactPlayer 行 2 短徽标 + Tooltip 采样率/声道。真实 LibVLC WAV 采集回归、声明值透传/缓存、徽标绑定等测试锚定；在线流 ParseNetwork 路径列入人工验收。
 
 ## 当前流程
 
@@ -134,7 +135,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像已落地（见「已完成」）；后续仅评估跨设备同步与画像维度扩展（时段偏好、语种配比等）。
-- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28）已接入 Audius 开放曲库（无 Key 只读 + 可选 API Key 本机安全存储）与 OpenSubsonic 传输音质偏好。独立 Provider 程序集拆分、实际播放编码/码率展示与完整播放传输适配仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
+- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28）已接入 Audius 开放曲库（无 Key 只读 + 可选 API Key 本机安全存储）与 OpenSubsonic 传输音质偏好；实际播放编码/码率展示已落地（2026-10-10，LibVLC 解析为准 + 声明值兜底 + 试听徽标前瞻性接线）。独立 Provider 程序集拆分、完整播放传输适配与网易声明值采集仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
 - 在线音源可靠性专项已接入结构化解析结果、后三首队列预检与逐首状态、最近 20 次请求健康度；网易云代理升级到 4.32.0。完整权益/设备/版本诊断、带请求版本隔离的 YouTube 后台候选代理仍待实现，代理的上游依赖链仍有 3 项 npm audit 告警。
 - 音源体验增强与设置页逐源连接诊断均已落地（2026-09-15，见「已完成」）。
 - Node.js/yt-dlp 供应链校验已落地（下载即 fail-closed 校验官方 SHA 值 + 固定 release 版本）。
