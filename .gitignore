@@ -33,3 +33,6 @@ Desktop.ini
 
 # OpenAI Codex CLI
 .codex/
+
+# ZCode agent session workspace
+.zcode/
