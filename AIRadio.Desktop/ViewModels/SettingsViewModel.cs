@@ -82,6 +82,8 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private bool _kugouQrRunning;
     private bool _loadingYtdlpBrowser;
     private bool _loadingOpenSubsonicQuality;
+    private bool _loadingMusicSourcePolicy;
+    private readonly IDisposable _musicSourcePolicySub;
     private bool _ytdlpCookieNoticeShown;
     private readonly IDisposable _selectedLanguageSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
@@ -125,6 +127,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public string OpenSubsonicPassword { get; set; } = string.Empty;
     [Reactive] public string OpenSubsonicStatus { get; set; } = string.Empty;
     [Reactive] public string SelectedOpenSubsonicQuality { get; set; } = "auto";
+    [Reactive] public string SelectedMusicSourcePolicy { get; set; } = "coverage";
     [Reactive] public bool IsConnectingOpenSubsonic { get; set; }
     [Reactive] public string AudiusApiKeyInput { get; set; } = string.Empty;
     [Reactive] public string AudiusStatus { get; set; } = string.Empty;
@@ -176,6 +179,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public List<VoiceOption> YtdlpBrowsers { get; set; } = new();
     [Reactive] public List<MusicProviderOption> MusicProviders { get; set; } = new();
     [Reactive] public List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
+    [Reactive] public List<VoiceOption> MusicSourcePolicies { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -295,6 +299,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 if (!_loadingOpenSubsonicQuality)
                     _ = SaveUiStateCommand.Execute().Subscribe();
             });
+        _musicSourcePolicySub = this.WhenAnyValue(x => x.SelectedMusicSourcePolicy)
+            .Skip(1)
+            .Subscribe(id =>
+            {
+                if (id is not ("coverage" or "stability" or "quality"))
+                    return;
+                if (_musicSearch is IMusicSourceBroker broker)
+                    broker.SourcePolicy = ParseMusicSourcePolicy(id);
+                if (!_loadingMusicSourcePolicy)
+                    _ = SaveUiStateCommand.Execute().Subscribe();
+            });
         // 界面显示语言严格跟随本选项：加载读到旧值与用户切换时都经 Apply 生效
         _selectedLanguageSub = this.WhenAnyValue(x => x.SelectedLanguage)
             .Skip(1)
@@ -374,6 +389,17 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     private static string NormalizeOpenSubsonicQuality(string? id)
         => id is "original" or "data-saver" ? id : "auto";
 
+    private static string NormalizeMusicSourcePolicy(string? id)
+        => id is "stability" or "quality" ? id : "coverage";
+
+    private static MusicSourcePolicy ParseMusicSourcePolicy(string? id)
+        => id switch
+        {
+            "stability" => MusicSourcePolicy.Stability,
+            "quality" => MusicSourcePolicy.Quality,
+            _ => MusicSourcePolicy.Coverage
+        };
+
     private static OpenSubsonicQuality ParseOpenSubsonicQuality(string? id)
         => id switch
         {
@@ -424,6 +450,12 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             new() { Id = "auto", DisplayName = AppLanguage.T("自动", "Automatic") },
             new() { Id = "original", DisplayName = AppLanguage.T("原始音质", "Original quality") },
             new() { Id = "data-saver", DisplayName = AppLanguage.T("省流量（最高 128 kbps）", "Data saver (up to 128 kbps)") },
+        };
+        MusicSourcePolicies = new List<VoiceOption>
+        {
+            new() { Id = "coverage", DisplayName = AppLanguage.T("覆盖优先", "Coverage first") },
+            new() { Id = "stability", DisplayName = AppLanguage.T("稳定优先", "Stability first") },
+            new() { Id = "quality", DisplayName = AppLanguage.T("音质优先", "Quality first") },
         };
         var browserId = SelectedYtdlpBrowser?.Id;
         _loadingYtdlpBrowser = true;
@@ -626,6 +658,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     _loadingOpenSubsonicQuality = true;
                     SelectedOpenSubsonicQuality = NormalizeOpenSubsonicQuality(quality.GetString());
                     _loadingOpenSubsonicQuality = false;
+                }
+                if (root.TryGetProperty("music_source_policy", out var sourcePolicy) &&
+                    sourcePolicy.ValueKind == JsonValueKind.String)
+                {
+                    _loadingMusicSourcePolicy = true;
+                    SelectedMusicSourcePolicy = NormalizeMusicSourcePolicy(sourcePolicy.GetString());
+                    if (_musicSearch is IMusicSourceBroker policyBroker)
+                        policyBroker.SourcePolicy = ParseMusicSourcePolicy(SelectedMusicSourcePolicy);
+                    _loadingMusicSourcePolicy = false;
                 }
                 if (root.TryGetProperty("speech_mix_mode", out var speechMode))
                     SpeechMixMode = speechMode.GetString() == "pause" ? "pause" : "duck";
@@ -1427,6 +1468,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
                 open_subsonic_quality = NormalizeOpenSubsonicQuality(SelectedOpenSubsonicQuality),
+                music_source_policy = NormalizeMusicSourcePolicy(SelectedMusicSourcePolicy),
                 music_provider_order = MusicProviders.Select(item => item.Id).ToArray(),
                 music_provider_disabled = MusicProviders.Where(item => !item.Enabled)
                     .Select(item => item.Id).ToArray(),
@@ -1510,6 +1552,7 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         _selectedCharacterSub.Dispose();
         _selectedYtdlpBrowserSub.Dispose();
         _openSubsonicQualitySub.Dispose();
+        _musicSourcePolicySub.Dispose();
         _selectedLanguageSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;

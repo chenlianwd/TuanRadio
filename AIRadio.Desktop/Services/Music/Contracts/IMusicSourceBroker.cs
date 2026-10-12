@@ -29,6 +29,11 @@ public interface IMusicSourceBroker : IMusicSearchService
     /// <summary>每个已注册音源的最近请求健康度快照；只包含本地分类与时间，不包含凭据或播放地址。</summary>
     IReadOnlyList<SourceHealthSnapshot> GetHealthSnapshots();
 
+    /// <summary>
+    /// 全局源策略：影响跨源回退尝试顺序与搜索重排的源权重；首选源仍由用户排序决定。
+    /// </summary>
+    MusicSourcePolicy SourcePolicy { get; set; }
+
     /// <summary>注册音源和用户可调顺序；禁用的源仍列在注册列表中供设置页恢复。</summary>
     IReadOnlyList<MusicProviderDescriptor> GetProviderDescriptors();
     void ConfigureProviders(IReadOnlyList<string> orderedIds, IReadOnlyCollection<string> disabledIds);
