@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\AIRadio.Desktop\AIRadio.Desktop.csproj" />
+    <ProjectReference Include="..\..\AIRadio.Desktop.Music\AIRadio.Desktop.Music.csproj" />
   </ItemGroup>
 
 </Project>

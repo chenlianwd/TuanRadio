@@ -6,7 +6,7 @@ namespace AIRadio.Desktop.Services;
 /// 日志与诊断文本脱敏：掩盖 Cookie、token、userid、dfid 与常见签名参数的值。
 /// 用于逐源搜索报告和异常文本进入 UI/日志之前；脱敏只作用于文本，不改变业务行为。
 /// </summary>
-internal static class SensitiveDataSanitizer
+public static class SensitiveDataSanitizer
 {
     // 覆盖 query 参数（& 分隔）与 cookie 分号分隔两种 key=value 形态。
     // 键名包含各音源真实 Cookie 键（MUSIC_U/__csrf/kg_mid 等）与常见 OAuth 变体；

@@ -1,35 +1,28 @@
 using System;
 using System.Collections.Generic;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Threading;
 
 namespace AIRadio.Desktop.Services;
 
 /// <summary>
 /// 界面语言状态：严格跟随设置的 zh/en 选项。
-/// XAML 静态文案经 <see cref="Attach"/> 挂载的资源字典（DynamicResource）切换：
-/// 切换时原地清空重填同一 ResourceDictionary 实例，触发所有 DynamicResource 刷新；
-/// VM 动态文案经 <see cref="T"/> 即时读取当前语言；持有常驻文案的 VM 订阅 Changed 重算。
+/// VM 动态文案经 <see cref="T"/> 即时读取当前语言；持有常驻文案的 VM 订阅 Changed 重算；
+/// XAML 静态文案由宿主（AIRadio.Desktop 的 AppLanguageUi）订阅 Changed 重填资源字典触发
+/// DynamicResource 刷新——本类不依赖任何 UI 框架，可安全驻留类库。
 /// 两份字符串表的键集奇偶由 StringResourceParityTests 校验。
 /// </summary>
 public static class AppLanguage
 {
     private static volatile string _current = "zh";
-    private static ResourceDictionary? _stringsHost;
+    // UI 线程编组钩子：宿主 Attach 时注入（Dispatcher.Post）；null（单测/无 UI 宿主）时在调用线程直接广播
+    private static Action<Action>? _uiMarshal;
 
-    /// <summary>语言变化通知；UI 线程触发（无 Avalonia 应用时在调用线程触发）。</summary>
+    /// <summary>语言变化通知；宿主注入编组后经 UI 线程触发，否则在调用线程触发。</summary>
     public static event Action? Changed;
 
     public static string Current => _current;
 
-    /// <summary>App 启动时挂载字符串宿主字典；必须在主窗口创建之前调用。</summary>
-    public static void Attach(Application app)
-    {
-        _stringsHost = new ResourceDictionary();
-        app.Resources.MergedDictionaries.Add(_stringsHost);
-        FillStrings(_current);
-    }
+    /// <summary>宿主启动时注入 UI 线程编组器；必须在主窗口创建之前调用。传 null 恢复无宿主语义。</summary>
+    public static void SetUiMarshal(Action<Action>? marshal) => _uiMarshal = marshal;
 
     public static void Apply(string? language)
     {
@@ -39,28 +32,11 @@ public static class AppLanguage
 
         // 先落地当前语言：后台线程调用时 T() 立即生效
         _current = next;
-
-        var app = Application.Current;
-        if (app == null)
-        {
-            // 单测环境（未 Attach）：仅通知 VM 层
-            Changed?.Invoke();
-            return;
-        }
-
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            FillStrings(next);
-            Changed?.Invoke();
-        }
+        void Notify() => Changed?.Invoke();
+        if (_uiMarshal != null)
+            _uiMarshal(Notify);
         else
-        {
-            Dispatcher.UIThread.Post(() =>
-            {
-                FillStrings(next);
-                Changed?.Invoke();
-            });
-        }
+            Notify();
     }
 
     /// <summary>VM 动态文案：按当前语言返回对应文本；默认中文，单测零改动。</summary>
@@ -88,16 +64,9 @@ public static class AppLanguage
         };
     }
 
-    private static void FillStrings(string language)
-    {
-        if (_stringsHost == null)
-            return;
-
-        var source = language == "en" ? EnStrings : ZhStrings;
-        _stringsHost.Clear();
-        foreach (var pair in source)
-            _stringsHost[pair.Key] = pair.Value;
-    }
+    /// <summary>当前语言的 S_* 词条表只读视图（宿主资源字典填充用）。</summary>
+    public static IReadOnlyDictionary<string, string> GetStringTable(string? language)
+        => string.Equals(language, "en", StringComparison.OrdinalIgnoreCase) ? EnStrings : ZhStrings;
 
     // ---- 字符串表（键集必须与 EnStrings 完全一致）----
 
