@@ -49,6 +49,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 播放 URL 重定向逐跳复检（2026-10-10）：PlaybackRedirectGuard 解析期主动跟随 3xx 链（Range: bytes=0-0 探测、≤5 跳、违规跳转绝不发出请求），每跳过策略校验（公网 MediaUriPolicy/私有同源）；观察型语义——只拒绝观察到的违规跳转（不记熔断），探测超时/不可得放行原 URL（超时拒绝原设计被 15 例级联测试失败否决），独立 2s 短预算快速失败；LibVLC 仍拿原始 URL，残余窗口（停滞探测规避/TOCTOU）文档化。挂载于 ResolveWithTimeout 收口点（缓存命中不重复探测），搜索可播性探针跳过探测（防酷狗 20028 风控敏感的成倍 GET）。
 - PlaybackHeaders 播放头传输适配（2026-10-12）：播放头端到端贯通（ResolvedMedia→ResolveTrackResult→Track[JsonIgnore]→MediaHttpOptions→LibVLC AddOption，缓存内存携带）；投递能力经 VLC 3.0.23.1 二进制验证——:http-user-agent/:http-cookies 核心客户端可靠，:http-referrer 仅旧插件支持属尽力投递；按源档案 PlaybackHeaderProfiles（youtube 浏览器 UA/kuwo Referer/migu UA+Referer，网易酷狗无档案）；注入防护两道（生产点 Sanitized 剔除控制字符/超长，消费点跳过），Cookie 额外约束可打印 ASCII。首播头缺口待 Broker 返回对象化。
 - Broker 返回对象化：首播即携带完整解析结果（2026-10-12）：四处首播点（Chat/Playlist/Recommendation/DJ）改 ResolveTrackAsync(forceRefresh:false) + OnlineTrack.ToTrack(ResolveTrackResult) 重载，首播 Media 即带播放头与声明值；Track.ResolvedAtUtc 新鲜度标记（回退结果不标，防"跳过刷新+回退无头"叠加）+ PlayTrackCore 后台预刷新 2min 窗口跳过，阻塞刷新与重试链路不动。两轮计划复查否决"播前阻塞刷新"前提（实为立即播放+后台 fire-and-forget 刷新）。
+- 网易 br/type 声明值采集（2026-10-12）：IMusicSearchService 增默认方法 ResolvePlayInfoAsync（ResolvedPlayInfo 记录，null=不支持回退字符串路径/非 null=已解析且 Url 空不得回退——契约防失败路径双重请求），NeteaseMusicService 提取 type/br 为声明值（试听/非 http 语义逐字保留），适配器按契约接线；首播点歌网易曲目徽标即显声明值。
 
 ## 当前流程
 
@@ -138,7 +139,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像已落地（见「已完成」）；后续仅评估跨设备同步与画像维度扩展（时段偏好、语种配比等）。
-- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28）已接入 Audius 开放曲库（无 Key 只读 + 可选 API Key 本机安全存储）与 OpenSubsonic 传输音质偏好；实际播放编码/码率展示已落地（2026-10-10，LibVLC 解析为准 + 声明值兜底 + 试听徽标前瞻性接线）；重定向逐跳复检、播放头传输（PlaybackHeaders）与首播对象化解析已落地（2026-10-10/10-12）。独立 Provider 程序集拆分、网易声明值采集与全局源策略仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
+- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28）已接入 Audius 开放曲库（无 Key 只读 + 可选 API Key 本机安全存储）与 OpenSubsonic 传输音质偏好；实际播放编码/码率展示已落地（2026-10-10，LibVLC 解析为准 + 声明值兜底 + 试听徽标前瞻性接线）；重定向逐跳复检、播放头传输（PlaybackHeaders）与首播对象化解析已落地（2026-10-10/10-12）。独立 Provider 程序集拆分与全局源策略仍待实现。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
 - 在线音源可靠性专项已接入结构化解析结果、后三首队列预检与逐首状态、最近 20 次请求健康度；网易云代理升级到 4.32.0。完整权益/设备/版本诊断、带请求版本隔离的 YouTube 后台候选代理仍待实现，代理的上游依赖链仍有 3 项 npm audit 告警。
 - 音源体验增强与设置页逐源连接诊断均已落地（2026-09-15，见「已完成」）。
 - Node.js/yt-dlp 供应链校验已落地（下载即 fail-closed 校验官方 SHA 值 + 固定 release 版本）。
