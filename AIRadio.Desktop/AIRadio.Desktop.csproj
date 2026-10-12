@@ -19,6 +19,10 @@
     <InternalsVisibleTo Include="AIRadio.Desktop.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\AIRadio.Desktop.Music\AIRadio.Desktop.Music.csproj" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- 实验性 Node 音乐代理（网易/酷狗）构建开关：-p:TuanRadioEnableNodeProviders=false
          可在无 Node.js 环境构建核心；关闭后不执行 npm，也不复制代理目录 -->

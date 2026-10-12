@@ -84,7 +84,7 @@ public class OnlineTrack
     /// 首播即生效而非等待播放后的后台刷新回写。仅非回退结果标记 ResolvedAtUtc——
     /// 跨源回退结果无播放头（BuildResolveResult 回退路径不透传），保留后台刷新补齐。
     /// </summary>
-    public Track ToTrack(AIRadio.Desktop.Services.Music.ResolveTrackResult resolution)
+    public Track ToTrack(Music.ResolveTrackResult resolution)
     {
         var track = ToTrack(resolution.Url);
         track.DeclaredCodec = resolution.Codec;

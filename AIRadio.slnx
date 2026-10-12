@@ -3,4 +3,5 @@
     <Project Path="AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.csproj" />
   </Folder>
   <Project Path="AIRadio.Desktop/AIRadio.Desktop.csproj" />
+  <Project Path="AIRadio.Desktop.Music/AIRadio.Desktop.Music.csproj" />
 </Solution>
