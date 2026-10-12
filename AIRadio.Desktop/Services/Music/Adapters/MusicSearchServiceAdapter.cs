@@ -69,13 +69,25 @@ public sealed class MusicSearchServiceAdapter : IMusicProvider
 
         try
         {
-            var url = await _inner.GetPlayUrlAsync(carrier, cancellationToken).ConfigureAwait(false);
+            // 富解析契约（IMusicSearchService.ResolvePlayInfoAsync）：非 null 即"服务已解析"，
+            // Url 为空表示本次失败——不得再回退字符串路径（防已实现富解析的源对同一 API 双重请求）；
+            // null = 服务不支持，走字符串路径
+            var info = await _inner.ResolvePlayInfoAsync(carrier, cancellationToken).ConfigureAwait(false);
+            var url = info != null
+                ? info.Url
+                : await _inner.GetPlayUrlAsync(carrier, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(url))
                 return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound);
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
                 return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.TransportRejected);
-            // 播放头经 Sanitized 剔除不安全项后随 ResolvedMedia 透传（null 即不带）
-            return MediaResolutionResult.Playable(new ResolvedMedia(track, uri, Headers: _playbackHeaders?.Sanitized()));
+            // 声明值（编码/码率/试听）尽力而为；播放头经 Sanitized 剔除不安全项后透传（null 即不带）
+            return MediaResolutionResult.Playable(new ResolvedMedia(
+                track,
+                uri,
+                IsPreview: info?.IsPreview ?? false,
+                Codec: info?.Codec,
+                BitrateKbps: info?.BitrateKbps,
+                Headers: _playbackHeaders?.Sanitized()));
         }
         catch (MusicSourceBusinessException ex)
         {

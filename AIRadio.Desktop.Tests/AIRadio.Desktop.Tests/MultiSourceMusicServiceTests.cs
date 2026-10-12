@@ -801,4 +801,74 @@ public class MultiSourceMusicServiceTests
         // 诊断走独立作用域：不污染用户上一次搜索的共享报告
         Assert.Empty(service.LastSearchReport);
     }
+
+    private static NeteaseMusicService CreateNeteaseService(Func<HttpRequestMessage, HttpResponseMessage> respond)
+        => new(new HttpClient(new DelegateHandler((request, _) =>
+            Task.FromResult(respond(request)))));
+
+    [Fact]
+    public async Task NeteasePlayInfo_CapturesDeclaredTypeAndBitrate()
+    {
+        var service = CreateNeteaseService(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.3/a.mp3\",\"type\":\"mp3\",\"br\":320000}]}")
+        });
+
+        var info = await service.ResolvePlayInfoAsync(new OnlineTrack { Id = "netease:1" }, CancellationToken.None);
+
+        Assert.NotNull(info);
+        Assert.Equal("https://203.0.113.3/a.mp3", info.Url);
+        Assert.Equal("MP3", info.Codec);
+        Assert.Equal(320, info.BitrateKbps);
+        // 字符串路径不回归：同一响应下 GetPlayUrlAsync 返回一致 URL
+        Assert.Equal("https://203.0.113.3/a.mp3", await service.GetPlayUrlAsync("netease:1", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task NeteasePlayInfo_MissingOrInvalidFields_ReturnsNonNullWithNullPayload()
+    {
+        // 缺 type/br：声明值为空但记录非 null（契约：非 null 即已解析，不得回退字符串路径）
+        var service = CreateNeteaseService(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.3/b.flac\"}]}")
+        });
+        var info = await service.ResolvePlayInfoAsync(new OnlineTrack { Id = "netease:2" }, CancellationToken.None);
+        Assert.NotNull(info);
+        Assert.Null(info.Codec);
+        Assert.Null(info.BitrateKbps);
+
+        // 非 http(s) URL：Url 为空、记录非 null；字符串路径同判 null
+        var nonHttp = CreateNeteaseService(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"code\":200,\"data\":[{\"url\":\"ftp://x/a.mp3\",\"br\":320000}]}")
+        });
+        var nonHttpInfo = await nonHttp.ResolvePlayInfoAsync(new OnlineTrack { Id = "netease:3" }, CancellationToken.None);
+        Assert.NotNull(nonHttpInfo);
+        Assert.Null(nonHttpInfo.Url);
+        Assert.Null(await nonHttp.GetPlayUrlAsync("netease:3", CancellationToken.None));
+
+        // code 非 200：同契约
+        var badCode = CreateNeteaseService(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"code\":301}")
+        });
+        var badCodeInfo = await badCode.ResolvePlayInfoAsync(new OnlineTrack { Id = "netease:4" }, CancellationToken.None);
+        Assert.NotNull(badCodeInfo);
+        Assert.Null(badCodeInfo.Url);
+    }
+
+    [Fact]
+    public async Task NeteasePlayInfo_TrialStream_StillThrowsPreviewOnly()
+    {
+        var service = CreateNeteaseService(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"code\":200,\"data\":[{\"url\":\"https://203.0.113.3/30s.mp3\",\"freeTrialInfo\":{\"start\":0,\"end\":30},\"freeTrialPrivilege\":{\"listenType\":5,\"cannotListenReason\":1}}]}")
+        });
+
+        var ex = await Assert.ThrowsAsync<MusicSourceBusinessException>(() =>
+            service.ResolvePlayInfoAsync(new OnlineTrack { Id = "netease:5" }, CancellationToken.None));
+        Assert.Equal(MusicSourceFailureKind.PreviewOnly, ex.Kind);
+    }
 }

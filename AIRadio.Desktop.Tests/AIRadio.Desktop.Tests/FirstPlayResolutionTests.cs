@@ -188,4 +188,54 @@ public class FirstPlayResolutionTests
             HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
     }
+
+    [Fact]
+    public async Task Adapter_RichResolution_CarriesDeclaredPayloadWithoutFallback()
+    {
+        var service = new RichSearchService(new ResolvedPlayInfo("https://203.0.113.60/a.m4a", "AAC", 256));
+        var adapter = new MusicSearchServiceAdapter(service);
+
+        var result = await adapter.ResolveAsync(new ProviderTrackRef("rich", "1"), null, CancellationToken.None);
+
+        Assert.NotNull(result.Media);
+        Assert.Equal("AAC", result.Media!.Codec);
+        Assert.Equal(256, result.Media.BitrateKbps);
+        // 富解析命中即不再走字符串路径
+        Assert.Equal(0, service.UrlFallbackCalls);
+    }
+
+    [Fact]
+    public async Task Adapter_RichResolutionWithEmptyUrl_FailsWithoutDoubleRequest()
+    {
+        // 契约：非 null 记录 Url 空 = 本次解析失败，不得回退字符串路径（防同一 API 双重请求）
+        var service = new RichSearchService(new ResolvedPlayInfo(null));
+        var adapter = new MusicSearchServiceAdapter(service);
+
+        var result = await adapter.ResolveAsync(new ProviderTrackRef("rich", "1"), null, CancellationToken.None);
+
+        Assert.Null(result.Media);
+        Assert.Equal(0, service.UrlFallbackCalls);
+    }
+
+    /// <summary>实现富解析的旧音源 fake：ResolvePlayInfoAsync 返回注入结果，字符串路径计数。</summary>
+    private sealed class RichSearchService(ResolvedPlayInfo? info) : IMusicSearchService
+    {
+        public int UrlFallbackCalls;
+        private readonly ResolvedPlayInfo? _info = info;
+
+        public string Name => "rich";
+        public bool IsSlowSource => false;
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
+            => Task.FromResult(new List<OnlineTrack>());
+
+        public Task<string?> GetPlayUrlAsync(string trackId)
+        {
+            UrlFallbackCalls++;
+            return Task.FromResult<string?>("https://203.0.113.60/fallback.mp3");
+        }
+
+        public Task<ResolvedPlayInfo?> ResolvePlayInfoAsync(OnlineTrack track, CancellationToken cancellationToken)
+            => Task.FromResult(_info);
+    }
 }
