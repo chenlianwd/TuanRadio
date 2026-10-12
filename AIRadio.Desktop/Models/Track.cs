@@ -53,10 +53,17 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public bool IsPreviewStream { get; set; }
     /// <summary>
     /// 音源声明的播放请求头（Referer/UA/Cookie 白名单），随解析结果内存流转、绝不落盘
-    /// （含 Cookie 凭据语义）。首播路径不携带（ToTrack 只有 URL），URL 刷新/恢复路径回写。
+    /// （含 Cookie 凭据语义）。首播经 ToTrack(ResolveTrackResult) 携带，URL 刷新/恢复路径回写。
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public AIRadio.Desktop.Services.Music.PlaybackHeaders? PlaybackHeaders { get; set; }
+    /// <summary>
+    /// 播放 URL 最近一次解析完成的时刻（UTC，内存不落盘）。距播放 ≤ FreshResolveSkipWindow
+    /// 时跳过后台同源预刷新（刚解析的 URL 无需再解析）；跨源回退结果不标记（回退结果无头，
+    /// 保留后台刷新补齐）。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTimeOffset? ResolvedAtUtc { get; set; }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public TrackPlayability Playability

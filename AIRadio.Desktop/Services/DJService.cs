@@ -520,14 +520,24 @@ Response rules:
                 continue;
             }
 
-            var url = _musicSearch is Music.IMusicSourceBroker multi
-                ? await multi.GetPlayUrlAsync(item, cancellationToken)
-                : await _musicSearch.GetPlayUrlAsync(item.Id)
+            Track? playableTrack;
+            if (_musicSearch is Music.IMusicSourceBroker multi)
+            {
+                // broker 路径拿完整解析结果：首播即携带播放头/声明值
+                var resolution = await multi.ResolveTrackAsync(item, forceRefresh: false, cancellationToken);
+                playableTrack = resolution == null ? null : item.ToTrack(resolution);
+            }
+            else
+            {
+                var url = await _musicSearch.GetPlayUrlAsync(item.Id)
                     .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-            if (!string.IsNullOrEmpty(url))
+                playableTrack = string.IsNullOrWhiteSpace(url) ? null : item.ToTrack(url);
+            }
+
+            if (playableTrack != null)
             {
                 Log.Information("DJ recommended: {Title} by {Artist}", item.Title, item.Artist);
-                return item.ToTrack(url);
+                return playableTrack;
             }
         }
 

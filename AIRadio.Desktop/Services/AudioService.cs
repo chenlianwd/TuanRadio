@@ -109,6 +109,10 @@ public class AudioService : IAudioService, IDisposable
     private const float TtsDuckVolumeRatio = 0.35f;
     private static readonly TimeSpan PlaybackCallbackReleaseDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan UrlRefreshTimeout = TimeSpan.FromSeconds(8);
+    // 后台预刷新新鲜度窗口：刚解析的 URL（首播 ToTrack(result) 或刷新回写）无需再同源解析，
+    // 省一次后台 CDN 请求与 forceRefresh 缓存逐出；窗口远小于 CDN 签名 URL 常见有效期。
+    // 回退结果不标记新鲜（ToTrack 重载），保留后台刷新为回退首播补播放头
+    private static readonly TimeSpan FreshResolveSkipWindow = TimeSpan.FromMinutes(2);
     // 实际轨道信息解析预算：在线流要经网络预解析（对音源 CDN 多发一次 GET），本地文件快速返回
     private const int LocalMediaParseTimeoutMs = 2500;
     private const int NetworkMediaParseTimeoutMs = 8000;
@@ -1340,8 +1344,9 @@ public class AudioService : IAudioService, IDisposable
                 }
                 // For online tracks with an existing URL, refresh the URL in the background
                 // to get a fresh link, but still play immediately with the current URL.
-                // Only skip if the URL looks like a local file path.
-                if (isOnlineUrl)
+                // Only skip if the URL looks like a local file path; freshly resolved
+                // tracks (ResolvedAtUtc within window) skip the redundant background resolve.
+                if (isOnlineUrl && !IsRecentlyResolved(track))
                 {
                     _ = RefreshTrackUrlAsync(track, requestId);
                 }
@@ -1882,6 +1887,10 @@ public class AudioService : IAudioService, IDisposable
         });
     }
 
+    private static bool IsRecentlyResolved(Track track)
+        => track.ResolvedAtUtc is { } resolvedAt &&
+           DateTimeOffset.UtcNow - resolvedAt <= FreshResolveSkipWindow;
+
     private static bool ApplyTrackUrlResolution(Track track, TrackUrlResolution resolution)
     {
         var resolvedSourceId = string.IsNullOrWhiteSpace(resolution.SourceId)
@@ -1899,6 +1908,8 @@ public class AudioService : IAudioService, IDisposable
         track.DeclaredBitrateKbps = resolution.BitrateKbps;
         track.IsPreviewStream = resolution.IsPreview;
         track.PlaybackHeaders = resolution.Headers;
+        // 刷新本身即一次新解析：标记新鲜，播放时跳过后台同源预刷新
+        track.ResolvedAtUtc = DateTimeOffset.UtcNow;
         if (resolution.ProviderMetadata != null)
             track.ProviderMetadata = new Dictionary<string, string>(
                 resolution.ProviderMetadata,

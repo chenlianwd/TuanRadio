@@ -63,6 +63,23 @@ public class OnlineTrack
         SourceId = Id,  // store original ID for URL re-resolution
         ProviderMetadata = new Dictionary<string, string>(ProviderMetadata, StringComparer.OrdinalIgnoreCase)
     };
+
+    /// <summary>
+    /// 以完整解析结果构造 Track：除 URL/身份外携带音源声明值（编码/码率/试听）与播放头，
+    /// 首播即生效而非等待播放后的后台刷新回写。仅非回退结果标记 ResolvedAtUtc——
+    /// 跨源回退结果无播放头（BuildResolveResult 回退路径不透传），保留后台刷新补齐。
+    /// </summary>
+    public Track ToTrack(AIRadio.Desktop.Services.Music.ResolveTrackResult resolution)
+    {
+        var track = ToTrack(resolution.Url);
+        track.DeclaredCodec = resolution.Codec;
+        track.DeclaredBitrateKbps = resolution.BitrateKbps;
+        track.IsPreviewStream = resolution.IsPreview;
+        track.PlaybackHeaders = resolution.Headers;
+        if (!resolution.FellBack)
+            track.ResolvedAtUtc = DateTimeOffset.UtcNow;
+        return track;
+    }
 }
 
 /// <summary>音源业务失败的结构化分类（docs/plans/2026-09-15-music-source-experience-enhancement-design.md）。

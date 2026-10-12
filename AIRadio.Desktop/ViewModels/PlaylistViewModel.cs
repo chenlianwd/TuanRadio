@@ -202,22 +202,21 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             try
             {
                 SetSearchStatus(() => AppLanguage.T($"正在添加《{track.Title}》...", $"Adding \"{track.Title}\"..."));
-                var url = await ResolvePlayUrlAsync(track);
-                if (url == null)
+                var t = await ResolvePlayableTrackAsync(track);
+                if (t == null)
                 {
                     SetSearchStatus(() => AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
                     return;
                 }
 
                 // Check if already in playlist (stable identity, not the temporary URL)
-                var existing = Tracks.FirstOrDefault(t => MatchesOnlineTrack(t, track));
+                var existing = Tracks.FirstOrDefault(existingTrack => MatchesOnlineTrack(existingTrack, track));
                 if (existing != null)
                 {
                     SetSearchStatus(() => AppLanguage.T("这首歌已经在播放列表里了。", "Already in the playlist."));
                     return;
                 }
 
-                var t = track.ToTrack(url);
                 Tracks.Add(t);
                 _audioService.AddTracks(new[] { t });
                 TabIndex = 0;
@@ -696,8 +695,8 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         try
         {
             SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》...", $"Playing \"{track.Title}\"..."));
-            var url = await ResolvePlayUrlAsync(track);
-            if (url == null)
+            var t = await ResolvePlayableTrackAsync(track);
+            if (t == null)
             {
                 Log.Warning("No play URL for track {Id}", track.Id);
                 SetSearchStatus(() => AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
@@ -705,7 +704,7 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
             }
 
             // Check if track already in playlist (stable identity, not the temporary URL)
-            var existing = Tracks.FirstOrDefault(t => MatchesOnlineTrack(t, track));
+            var existing = Tracks.FirstOrDefault(existingTrack => MatchesOnlineTrack(existingTrack, track));
             if (existing != null)
             {
                 _audioService.PlayTrack(existing);
@@ -714,7 +713,6 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var t = track.ToTrack(url);
             Tracks.Add(t);
             _audioService.AddTracks(new[] { t });
             _audioService.PlayTrack(t);
@@ -766,10 +764,21 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
         return (tracks, Array.Empty<Services.SourceSearchStatus>());
     }
 
-    private Task<string?> ResolvePlayUrlAsync(OnlineTrack track)
-        => _musicSearchService is Services.Music.IMusicSourceBroker multi
-            ? multi.GetPlayUrlAsync(track, _lifetimeCts.Token)
-            : _musicSearchService.GetPlayUrlAsync(track.Id);
+    /// <summary>
+    /// 解析并构造可播放 Track：broker 路径拿完整 ResolveTrackResult（首播即携带播放头/声明值，
+    /// 非 broker 兜底只有 URL）。
+    /// </summary>
+    private async Task<Track?> ResolvePlayableTrackAsync(OnlineTrack track)
+    {
+        if (_musicSearchService is Services.Music.IMusicSourceBroker multi)
+        {
+            var resolution = await multi.ResolveTrackAsync(track, forceRefresh: false, _lifetimeCts.Token);
+            return resolution == null ? null : track.ToTrack(resolution);
+        }
+
+        var url = await _musicSearchService.GetPlayUrlAsync(track.Id);
+        return string.IsNullOrWhiteSpace(url) ? null : track.ToTrack(url);
+    }
 
     public async Task LoadKugouPlaylistsAsync(bool force = false)
     {
