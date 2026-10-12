@@ -51,6 +51,12 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public int? DeclaredBitrateKbps { get; set; }
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsPreviewStream { get; set; }
+    /// <summary>
+    /// 音源声明的播放请求头（Referer/UA/Cookie 白名单），随解析结果内存流转、绝不落盘
+    /// （含 Cookie 凭据语义）。首播路径不携带（ToTrack 只有 URL），URL 刷新/恢复路径回写。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public AIRadio.Desktop.Services.Music.PlaybackHeaders? PlaybackHeaders { get; set; }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public TrackPlayability Playability

@@ -142,8 +142,27 @@ public sealed class MusicProviderPreferencesTests
             });
     }
 
+    [Fact]
+    public async Task PlaybackHeaders_FlowThroughResolveResultAndCache()
+    {
+        var headers = new PlaybackHeaders(UserAgent: "UA/1.0", Referer: new Uri("https://www.kuwo.cn/"));
+        var provider = new StubProvider("hdr", headers: headers);
+        var broker = new MusicSourceBroker(provider);
+        var track = new OnlineTrack { Id = "hdr:1", Title = "Song", Artist = "Artist", Source = "hdr" };
+
+        var result = await broker.ResolveTrackAsync(track, forceRefresh: true, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal(headers, result.Headers);
+
+        // 缓存（内存）同样携带播放头，符合"只存在于内存"契约
+        var cached = await broker.ResolveTrackAsync(track, forceRefresh: false, CancellationToken.None);
+        Assert.NotNull(cached);
+        Assert.Equal(headers, cached.Headers);
+    }
+
     private sealed class StubProvider(string id, bool isSlow = false, string? mediaUrl = null,
-        string? codec = null, int? bitrateKbps = null, bool isPreview = false) : IMusicProvider
+        string? codec = null, int? bitrateKbps = null, bool isPreview = false,
+        PlaybackHeaders? headers = null) : IMusicProvider
     {
         public MusicProviderDescriptor Descriptor { get; } = new(id, id,
             ProviderNetworkScope.PublicInternet, IsSlowSource: isSlow);
@@ -166,7 +185,8 @@ public sealed class MusicProviderPreferencesTests
             return Task.FromResult(MediaResolutionResult.Playable(
                 new ResolvedMedia(track, new Uri(mediaUrl ?? ("https://203.0.113." +
                     (id == "second" ? "2" : "1") + "/stream.mp3")),
-                    Codec: codec, BitrateKbps: bitrateKbps, IsPreview: isPreview)));
+                    Codec: codec, BitrateKbps: bitrateKbps, IsPreview: isPreview,
+                    Headers: headers)));
         }
     }
 }

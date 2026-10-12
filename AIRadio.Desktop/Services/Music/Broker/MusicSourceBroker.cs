@@ -244,8 +244,8 @@ public class MusicSourceBroker : IMusicSourceBroker
         IEnumerable<IMusicProvider> supplementalProviders, params IMusicSearchService[] extraSources)
     {
         var kugouSource = new KugouMusicService(httpClient, accounts, kugouVerification);
-        var neteaseProvider = new MusicSearchServiceAdapter(new NeteaseMusicService(httpClient, accounts));
-        var kugouProvider = new MusicSearchServiceAdapter(kugouSource);
+        var neteaseProvider = MusicSearchServiceAdapter.CreateWithPlaybackHeaderProfile(new NeteaseMusicService(httpClient, accounts));
+        var kugouProvider = MusicSearchServiceAdapter.CreateWithPlaybackHeaderProfile(kugouSource);
         var providers = new List<IMusicProvider>(preferredProviders)
         {
             neteaseProvider,
@@ -269,11 +269,15 @@ public class MusicSourceBroker : IMusicSourceBroker
                 "1",
                 StringComparison.Ordinal))
         {
-            providers.Add(new MusicSearchServiceAdapter(new KuwoMusicService(httpClient), isExperimental: true));
-            providers.Add(new MusicSearchServiceAdapter(new MiguMusicService(httpClient), isExperimental: true));
+            providers.Add(MusicSearchServiceAdapter.CreateWithPlaybackHeaderProfile(
+                new KuwoMusicService(httpClient), isExperimental: true));
+            providers.Add(MusicSearchServiceAdapter.CreateWithPlaybackHeaderProfile(
+                new MiguMusicService(httpClient), isExperimental: true));
         }
         providers.AddRange(supplementalProviders);
-        providers.AddRange(extraSources.Select(source => new MusicSearchServiceAdapter(source))); // YouTube 等额外源作为最低优先级
+        // YouTube 等额外源作为最低优先级；档案按派生 ProviderId 查表（youtube → 浏览器 UA）
+        providers.AddRange(extraSources.Select(source =>
+            MusicSearchServiceAdapter.CreateWithPlaybackHeaderProfile(source)));
         SubscribeToPrivateProviders(providers);
         _providers = providers;
         _activeProviders = _providers.ToArray();
@@ -590,7 +594,8 @@ public class MusicSourceBroker : IMusicSourceBroker
             FellBack: !string.Equals(beforeId, track.Id, StringComparison.Ordinal),
             Codec: declaredMedia?.Codec,
             BitrateKbps: declaredMedia?.BitrateKbps,
-            IsPreview: declaredMedia?.IsPreview ?? false);
+            IsPreview: declaredMedia?.IsPreview ?? false,
+            Headers: declaredMedia?.Headers);
 
     /// <summary>
     /// 当前音源已经提前结束时，跳过该音源并按歌曲元数据寻找替代播放地址。
