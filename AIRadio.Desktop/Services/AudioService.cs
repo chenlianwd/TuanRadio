@@ -21,7 +21,8 @@ public sealed record TrackUrlResolution(
     IReadOnlyDictionary<string, string>? ProviderMetadata = null,
     string? Codec = null,
     int? BitrateKbps = null,
-    bool IsPreview = false);
+    bool IsPreview = false,
+    AIRadio.Desktop.Services.Music.PlaybackHeaders? Headers = null);
 
 /// <summary>LibVLC 解析得到的实际播放轨道技术信息；采集尽力而为，任何字段可为空。</summary>
 public sealed record TrackMediaInfo(
@@ -1370,6 +1371,9 @@ public class AudioService : IAudioService, IDisposable
                 {
                     newMedia.AddOption(":network-caching=5000");
                     newMedia.AddOption(":http-reconnect");
+                    // 音源声明的播放头（UA 可靠投递/Cookie 通道/Referer 尽力，见 MediaHttpOptions）
+                    foreach (var headerOption in MediaHttpOptions.Build(track.PlaybackHeaders))
+                        newMedia.AddOption(headerOption);
                 }
 
                 _player.Media = newMedia;
@@ -1894,6 +1898,7 @@ public class AudioService : IAudioService, IDisposable
         track.DeclaredCodec = resolution.Codec;
         track.DeclaredBitrateKbps = resolution.BitrateKbps;
         track.IsPreviewStream = resolution.IsPreview;
+        track.PlaybackHeaders = resolution.Headers;
         if (resolution.ProviderMetadata != null)
             track.ProviderMetadata = new Dictionary<string, string>(
                 resolution.ProviderMetadata,

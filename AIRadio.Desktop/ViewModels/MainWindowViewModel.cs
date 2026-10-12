@@ -455,7 +455,8 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 onlineTrack.ProviderMetadata,
                 resolved?.Codec,
                 resolved?.BitrateKbps,
-                resolved?.IsPreview ?? false);
+                resolved?.IsPreview ?? false,
+                resolved?.Headers);
     }
 
     private void ToggleCurrentFavorite()

@@ -15,21 +15,37 @@ namespace AIRadio.Desktop.Services.Music;
 public sealed class MusicSearchServiceAdapter : IMusicProvider
 {
     private readonly IMusicSearchService _inner;
+    private readonly PlaybackHeaders? _playbackHeaders;
 
     public MusicProviderDescriptor Descriptor { get; }
 
     public MusicSearchServiceAdapter(
         IMusicSearchService inner,
         ProviderNetworkScope networkScope = ProviderNetworkScope.PublicInternet,
-        bool isExperimental = false)
+        bool isExperimental = false,
+        PlaybackHeaders? playbackHeaders = null)
     {
         _inner = inner;
+        _playbackHeaders = playbackHeaders;
         Descriptor = new MusicProviderDescriptor(
             Id: DeriveProviderId(inner.GetType().Name),
             DisplayName: inner.Name,
             NetworkScope: networkScope,
             IsSlowSource: inner.IsSlowSource,
             IsExperimental: isExperimental);
+    }
+
+    /// <summary>
+    /// 按 PlaybackHeaderProfiles 的源档案构造（档案缺失即 null 头，网易/酷狗签名 URL 鉴权无档案）。
+    /// 宿主侧统一走此工厂，避免逐处散落档案查表。
+    /// </summary>
+    internal static MusicSearchServiceAdapter CreateWithPlaybackHeaderProfile(
+        IMusicSearchService inner,
+        ProviderNetworkScope networkScope = ProviderNetworkScope.PublicInternet,
+        bool isExperimental = false)
+    {
+        _ = PlaybackHeaderProfiles.TryGet(DeriveProviderId(inner.GetType().Name), out var headers);
+        return new MusicSearchServiceAdapter(inner, networkScope, isExperimental, playbackHeaders: headers);
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken)
@@ -58,7 +74,8 @@ public sealed class MusicSearchServiceAdapter : IMusicProvider
                 return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound);
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
                 return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.TransportRejected);
-            return MediaResolutionResult.Playable(new ResolvedMedia(track, uri));
+            // 播放头经 Sanitized 剔除不安全项后随 ResolvedMedia 透传（null 即不带）
+            return MediaResolutionResult.Playable(new ResolvedMedia(track, uri, Headers: _playbackHeaders?.Sanitized()));
         }
         catch (MusicSourceBusinessException ex)
         {
