@@ -1237,9 +1237,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
             var track = SelectBestTrack(searchQuery, results, preferArtistMatch);
             Log.Debug("DJ got track: {Track}, fetching URL...", track.Title);
-            var url = await ResolvePlayUrlAsync(track, _lifetimeCts.Token);
-            Log.Debug("DJ got URL: {Url}", url != null ? "present" : "null");
-            if (url == null)
+            var t = await ResolvePlayableTrackAsync(track, _lifetimeCts.Token);
+            Log.Debug("DJ got URL: {Url}", t != null ? "present" : "null");
+            if (t == null)
             {
                 AddMessage(new ChatMessage
                 {
@@ -1249,10 +1249,9 @@ public class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var t = track.ToTrack(url);
             // 添加前先严格+宽松两级查重：AddExternalTrack 命中宽松合并时不会入列，
             // 后续仅靠严格查找会落空；宽松预查让"已在列表"直接复用既有条目
-            var index = FindAudioTrackIndex(track.Id, url);
+            var index = FindAudioTrackIndex(track.Id, t.FilePath);
             if (index < 0)
                 index = FindAudioTrackIndexLoose(t);
             if (index < 0)
@@ -1339,15 +1338,23 @@ public class ChatViewModel : ViewModelBase, IDisposable
             .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
     }
 
-    private Task<string?> ResolvePlayUrlAsync(
+    /// <summary>
+    /// 解析并构造可播放 Track：broker 路径拿完整 ResolveTrackResult（首播即携带播放头/声明值，
+    /// 非 broker 兜底只有 URL）。
+    /// </summary>
+    private async Task<Track?> ResolvePlayableTrackAsync(
         OnlineTrack track,
         CancellationToken cancellationToken)
     {
         if (_musicSearchService is IMusicSourceBroker multi)
-            return multi.GetPlayUrlAsync(track, cancellationToken);
+        {
+            var resolution = await multi.ResolveTrackAsync(track, forceRefresh: false, cancellationToken);
+            return resolution == null ? null : track.ToTrack(resolution);
+        }
 
-        return _musicSearchService.GetPlayUrlAsync(track.Id)
+        var url = await _musicSearchService.GetPlayUrlAsync(track.Id)
             .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        return string.IsNullOrWhiteSpace(url) ? null : track.ToTrack(url);
     }
 
     private int FindAudioTrackIndex(string sourceId, string filePath)

@@ -108,8 +108,8 @@ public class RecommendationService : IRecommendationService
                 if (CandidateRanker.IsUnwantedVersion(result, query))
                     continue;
 
-                var url = await ResolvePlayUrlAsync(result, cancellationToken);
-                if (string.IsNullOrWhiteSpace(url))
+                var track = await ResolvePlayableTrackAsync(result, cancellationToken);
+                if (track == null)
                 {
                     if (tracks.Count(x => !x.IsPlayable) >= 5)
                         continue;
@@ -126,13 +126,12 @@ public class RecommendationService : IRecommendationService
                     continue;
                 }
 
-                var track = result.ToTrack(url);
                 playableCount++;
                 tracks.Add(new RecommendedTrack
                 {
                     Track = track,
                     Source = GetSourceDisplayName(result),
-                    PlayUrl = url,
+                    PlayUrl = track.FilePath,
                     IsPlayable = true,
                     Score = 1.0 - playableCount * 0.05,
                     Tags = BuildTags(context, result),
@@ -656,13 +655,23 @@ public class RecommendationService : IRecommendationService
             : _musicSearch.SearchAsync(query, limit)
                 .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
 
-    private Task<string?> ResolvePlayUrlAsync(
+    /// <summary>
+    /// 解析并构造可播放 Track：broker 路径拿完整 ResolveTrackResult（首播即携带播放头/声明值）。
+    /// </summary>
+    private async Task<Track?> ResolvePlayableTrackAsync(
         OnlineTrack track,
         CancellationToken cancellationToken)
-        => _musicSearch is Music.IMusicSourceBroker multi
-            ? multi.GetPlayUrlAsync(track, cancellationToken)
-            : _musicSearch.GetPlayUrlAsync(track.Id)
-                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+    {
+        if (_musicSearch is Music.IMusicSourceBroker multi)
+        {
+            var resolution = await multi.ResolveTrackAsync(track, forceRefresh: false, cancellationToken);
+            return resolution == null ? null : track.ToTrack(resolution);
+        }
+
+        var url = await _musicSearch.GetPlayUrlAsync(track.Id)
+            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        return string.IsNullOrWhiteSpace(url) ? null : track.ToTrack(url);
+    }
 
     private Task<string> ChatAsync(string prompt, CancellationToken cancellationToken)
         => _llm is LLMService llm
