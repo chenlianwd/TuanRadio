@@ -30,7 +30,22 @@ public interface IMusicSearchService
 
     Task<string?> GetPlayUrlAsync(OnlineTrack track, CancellationToken cancellationToken)
         => GetPlayUrlAsync(track.Id, cancellationToken);
+
+    /// <summary>
+    /// 可选富解析（默认不支持）。契约二义性消解：<c>null</c> = 服务不支持富解析，
+    /// 调用方回退 GetPlayUrlAsync 字符串路径；<c>非 null</c> = 支持，Url 为空即本次解析失败，
+    /// <b>不得</b>再回退字符串路径（否则已实现富解析的源在失败路径会对同一 API 双重请求）。
+    /// </summary>
+    Task<ResolvedPlayInfo?> ResolvePlayInfoAsync(OnlineTrack track, CancellationToken cancellationToken)
+        => Task.FromResult<ResolvedPlayInfo?>(null);
 }
+
+/// <summary>旧音源接口的富解析结果：URL 之外携带音源声明的编码/码率/试听标记（尽力而为可空）。</summary>
+public sealed record ResolvedPlayInfo(
+    string? Url,
+    string? Codec = null,
+    int? BitrateKbps = null,
+    bool IsPreview = false);
 
 public class OnlineTrack
 {

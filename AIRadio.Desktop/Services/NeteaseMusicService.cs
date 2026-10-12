@@ -123,6 +123,16 @@ public class NeteaseMusicService : IMusicSearchService
         => GetPlayUrlAsync(trackId, CancellationToken.None);
 
     public async Task<string?> GetPlayUrlAsync(string trackId, CancellationToken cancellationToken)
+        => (await ResolvePlayInfoCoreAsync(trackId, cancellationToken).ConfigureAwait(false))?.Url;
+
+    /// <summary>
+    /// 富解析（IMusicSearchService.ResolvePlayInfoAsync 契约）：非 null 即"已解析"，
+    /// Url 为空表示本次无可播地址——调用方不得再回退字符串路径（防同一 API 双重请求）。
+    /// </summary>
+    public Task<ResolvedPlayInfo?> ResolvePlayInfoAsync(OnlineTrack track, CancellationToken cancellationToken)
+        => ResolvePlayInfoCoreAsync(track.Id, cancellationToken);
+
+    private async Task<ResolvedPlayInfo?> ResolvePlayInfoCoreAsync(string trackId, CancellationToken cancellationToken)
     {
         try
         {
@@ -143,7 +153,7 @@ public class NeteaseMusicService : IMusicSearchService
             if (!root.TryGetProperty("code", out var codeEl) ||
                 codeEl.ValueKind != JsonValueKind.Number ||
                 codeEl.GetInt32() != 200)
-                return null;
+                return new ResolvedPlayInfo(null);
 
             if (root.TryGetProperty("data", out var data) &&
                 data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0)
@@ -162,11 +172,25 @@ public class NeteaseMusicService : IMusicSearchService
                 {
                     // 与酷狗/YouTube 同口径：非 http(s) 值不得流入 LibVLC
                     var playUrl = urlEl.GetString();
-                    return IsHttpUrl(playUrl) ? playUrl : null;
+                    if (!IsHttpUrl(playUrl))
+                        return new ResolvedPlayInfo(null);
+
+                    // type/br 是上游声明的编码与码率（bps）：仅作展示兜底，实际以 LibVLC 解析为准
+                    var codec = first.TryGetProperty("type", out var typeEl) &&
+                                typeEl.ValueKind == JsonValueKind.String
+                        ? typeEl.GetString()?.Trim().ToUpperInvariant()
+                        : null;
+                    var bitrateKbps = first.TryGetProperty("br", out var brEl) &&
+                                      brEl.ValueKind == JsonValueKind.Number &&
+                                      brEl.TryGetInt32(out var br) && br > 0
+                        ? br / 1000
+                        : (int?)null;
+                    if (string.IsNullOrEmpty(codec)) codec = null;
+                    return new ResolvedPlayInfo(playUrl, codec, bitrateKbps);
                 }
             }
 
-            return null;
+            return new ResolvedPlayInfo(null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
