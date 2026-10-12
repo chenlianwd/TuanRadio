@@ -87,7 +87,7 @@ dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.cs
 ## 已知技术债
 
 - 长期收听画像已落地且推荐/聊天双链路注入（见 docs/plans/2026-09-14 与 2026-09-15 设计文档），但画像纯本地、不跨设备同步（有意不做云端）。
-- 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级。可搜索本地曲库、OpenSubsonic、Audius 无 Key 只读 PoC、无 Node 核心构建、裁剪后的代理包、音源启停/排序、OpenSubsonic 传输音质偏好、实际播放编码/码率展示、重定向逐跳复检、播放头传输（PlaybackHeaders 端到端）与首播对象化解析（ResolveTrackAsync + 新鲜度跳过后台预刷新）已实现；Provider 独立程序集、网易声明值采集与全局源策略仍待完成，详见 `docs/plans/2026-08-25-music-source-architecture-evolution-plan.md`。
+- 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级。可搜索本地曲库、OpenSubsonic、Audius 无 Key 只读 PoC、无 Node 核心构建、裁剪后的代理包、音源启停/排序、OpenSubsonic 传输音质偏好、实际播放编码/码率展示（含网易 type/br 声明值采集）、重定向逐跳复检、播放头传输（PlaybackHeaders 端到端）与首播对象化解析（ResolveTrackAsync + 新鲜度跳过后台预刷新）已实现；Provider 独立程序集与全局源策略仍待完成，详见 `docs/plans/2026-08-25-music-source-architecture-evolution-plan.md`。
 - 网易云代理固定 `NeteaseCloudMusicApi` 4.32.0，生产依赖经过兼容更新并生成 `providers-manifest.json`；当前 `npm audit --omit=dev` 仍报告上游 `music-metadata`/`file-type` 链上的 3 项告警（1 中危、2 高危），升级到不兼容旧接口的版本前需单独评估。
 - 酷狗代理生产锁文件已在兼容范围内更新，`npm ci --omit=dev --ignore-scripts` 与 `npm audit --omit=dev` 验证通过（0 项告警）；代理源码基线与本地补丁记录在 `server-kugou/VENDOR.md`。
 - 播放 URL 安全校验分两层：`MediaUriPolicy` fail-closed 校验初始地址（scheme/禁段/DNS/凭据）；`PlaybackRedirectGuard` 在解析期主动跟随重定向并逐跳复检（观察型，只拒绝观察到的违规跳转，探测超时/不可得放行原 URL，残余风险为恶意源停滞探测规避与 TOCTOU 窗口，已文档化）。DNS 校验与播放连接是两次独立解析，重绑定 TOCTOU 窗口同样属已接受残余。音源声明的播放请求头经 `PlaybackHeaders` 白名单端到端投递（UA/Cookie 走 `:http-user-agent`/`:http-cookies` 可靠，Referer 尽力投递——libvlc 3 核心 HTTP 客户端不支持，上游限制），带注入防护。

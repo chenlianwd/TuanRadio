@@ -540,7 +540,7 @@ AIRadio.Desktop/Services/Music/
 
 > 2026-10-10 进度：实际播放编码/码率已落地——播放器解析在播媒体音频轨道（fourcc 短名 + 码率，在线流经 ParseNetwork 预解析、失败静默），OpenSubsonic 声明值经解析链路（ResolvedMedia→ResolveTrackResult→Track）兜底，`IsPreview` 字段贯通到播放区试听徽标（当前无生产者播放试听流，属前瞻性接线）。局限：跨源回退无声明值、首播徽标在解析事件前为空、网易 /song/url/v1 的 br/type 仍丢弃。试听/完整播放状态 UI 已接线；全局源策略尚未实现。
 
-> 2026-10-12 进度（首播对象化）：四处首播点改 ResolveTrackAsync + ToTrack(ResolveTrackResult)——首播即携带播放头/声明值（此前靠播放后的后台刷新回写）；Track.ResolvedAtUtc 新鲜度标记（回退结果不标记）使 2 分钟内解析的 URL 跳过后台同源预刷新。局限更新：跨源回退仍无声明值/头（刷新路径在重解析后补齐）、网易 /song/url/v1 的 br/type 仍丢弃。
+> 2026-10-12 进度（首播对象化 + 网易声明值）：四处首播点改 ResolveTrackAsync + ToTrack(ResolveTrackResult)——首播即携带播放头/声明值（此前靠播放后的后台刷新回写）；Track.ResolvedAtUtc 新鲜度标记（回退结果不标记）使 2 分钟内解析的 URL 跳过后台同源预刷新。网易 /song/url/v1 的 type/br 经富解析契约（IMusicSearchService.ResolvePlayInfoAsync，null/非null 二义性消解防双重请求）采集为声明值。局限更新：跨源回退仍无声明值/头（刷新路径在重解析后补齐）。
 
 > 目标：在不依赖主流平台私有接口的情况下扩充可合法访问的在线候选池。
 
