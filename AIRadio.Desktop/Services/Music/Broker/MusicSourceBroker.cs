@@ -35,6 +35,16 @@ public class MusicSourceBroker : IMusicSourceBroker
     public event EventHandler? ProviderConfigurationChanged;
     private readonly SourceHealthRegistry _healthRegistry = new();
     private readonly ResolvedMediaCache _mediaCache = new();
+    private int _sourcePolicyOrdinal = (int)MusicSourcePolicy.Coverage;
+    /// <summary>
+    /// 全局源策略（docs/plans 阶段 4 UI 项）：影响跨源回退尝试顺序与搜索重排的 15% 源权重；
+    /// 首选源与搜索主源仍由用户手动排序决定。枚举以 int 支撑配合 Volatile，对齐 _activeProviders 纪律。
+    /// </summary>
+    public MusicSourcePolicy SourcePolicy
+    {
+        get => (MusicSourcePolicy)Volatile.Read(ref _sourcePolicyOrdinal);
+        set => Volatile.Write(ref _sourcePolicyOrdinal, (int)value);
+    }
     // 重定向探测客户端：禁用自动跟随（跟随与逐跳校验由 PlaybackRedirectGuard 手动完成）；
     // 10s 客户端兜底，实际预算由 ResolveWithTimeout 的 WaitAsync 约束。随 Broker 单例存活到进程结束。
     private readonly HttpClient _redirectProbeClient = new(
@@ -433,9 +443,9 @@ public class MusicSourceBroker : IMusicSourceBroker
         return new List<OnlineTrack>();
     }
 
-    private static List<OnlineTrack> RankResults(IEnumerable<OnlineTrack> results, string keyword, int limit)
+    private List<OnlineTrack> RankResults(IEnumerable<OnlineTrack> results, string keyword, int limit)
         => CandidateRanker.DeduplicateTracks(
-                CandidateRanker.RankSearchResults(results.ToList(), keyword))
+                CandidateRanker.RankSearchResults(results.ToList(), keyword, SourcePolicy))
             .Take(limit * 2)
             .ToList();
 
@@ -621,11 +631,11 @@ public class MusicSourceBroker : IMusicSourceBroker
             ? track.Title
             : $"{track.Title} {track.Artist}";
 
-        // 快速源共享同一段搜索预算并发查询；仍按 _providers 的既定优先级选择候选。
-        // 这样单个坏源不会在串行链路里吃光总预算，同时不改变正常情况下的选源顺序。
-        var fastSources = Volatile.Read(ref _activeProviders)
+        // 快速源共享同一段搜索预算并发查询；按策略重排命中即停的尝试序（覆盖优先=用户序）。
+        // 这样单个坏源不会在串行链路里吃光总预算；重排只影响解析顺序，搜索仍全源并发零额外成本。
+        var fastSources = ApplySourcePolicyOrder(Volatile.Read(ref _activeProviders)
             .Where(provider => !ReferenceEquals(provider, excludedProvider) && !provider.Descriptor.IsSlowSource)
-            .ToArray();
+            .ToArray());
         var fastSearchBudget = CapBudget(SourceTimeout, RemainingBudget(deadline));
         if (fastSources.Length > 0 && fastSearchBudget >= MinSourceBudget)
         {
@@ -683,6 +693,23 @@ public class MusicSourceBroker : IMusicSourceBroker
 
         // YouTube/yt-dlp 不参与自动回退：30s 子进程不能安全塞进 8s 播放恢复预算。
         return null;
+    }
+
+    /// <summary>
+    /// 全局源策略重排（稳定/音质优先）：按源分级升序稳定排序，类内保持用户序；
+    /// 覆盖优先返回原序（现状）。GetAlternativePlayUrlAsync 复用同一回退漏斗，一并生效。
+    /// </summary>
+    private IMusicProvider[] ApplySourcePolicyOrder(IMusicProvider[] providers)
+    {
+        var policy = SourcePolicy;
+        if (policy == MusicSourcePolicy.Coverage)
+            return providers;
+        return providers
+            .Select((provider, index) => (Provider: provider, Index: index))
+            .OrderBy(entry => SourcePolicyClasses.GetClass(entry.Provider.Descriptor.Id, policy))
+            .ThenBy(entry => entry.Index)
+            .Select(entry => entry.Provider)
+            .ToArray();
     }
 
     private async Task<string?> TryResolveFallbackCandidateAsync(
@@ -745,7 +772,7 @@ public class MusicSourceBroker : IMusicSourceBroker
     /// 单遍回退候选择优：通过该遍身份匹配的候选中按时长接近度取最高分；
     /// 严格大于才替换（并列取源内首个，保留各源自身相关性排序为 tie-breaker）。
     /// </summary>
-    private static OnlineTrack? FindBestFallbackCandidate(
+    private OnlineTrack? FindBestFallbackCandidate(
         IReadOnlyList<OnlineTrack> candidates,
         OnlineTrack target,
         bool stripDecorations)
@@ -764,7 +791,7 @@ public class MusicSourceBroker : IMusicSourceBroker
             if (!MusicIdentity.IsSameSongLoose(candidateTitle, candidate.Artist, targetTitle, target.Artist))
                 continue;
 
-            var score = CandidateRanker.ScoreFallbackCandidate(candidate, target);
+            var score = CandidateRanker.ScoreFallbackCandidate(candidate, target, SourcePolicy);
             if (score > bestScore)
             {
                 bestScore = score;

@@ -118,6 +118,18 @@
                            Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
             </StackPanel>
 
+            <!-- 全局源策略：覆盖/稳定/音质优先（影响回退与搜索源偏好，不改首选源） -->
+            <StackPanel Spacing="4" Margin="0,6,0,0">
+                <TextBlock Text="{DynamicResource S_MusicSourcePolicy}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                <ComboBox SelectedValue="{Binding SelectedMusicSourcePolicy, Mode=TwoWay}"
+                          ItemsSource="{Binding MusicSourcePolicies}"
+                          SelectedValueBinding="{Binding Id}"
+                          DisplayMemberBinding="{Binding DisplayName}"
+                          HorizontalAlignment="Stretch"/>
+                <TextBlock Text="{DynamicResource S_MusicSourcePolicyHint}" Foreground="{DynamicResource C_FF666666}"
+                           FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
             <StackPanel Spacing="4" Margin="0,6,0,0">
                 <TextBlock Text="{DynamicResource S_MusicProviderPriority}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                 <TextBlock Text="{DynamicResource S_MusicProviderPriorityHint}" Foreground="{DynamicResource C_FF666666}"

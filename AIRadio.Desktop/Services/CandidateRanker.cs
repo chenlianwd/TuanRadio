@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using AIRadio.Desktop.Models;
+using AIRadio.Desktop.Services.Music;
 
 namespace AIRadio.Desktop.Services;
 
@@ -65,7 +66,8 @@ public static class CandidateRanker
     /// <summary>
     /// 对跨源播放回退候选进行综合评分（分数区间理论为 [-1.0, 1.0]）。
     /// </summary>
-    public static double ScoreFallbackCandidate(OnlineTrack candidate, OnlineTrack target)
+    public static double ScoreFallbackCandidate(OnlineTrack candidate, OnlineTrack target,
+        MusicSourcePolicy policy = MusicSourcePolicy.Coverage)
     {
         // 1. 标题匹配度（35%）
         var titleScore = ScoreTitle(candidate.Title, target.Title);
@@ -77,7 +79,7 @@ public static class CandidateRanker
         var durationScore = ScoreDuration(candidate.DurationMs, target.DurationMs);
 
         // 4. 音源优先级与健康度（15%）
-        var sourceScore = ScoreSource(candidate.Source);
+        var sourceScore = ScoreSource(candidate.Source, policy);
 
         var baseScore = (0.35 * titleScore) + (0.30 * artistScore) + (0.20 * durationScore) + (0.15 * sourceScore);
 
@@ -104,7 +106,8 @@ public static class CandidateRanker
     /// <summary>
     /// 对搜索结果单项进行评分。
     /// </summary>
-    public static double ScoreSearchResult(OnlineTrack candidate, string query)
+    public static double ScoreSearchResult(OnlineTrack candidate, string query,
+        MusicSourcePolicy policy = MusicSourcePolicy.Coverage)
     {
         if (string.IsNullOrWhiteSpace(query))
             return 0.5;
@@ -127,7 +130,7 @@ public static class CandidateRanker
                 artistSim = CalculateStringSimilarity(candArtist, query);
         }
 
-        var sourceScore = ScoreSource(candidate.Source);
+        var sourceScore = ScoreSource(candidate.Source, policy);
         var baseScore = (0.50 * titleSim) + (0.35 * artistSim) + (0.15 * sourceScore);
 
         var penalty = 0.0;
@@ -148,10 +151,11 @@ public static class CandidateRanker
     /// </summary>
     public static IReadOnlyList<OnlineTrack> RankFallbackCandidates(
         IEnumerable<OnlineTrack> candidates,
-        OnlineTrack target)
+        OnlineTrack target,
+        MusicSourcePolicy policy = MusicSourcePolicy.Coverage)
     {
         return candidates
-            .Select(c => (Track: c, Score: ScoreFallbackCandidate(c, target)))
+            .Select(c => (Track: c, Score: ScoreFallbackCandidate(c, target, policy)))
             .OrderByDescending(x => x.Score)
             .Select(x => x.Track)
             .ToList();
@@ -162,10 +166,11 @@ public static class CandidateRanker
     /// </summary>
     public static IReadOnlyList<OnlineTrack> RankSearchResults(
         IEnumerable<OnlineTrack> candidates,
-        string query)
+        string query,
+        MusicSourcePolicy policy = MusicSourcePolicy.Coverage)
     {
         return candidates
-            .Select(c => (Track: c, Score: ScoreSearchResult(c, query)))
+            .Select(c => (Track: c, Score: ScoreSearchResult(c, query, policy)))
             .OrderByDescending(x => x.Score)
             .Select(x => x.Track)
             .ToList();
@@ -295,22 +300,27 @@ public static class CandidateRanker
         return 0.0; // 偏差大于 1 分钟（试听切片/错曲/完整演出长音频）直接给 0 分
     }
 
-    private static double ScoreSource(string? source)
+    private static double ScoreSource(string? source, MusicSourcePolicy policy)
     {
         if (string.IsNullOrWhiteSpace(source))
             return 0.80;
 
-        return source.Trim().ToLowerInvariant() switch
-        {
-            "local" or "local library" or "本地曲库" => 1.0,
-            "opensubsonic" => 1.0,
-            "netease" or "网易" => 1.0,
-            "kugou" or "酷狗" => 0.95,
-            "kuwo" or "酷我" => 0.90,
-            "migu" or "咪咕" => 0.85,
-            "youtube" => 0.75,
-            _ => 0.80
-        };
+        // 覆盖优先（默认）：沿用既有静态表，零回归
+        if (policy == MusicSourcePolicy.Coverage)
+            return source.Trim().ToLowerInvariant() switch
+            {
+                "local" or "local library" or "本地曲库" => 1.0,
+                "opensubsonic" => 1.0,
+                "netease" or "网易" => 1.0,
+                "kugou" or "酷狗" => 0.95,
+                "kuwo" or "酷我" => 0.90,
+                "migu" or "咪咕" => 0.85,
+                "youtube" => 0.75,
+                _ => 0.80
+            };
+
+        // 稳定/音质优先：按源分级线性映射（等级 0 → 1.0，每级 −0.05）
+        return 1.0 - 0.05 * SourcePolicyClasses.GetClass(source, policy);
     }
 
     /// <summary>
