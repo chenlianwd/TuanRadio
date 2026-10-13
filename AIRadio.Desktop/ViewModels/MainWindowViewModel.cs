@@ -84,8 +84,9 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsCompactMode { get; set; }
     [Reactive] public bool IsLyricsMode { get; set; }
 
-    /// <summary>舞台点击切歌词的守门：无在播曲目时点击舞台不进入空歌词层（标题栏按钮不受限）。</summary>
-    public bool HasCurrentTrack => _audioService.CurrentTrack is not null;
+    /// <summary>舞台点击切歌词与手型光标的守门：无在播曲目时不进空歌词层、光标不提示可点（标题栏按钮不受限）。
+    /// 由 TrackChanged 事件流维护，与 _audioService.CurrentTrack 同步。</summary>
+    [Reactive] public bool HasCurrentTrack { get; private set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
     [Reactive] public bool HasCurrentRadioProgram { get; set; }
     [Reactive] public bool IsProgramLoading { get; set; }
@@ -331,7 +332,11 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
         _trackChangedSub = _audioService.TrackChanged
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(track => IsCurrentFavorite = track?.IsFavorite == true);
+            .Subscribe(track =>
+            {
+                IsCurrentFavorite = track?.IsFavorite == true;
+                HasCurrentTrack = track != null;
+            });
 
         // 跳过判定必须与 TrackChanged 发射同步评估：经 ObserveOn 派发到 UI 线程时，
         // 新曲的进度样本可能已把旧曲样本覆盖，导致漏记跳过。判定在服务内加锁，线程安全。
@@ -394,14 +399,13 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .ToProperty(this, x => x.CurrentState);
 
-        // 1s 时钟推进（spec §5.5）；跨日时刷新日历徽标
+        // 1s 时钟推进（spec §5.5）
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(_ =>
             {
                 Now = DateTimeOffset.Now;
                 RefreshLocalizedClockText();
-                WeatherVM.UpdateCalendar(Now.LocalDateTime);
             });
     }
 

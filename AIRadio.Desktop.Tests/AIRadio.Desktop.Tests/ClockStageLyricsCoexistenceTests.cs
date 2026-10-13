@@ -25,16 +25,17 @@ namespace AIRadio.Desktop.Tests;
 /// 2. 时钟图层与歌词图层按 IsLyricsMode 互斥；
 /// 3. ToggleLyricsModeCommand 翻转 IsLyricsMode 并持久化 ShowLyricsInStage，
 ///    HasCurrentTrack 守门与 _audioService.CurrentTrack 一致（舞台点击用）。
+/// 4. 手型光标跟随在播状态：无曲目时舞台点击静默，光标不得谎报可点。
 /// 注：headless 下无法投递真实指针（见 PlayerDeckFeedbackButtonTests 注），
 /// 点击链路以"图层接线断言 + 命令直驱"覆盖。
 /// </summary>
 public class ClockStageLyricsCoexistenceTests
 {
-    private static MainWindowViewModel CreateViewModel(Track? currentTrack)
+    private static MainWindowViewModel CreateViewModel(Track? currentTrack, Subject<Track?>? trackChanged = null)
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
-        audio.Setup(x => x.TrackChanged).Returns(new Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(trackChanged ?? new Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
         audio.Setup(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
         audio.Setup(x => x.SpectrumData).Returns(new Subject<float[]>());
@@ -101,6 +102,40 @@ public class ClockStageLyricsCoexistenceTests
             Assert.True(clockLayer.IsVisible);
             Assert.False(lyricsLayer.IsVisible);
             Assert.True(indicators.IsVisible);
+        }
+        finally
+        {
+            window?.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void StageCursor_HandOnlyWhenTrackExists()
+    {
+        // 手型光标跟随在播状态：无曲目时舞台点击静默，光标不得谎报可点（2026-10-13 用户反馈）
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var trackChanged = new Subject<Track?>();
+        var vm = CreateViewModel(track, trackChanged);
+
+        Window? window = null;
+        try
+        {
+            var stage = new ClockStage { DataContext = vm };
+            window = new Window { Content = stage };
+            window.Show();
+            var root = FindNamed<Grid>(stage, "StageRoot");
+
+            trackChanged.OnNext(track); // VM 构造后未播任何事件：不可点
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.HasCurrentTrack);
+            Assert.Contains("clickable", root.Classes);
+            Assert.NotNull(root.Cursor); // clickable 样式置 Hand
+
+            trackChanged.OnNext(null); // 曲目清空（TrackChanged 也承载 null）
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.HasCurrentTrack);
+            Assert.DoesNotContain("clickable", root.Classes);
+            Assert.Null(root.Cursor); // 样式脱附，回落默认箭头
         }
         finally
         {
