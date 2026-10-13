@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
@@ -13,8 +11,9 @@ using ReactiveUI.Fody.Helpers;
 namespace AIRadio.Desktop.ViewModels;
 
 /// <summary>
-/// 时钟舞台角落的环境指示器（天气图标 + 日历徽标，docs/plans/2026-09-17-weather-calendar-design.md）。
+/// 时钟舞台角落的环境指示器（天气图标，docs/plans/2026-09-17-weather-calendar-design.md）。
 /// 默认只有图标，详情经悬停 Tooltip 展示；天气失败只隐藏图标，不打扰播放主流程。
+/// 日历徽标（农历/节气/节日）2026-10-13 按用户裁决整体移除。
 /// </summary>
 public class WeatherViewModel : ViewModelBase, IDisposable
 {
@@ -27,15 +26,10 @@ public class WeatherViewModel : ViewModelBase, IDisposable
     private int _disposed;
     private string? _lastCity;
     private WeatherInfo? _lastWeather;
-    private CalendarDayInfo? _lastCalendar;
-    private DateTime _lastCalendarDate;
 
     [Reactive] public bool IsWeatherVisible { get; private set; }
     [Reactive] public string WeatherGlyph { get; private set; } = string.Empty;
     [Reactive] public string WeatherTooltip { get; private set; } = string.Empty;
-    [Reactive] public string CalendarDayBadge { get; private set; } = string.Empty;
-    [Reactive] public string CalendarTooltip { get; private set; } = string.Empty;
-    [Reactive] public bool IsCalendarHighlighted { get; private set; }
 
     /// <summary>创建环境指示器，所有异步天气结果均交回界面调度器。</summary>
     public WeatherViewModel(IWeatherService weather, IScheduler? uiScheduler = null)
@@ -43,7 +37,6 @@ public class WeatherViewModel : ViewModelBase, IDisposable
         _weather = weather;
         _uiScheduler = uiScheduler ?? RxApp.MainThreadScheduler;
         _lifetimeToken = _lifetimeCts.Token;
-        UpdateCalendar(DateTime.Now);
 
         // 30 分钟周期刷新（服务层有同周期缓存，命中时零网络）；异常全内吞
         _refreshTimer = Observable.Interval(TimeSpan.FromMinutes(30))
@@ -84,21 +77,10 @@ public class WeatherViewModel : ViewModelBase, IDisposable
         }, _uiScheduler).ToTask().ConfigureAwait(false);
     }
 
-    /// <summary>日期变更时重算日历徽标（由主窗口 1s 时钟推进驱动）。</summary>
-    public void UpdateCalendar(DateTime now)
-    {
-        if (now.Date == _lastCalendarDate)
-            return;
-        _lastCalendarDate = now.Date;
-        _lastCalendar = ChineseCalendar.GetInfo(now);
-        ApplyCalendar();
-    }
-
     /// <summary>语言切换时经主窗口回调重建双语 Tooltip。</summary>
     public void RebuildTooltips()
     {
         ApplyWeather();
-        ApplyCalendar();
     }
 
     private void ApplyWeather()
@@ -137,114 +119,6 @@ public class WeatherViewModel : ViewModelBase, IDisposable
             ? string.Empty
             : $" {_lastWeather.TemperatureC:0}°C";
         WeatherTooltip = $"{_lastWeather.LocationName} · {description}{temperature}";
-    }
-
-    private void ApplyCalendar()
-    {
-        if (_lastCalendar == null)
-        {
-            CalendarDayBadge = string.Empty;
-            CalendarTooltip = string.Empty;
-            IsCalendarHighlighted = false;
-            return;
-        }
-
-        var info = _lastCalendar;
-        CalendarDayBadge = info.Day.ToString();
-        IsCalendarHighlighted = info.IsHighlighted;
-
-        var weekText = AppLanguage.Current == "en"
-            ? $"{_lastCalendarDate.ToString("M/d", System.Globalization.CultureInfo.GetCultureInfo("en-US"))} {_lastCalendarDate.ToString("dddd", System.Globalization.CultureInfo.GetCultureInfo("en-US"))}"
-            : _lastCalendarDate.ToString("M月d日 dddd", System.Globalization.CultureInfo.GetCultureInfo("zh-CN"));
-        var solarTerm = LocalizeSolarTerm(info.SolarTerm);
-        var festival = LocalizeFestival(info.Festival);
-        var parts = new[]
-        {
-            weekText,
-            AppLanguage.T($"农历 {info.LunarText}", $"Lunar {LocalizeLunarDate(info)}"),
-            solarTerm ?? string.Empty,
-            festival ?? string.Empty,
-            info.DaysToSaturday == 0
-                ? AppLanguage.T("今天是周六", "It's Saturday")
-                : AppLanguage.T($"距周六 {info.DaysToSaturday} 天", $"{info.DaysToSaturday} day(s) to Saturday")
-        };
-        CalendarTooltip = string.Join(" · ", parts.Where(p => !string.IsNullOrEmpty(p)));
-    }
-
-    private static string LocalizeLunarDate(CalendarDayInfo info)
-    {
-        if (AppLanguage.Current != "en")
-            return info.LunarText;
-
-        var month = Ordinal(info.LunarMonth);
-        var day = Ordinal(info.LunarDay);
-        return info.IsLeapMonth ? $"leap {month} month, {day} day" : $"{month} month, {day} day";
-    }
-
-    private static string Ordinal(int n)
-    {
-        if (n % 100 is >= 11 and <= 13)
-            return $"{n}th";
-        var suffix = (n % 10) switch { 1 => "st", 2 => "nd", 3 => "rd", _ => "th" };
-        return $"{n}{suffix}";
-    }
-
-    private static string? LocalizeSolarTerm(string? term)
-    {
-        if (term == null || AppLanguage.Current != "en")
-            return term;
-
-        return term switch
-        {
-            "小寒" => "Minor Cold",
-            "大寒" => "Major Cold",
-            "立春" => "Beginning of Spring",
-            "雨水" => "Rain Water",
-            "惊蛰" => "Awakening of Insects",
-            "春分" => "Spring Equinox",
-            "清明" => "Qingming",
-            "谷雨" => "Grain Rain",
-            "立夏" => "Beginning of Summer",
-            "小满" => "Grain Buds",
-            "芒种" => "Grain in Ear",
-            "夏至" => "Summer Solstice",
-            "小暑" => "Minor Heat",
-            "大暑" => "Major Heat",
-            "立秋" => "Beginning of Autumn",
-            "处暑" => "End of Heat",
-            "白露" => "White Dew",
-            "秋分" => "Autumn Equinox",
-            "寒露" => "Cold Dew",
-            "霜降" => "Frost's Descent",
-            "立冬" => "Beginning of Winter",
-            "小雪" => "Minor Snow",
-            "大雪" => "Major Snow",
-            "冬至" => "Winter Solstice",
-            _ => term
-        };
-    }
-
-    private static string? LocalizeFestival(string? festival)
-    {
-        if (festival == null || AppLanguage.Current != "en")
-            return festival;
-
-        return festival switch
-        {
-            "除夕" => "New Year's Eve",
-            "春节" => "Spring Festival",
-            "元宵节" => "Lantern Festival",
-            "端午节" => "Dragon Boat Festival",
-            "七夕" => "Qixi Festival",
-            "中秋节" => "Mid-Autumn Festival",
-            "重阳节" => "Double Ninth Festival",
-            "腊八节" => "Laba Festival",
-            "元旦" => "New Year's Day",
-            "劳动节" => "Labour Day",
-            "儿童节" => "Children's Day",
-            "国庆节" => "National Day",
-            _ => festival
-        };
     }
 
     /// <summary>停止刷新并作废全部在途结果，允许重复释放。</summary>

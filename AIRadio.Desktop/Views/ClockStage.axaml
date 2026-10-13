@@ -5,27 +5,16 @@
              x:Class="AIRadio.Desktop.Views.ClockStage"
              x:DataType="vm:MainWindowViewModel">
 
-    <!-- 环境指示器徽标样式：节气/节日当天高亮。
-         注意：子树必须用 {Binding WeatherVM.X} 路径绑定——DataContext="{Binding WeatherVM}"
+    <!-- 注意：环境指示器子树必须用 {Binding WeatherVM.X} 路径绑定——DataContext="{Binding WeatherVM}"
          重定向与编译绑定组合会静默破坏整个程序集的 XAML 预编译（ChatAreaMicButtonTests 回归锚定） -->
     <UserControl.Styles>
-        <Style Selector="Border.calendar-badge">
-            <Setter Property="Background" Value="{DynamicResource C_10000000}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource C_333A3D4A}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="9"/>
-            <Setter Property="Padding" Value="7,2"/>
-        </Style>
-        <Style Selector="Border.calendar-badge.highlighted">
-            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
-        </Style>
-        <Style Selector="Border.calendar-badge.highlighted TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
-            <Setter Property="FontWeight" Value="700"/>
+        <!-- 手型光标仅在可点时提示（有在播曲目）：无曲目时舞台点击静默，光标不得谎报可点 -->
+        <Style Selector="Grid#StageRoot.clickable">
+            <Setter Property="Cursor" Value="Hand"/>
         </Style>
     </UserControl.Styles>
 
-    <Grid Background="{DynamicResource C_F008080D}" Cursor="Hand">
+    <Grid x:Name="StageRoot" Background="{DynamicResource C_F008080D}" Classes.clickable="{Binding HasCurrentTrack}">
         <TextBlock x:Name="ClockDots"
                    IsHitTestVisible="False"
                    Opacity="0.20"
@@ -54,14 +43,9 @@
                                 Height="118" Margin="18,0,0,0"/>
         </Grid>
 
-        <!-- 环境指示器（天气 + 日历徽标）：时钟/歌词两种模式常显；默认仅图标，悬停出详情 -->
+        <!-- 环境指示器（天气）：时钟/歌词两种模式常显；默认仅图标，悬停出详情（日历徽标 2026-10-13 移除） -->
         <StackPanel x:Name="EnvironmentIndicators" Orientation="Horizontal" Spacing="12" Cursor="Arrow"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,18,10">
-        <Border Classes="calendar-badge" Classes.highlighted="{Binding WeatherVM.IsCalendarHighlighted}"
-                ToolTip.Tip="{Binding WeatherVM.CalendarTooltip}">
-            <TextBlock Text="{Binding WeatherVM.CalendarDayBadge}" FontSize="10" FontFamily="Consolas"
-                       Foreground="{DynamicResource C_FFB3B3B3}"/>
-        </Border>
         <TextBlock Text="{Binding WeatherVM.WeatherGlyph}" FontSize="14"
                    FontFamily="Segoe UI Symbol, Microsoft YaHei UI"
                    Foreground="{DynamicResource C_FFB3B3B3}"
