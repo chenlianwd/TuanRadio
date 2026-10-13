@@ -26,8 +26,11 @@ ehthumbs.db
 Desktop.ini
 .DS_Store
 
-# IDE
+# IDE（.vscode 下共享 tasks/launch 配置随仓库传播，其余本地文件忽略）
 .idea/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
 *.swp
 *~
 

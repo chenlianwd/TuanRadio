@@ -78,10 +78,12 @@ dotnet run --project AIRadio.Desktop\AIRadio.Desktop.csproj
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -p:TuanRadioEnableNodeProviders=false -v:minimal
 ```
 
+完整构建需要 Node.js，但无需手动配置：构建会自动探测 PATH 及常见安装目录（如 `C:\Program Files\nodejs`）并以绝对路径调用 npm/node，首次构建联网执行 `npm ci` 安装音源代理依赖；非标准安装位置可用 `-p:TuanRadioNodeDir=<目录>` 指定。核心构建不需要 Node，但设置页不含网易/酷狗扫码登录等实验性音源区块。VSCode 中 F5 会先执行构建再启动（`preLaunchTask` 配置随仓库共享）。
+
 ## 验证
 
 ```bash
-dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"
+dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```
 
 ## 已知技术债
