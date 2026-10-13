@@ -32,18 +32,32 @@
     <DefineConstants>$(DefineConstants);TUANRADIO_SLIM_CORE</DefineConstants>
   </PropertyGroup>
 
+  <!-- Node 工具链探测：PATH 之外再探常见安装目录，命中即用绝对路径调用 npm/node
+       （Node 已装但未进 PATH 的机器 clone 后开箱即完整构建）；也可 -p:TuanRadioNodeDir=... 显式指定 -->
+  <PropertyGroup Condition="'$(TuanRadioEnableNodeProviders)' == 'true' And '$(TuanRadioNodeDir)' == ''">
+    <TuanRadioNodeDir Condition="Exists('$(ProgramFiles)\nodejs\node.exe') And Exists('$(ProgramFiles)\nodejs\npm.cmd')">$(ProgramFiles)\nodejs</TuanRadioNodeDir>
+    <TuanRadioNodeDir Condition="'$(TuanRadioNodeDir)' == '' And Exists('$(ProgramFiles(x86))\nodejs\node.exe') And Exists('$(ProgramFiles(x86))\nodejs\npm.cmd')">$(ProgramFiles(x86))\nodejs</TuanRadioNodeDir>
+    <TuanRadioNodeDir Condition="'$(TuanRadioNodeDir)' == '' And Exists('$(LocalAppData)\Programs\nodejs\node.exe') And Exists('$(LocalAppData)\Programs\nodejs\npm.cmd')">$(LocalAppData)\Programs\nodejs</TuanRadioNodeDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TuanRadioEnableNodeProviders)' == 'true'">
+    <TuanRadioNpm Condition="'$(TuanRadioNodeDir)' != ''">&quot;$(TuanRadioNodeDir)\npm.cmd&quot;</TuanRadioNpm>
+    <TuanRadioNpm Condition="'$(TuanRadioNpm)' == ''">npm</TuanRadioNpm>
+    <TuanRadioNode Condition="'$(TuanRadioNodeDir)' != ''">&quot;$(TuanRadioNodeDir)\node.exe&quot;</TuanRadioNode>
+    <TuanRadioNode Condition="'$(TuanRadioNode)' == ''">node</TuanRadioNode>
+  </PropertyGroup>
+
   <!-- npm ci 严格按 lockfile 安装且失败不留"看似完整"的 node_modules（隐藏 lockfile 仅在装完时落盘）；
        普通/CI 构建都不会隐式更新 lockfile -->
   <Target Name="NpmInstall" BeforeTargets="Build" Condition="'$(TuanRadioEnableNodeProviders)' == 'true' And !Exists('server\node_modules\.package-lock.json')">
-    <Exec Command="npm ci --omit=dev" WorkingDirectory="server" />
+    <Exec Command="$(TuanRadioNpm) ci --omit=dev" WorkingDirectory="server" />
   </Target>
 
   <Target Name="NpmInstallKugou" BeforeTargets="Build" Condition="'$(TuanRadioEnableNodeProviders)' == 'true' And !Exists('server-kugou\node_modules\.package-lock.json')">
-    <Exec Command="npm ci --omit=dev" WorkingDirectory="server-kugou" />
+    <Exec Command="$(TuanRadioNpm) ci --omit=dev" WorkingDirectory="server-kugou" />
   </Target>
 
   <Target Name="GenerateProviderManifest" AfterTargets="Build" Condition="'$(TuanRadioEnableNodeProviders)' == 'true'">
-    <Exec Command="node &quot;$(MSBuildProjectDirectory)\scripts\generate-provider-manifest.js&quot; &quot;$(TargetDir)providers-manifest.json&quot;" />
+    <Exec Command="$(TuanRadioNode) &quot;$(MSBuildProjectDirectory)\scripts\generate-provider-manifest.js&quot; &quot;$(TargetDir)providers-manifest.json&quot;" />
   </Target>
 
   <ItemGroup Condition="'$(TuanRadioEnableNodeProviders)' == 'true'">

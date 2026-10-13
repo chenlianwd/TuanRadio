@@ -77,7 +77,14 @@ dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
 dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"
 ```
 
-> Git Bash 下 `/p:` 参数必须加引号，否则 MSBuild 解析报 MSB1008。
+> Git Bash 下 `/p:` 参数的斜杠会被 MSYS 吞掉（加引号也无效），属性一律用 `-p:` 形式；
+> 项目路径用正斜杠。
+>
+> Node 工具链：构建自动探测标准安装目录（`%ProgramFiles%\nodejs` 等）并以绝对路径调用
+> npm/node，Node 未进 PATH 也能完整构建；非标准位置可用 `-p:TuanRadioNodeDir=...` 指定。
+> 首次构建需联网跑 `npm ci`。彻底无 Node 的机器仍可 `-p:TuanRadioEnableNodeProviders=false`
+> 构建核心版（设置页实验性音源区块隐藏）。VSCode F5 依赖 `.vscode/launch.json` 的
+> `preLaunchTask: build`（该文件与 tasks.json 随仓库共享）。
 
 ## Notes For Future Agents
 
