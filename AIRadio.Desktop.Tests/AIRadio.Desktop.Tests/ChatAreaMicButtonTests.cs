@@ -20,7 +20,7 @@ namespace AIRadio.Desktop.Tests;
 
 public class ChatAreaMicButtonTests
 {
-    private static MainWindowViewModel CreateViewModel()
+    internal static MainWindowViewModel CreateViewModel()
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
