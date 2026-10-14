@@ -957,4 +957,96 @@ public class SettingsViewModelTests
                 Content = new StringContent(content)
             });
     }
+
+    private sealed class RoutingHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+            => send(request);
+    }
+
+    private static Task<HttpResponseMessage> RefusedResponse()
+        => Task.FromException<HttpResponseMessage>(new HttpRequestException(
+            "refused", new System.Net.Sockets.SocketException(
+                (int)System.Net.Sockets.SocketError.ConnectionRefused)));
+
+    private static HttpResponseMessage JsonResponse(string body)
+        => new(HttpStatusCode.OK) { Content = new StringContent(body) };
+
+    private static async Task WaitForStatusAsync(Func<bool> condition, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+                return;
+            await Task.Delay(100);
+        }
+        Assert.True(condition(), "status did not reach the expected value in time");
+    }
+
+    // 1x1 PNG：CreateBitmap 解码失败会自吞并继续轮询，base64 本身合法即可
+    private const string TinyPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    [Fact]
+    public async Task KugouQrLogin_LocalProxyUnavailable_ShowsServiceStatusAndStopsPolling()
+    {
+        var checkCalls = 0;
+        var handler = new RoutingHandler(req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (path.Contains("/login/qr/check"))
+            {
+                checkCalls++;
+                return RefusedResponse();
+            }
+
+            return Task.FromResult(JsonResponse(
+                $"{{\"data\":{{\"qrcode\":\"KEY\",\"qrcode_img\":\"data:image/png;base64,{TinyPngBase64}\"}}}}"));
+        });
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+            CreateTempSettingsFile(), httpClient: new HttpClient(handler));
+
+        vm.KugouQrLoginCommand.Execute().Subscribe();
+        await WaitForStatusAsync(() =>
+            vm.KugouAccountStatus.Contains("不可用") || vm.KugouAccountStatus.Contains("unavailable"));
+
+        // 轮询在服务不可用后终止：等待两个轮询周期调用数不再增长
+        var callsAfterFailure = checkCalls;
+        await Task.Delay(3500);
+        Assert.Equal(callsAfterFailure, checkCalls);
+        Assert.True(callsAfterFailure <= 2, $"unexpected poll count: {callsAfterFailure}");
+    }
+
+    [Fact]
+    public async Task NeteaseQrLogin_LocalProxyUnavailable_ShowsServiceStatusAndStopsPolling()
+    {
+        var checkCalls = 0;
+        var handler = new RoutingHandler(req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (path.Contains("/login/qr/check"))
+            {
+                checkCalls++;
+                return RefusedResponse();
+            }
+
+            if (path.Contains("/login/qr/create"))
+                return Task.FromResult(JsonResponse(
+                    $"{{\"data\":{{\"qrimg\":\"data:image/png;base64,{TinyPngBase64}\"}}}}"));
+
+            return Task.FromResult(JsonResponse("{\"data\":{\"unikey\":\"KEY\"}}"));
+        });
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
+            CreateTempSettingsFile(), httpClient: new HttpClient(handler));
+
+        vm.NeteaseQrLoginCommand.Execute().Subscribe();
+        await WaitForStatusAsync(() =>
+            vm.NeteaseAccountStatus.Contains("不可用") || vm.NeteaseAccountStatus.Contains("unavailable"));
+
+        var callsAfterFailure = checkCalls;
+        await Task.Delay(3500);
+        Assert.Equal(callsAfterFailure, checkCalls);
+        Assert.True(callsAfterFailure <= 2, $"unexpected poll count: {callsAfterFailure}");
+    }
 }
