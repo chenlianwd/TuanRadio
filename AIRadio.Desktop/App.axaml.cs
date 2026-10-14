@@ -91,7 +91,7 @@ public partial class App : Application
                     environmentFactory: () => MusicApiServer.RestrictedCorsEnvironment);
                 var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
                 _kugouApiServer = new MusicApiServer(
-                    port: 37251,
+                    port: MusicApiServer.KugouProxyPort,
                     serverDirName: "server-kugou",
                     healthQuery: "/tuanradio/identity",
                     // 每次探测时读取 LoadAsync 恢复后的当前身份，不能在构造阶段捕获随机初始值。
@@ -211,7 +211,23 @@ public partial class App : Application
 
     private void ConfigureServices(IServiceCollection services)
     {
+#if TUANRADIO_SLIM_CORE
         var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+#else
+        // 连接级自愈：本地音乐代理死亡时先重新拉起再重试一次（LocalProxyResilienceHandler）。
+        // 两个服务器实例在本方法返回后才创建，闭包在请求时才读取字段。
+        var resilienceHandler = new LocalProxyResilienceHandler(
+            new[] { MusicApiServer.NeteaseProxyPort, MusicApiServer.KugouProxyPort },
+            (port, ct) => port switch
+            {
+                MusicApiServer.KugouProxyPort when _kugouApiServer != null => _kugouApiServer.StartAsync(ct),
+                MusicApiServer.NeteaseProxyPort when _musicApiServer != null => _musicApiServer.StartAsync(ct),
+                _ => Task.CompletedTask
+            },
+            _lifetimeCts.Token,
+            new System.Net.Http.HttpClientHandler());
+        var http = new System.Net.Http.HttpClient(resilienceHandler) { Timeout = TimeSpan.FromSeconds(30) };
+#endif
         services.AddSingleton(http);
         services.AddSingleton<IAudioService, AudioService>();
         services.AddSingleton<ILLMService, LLMService>();

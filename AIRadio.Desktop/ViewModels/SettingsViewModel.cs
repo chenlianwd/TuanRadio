@@ -1134,6 +1134,11 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                     case QrState.Expired:
                         SetNeteaseAccountStatus(() => AppLanguage.T("二维码已过期，请重新扫码", "QR code expired; scan again"));
                         return;
+                    case QrState.ServiceUnavailable:
+                        SetNeteaseAccountStatus(() => AppLanguage.T(
+                            "本地音乐服务不可用，请稍后重试或重启应用",
+                            "Local music service is unavailable; retry later or restart the app"));
+                        return;
                     default:
                         SetNeteaseAccountStatus(() => AppLanguage.T("登录失败：接口返回异常，请重试", "Login failed: unexpected API response, try again"));
                         return;
@@ -1196,6 +1201,11 @@ public class SettingsViewModel : ViewModelBase, IDisposable
                         return;
                     case QrState.Expired:
                         SetKugouAccountStatus(() => AppLanguage.T("二维码已过期，请重新扫码", "QR code expired; scan again"));
+                        return;
+                    case QrState.ServiceUnavailable:
+                        SetKugouAccountStatus(() => AppLanguage.T(
+                            "本地酷狗服务不可用，请稍后重试或重启应用",
+                            "Local Kugou service is unavailable; retry later or restart the app"));
                         return;
                     default:
                         SetKugouAccountStatus(() => AppLanguage.T("登录失败：接口返回异常，请重试", "Login failed: unexpected API response, try again"));

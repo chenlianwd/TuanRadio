@@ -15,7 +15,11 @@ public class MusicApiServer : IDisposable
 {
     private Process? _process;
     private readonly int _port;
-    private const int DefaultPort = 37250;
+
+    /// <summary>网易/酷狗本地代理端口的自愈与装配共享同一来源，避免多处字面量漂移。</summary>
+    public const int NeteaseProxyPort = 37250;
+    public const int KugouProxyPort = 37251;
+    private const int DefaultPort = NeteaseProxyPort;
     private const int MaxStartupRetries = 30;
     private readonly string _serverDir;
     private readonly string _healthQuery;

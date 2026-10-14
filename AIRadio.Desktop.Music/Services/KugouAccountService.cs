@@ -87,6 +87,12 @@ public sealed class KugouAccountService
         {
             throw;
         }
+        catch (HttpRequestException ex) when (LocalProxyTransport.IsConnectFailure(ex))
+        {
+            // 传输层失败=本地代理不可达，与扫码/账号失败（Failed）区分开供 UI 诚实提示
+            Log.Warning(ex, "Kugou QR check failed: local proxy unreachable");
+            return new QrPollResult(QrState.ServiceUnavailable);
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Kugou QR check failed");
