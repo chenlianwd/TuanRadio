@@ -66,6 +66,14 @@ internal sealed class LocalProxyResilienceHandler : DelegatingHandler
                 Log.Debug(resurrectEx, "Music proxy resurrect attempt failed for port {Port}", port);
             }
 
+            // 拉起期间请求令牌可能已被取消（HttpClient 超时/消费方预算）：已取消的令牌上重试
+            // 只会立刻抛 TaskCanceledException，回抛原始连接失败让消费方按"代理不可达"归类
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _cooldownUntil[port] = DateTimeOffset.UtcNow + _resurrectCooldown;
+                throw;
+            }
+
             try
             {
                 var response = await base.SendAsync(request, cancellationToken);

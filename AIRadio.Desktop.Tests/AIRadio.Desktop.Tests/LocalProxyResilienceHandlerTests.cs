@@ -198,6 +198,57 @@ public class LocalProxyResilienceHandlerTests
         Assert.Equal(1, counter.Count);
     }
 
+    // 拉起超过消费方预算（Broker 8s/HttpClient 30s）时请求令牌先被取消：
+    // 不得在已取消的令牌上重试（无意义请求+凭空多出的 TaskCanceledException 断点），
+    // 回抛原始连接失败。.NET 在令牌已取消时会把 handler 抛出的异常包装为
+    // TaskCanceledException（原始连接失败保留在 InnerException 链），属平台取消契约
+    [Fact]
+    public async Task RequestCancelledDuringResurrect_DoesNotRetryAndPreservesConnectFailure()
+    {
+        var inner = new ScriptedHandler(ConnectionRefused(), ConnectionRefused(), ConnectionRefused());
+        var counter = new ResurrectCounter();
+        var resurrectEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseResurrect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new LocalProxyResilienceHandler(
+            new[] { NeteasePort, KugouPort },
+            (_, _) =>
+            {
+                counter.Count++;
+                resurrectEntered.SetResult();
+                return releaseResurrect.Task;
+            },
+            CancellationToken.None,
+            inner,
+            TimeSpan.FromMilliseconds(200));
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var requestCts = new CancellationTokenSource();
+
+        var requestTask = client.GetAsync($"http://127.0.0.1:{NeteasePort}/search", requestCts.Token);
+        await resurrectEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await requestCts.CancelAsync();
+        releaseResurrect.SetResult();
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => requestTask);
+        Assert.True(ContainsRefusedSocket(thrown), $"connect failure not preserved: {thrown}");
+        Assert.Equal(1, inner.Calls); // 已取消的令牌上不再发出重试
+
+        // 拉起未证实成功：冷却内的后续请求直接失败，不再触发拉起
+        await AssertRefusedAsync(() => client.GetAsync($"http://127.0.0.1:{NeteasePort}/search"));
+        Assert.Equal(2, inner.Calls);
+        Assert.Equal(1, counter.Count);
+    }
+
+    private static bool ContainsRefusedSocket(Exception? exception)
+    {
+        for (var e = exception; e != null; e = e.InnerException)
+        {
+            if (e is SocketException { SocketErrorCode: SocketError.ConnectionRefused })
+                return true;
+        }
+
+        return false;
+    }
+
     [Fact]
     public async Task AppLifetimeCancelled_DoesNotResurrect()
     {
