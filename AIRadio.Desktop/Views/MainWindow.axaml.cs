@@ -27,6 +27,7 @@ public partial class MainWindow : Window, IDisposable
     public MainWindow()
     {
         InitializeComponent();
+        InputFocusRelease.Attach(this);
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
 
         DataContextChanged += (_, _) =>
