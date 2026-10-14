@@ -14,6 +14,7 @@ namespace AIRadio.Desktop.Services;
 public class MusicApiServer : IDisposable
 {
     private Process? _process;
+    private KillOnCloseJob? _childJob;
     private readonly int _port;
 
     /// <summary>网易/酷狗本地代理端口的自愈与装配共享同一来源，避免多处字面量漂移。</summary>
@@ -166,6 +167,13 @@ public class MusicApiServer : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     _process = process;
                     process.Start();
+                    // 强杀（停止调试/任务管理器）不再留孤儿：作业对象 kill-on-close 绑定父子
+                    // 生命周期；创建/绑定失败仅降级为旧语义（可留孤儿），不阻断启动
+                    var job = _childJob ??= KillOnCloseJob.TryCreate();
+                    if (job == null)
+                        Log.Warning("{Tag} server could not create a kill-on-close job; force-killing the app may leave orphan Node processes", _logTag);
+                    else if (!job.TryAssign(process))
+                        Log.Warning("{Tag} server process could not be bound to the parent lifetime job", _logTag);
                     process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
                 }
@@ -257,6 +265,8 @@ public class MusicApiServer : IDisposable
             return;
 
         Stop();
+        // 作业句柄随 Dispose 关闭即终止仍存活的绑定进程；Stop 已先行回收自有进程，这里是兜底
+        _childJob?.Dispose();
     }
 
     private async Task<bool> IsServerReadyAsync(CancellationToken cancellationToken)
