@@ -8,13 +8,14 @@
     <!-- 注意：环境指示器子树必须用 {Binding WeatherVM.X} 路径绑定——DataContext="{Binding WeatherVM}"
          重定向与编译绑定组合会静默破坏整个程序集的 XAML 预编译（ChatAreaMicButtonTests 回归锚定） -->
     <UserControl.Styles>
-        <!-- 手型光标仅在可点时提示（有在播曲目）：无曲目时舞台点击静默，光标不得谎报可点 -->
-        <Style Selector="Grid#StageRoot.clickable">
+        <!-- 中栏（时钟/歌词面板）手型光标仅在可点时提示（有在播曲目）：
+             无曲目时点击静默，光标不得谎报可点；频谱条随时可点（切样式），恒手型 -->
+        <Style Selector="StackPanel.clickable">
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
     </UserControl.Styles>
 
-    <Grid x:Name="StageRoot" Background="{DynamicResource C_F008080D}" Classes.clickable="{Binding HasCurrentTrack}">
+    <Grid x:Name="StageRoot" Background="{DynamicResource C_F008080D}">
         <TextBlock x:Name="ClockDots"
                    IsHitTestVisible="False"
                    Opacity="0.20"
@@ -27,9 +28,10 @@
                              IsHitTestVisible="False"/>
         <Grid x:Name="ClockLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding !IsLyricsMode}">
             <local:SpectrumView x:Name="ClockSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
                                 Height="118" Margin="0,0,18,0"/>
-            <StackPanel x:Name="ClockPanel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+            <StackPanel x:Name="ClockPanel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4"
+                        Background="Transparent" Classes.clickable="{Binding HasCurrentTrack}">
                 <TextBlock Text="{Binding Now, StringFormat='HH:mm'}" FontSize="56" FontWeight="700"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"
                            HorizontalAlignment="Center"/>
@@ -39,7 +41,7 @@
                            Foreground="{DynamicResource C_FF858594}" HorizontalAlignment="Center"/>
             </StackPanel>
             <local:SpectrumView x:Name="ClockSpectrumRight" Grid.Column="2" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
                                 Height="118" Margin="18,0,0,0"/>
         </Grid>
 
@@ -54,12 +56,13 @@
     </StackPanel>
 
     <!-- 歌词图层：仅替换中栏时钟，两侧频谱与星空常驻（频谱/歌词共存）；
-         中栏固定宽防逐行长度变化带动频谱抖动；点击舞台或标题栏按钮切换 -->
+         中栏固定宽防逐行长度变化带动频谱抖动；点击中栏面板切换（标题栏旧按钮已移除） -->
         <Grid x:Name="LyricsLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding IsLyricsMode}">
             <local:SpectrumView x:Name="LyricsSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
                                 Height="118" Margin="0,0,18,0"/>
-            <StackPanel x:Name="LyricsPanel" Grid.Column="1" Width="540" IsHitTestVisible="False"
+            <StackPanel x:Name="LyricsPanel" Grid.Column="1" Width="540" Background="Transparent"
+                        Classes.clickable="{Binding HasCurrentTrack}"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
                 <TextBlock Text="{Binding LyricsVM.PreviousLineText}" FontSize="12" Opacity="0.7"
                            FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF858594}"
@@ -75,7 +78,7 @@
                            HorizontalAlignment="Center" IsVisible="{Binding LyricsVM.HasStatusText}"/>
             </StackPanel>
             <local:SpectrumView x:Name="LyricsSpectrumRight" Grid.Column="2" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
                                 Height="118" Margin="18,0,0,0"/>
         </Grid>
     </Grid>

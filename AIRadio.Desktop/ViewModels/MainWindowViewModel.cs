@@ -84,7 +84,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public bool IsCompactMode { get; set; }
     [Reactive] public bool IsLyricsMode { get; set; }
 
-    /// <summary>舞台点击切歌词与手型光标的守门：无在播曲目时不进空歌词层、光标不提示可点（标题栏按钮不受限）。
+    /// <summary>舞台点击切歌词与手型光标的守门：无在播曲目时不进空歌词层、光标不提示可点。
     /// 由 TrackChanged 事件流维护，与 _audioService.CurrentTrack 同步。</summary>
     [Reactive] public bool HasCurrentTrack { get; private set; }
     [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
@@ -128,6 +128,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ToggleThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactModeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleLyricsModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> CycleSpectrumStyleCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactTopmostCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCompactLyricsCommand { get; }
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
@@ -249,6 +250,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
         ToggleCompactModeCommand = ReactiveCommand.Create(ToggleCompactMode);
         ToggleLyricsModeCommand = ReactiveCommand.Create(ToggleLyricsMode);
+        CycleSpectrumStyleCommand = ReactiveCommand.Create(CycleSpectrumStyle);
         ToggleCompactTopmostCommand = ReactiveCommand.Create(() =>
         {
             SettingsVM.CompactModeTopmost = !SettingsVM.CompactModeTopmost;
@@ -867,6 +869,15 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
         IsLyricsMode = !IsLyricsMode;
         // 与简洁模式同款记忆链路：时钟舞台与歌词视图的偏好跨启动保留
         SettingsVM.ShowLyricsInStage = IsLyricsMode;
+        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+    }
+
+    /// <summary>舞台频谱点击：循环频谱样式（柱状→镜像→波形→粒子），与设置页下拉同源，走 UI 状态保存链路持久化。</summary>
+    private void CycleSpectrumStyle()
+    {
+        var styles = SettingsVM.SpectrumStyles;
+        var current = styles.FindIndex(s => string.Equals(s.Id, SettingsVM.SelectedSpectrumStyle, StringComparison.OrdinalIgnoreCase));
+        SettingsVM.SelectedSpectrumStyle = styles[(current + 1) % styles.Count].Id;
         SettingsVM.SaveUiStateCommand.Execute().Subscribe();
     }
 
