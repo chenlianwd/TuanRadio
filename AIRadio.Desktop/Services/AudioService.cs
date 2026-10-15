@@ -588,7 +588,11 @@ public class AudioService : IAudioService, IDisposable
             else if (TryAdvancePlaybackContext(allowWrap: _repeatMode == "list", out var hadContext))
                 return;
             else if (_repeatMode == "radio")
+            {
+                // 电台链路可观测：自然结束经 TrackEnded 交由 VM 推荐串场（无此日志=被上下文/单曲循环旁路）
+                Log.Debug("Radio track ended; handing off to auto-radio handler for {Track}", CurrentTrack?.Title);
                 _trackEndedSubject.OnNext(CurrentTrack);
+            }
             else if (_repeatMode == "list" && !hadContext)
                 Next();
             else
@@ -805,8 +809,22 @@ public class AudioService : IAudioService, IDisposable
 
     public void SetRepeatMode(string mode)
     {
-        if (!IsDisposed)
-            _repeatMode = mode;
+        if (IsDisposed)
+            return;
+
+        var previous = _repeatMode;
+        _repeatMode = mode;
+        if (previous == mode)
+            return;
+
+        Log.Information("Repeat mode changed: {Previous} -> {Mode}", previous, mode);
+        if (mode == "radio")
+        {
+            // 切入电台模式即由 DJ 接管后续选曲：残留的播放上下文（如歌单队列）会在
+            // 曲目结束时优先于电台推荐推进，让串场/推荐静默失效
+            ClearPlaybackContextCore();
+            Log.Information("Radio mode engaged; playback context cleared for DJ takeover");
+        }
     }
 
     public void SetNextCallback(Func<Task<Track?>>? callback)
@@ -1029,6 +1047,9 @@ public class AudioService : IAudioService, IDisposable
                 _playbackQueueIndex = startIndex;
                 _playbackContextName = contextName ?? string.Empty;
             }
+            Log.Information(
+                "Playback context started: {Name} ({Count} tracks from index {StartIndex}, shuffle={Shuffle})",
+                contextName ?? "<unnamed>", items.Count, startIndex, shuffle);
             PlayTrackInstance(items[startIndex], isContextTrack: true);
         }
     }
@@ -1121,6 +1142,7 @@ public class AudioService : IAudioService, IDisposable
 
             _playbackQueueIndex = nextIndex;
             next = _playbackQueue[nextIndex];
+            Log.Debug("Advancing playback context '{Name}' to index {Index}", _playbackContextName, nextIndex);
         }
         PlayTrackInstance(next, isContextTrack: true);
         return true;
