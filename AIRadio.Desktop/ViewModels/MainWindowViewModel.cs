@@ -1,5 +1,5 @@
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.Music;
@@ -17,7 +17,7 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class MainWindowViewModel : ViewModelBase, IDisposable
+public partial class MainWindowViewModel : ViewModelBase, IDisposable
 {
 #if TUANRADIO_SLIM_CORE
     public bool HasExperimentalProviders => false;
@@ -75,35 +75,35 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
-    [Reactive] public bool IsSettingsOpen { get; set; }
-    [Reactive] public bool IsLibraryOpen { get; set; }
-    [Reactive] public bool IsCharacterPickerOpen { get; set; }
-    [Reactive] public CharacterProfile SelectedCharacter { get; set; }
-    [Reactive] public bool IsDarkMode { get; set; } = true;
-    [Reactive] public bool IsCurrentFavorite { get; set; }
-    [Reactive] public bool IsCompactMode { get; set; }
-    [Reactive] public bool IsLyricsMode { get; set; }
+    [Reactive] public partial bool IsSettingsOpen { get; set; }
+    [Reactive] public partial bool IsLibraryOpen { get; set; }
+    [Reactive] public partial bool IsCharacterPickerOpen { get; set; }
+    [Reactive] public partial CharacterProfile SelectedCharacter { get; set; }
+    [Reactive] public partial bool IsDarkMode { get; set; } = true;
+    [Reactive] public partial bool IsCurrentFavorite { get; set; }
+    [Reactive] public partial bool IsCompactMode { get; set; }
+    [Reactive] public partial bool IsLyricsMode { get; set; }
 
     /// <summary>舞台点击切歌词与手型光标的守门：无在播曲目时不进空歌词层、光标不提示可点。
     /// 由 TrackChanged 事件流维护，与 _audioService.CurrentTrack 同步。</summary>
-    [Reactive] public bool HasCurrentTrack { get; private set; }
-    [Reactive] public RadioProgram? CurrentRadioProgram { get; set; }
-    [Reactive] public bool HasCurrentRadioProgram { get; set; }
-    [Reactive] public bool IsProgramLoading { get; set; }
-    [Reactive] public string ProgramStatusText { get; set; } = AppLanguage.T(
+    [Reactive] public partial bool HasCurrentTrack { get; private set; }
+    [Reactive] public partial RadioProgram? CurrentRadioProgram { get; set; }
+    [Reactive] public partial bool HasCurrentRadioProgram { get; set; }
+    [Reactive] public partial bool IsProgramLoading { get; set; }
+    [Reactive] public partial string ProgramStatusText { get; set; } = AppLanguage.T(
         "打开节目单时，DJ 会按当前收听风格生成下一组候选歌曲。",
         "Open Program and the DJ will curate the next set from your current listening style.");
-    [Reactive] public string PlaybackRecoveryMessage { get; private set; } = string.Empty;
-    [Reactive] public bool HasPlaybackRecoveryFailure { get; private set; }
-    [Reactive] public bool IsCompactLyricsVisible { get; private set; }
+    [Reactive] public partial string PlaybackRecoveryMessage { get; private set; } = string.Empty;
+    [Reactive] public partial bool HasPlaybackRecoveryFailure { get; private set; }
+    [Reactive] public partial bool IsCompactLyricsVisible { get; private set; }
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
-    [Reactive] public DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
-    [Reactive] public string LocalizedDayOfWeek { get; private set; } = string.Empty;
-    [Reactive] public string LocalizedDate { get; private set; } = string.Empty;
+    [Reactive] public partial DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
+    [Reactive] public partial string LocalizedDayOfWeek { get; private set; } = string.Empty;
+    [Reactive] public partial string LocalizedDate { get; private set; } = string.Empty;
 
     /// <summary>统一电台状态，由子 VM flags 派生（spec §5.2）。</summary>
-    [ObservableAsProperty] public RadioState CurrentState { get; }
+    [ObservableAsProperty] public partial RadioState CurrentState { get; }
 
     /// <summary>状态派生纯函数：Error &gt; Speaking &gt; Searching &gt; Curating &gt; Playing &gt; Idle。</summary>
     public static RadioState DeriveRadioState(bool hasFailure, bool isSpeaking, bool isSearching, bool isProcessing, bool isPlaying)
@@ -388,8 +388,10 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 PlaybackRecoveryMessage = notice.Message;
             });
 
-        // 统一电台状态机：从子 VM flags 派生 CurrentState（spec §5.2）
-        this.WhenAnyValue(
+        // 统一电台状态机：从子 VM flags 派生 CurrentState（spec §5.2）。
+        // 源生成器 OAPH 契约：ToProperty 返回的 helper 必须赋给生成的
+        // _currentStateHelper 字段，getter 才能读到派生值（null 回退是初始占位）
+        _currentStateHelper = this.WhenAnyValue(
                 x => x.ChatVM.HasFailure,
                 x => x.HasPlaybackRecoveryFailure,
                 x => x.ChatVM.IsSpeaking,
@@ -399,7 +401,7 @@ public class MainWindowViewModel : ViewModelBase, IDisposable
                 (chatFailure, playbackFailure, speaking, searching, processing, playing) =>
                     DeriveRadioState(chatFailure || playbackFailure, speaking, searching, processing, playing))
             .ObserveOn(RxApp.MainThreadScheduler)
-            .ToProperty(this, x => x.CurrentState);
+            .ToProperty(this, nameof(CurrentState));
 
         // 1s 时钟推进（spec §5.5）
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))

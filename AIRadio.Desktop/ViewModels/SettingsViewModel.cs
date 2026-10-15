@@ -1,5 +1,5 @@
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.Music;
@@ -44,7 +44,7 @@ public sealed class MusicProviderOption : ReactiveObject
     public void RefreshLanguage() => this.RaisePropertyChanged(nameof(DisplayName));
 }
 
-public class SettingsViewModel : ViewModelBase, IDisposable
+public partial class SettingsViewModel : ViewModelBase, IDisposable
 {
 #if TUANRADIO_SLIM_CORE
     public bool HasExperimentalProviders => false;
@@ -103,65 +103,65 @@ public class SettingsViewModel : ViewModelBase, IDisposable
     // Per-character overrides: character id → (voiceId, personalityPrompt)
     private readonly Dictionary<string, (string VoiceId, string Personality)> _overrides = new();
 
-    [Reactive] public string ApiKey { get; set; } = string.Empty;
-    [Reactive] public string SelectedProvider { get; set; } = "openai";
-    [Reactive] public string BaseUrl { get; set; } = string.Empty;
-    [Reactive] public string Model { get; set; } = string.Empty;
-    [Reactive] public string StatusMessage { get; set; } = string.Empty;
-    [Reactive] public bool IsTesting { get; set; }
-    [Reactive] public string TestConnectionButtonText { get; set; } = AppLanguage.T("测试连接", "Test");
-    [Reactive] public bool TtsEnabled { get; set; } = true;
-    [Reactive] public bool IsDarkMode { get; set; } = true;
-    [Reactive] public bool EnableStarfield { get; set; } = true;
-    [Reactive] public string SelectedSpectrumStyle { get; set; } = "bars";
-    [Reactive] public bool CompactModeTopmost { get; set; } = true;
-    [Reactive] public bool CompactShowLyrics { get; set; } = true;
-    [Reactive] public bool RadioSoundFxEnabled { get; set; } = true;
-    [Reactive] public bool StartInCompactMode { get; set; }
-    [Reactive] public bool ShowLyricsInStage { get; set; }
-    [Reactive] public bool ListenerProfileEnabled { get; set; } = true;
+    [Reactive] public partial string ApiKey { get; set; } = string.Empty;
+    [Reactive] public partial string SelectedProvider { get; set; } = "openai";
+    [Reactive] public partial string BaseUrl { get; set; } = string.Empty;
+    [Reactive] public partial string Model { get; set; } = string.Empty;
+    [Reactive] public partial string StatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial bool IsTesting { get; set; }
+    [Reactive] public partial string TestConnectionButtonText { get; set; } = AppLanguage.T("测试连接", "Test");
+    [Reactive] public partial bool TtsEnabled { get; set; } = true;
+    [Reactive] public partial bool IsDarkMode { get; set; } = true;
+    [Reactive] public partial bool EnableStarfield { get; set; } = true;
+    [Reactive] public partial string SelectedSpectrumStyle { get; set; } = "bars";
+    [Reactive] public partial bool CompactModeTopmost { get; set; } = true;
+    [Reactive] public partial bool CompactShowLyrics { get; set; } = true;
+    [Reactive] public partial bool RadioSoundFxEnabled { get; set; } = true;
+    [Reactive] public partial bool StartInCompactMode { get; set; }
+    [Reactive] public partial bool ShowLyricsInStage { get; set; }
+    [Reactive] public partial bool ListenerProfileEnabled { get; set; } = true;
     // 天气城市：留空时按 IP 自动定位（见 WeatherService）
-    [Reactive] public string WeatherCity { get; set; } = string.Empty;
-    [Reactive] public string OpenSubsonicServerUrl { get; set; } = string.Empty;
-    [Reactive] public string OpenSubsonicUsername { get; set; } = string.Empty;
-    [Reactive] public string OpenSubsonicPassword { get; set; } = string.Empty;
-    [Reactive] public string OpenSubsonicStatus { get; set; } = string.Empty;
-    [Reactive] public string SelectedOpenSubsonicQuality { get; set; } = "auto";
-    [Reactive] public string SelectedMusicSourcePolicy { get; set; } = "coverage";
-    [Reactive] public bool IsConnectingOpenSubsonic { get; set; }
-    [Reactive] public string AudiusApiKeyInput { get; set; } = string.Empty;
-    [Reactive] public string AudiusStatus { get; set; } = string.Empty;
+    [Reactive] public partial string WeatherCity { get; set; } = string.Empty;
+    [Reactive] public partial string OpenSubsonicServerUrl { get; set; } = string.Empty;
+    [Reactive] public partial string OpenSubsonicUsername { get; set; } = string.Empty;
+    [Reactive] public partial string OpenSubsonicPassword { get; set; } = string.Empty;
+    [Reactive] public partial string OpenSubsonicStatus { get; set; } = string.Empty;
+    [Reactive] public partial string SelectedOpenSubsonicQuality { get; set; } = "auto";
+    [Reactive] public partial string SelectedMusicSourcePolicy { get; set; } = "coverage";
+    [Reactive] public partial bool IsConnectingOpenSubsonic { get; set; }
+    [Reactive] public partial string AudiusApiKeyInput { get; set; } = string.Empty;
+    [Reactive] public partial string AudiusStatus { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
-    [Reactive] public string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
+    [Reactive] public partial string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     // 音源逐源连接诊断结果（随语言切换重建）
-    [Reactive] public string SourceDiagnosticsText { get; set; } = string.Empty;
-    [Reactive] public bool IsDiagnosingSources { get; set; }
-    [Reactive] public string DiagnoseSourcesButtonText { get; set; } = AppLanguage.T("音源连接诊断", "Diagnose music sources");
-    [Reactive] public string SpeechMixMode { get; set; } = "duck";
-    [Reactive] public string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
+    [Reactive] public partial string SourceDiagnosticsText { get; set; } = string.Empty;
+    [Reactive] public partial bool IsDiagnosingSources { get; set; }
+    [Reactive] public partial string DiagnoseSourcesButtonText { get; set; } = AppLanguage.T("音源连接诊断", "Diagnose music sources");
+    [Reactive] public partial string SpeechMixMode { get; set; } = "duck";
+    [Reactive] public partial string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
     // 音源账号（网易扫码/酷狗扫码/yt-dlp cookies）
-    [Reactive] public string NeteaseAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
-    [Reactive] public IImage? NeteaseQrImage { get; set; }
-    [Reactive] public bool IsNeteaseQrVisible { get; set; }
-    [Reactive] public string KugouAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
-    [Reactive] public IImage? KugouQrImage { get; set; }
-    [Reactive] public bool IsKugouQrVisible { get; set; }
-    [Reactive] public VoiceOption? SelectedYtdlpBrowser { get; set; }
+    [Reactive] public partial string NeteaseAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
+    [Reactive] public partial IImage? NeteaseQrImage { get; set; }
+    [Reactive] public partial bool IsNeteaseQrVisible { get; set; }
+    [Reactive] public partial string KugouAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
+    [Reactive] public partial IImage? KugouQrImage { get; set; }
+    [Reactive] public partial bool IsKugouQrVisible { get; set; }
+    [Reactive] public partial VoiceOption? SelectedYtdlpBrowser { get; set; }
     // 首次启用浏览器 Cookies 的隐私提示（每次会话提示一次）
-    [Reactive] public string YtdlpCookieNotice { get; set; } = string.Empty;
-    [Reactive] public bool IsYtdlpCookieNoticeVisible { get; set; }
+    [Reactive] public partial string YtdlpCookieNotice { get; set; } = string.Empty;
+    [Reactive] public partial bool IsYtdlpCookieNoticeVisible { get; set; }
 
     // Character customization
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
-    [Reactive] public CharacterProfile? SelectedCharacter { get; set; }
-    [Reactive] public VoiceOption? CharacterVoice { get; set; }
-    [Reactive] public string CharacterPersonality { get; set; } = string.Empty;
+    [Reactive] public partial CharacterProfile? SelectedCharacter { get; set; }
+    [Reactive] public partial VoiceOption? CharacterVoice { get; set; }
+    [Reactive] public partial string CharacterPersonality { get; set; } = string.Empty;
 
     // 依赖语言的选项列表：语言切换时整体换新实例。
     // 不能就地 Clear+AddRange：绑定重读到同一 List 实例会被 Avalonia 按相等性去重，
     // ItemsSource 不会重新赋值，下拉项将停留旧语言。
-    [Reactive] public List<VoiceOption> Voices { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> Voices { get; set; } = new();
 
     // 语言名按 i18n 惯例保留母语写法，不随界面语言重建
     public List<VoiceOption> Languages { get; } = new()
@@ -170,16 +170,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         new() { Id = "en", DisplayName = "English" },
     };
 
-    [Reactive] public List<VoiceOption> LlmProviders { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> LlmProviders { get; set; } = new();
 
-    [Reactive] public List<VoiceOption> SpeechMixModes { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> SpeechMixModes { get; set; } = new();
 
-    [Reactive] public List<VoiceOption> SpectrumStyles { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> SpectrumStyles { get; set; } = new();
 
-    [Reactive] public List<VoiceOption> YtdlpBrowsers { get; set; } = new();
-    [Reactive] public List<MusicProviderOption> MusicProviders { get; set; } = new();
-    [Reactive] public List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
-    [Reactive] public List<VoiceOption> MusicSourcePolicies { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> YtdlpBrowsers { get; set; } = new();
+    [Reactive] public partial List<MusicProviderOption> MusicProviders { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> MusicSourcePolicies { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
