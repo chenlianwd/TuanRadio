@@ -374,6 +374,77 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task TestConnection_NonAsciiApiKey_BlockedBeforeLlmCall()
+    {
+        // 实机事故：Key 复制混入中文，运行期报"Request headers must contain only ASCII
+        // characters"却被归类成网络问题；入口拦截 + 准确文案
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        try
+        {
+            vm.ApiKey = "sk-正常前缀混入中文";
+            vm.Model = "test-model";
+
+            await vm.TestConnectionCommand.Execute();
+
+            Assert.Contains("非 ASCII", vm.StatusMessage);
+            _mockLlm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Never);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task TestConnection_FullWidthSpaceSuffix_TrimsThenProceeds()
+    {
+        // 尾缀全角空格（U+3000）是可修剪空白，Trim 后即合法 Key，不得误拦成死循环
+        _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("连接正常");
+
+        var settingsFile = CreateTempSettingsFile();
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+        try
+        {
+            vm.ApiKey = "sk-valid\u3000";
+            vm.Model = "test-model";
+
+            await vm.TestConnectionCommand.Execute();
+
+            _mockLlm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveCommand_NonAsciiApiKey_RejectedBeforeSecureStorageAndDisk()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+        try
+        {
+            vm.ApiKey = "sk-全角Ｋｅｙ";
+            vm.Model = "test-model";
+
+            await vm.SaveCommand.Execute();
+
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", It.IsAny<string>()), Times.Never);
+            Assert.False(File.Exists(settingsFile));
+            Assert.Contains("非 ASCII", vm.StatusMessage);
+        }
+        finally
+        {
+            vm.Dispose();
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
     public async Task TestConnectionCommand_LocalWithoutApiKey_CallsLlm()
     {
         _mockLlm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))

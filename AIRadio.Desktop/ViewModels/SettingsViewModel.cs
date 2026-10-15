@@ -1006,6 +1006,15 @@ public class SettingsViewModel : ViewModelBase, IDisposable
             SetStatusMessage(() => AppLanguage.T("请先输入 API Key", "Enter your API key first"));
             return;
         }
+        // Trim 先行：尾缀全角空格（U+3000）属可修剪空白，不应误判为非法字符；
+        // NormalizeLlmInputs 在 try 内才执行，此处的校验必须自带 Trim
+        if (!string.IsNullOrWhiteSpace(ApiKey) && !IsPrintableAscii(ApiKey.Trim()))
+        {
+            SetStatusMessage(() => AppLanguage.T(
+                "API Key 含非 ASCII 字符（复制时可能混入中文或全角符号），请重新粘贴",
+                "The API key contains non-ASCII characters (likely pasted Chinese or full-width symbols); please re-paste it"));
+            return;
+        }
         if (string.IsNullOrWhiteSpace(Model))
         {
             SetStatusMessage(() => AppLanguage.T("请先输入模型名称", "Enter a model name first"));
@@ -1429,6 +1438,16 @@ public class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (!string.IsNullOrWhiteSpace(ApiKey))
                 {
+                    if (!IsPrintableAscii(ApiKey))
+                    {
+                        // 坏 Key 一旦入存，运行期 LLM 调用会以 HttpRequestException
+                        //（"Request headers must contain only ASCII characters"）失败，
+                        // 文案被归类成网络问题误导排查；保存入口直接拦下
+                        SetStatusMessage(() => AppLanguage.T(
+                            "API Key 含非 ASCII 字符（复制时可能混入中文或全角符号），请重新粘贴",
+                            "The API key contains non-ASCII characters (likely pasted Chinese or full-width symbols); please re-paste it"));
+                        return;
+                    }
                     await _secureStorage.SaveApiKeyAsync(LlmCredentialService, ApiKey);
                 }
                 // ApiKey 为空时保留凭据管理器里的旧 key：自动保存路径随时可能触发保存，
@@ -1595,6 +1614,13 @@ public class SettingsViewModel : ViewModelBase, IDisposable
         BaseUrl = (BaseUrl ?? string.Empty).Trim().TrimEnd('/');
         Model = (Model ?? string.Empty).Trim();
     }
+
+    /// <summary>
+    /// API Key 会原样进入 HTTP 请求头（Authorization/x-api-key），HttpClient 拒绝
+    /// 非 ASCII 头；可打印 ASCII 0x20–0x7E 之外（含中文、全角符号、控制字符）一律拦截。
+    /// </summary>
+    private static bool IsPrintableAscii(string value) =>
+        value.All(ch => ch >= ' ' && ch <= '~');
 
     private static string NormalizeProvider(string? provider) => provider?.ToLowerInvariant() switch
     {

@@ -102,4 +102,43 @@ public class AccountQrCheckTests
 
         Assert.Equal(QrState.Failed, result.State);
     }
+
+    [Fact]
+    public async Task Kugou_CreateQrSession_TransientFailure_RetriesOnceAndSucceeds()
+    {
+        // 实机观察：活代理以 502+JSON 表达上游瞬时超时（axios 15s ECONNABORTED），
+        // 立即复测即恢复——重试一次可自愈，用户无需手动再点
+        var calls = 0;
+        var service = new KugouAccountService(new HttpClient(new RoutingHandler(_ =>
+        {
+            calls++;
+            return calls == 1
+                ? Task.FromException<HttpResponseMessage>(new HttpRequestException(
+                    "simulated upstream timeout (502)"))
+                : Json("""{"data":{"qrcode":"qr-key-1","qrcode_img":"data:image/png;base64,AAAA"}}""");
+        })));
+
+        var session = await service.CreateQrSessionAsync();
+
+        Assert.NotNull(session);
+        Assert.Equal("qr-key-1", session!.Key);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Kugou_CreateQrSession_SecondFailureAlsoFails_ReturnsNull()
+    {
+        var calls = 0;
+        var service = new KugouAccountService(new HttpClient(new RoutingHandler(_ =>
+        {
+            calls++;
+            return Task.FromException<HttpResponseMessage>(new HttpRequestException(
+                "simulated upstream timeout (502)"));
+        })));
+
+        var session = await service.CreateQrSessionAsync();
+
+        Assert.Null(session);
+        Assert.Equal(2, calls);
+    }
 }

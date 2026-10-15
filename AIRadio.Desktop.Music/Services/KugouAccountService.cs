@@ -17,6 +17,8 @@ public sealed class KugouAccountService
     private static readonly string[] SessionFields =
         { "token", "userid", "t1", "vip_type", "vip_token" };
 
+    private static readonly TimeSpan QrKeyRetryDelay = TimeSpan.FromMilliseconds(800);
+
     private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
 
@@ -30,8 +32,7 @@ public sealed class KugouAccountService
     {
         try
         {
-            var json = await _httpClient.GetStringAsync(
-                $"{_baseUrl}/login/qr/key?timestamp={ClockStamp()}", cancellationToken);
+            var json = await FetchQrKeyWithRetryAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data) ||
                 !data.TryGetProperty("qrcode", out var qrcodeEl))
@@ -54,6 +55,31 @@ public sealed class KugouAccountService
         {
             Log.Warning(ex, "Kugou QR session creation failed");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 二维码会话创建的单次失败多为代理上游瞬时超时（活代理以 502+JSON 表达，
+    /// 实机观察过 axios 15s 超时后立即自愈），短暂等待后重试一次；取消不重试，
+    /// 二次失败由 CreateQrSessionAsync 的兜底 catch 归并为 null。
+    /// </summary>
+    private async Task<string> FetchQrKeyWithRetryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _httpClient.GetStringAsync(
+                $"{_baseUrl}/login/qr/key?timestamp={ClockStamp()}", cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception first)
+        {
+            Log.Debug(first, "Kugou QR key fetch failed once; retrying after a short delay");
+            await Task.Delay(QrKeyRetryDelay, cancellationToken);
+            return await _httpClient.GetStringAsync(
+                $"{_baseUrl}/login/qr/key?timestamp={ClockStamp()}", cancellationToken);
         }
     }
 
