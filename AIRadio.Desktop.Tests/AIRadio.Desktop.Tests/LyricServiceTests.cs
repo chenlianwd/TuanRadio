@@ -293,6 +293,44 @@ public class LyricServiceTests
         Assert.Single(capture.Requests);
     }
 
+    // 瞬时失败（代理冷启动/连接拒绝/内部超时）不得写入无 TTL 负缓存：否则启动首播
+    // 曲目的歌词整会话恒空（Node 代理 14s 冷启动 > 5s 取词预算必踩），下次取词应重试
+    [Fact]
+    public async Task TransientFailure_DoesNotEnterNegativeCache_RetriedOnNextFetch()
+    {
+        var capture = new RequestCapture();
+        var handler = new DelegateHandler((request, _) =>
+        {
+            capture.Record(request);
+            if (capture.Requests.Count == 1)
+                throw new HttpRequestException("proxy cold start");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"code\":200,\"lrc\":{\"lyric\":\"[00:05.00]句\\n\"}}")
+            });
+        });
+        var service = new LyricService(new HttpClient(handler));
+
+        Assert.Null(await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None));
+
+        var result = await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal(2, capture.Requests.Count);
+    }
+
+    // 与失败相反的另一半语义：服务端明确回答"无词"（code≠200）是确认结果，仍入缓存
+    [Fact]
+    public async Task ConfirmedNoLyrics_IsCached_SecondFetchMakesNoRequest()
+    {
+        var (client, capture) = CreateClient(_ => "{\"code\":404}");
+        var service = new LyricService(client);
+
+        Assert.Null(await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None));
+        Assert.Null(await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None));
+
+        Assert.Single(capture.Requests);
+    }
+
     [Fact]
     public async Task CallerCancellation_ThrowsOperationCanceledAndDoesNotPolluteCache()
     {

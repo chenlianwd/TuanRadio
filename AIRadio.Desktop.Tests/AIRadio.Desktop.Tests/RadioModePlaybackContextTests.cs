@@ -100,4 +100,39 @@ public class RadioModePlaybackContextTests
             svc.Dispose();
         }
     }
+
+    // 推荐回调在途（NextAsync 最长约 60s 预算）时用户按停止：迟到的推荐不得开播。
+    // Next() 的同步前导（信号量即得→锁内快照意图版本→挂起等回调）保证 Stop()
+    // 必然发生在快照之后，时序确定
+    [Fact]
+    public async Task StopDuringInFlightRadioRecommendation_DiscardsLateTrack()
+    {
+        var svc = new AudioService();
+        try
+        {
+            svc.SetRepeatMode("radio");
+            var recommendation = new TaskCompletionSource<Track?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            svc.SetNextCallback(() => recommendation.Task);
+
+            var played = new TaskCompletionSource<Track?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            using var subscription = svc.TrackChanged.Subscribe(track => played.TrySetResult(track));
+
+            svc.Next();
+            svc.Stop();
+            recommendation.SetResult(NewTrack("迟到"));
+
+            // 负向断言的宽限窗：丢弃路径为纯同步的锁+版本比较，无 IO，
+            // 500ms 远超实际耗时；若缺陷存在，开播会在回调完成的毫秒级内发生
+            var winner = await Task.WhenAny(played.Task, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            Assert.NotSame(played.Task, winner);
+            Assert.Null(svc.CurrentTrack);
+            Assert.Empty(svc.Playlist);
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
 }

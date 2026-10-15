@@ -156,4 +156,24 @@ public class PlaybackRedirectGuardTests
             HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromCanceled<HttpResponseMessage>(new CancellationToken(canceled: true));
     }
+
+    // 日志脱敏形状：播放 URL 的 query 携带 OpenSubsonic token（u/t/s，无过期可重放）与
+    // 各源签名参数，落日志必须剥除 query/fragment，只留 scheme://host[:port]/path
+    [Theory]
+    [InlineData(
+        "https://navidrome.example.com/rest/stream?id=42&u=demo&t=abc123&s=deadbeef",
+        "https://navidrome.example.com/rest/stream")]
+    [InlineData(
+        "https://music.example.com/audio/a.mp3?authSecret=xyz&sign=1#frag",
+        "https://music.example.com/audio/a.mp3")]
+    [InlineData(
+        "http://203.0.113.9:8080/song.flac?token=x",
+        "http://203.0.113.9:8080/song.flac")]
+    [InlineData(
+        "https://music.example.com/track",
+        "https://music.example.com/track")]
+    public void UrlForLog_StripsQueryAndFragment_KeepsNonDefaultPort(string input, string expected)
+    {
+        Assert.Equal(expected, PlaybackRedirectGuard.UrlForLog(new Uri(input)));
+    }
 }

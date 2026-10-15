@@ -196,8 +196,13 @@ async function consturctServer(moduleDefs) {
 
   /**
    * ============================================================
-   * CORS 跨域资源共享中间件
+   * Origin 请求准入 + CORS 跨域资源共享中间件
    * ============================================================
+   *
+   * Origin 准入（防跨站 drive-by）：CORS 响应头只能阻止浏览器读取响应，拦不住
+   * 简单请求发出并执行——任意网页可驱动本机代理以用户 IP + 稳定设备指纹调用上游、
+   * 消耗风控信誉。携带 Origin 的请求只放行同源（验证页）与显式白名单
+   * CORS_ALLOW_ORIGIN；桌面 HttpClient 不发 Origin，不受影响。
    *
    * 对非根路径且非静态文件的请求设置 CORS 响应头：
    * - Access-Control-Allow-Credentials: 允许携带凭证（Cookie）
@@ -209,6 +214,11 @@ async function consturctServer(moduleDefs) {
    * 对 OPTIONS 预检请求直接返回 204 No Content
    */
   app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && origin !== `http://${req.headers.host}` && origin !== CORS_ALLOW_ORIGIN) {
+      res.status(403).end();
+      return;
+    }
     // 会话桥端点（/verify/bridge/*）仅供同源验证页调用：
     // 不反射跨域 Origin、不下发 CORS 凭证头，防任意站点携 Cookie 跨站调用
     if (req.path !== '/' && !req.path.includes('.') && !req.path.startsWith('/verify/bridge')) {

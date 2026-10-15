@@ -2010,6 +2010,14 @@ public class AudioService : IAudioService, IDisposable
     {
         Interlocked.Increment(ref _playRequestId);
         Volatile.Write(ref _recoveryScheduled, 0);
+        // 停止/换列表必须连在途电台推荐一并作废：NextAsync 回调完成后只校验意图版本，
+        // 不校验 requestId（PlayTrackCore 入场会铸造新 requestId），不递增则停止后
+        // 迟到的推荐仍会开播。切模式经 SetRepeatMode→ClearPlaybackContextCore 的
+        // "不作废在途推荐"语义不受影响（该路径不经此处）
+        lock (_playbackIntentGate)
+        {
+            _playbackIntentVersion++;
+        }
     }
 
     private async Task DisposeMediaAfterDelayAsync(Media media, CancellationToken cancellationToken)

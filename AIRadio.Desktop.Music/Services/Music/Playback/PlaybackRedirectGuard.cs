@@ -50,7 +50,8 @@ public sealed class PlaybackRedirectGuard
             {
                 if (hops > MaxRedirectHops)
                 {
-                    Log.Warning("Redirect walk exceeded {Max} hops for {Url}", MaxRedirectHops, initial);
+                    Log.Warning("Redirect walk exceeded {Max} hops for {Url}",
+                        MaxRedirectHops, UrlForLog(initial));
                     return RedirectWalkResult.Rejected;
                 }
 
@@ -68,14 +69,16 @@ public sealed class PlaybackRedirectGuard
                 if (code is < 300 or > 399)
                 {
                     // 4xx/5xx：CDN 可能拒绝裸 GET，探测不可得不构成拒绝依据
-                    Log.Debug("Redirect probe got {Code} for {Url}; allowing original", code, initial);
+                    Log.Debug("Redirect probe got {Code} for {Url}; allowing original",
+                        code, UrlForLog(initial));
                     return RedirectWalkResult.Inconclusive;
                 }
 
                 var location = response.Headers.Location;
                 if (location == null)
                 {
-                    Log.Debug("Redirect {Code} without Location for {Url}; allowing original", code, initial);
+                    Log.Debug("Redirect {Code} without Location for {Url}; allowing original",
+                        code, UrlForLog(initial));
                     return RedirectWalkResult.Inconclusive;
                 }
 
@@ -83,7 +86,7 @@ public sealed class PlaybackRedirectGuard
                 if (!await hopValidator(next, cancellationToken).ConfigureAwait(false))
                 {
                     Log.Warning("Redirect hop {Hop} to {Target} rejected by policy for {Url}",
-                        hops + 1, next, initial);
+                        hops + 1, UrlForLog(next), UrlForLog(initial));
                     return RedirectWalkResult.Rejected;
                 }
 
@@ -93,14 +96,22 @@ public sealed class PlaybackRedirectGuard
         catch (OperationCanceledException)
         {
             // 探测预算超时：观察不到跳转，不构成拒绝依据（恶意源停滞探测的规避是已接受的残余风险）
-            Log.Debug("Redirect probe timed out for {Url}; allowing original", initial);
+            Log.Debug("Redirect probe timed out for {Url}; allowing original", UrlForLog(initial));
             return RedirectWalkResult.Inconclusive;
         }
         catch (Exception ex)
         {
             // 连接被拒/DNS 失败等传输异常：探测不可得，放行原 URL
-            Log.Debug(ex, "Redirect probe failed for {Url}; allowing original", initial);
+            Log.Debug(ex, "Redirect probe failed for {Url}; allowing original", UrlForLog(initial));
             return RedirectWalkResult.Inconclusive;
         }
     }
+
+    /// <summary>
+    /// 日志口径：播放 URL 的 query 携带 OpenSubsonic token（u/t/s，无过期可重放）与
+    /// 各源签名参数，按"带签名地址不落日志"纪律剥除 query 与 fragment，只留
+    /// scheme://host[:port]/path（Authority 含 IPv6 方括号形态）。internal 供测试锚定脱敏形状。
+    /// </summary>
+    internal static string UrlForLog(Uri uri)
+        => $"{uri.Scheme}://{uri.Authority}{uri.AbsolutePath}";
 }
