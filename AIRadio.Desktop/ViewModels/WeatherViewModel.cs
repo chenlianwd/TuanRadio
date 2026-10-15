@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Services;
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 
 namespace AIRadio.Desktop.ViewModels;
 
@@ -15,7 +15,7 @@ namespace AIRadio.Desktop.ViewModels;
 /// 默认只有图标，详情经悬停 Tooltip 展示；天气失败只隐藏图标，不打扰播放主流程。
 /// 日历徽标（农历/节气/节日）2026-10-13 按用户裁决整体移除。
 /// </summary>
-public class WeatherViewModel : ViewModelBase, IDisposable
+public partial class WeatherViewModel : ViewModelBase, IDisposable
 {
     private readonly IWeatherService _weather;
     private readonly IDisposable _refreshTimer;
@@ -27,9 +27,9 @@ public class WeatherViewModel : ViewModelBase, IDisposable
     private string? _lastCity;
     private WeatherInfo? _lastWeather;
 
-    [Reactive] public bool IsWeatherVisible { get; private set; }
-    [Reactive] public string WeatherGlyph { get; private set; } = string.Empty;
-    [Reactive] public string WeatherTooltip { get; private set; } = string.Empty;
+    [Reactive] public partial bool IsWeatherVisible { get; private set; }
+    [Reactive] public partial string WeatherGlyph { get; private set; } = string.Empty;
+    [Reactive] public partial string WeatherTooltip { get; private set; } = string.Empty;
 
     /// <summary>创建环境指示器，所有异步天气结果均交回界面调度器。</summary>
     public WeatherViewModel(IWeatherService weather, IScheduler? uiScheduler = null)

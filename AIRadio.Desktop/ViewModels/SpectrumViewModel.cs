@@ -1,5 +1,5 @@
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Services;
 using System;
 using System.Collections.ObjectModel;
@@ -7,10 +7,10 @@ using System.Reactive.Linq;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class SpectrumViewModel : ViewModelBase, IDisposable
+public partial class SpectrumViewModel : ViewModelBase, IDisposable
 {
     public ObservableCollection<float> Bands { get; } = new();
-    [Reactive] public string SelectedStyle { get; set; } = "bars";
+    [Reactive] public partial string SelectedStyle { get; set; } = "bars";
     private readonly IDisposable _spectrumSub;
 
     public event Action<float[]>? SpectrumReceived;

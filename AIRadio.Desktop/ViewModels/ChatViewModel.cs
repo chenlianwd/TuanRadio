@@ -1,5 +1,5 @@
 ﻿using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.Music;
@@ -21,7 +21,7 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class ChatViewModel : ViewModelBase, IDisposable
+public partial class ChatViewModel : ViewModelBase, IDisposable
 {
     private readonly IDJService _djService;
     private readonly IAudioService _audioService;
@@ -55,7 +55,7 @@ public class ChatViewModel : ViewModelBase, IDisposable
     private const int MaxChatMessages = 200;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private int _disposed;
-    [Reactive] public bool HasFailure { get; set; }
+    [Reactive] public partial bool HasFailure { get; set; }
     private bool _isStatusNoticeDismissed;
     private string _failureStatusText = "AI ERROR";
     // 保留未本地化的原始失败信息，语言切换时按当前语言重译常驻/可召回通知
@@ -64,20 +64,20 @@ public class ChatViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
-    [Reactive] public string InputText { get; set; } = string.Empty;
-    [Reactive] public bool IsProcessing { get; set; }
-    [Reactive] public bool IsListening { get; set; }
-    [Reactive] public bool IsRecognizing { get; set; }
-    [Reactive] public bool IsSpeaking { get; set; }
-    [Reactive] public bool IsConversationMode { get; set; }
-    [Reactive] public string DjEmotion { get; set; } = "neutral";
-    [Reactive] public string StatusText { get; set; } = "READY";
-    [Reactive] public string StatusHeadline { get; set; } = string.Empty;
-    [Reactive] public string StatusDetail { get; set; } = string.Empty;
-    [Reactive] public string StatusRecoveryHint { get; set; } = string.Empty;
-    [Reactive] public bool ShowStatusNotice { get; set; }
-    [Reactive] public bool ShowStatusRecall { get; set; }
-    [Reactive] public string MicButtonText { get; set; } = "HOLD";
+    [Reactive] public partial string InputText { get; set; } = string.Empty;
+    [Reactive] public partial bool IsProcessing { get; set; }
+    [Reactive] public partial bool IsListening { get; set; }
+    [Reactive] public partial bool IsRecognizing { get; set; }
+    [Reactive] public partial bool IsSpeaking { get; set; }
+    [Reactive] public partial bool IsConversationMode { get; set; }
+    [Reactive] public partial string DjEmotion { get; set; } = "neutral";
+    [Reactive] public partial string StatusText { get; set; } = "READY";
+    [Reactive] public partial string StatusHeadline { get; set; } = string.Empty;
+    [Reactive] public partial string StatusDetail { get; set; } = string.Empty;
+    [Reactive] public partial string StatusRecoveryHint { get; set; } = string.Empty;
+    [Reactive] public partial bool ShowStatusNotice { get; set; }
+    [Reactive] public partial bool ShowStatusRecall { get; set; }
+    [Reactive] public partial string MicButtonText { get; set; } = "HOLD";
 
     public event Action<string, string>? DjVisualCue; // expression, motion
 

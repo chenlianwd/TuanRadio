@@ -1,5 +1,5 @@
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using System;
@@ -16,7 +16,7 @@ namespace AIRadio.Desktop.ViewModels;
 /// 歌词状态：TrackChanged 触发取词（generation + SourceId 双卫兵防旧词晚到），
 /// PositionChanged 驱动当前行滚动。状态文案真值表见 docs/plans/2026-09-11-lyrics-mode-design.md §4。
 /// </summary>
-public class LyricsViewModel : ViewModelBase, IDisposable
+public partial class LyricsViewModel : ViewModelBase, IDisposable
 {
     private enum StatusKind
     {
@@ -39,13 +39,13 @@ public class LyricsViewModel : ViewModelBase, IDisposable
     private int _disposed;
     private StatusKind _statusKind;
 
-    [Reactive] public string PreviousLineText { get; private set; } = string.Empty;
-    [Reactive] public string CurrentLineText { get; private set; } = string.Empty;
-    [Reactive] public string NextLineText { get; private set; } = string.Empty;
-    [Reactive] public bool HasLyrics { get; private set; }
-    [Reactive] public bool HasCurrentLine { get; private set; }
-    [Reactive] public string LyricStatusText { get; private set; } = string.Empty;
-    [Reactive] public bool HasStatusText { get; private set; }
+    [Reactive] public partial string PreviousLineText { get; private set; } = string.Empty;
+    [Reactive] public partial string CurrentLineText { get; private set; } = string.Empty;
+    [Reactive] public partial string NextLineText { get; private set; } = string.Empty;
+    [Reactive] public partial bool HasLyrics { get; private set; }
+    [Reactive] public partial bool HasCurrentLine { get; private set; }
+    [Reactive] public partial string LyricStatusText { get; private set; } = string.Empty;
+    [Reactive] public partial bool HasStatusText { get; private set; }
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 

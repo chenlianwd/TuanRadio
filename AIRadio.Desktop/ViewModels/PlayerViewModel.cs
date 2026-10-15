@@ -1,5 +1,5 @@
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using System;
@@ -10,7 +10,7 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class PlayerViewModel : ViewModelBase, IDisposable
+public partial class PlayerViewModel : ViewModelBase, IDisposable
 {
     private readonly IAudioService _audioService;
     private readonly IDisposable _trackSub;
@@ -25,29 +25,29 @@ public class PlayerViewModel : ViewModelBase, IDisposable
 
     public IAudioService AudioService => _audioService;
 
-    [Reactive] public string TrackTitle { get; set; } = AppLanguage.T("未播放", "Nothing playing");
-    [Reactive] public string TrackArtist { get; set; } = "";
-    [Reactive] public string TrackSource { get; set; } = "";
+    [Reactive] public partial string TrackTitle { get; set; } = AppLanguage.T("未播放", "Nothing playing");
+    [Reactive] public partial string TrackArtist { get; set; } = "";
+    [Reactive] public partial string TrackSource { get; set; } = "";
     // 实际播放编码/码率：LibVLC 解析值为准，音源声明值（OpenSubsonic 等）作兜底；空串隐藏徽标
-    [Reactive] public string TrackQualityText { get; set; } = "";
-    [Reactive] public string TrackQualityShort { get; set; } = "";
-    [Reactive] public string TrackQualityDetail { get; set; } = "";
-    [Reactive] public bool HasQuality { get; set; }
-    [Reactive] public string TrackPreviewText { get; set; } = AppLanguage.T("试听片段", "Preview");
-    [Reactive] public bool TrackIsPreview { get; set; }
-    [Reactive] public bool IsPlaying { get; set; }
-    [Reactive] public string PlayPauseText { get; set; } = "▶";
-    [Reactive] public double CurrentSeconds { get; set; }
-    [Reactive] public double DisplaySeconds { get; set; }
-    [Reactive] public double TotalSeconds { get; set; }
-    [Reactive] public float Volume { get; set; } = 0.8f;
-    [Reactive] public string PositionText { get; set; } = "0:00";
-    [Reactive] public string DurationText { get; set; } = "0:00";
-    [Reactive] public bool IsShuffled { get; set; }
-    [Reactive] public string ShuffleText { get; set; } = "🔀";
-    [Reactive] public string RepeatMode { get; set; } = "radio";
-    [Reactive] public string RepeatText { get; set; } = "DJ";
-    [Reactive] public string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
+    [Reactive] public partial string TrackQualityText { get; set; } = "";
+    [Reactive] public partial string TrackQualityShort { get; set; } = "";
+    [Reactive] public partial string TrackQualityDetail { get; set; } = "";
+    [Reactive] public partial bool HasQuality { get; set; }
+    [Reactive] public partial string TrackPreviewText { get; set; } = AppLanguage.T("试听片段", "Preview");
+    [Reactive] public partial bool TrackIsPreview { get; set; }
+    [Reactive] public partial bool IsPlaying { get; set; }
+    [Reactive] public partial string PlayPauseText { get; set; } = "▶";
+    [Reactive] public partial double CurrentSeconds { get; set; }
+    [Reactive] public partial double DisplaySeconds { get; set; }
+    [Reactive] public partial double TotalSeconds { get; set; }
+    [Reactive] public partial float Volume { get; set; } = 0.8f;
+    [Reactive] public partial string PositionText { get; set; } = "0:00";
+    [Reactive] public partial string DurationText { get; set; } = "0:00";
+    [Reactive] public partial bool IsShuffled { get; set; }
+    [Reactive] public partial string ShuffleText { get; set; } = "🔀";
+    [Reactive] public partial string RepeatMode { get; set; } = "radio";
+    [Reactive] public partial string RepeatText { get; set; } = "DJ";
+    [Reactive] public partial string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
 
     private bool _isDragging;
 

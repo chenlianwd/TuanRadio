@@ -1,5 +1,5 @@
 using ReactiveUI;
-using ReactiveUI.Fody.Helpers;
+using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.Music;
@@ -18,7 +18,7 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class PlaylistViewModel : ViewModelBase, IDisposable
+public partial class PlaylistViewModel : ViewModelBase, IDisposable
 {
     private readonly IAudioService _audioService;
     private readonly IMusicSearchService _musicSearchService;
@@ -67,26 +67,26 @@ public class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<SyncedPlaylistInfo> SyncedPlaylists { get; } = new();
     public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
 
-    [Reactive] public Track? SelectedTrack { get; set; }
-    [Reactive] public string SearchText { get; set; } = string.Empty;
-    [Reactive] public bool IsSearching { get; set; }
-    [Reactive] public bool HasSearchStatus { get; set; }
-    [Reactive] public string SearchStatusMessage { get; set; } = string.Empty;
-    [Reactive] public string SearchButtonText { get; set; } = AppLanguage.T("搜索", "Search");
-    [Reactive] public string LocalLibraryStatus { get; set; } = string.Empty;
-    [Reactive] public bool IsLocalLibraryScanning { get; set; }
-    [Reactive] public KugouPlaylistInfo? SelectedKugouPlaylist { get; set; }
-    [Reactive] public bool IsKugouLoading { get; set; }
-    [Reactive] public bool HasKugouPlaylists { get; set; }
-    [Reactive] public bool HasKugouPlaylistTracks { get; set; }
-    [Reactive] public bool HasKugouStatus { get; set; }
-    [Reactive] public string KugouStatusMessage { get; set; } = string.Empty;
-    [Reactive] public OnlineTrack? SelectedKugouTrack { get; set; }
-    [Reactive] public int KugouImportedCount { get; set; }
-    [Reactive] public string KugouFilterText { get; set; } = string.Empty;
-    [Reactive] public SyncedPlaylistInfo? SelectedSyncedPlaylist { get; set; }
-    [Reactive] public bool HasSyncedPlaylists { get; set; }
-    [Reactive] public int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单
+    [Reactive] public partial Track? SelectedTrack { get; set; }
+    [Reactive] public partial string SearchText { get; set; } = string.Empty;
+    [Reactive] public partial bool IsSearching { get; set; }
+    [Reactive] public partial bool HasSearchStatus { get; set; }
+    [Reactive] public partial string SearchStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial string SearchButtonText { get; set; } = AppLanguage.T("搜索", "Search");
+    [Reactive] public partial string LocalLibraryStatus { get; set; } = string.Empty;
+    [Reactive] public partial bool IsLocalLibraryScanning { get; set; }
+    [Reactive] public partial KugouPlaylistInfo? SelectedKugouPlaylist { get; set; }
+    [Reactive] public partial bool IsKugouLoading { get; set; }
+    [Reactive] public partial bool HasKugouPlaylists { get; set; }
+    [Reactive] public partial bool HasKugouPlaylistTracks { get; set; }
+    [Reactive] public partial bool HasKugouStatus { get; set; }
+    [Reactive] public partial string KugouStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial OnlineTrack? SelectedKugouTrack { get; set; }
+    [Reactive] public partial int KugouImportedCount { get; set; }
+    [Reactive] public partial string KugouFilterText { get; set; } = string.Empty;
+    [Reactive] public partial SyncedPlaylistInfo? SelectedSyncedPlaylist { get; set; }
+    [Reactive] public partial bool HasSyncedPlaylists { get; set; }
+    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearPlaylistCommand { get; }

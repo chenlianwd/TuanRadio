@@ -83,7 +83,7 @@
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
     <!-- ReactiveUI -->
     <PackageReference Include="ReactiveUI" Version="20.1.1" />
-    <PackageReference Include="ReactiveUI.Fody" Version="19.5.41" />
+    <PackageReference Include="ReactiveUI.SourceGenerators" Version="2.6.30" PrivateAssets="all" />
 
     <!-- DI -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
