@@ -272,4 +272,81 @@ public class LocalProxyResilienceHandlerTests
         Assert.Equal(1, inner.Calls);
         Assert.Equal(0, counter.Count);
     }
+
+    // Node 冷启动常超消费方短预算：重试撞上 HttpClient 超时抛 TaskCanceledException 时
+    // 不得让其逃逸（调试期表现为"用户代码未处理"断点），须按复活失败处理——进入冷却
+    // 并回抛原始连接失败
+    [Fact]
+    public async Task RetryTimesOut_ThrowsOriginalConnectFailureAndEntersCooldown()
+    {
+        var retryTimeout = new TaskCanceledException("simulated HttpClient timeout", new TimeoutException());
+        var inner = new ScriptedHandler(ConnectionRefused(), retryTimeout, ConnectionRefused());
+        using var client = CreateClient(inner, _ => { }, out var counter);
+
+        var thrown = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.GetAsync($"http://127.0.0.1:{NeteasePort}/search"));
+        Assert.True(ContainsRefusedSocket(thrown), $"connect failure not preserved: {thrown}");
+        Assert.Equal(2, inner.Calls);
+        Assert.Equal(1, counter.Count);
+
+        // 复活未证实成功：冷却内的后续请求直接失败，不再触发拉起
+        await AssertRefusedAsync(() => client.GetAsync($"http://127.0.0.1:{NeteasePort}/search"));
+        Assert.Equal(3, inner.Calls);
+        Assert.Equal(1, counter.Count);
+    }
+
+    // 消费方在重试在途时取消（Broker 预算/HttpClient 超时先于复活完成）：与重试前取消
+    // 同语义——回抛原始连接失败，消费方按"代理不可达"归类而非取消
+    [Fact]
+    public async Task RetryCancelledMidFlight_ThrowsOriginalConnectFailure()
+    {
+        var inner = new HangOnRetryHandler(ConnectionRefused());
+        var counter = new ResurrectCounter();
+        var handler = new LocalProxyResilienceHandler(
+            new[] { NeteasePort, KugouPort },
+            (_, _) =>
+            {
+                counter.Count++;
+                return Task.CompletedTask;
+            },
+            CancellationToken.None,
+            inner);
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var requestCts = new CancellationTokenSource();
+
+        var requestTask = client.GetAsync($"http://127.0.0.1:{NeteasePort}/search", requestCts.Token);
+        await inner.RetryEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        await requestCts.CancelAsync();
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => requestTask);
+        Assert.True(ContainsRefusedSocket(thrown), $"connect failure not preserved: {thrown}");
+        Assert.Equal(2, inner.Calls);
+        Assert.Equal(1, counter.Count);
+    }
+
+    /// <summary>
+    /// 首次调用抛连接失败、重试调用挂起直到令牌取消的内层 handler，用于锚定重试在途取消语义。
+    /// </summary>
+    private sealed class HangOnRetryHandler : HttpMessageHandler
+    {
+        private readonly Exception _firstFailure;
+        private readonly TaskCompletionSource _retryEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Calls { get; private set; }
+        public Task RetryEntered => _retryEntered.Task;
+
+        public HangOnRetryHandler(Exception firstFailure) => _firstFailure = firstFailure;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Calls == 1)
+                throw _firstFailure;
+            _retryEntered.SetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
 }

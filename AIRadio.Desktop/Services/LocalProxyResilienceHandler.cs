@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
@@ -14,8 +15,8 @@ namespace AIRadio.Desktop.Services;
 /// 复用的孤儿代理在会话中途退出，或自有进程崩溃——会让请求以"连接被拒绝/重置"失败，
 /// 且 StartAsync 只在应用启动时执行一次，整个会话将永久失联。此 handler 挂在共享
 /// HttpClient 上：捕获本地代理端口的连接级失败后，先触发对应 MusicApiServer 重新拉起
-/// 再重试一次；重试仍连接失败则进入短冷却，冷却期内直接失败，避免每次请求都付出
-/// 完整的拉起等待。仅重放 GET/HEAD——带请求体的请求无法安全重发。
+/// 再重试一次；重试仍失败（连接拒绝/重置、超时或取消）则进入短冷却，冷却期内直接失败，
+/// 避免每次请求都付出完整的拉起等待。仅重放 GET/HEAD——带请求体的请求无法安全重发。
 /// </summary>
 internal sealed class LocalProxyResilienceHandler : DelegatingHandler
 {
@@ -80,9 +81,15 @@ internal sealed class LocalProxyResilienceHandler : DelegatingHandler
                 _cooldownUntil.TryRemove(port, out _);
                 return response;
             }
-            catch (HttpRequestException retryEx) when (LocalProxyTransport.IsConnectFailure(retryEx))
+            catch (Exception retryEx) when (
+                retryEx is HttpRequestException retryConnect && LocalProxyTransport.IsConnectFailure(retryConnect)
+                || retryEx is OperationCanceledException)
             {
                 _cooldownUntil[port] = DateTimeOffset.UtcNow + _resurrectCooldown;
+                // 重试以超时/取消告终同样视为复活失败（Node 冷启动常超消费方短预算）：
+                // 回抛原始连接失败供消费方按"代理不可达"归类，不让重试链凭空
+                // 抛出的 TaskCanceledException 逃逸成取消语义
+                ExceptionDispatchInfo.Capture(ex).Throw();
                 throw;
             }
         }

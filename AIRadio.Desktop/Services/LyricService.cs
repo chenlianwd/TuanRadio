@@ -58,6 +58,7 @@ public class LyricService : ILyricService
         timeoutCts.CancelAfter(FetchTimeout);
 
         LyricResult? result;
+        var fetchFailed = false;
         try
         {
             result = prefix == "netease"
@@ -72,7 +73,14 @@ public class LyricService : ILyricService
         {
             Log.Debug(ex, "Lyrics fetch failed for {SourceId}", sourceId);
             result = null;
+            fetchFailed = true;
         }
+
+        // 失败（内部超时/代理冷启动未就绪/HTTP 错误）与"确认无词"语义不同：负缓存无
+        // TTL，瞬时失败一旦入缓存该曲目整会话恒无词（启动首播落 Node 14s 冷启动
+        // 窗口必踩）。只缓存确认结果，失败留给下次获取重试
+        if (fetchFailed)
+            return null;
 
         if (_cache.Count >= CacheCapacity)
             _cache.Clear(); // 电台模式无限续播防泄漏，粗粒度淘汰足够

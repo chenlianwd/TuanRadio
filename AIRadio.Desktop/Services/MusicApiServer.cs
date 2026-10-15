@@ -47,8 +47,9 @@ public class MusicApiServer : IDisposable
     }
 
     /// <summary>
-    /// 网易代理等无专属环境需求的启动环境：仅固定 CORS，与酷狗代理的
-    /// GetKugouProxyEnvironment 同理封死跨域浏览器访问（上游默认反射任意 Origin）。
+    /// 网易代理等无专属环境需求的启动环境。代理侧对携带 Origin 的请求做准入
+    /// （仅放行同源与 CORS_ALLOW_ORIGIN 白名单，见 server/start.js）：CORS 响应头
+    /// 只能阻止浏览器读取响应，拦不住跨站简单请求发出并执行，准入检查才是防线。
     /// </summary>
     public static IReadOnlyDictionary<string, string> RestrictedCorsEnvironment { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal)
