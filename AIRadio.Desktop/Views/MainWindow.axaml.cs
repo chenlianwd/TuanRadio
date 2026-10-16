@@ -125,7 +125,8 @@ public partial class MainWindow : Window, IDisposable
 
     private bool _bouncing;
 
-    private async void OnDjVisualCue(string expression, string motion)
+    // internal 供 headless 测试直驱（事件订阅接线由 DataContextChanged 建立，同 ClockStage.RouteStageTap 手法）
+    internal async void OnDjVisualCue(string expression, string motion)
     {
         if (_bouncing) return; // 串场/TTS 分段触发快于动画时长时避免多段 bounce 并发交错闪烁
         if (_avatarBorder is Border border)

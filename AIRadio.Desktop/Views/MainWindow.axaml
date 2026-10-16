@@ -55,6 +55,14 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="0"/>
         </Style>
+        <!-- DJ 说话中（TTS 正在出声，ChatVM.IsSpeaking）：徽章描强调绿圈、主播名点亮 -->
+        <Style Selector="Border#AvatarBorder.speaking">
+            <Setter Property="BorderThickness" Value="1.5"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+        </Style>
+        <Style Selector="TextBlock#HostNameText.speaking">
+            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+        </Style>
     </Window.Styles>
 
     <Grid x:Name="RootGrid" Background="{DynamicResource SurfaceRoot}" RowDefinitions="30,*">
@@ -76,15 +84,16 @@
                 <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                            <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}">
+                            <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}"
+                                    Classes.speaking="{Binding ChatVM.IsSpeaking}">
                                 <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}"
                                            FontSize="15" FontWeight="700"
                                            Foreground="{DynamicResource C_FFFFFFFF}"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
-                            <TextBlock Text="TuanRadio" FontSize="24" FontWeight="700"
-                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                       Foreground="{DynamicResource C_FFEDEDF5}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="HostNameText" Text="{Binding SelectedCharacter.DisplayName}" FontSize="14" FontWeight="600"
+                                       Foreground="{DynamicResource TitleText}" VerticalAlignment="Center"
+                                       Classes.speaking="{Binding ChatVM.IsSpeaking}"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
