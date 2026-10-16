@@ -1,98 +1,103 @@
 # TuanRadio
 
-TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI DJ 对话和串场、Edge TTS 播报、多音源搜索、节目单推荐、收藏歌单、歌词逐行同步、星空/频谱视觉反馈。现已支持可搜索的本地曲库、用户配置的 OpenSubsonic 服务器和 Audius 公开只读曲库；实验性在线平台仍可作为补充。
+TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI DJ 对话和串场、Edge TTS 播报、多音源搜索、节目单推荐、收藏歌单、歌词逐行同步、星空/频谱视觉反馈。
 
-## 技术栈
-
-| 模块 | 技术 |
+| 时钟舞台（播放中，两侧频谱常驻） | 歌词模式（点击中栏切换，逐行同步） |
 | --- | --- |
-| 桌面框架 | .NET 10 / Avalonia 11.3.9 |
-| MVVM | ReactiveUI + ReactiveUI.SourceGenerators |
-| 音频播放 | LibVLCSharp + NAudio |
-| AI DJ | 支持 OpenAI 兼容、Anthropic 兼容和本地模型三种接口格式 |
-| TTS | Edge TTS WebSocket 服务 |
-| 音源 | 本地曲库、OpenSubsonic、Audius；完整构建另含 NeteaseCloudMusicApi(Node.js)、酷狗和 YouTube yt-dlp；酷我、咪咕需显式设置 `AIRADIO_ENABLE_LEGACY_WEB_SOURCES=1` 才注册 |
-| 语音识别 | Whisper 本地 ASR |
-| 依赖注入 | Microsoft.Extensions.DependencyInjection |
+| ![时钟舞台](docs/screenshots/main-stage.png) | ![歌词模式](docs/screenshots/main-lyrics.png) |
 
-## 当前能力
+![简洁播放模式](docs/screenshots/compact-mode.png)
 
-- 支持播放/暂停/上一首/下一首/进度/音量；本地文件夹可建立可搜索索引并手动重扫，导入文件同步加入索引。
-- OpenSubsonic 可在设置页配置服务器与账号，连接时测试认证；凭据存入系统安全存储，可选自动、原始文件和最高 128 kbps 省流量请求。Audius 可无 Key 搜索公开曲目，也可在设置页保存可选 API Key，由 `x-api-key` 请求头用于搜索和详情请求；Key 存入系统安全存储，不写入歌单或播放 URL，Bearer Token 不用于客户端。保存后可在设置页运行音源连接诊断；播放前会复核流播权限。两者都进入音源 Broker。
-- 库抽屉四类视图：歌单、收藏、搜索、当前节目单（含推荐标签）。
-- AI DJ 聊天、点歌、串场、TTS 播报和 TTS 中断，DJ 角色可切换（名称/声音/人设）。
-- SongStory：STORY 按钮触发现曲 3-5 句 DJ 讲述，走 LLM 生成 + TTS 播报。
-- 歌词模式：经本地代理双源取词（网易单步、酷狗两步 + 关键词兜底 + 时长过滤），ClockStage 中栏在时钟与歌词间切换、两侧频谱常驻共显，点击舞台或标题栏按钮均可切换并记忆偏好，按播放进度逐行滚动显示。
-- 复古收音机调频音效：纯程序化 NAudio 声学合成（无外部音频资产），DJ 开口前 FM 调谐扫频自然淡入，新节目单落地时台呼微鸣；设置页开关。
-- 设置页可配置 LLM 提供商、API Key、Base URL、模型、回复语言、语音播报和说话混音方式，带连接测试与失败原因提示；音源区可启停及上下调整每个已注册音源，并可选择全局源策略（覆盖/稳定/音质优先——影响跨源回退顺序与搜索结果源偏好，不改变首选源）；搜索结果与播放区显示实际音源，并显示逐源连接诊断、最近 20 条健康记录中的正常接口响应数、搜索/解析成功时间和熔断状态。
-- 播放区显示实际播放编码/码率（如 `MP3 · 320 kbps`）：以 LibVLC 解析在播媒体的实际音频轨道为准（覆盖全部音源与本地文件），音源声明值（OpenSubsonic 等）兜底；简洁模式行 2 短徽标 + 曲目 Tooltip 显示采样率/声道。
-- Radio Mode 自动续播：优先使用 `RecommendationService` 生成节目单，失败时退回 DJ 单首推荐。
-- 推荐模型 v1：`ListeningContext`、`RecommendedTrack`、`RadioProgram`、`UserMusicFeedback`；会话级反馈中 NOPE 本轮排除、CALM/FIRE 切换氛围偏好，聊天的 change_mood 指令同样生效。
-- 长期收听画像：播放/完播/跳过/按钮反馈/氛围指令持久化到 `%APPDATA%\AIRadio\listener-profile.json`，派生歌手亲和度（30 天半衰期）、Dislike 曲目黑名单（180 天过期、音乐身份跨源匹配）与 LLM 口味摘要，注入节目单搜索词生成与排除逻辑（冷启动门槛 ≥30 事件且 ≥3 歌手，强制 1 个探索方向防茧房）；DJ 聊天的 system 上下文同样注入口味段与黑名单避雷（可自然提及但受克制约束，跟随「学习我的口味」开关）；设置页提供「学习我的口味」开关与二次确认清除。
-- 多平台音乐搜索：本地曲库和 OpenSubsonic 排在前面，完整构建还包含网易云、酷狗等实验性源；YouTube 只参与显式搜索/播放。搜索页先返回快速源结果，无结果时后台尝试慢源，新搜索或修改搜索词会取消旧慢源请求。每个源有独立硬超时，搜索状态逐源显示成功/超时/失败，业务失败按结构化分类渲染恢复建议；酷狗风控触发时自动弹出浏览器滑块验证（约 10 分钟冷却），设置页提供手动验证入口。
-- CandidateRanker 智能排重打分：标题/歌手/时长逼近/源优先级四维加权（35%/30%/20%/15%），伴奏/翻唱/DJ 加速版等非预期特殊版本强惩罚，贯通聚合搜索重排、跨源回退与推荐候选净化；播放 URL 失效或返回明确试听流时依据歌名和歌手跨源重新匹配（同遍候选按时长接近度择优，防截断版/live 版误选），并同步实际生效的音源 ID。
-- 真实 FFT 频谱：WasapiLoopbackCapture 采集系统输出 + 1024 点 FFT 转 32 频段；无有效回环数据时启用播放态视觉兜底，并限制幅度与刷新分配。
-- 统一电台状态机 `RadioState`（Idle/Curating/Searching/Speaking/Playing/Error），StatusBar 实时显示。
-- Light/Dark 双主题，全部颜色走 `Themes/Colors.axaml` token。
-- 简洁播放模式：一键收缩为两行紧凑卡（曲目信息/播放控制/进度/收藏/迷你频谱/窗口控制），行 1 单行动态歌词、无词或前奏时平滑退回歌曲信息（设置开关）；拖动、双击或 Esc 还原，窗口模式记忆，置顶可选（设置页开关）。
-- 时钟舞台环境指示器：天气（Open-Meteo，IP 自动定位或设置页手填城市）常驻图标显示阴晴雨雪，悬停显示温度与位置；日历徽标显示公历日号，农历节气/节日当天高亮，悬停显示农历与节日详情；取数失败只隐藏图标，不打扰播放。
-- 自动化耐久测试：电台 30 轮连续续播、自然结束并发单飞、真实 LibVLC 四曲连播、画像 30 会话跨会话积累、播放列表混合并发落盘、聊天 60 轮长对话注入（发布前人工清单中的设备/睡眠/内存项仍需真人执行）。
-- 收藏持久化到 `FavoriteIds`，并兼容旧的 `IsFavorite` 数据。
-- 通过 Node.js 启动网易云音乐 API，本地缺少 Node.js 时可下载便携版。
+*简洁播放模式：标题栏一键收缩为两行紧凑卡，行 1 为单行动态歌词、无词时退回曲目信息。*
 
-## 稳定性设计
+## 功能亮点
 
-- URL 刷新和音量排空在后台执行；在线歌曲提前结束时依次刷新当前源、尝试替代源、再进入续播，避免同一试听片段循环重放。
-- 播放 URL 进 LibVLC 前经 `MediaUriPolicy` 统一安全校验（scheme 白名单、IPv4/IPv6 字节级禁段、DNS 解析后复查、禁止 URL 内嵌凭据，全部 fail-closed），在 `MusicSourceBroker` 解析路径单点收口；用户配置的 OpenSubsonic 私有服务器只允许同源 stream 路径。解析期另经 `PlaybackRedirectGuard` 主动跟随重定向链并逐跳复检（观察型：只拒绝观察到的违规跳转，探测超时/不可得放行原 URL）。本地代理回环地址属于 API 通道，不是播放 URL。
-- `ResolvedMediaCache` 播放解析内存缓存（默认 10 分钟 TTL）：点歌/推荐/歌单重复解析直接命中，播放刷新与恢复链路强制刷新并先逐出旧条目防陈旧 URL，音源凭据变化自动清空对应源。
-- LibVLC 播放器操作统一串行，自动续播与聊天入口停止 TTS 时采用 2 秒有界后台等待，避免设备异常拖死 Avalonia UI。
-- 在线搜索、LLM、推荐、Edge TTS、Whisper 和 yt-dlp 支持超时或应用生命周期取消；关闭窗口后不再继续更新 ViewModel。
-- LibVLC、WASAPI 与 NAudio 的释放采用有界等待和后台续清理，窗口关闭不会无限等待原生回调。
-- 播放列表和设置使用串行、临时文件替换写入，降低并发保存及异常退出造成半份 JSON 的风险。
-- 播放列表与当前索引跨线程同步访问并返回快照；电台续播推荐链路带硬超时兜底，推荐挂起不会拖停电台。
-- Edge TTS 合成被服务端中断或返回空音频时自动换新连接重试；音源业务失败（鉴权/风控）逐源透传为失败状态而非"成功 0 条"。
-- 日志默认写入 `%APPDATA%\AIRadio\logs\airadio-*.log`，播放中断、音源超时和退出清理问题优先从这里排查。
+- **AI DJ**：文本或按住麦克风语音点歌（Whisper 本地识别 + LLM 同音纠错）、曲目串场、SongStory 现曲讲述，全部经 Edge TTS 播报；DJ 角色（名称/声音/人设）可切换。
+- **节目单推荐**：Radio Mode 自动续播按收听意图生成节目单；长期收听画像（歌手亲和度 30 天半衰期、Dislike 黑名单、LLM 口味摘要）注入推荐与 DJ 聊天两条链路，强制探索方向防茧房。
+- **多音源搜索与播放**：本地曲库、OpenSubsonic、Audius 开箱即用，完整构建另含网易云、酷狗（扫码登录）与 YouTube；候选经标题/歌手/时长/源优先级四维排重打分，播放 URL 失效或返回试听截断时跨源重匹配自愈。
+- **音质透明**：播放区显示实际编码与码率（如 `MP3 · 320 kbps`），以 LibVLC 解析在播媒体为准、音源声明值兜底；试听流有专门徽标。
+- **歌词模式**：双源取词、按播放进度逐行滚动；时钟舞台中栏在时钟与歌词间点击切换（偏好记忆），两侧频谱条点击循环切换频谱样式，两图层共显互不打扰。
+- **复古电台氛围**：纯程序化合成的 FM 调谐音效与台呼（零外部音频资产）、真实 FFT 频谱（WASAPI 回环采集）驱动频谱与星空、Light/Dark 双主题经 WCAG 对比度审计。
+- **简洁播放模式**：一键收缩为两行紧凑卡，行 1 单行动态歌词、无词时平滑退回曲目信息；窗口置顶与模式记忆可选。
+- **状态可见**：统一电台状态机（Idle/Curating/Searching/Speaking/Playing/Error）、逐源搜索状态与连接诊断、天气环境指示器（Open-Meteo，IP 自动定位或手填城市）。
 
-## 项目结构
+## 快速上手
 
-```text
-AIRadio.Desktop/
-  Assets/                  应用图标
-  Converters/              共享 XAML Converter
-  Models/                  Track、ChatMessage、DJProfile、推荐模型等
-  Services/                播放、AI DJ、LLM、TTS、推荐、歌词、搜索、ASR、环境服务
-  Services/Music/          音源子系统：Contracts、Broker、Playback（URL 安全校验与队列预检）、Providers（本地曲库/OpenSubsonic/Audius）、Adapters（实验性音源适配）
-  Themes/                  Colors.axaml 主题 token（Light/Dark）
-  ViewModels/              ReactiveUI ViewModel
-  Views/                   Avalonia 视图（TitleBar/ClockStage/PlayerDeck/CompactPlayer/ChatArea/PlaylistDrawer/StatusBar 等 UserControl）
-  server/                  NeteaseCloudMusicApi Node.js 服务
-AIRadio.Desktop.Tests/     xUnit 测试
-```
+### 前置要求
 
-## 构建运行
+- Windows 10/11，.NET 10 SDK
+- 播放、搜索等基础功能不依赖 LLM；AI DJ 对话、串场与节目单推荐需在设置页配置任一 LLM 提供商
+- Node.js **非必需**：完整构建自动探测 PATH 与常见安装目录，缺失时可下载便携版（按官方 SHASUMS256 校验）；也可用下面的核心构建完全跳过
+
+### 构建与运行
 
 ```bash
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
 dotnet run --project AIRadio.Desktop\AIRadio.Desktop.csproj
-# 不包含 Node/yt-dlp 音源的核心构建：
-dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -p:TuanRadioEnableNodeProviders=false -v:minimal
-```
 
-完整构建需要 Node.js，但无需手动配置：构建会自动探测 PATH 及常见安装目录（如 `C:\Program Files\nodejs`）并以绝对路径调用 npm/node，首次构建联网执行 `npm ci` 安装音源代理依赖；非标准安装位置可用 `-p:TuanRadioNodeDir=<目录>` 指定。核心构建不需要 Node，但设置页不含网易/酷狗扫码登录等实验性音源区块。VSCode 中 F5 会先执行构建再启动（`preLaunchTask` 配置随仓库共享）。
-
-## 验证
-
-```bash
+# 测试
 dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```
 
-## 已知技术债
+> Git Bash 下 MSBuild 属性的 `/p:` 斜杠会被 MSYS 吞掉，属性一律用 `-p:` 形式；项目路径用正斜杠。
 
-- 长期收听画像已落地且推荐/聊天双链路注入（见 docs/plans/2026-09-14 与 2026-09-15 设计文档），但画像纯本地、不跨设备同步（有意不做云端）。
-- 外部音乐 API 和 yt-dlp 仍可能因上游接口、地区限制或版权状态变化而失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级。可搜索本地曲库、OpenSubsonic、Audius 无 Key 只读 PoC、无 Node 核心构建、裁剪后的代理包、音源启停/排序、OpenSubsonic 传输音质偏好、实际播放编码/码率展示（含网易 type/br 声明值采集）、重定向逐跳复检、播放头传输（PlaybackHeaders 端到端）、首播对象化解析（ResolveTrackAsync + 新鲜度跳过后台预刷新）与全局源策略（覆盖/稳定/音质优先）已实现；音乐域已拆分为独立类库 AIRadio.Desktop.Music（Phase 1，2026-10-12），Phase 2（条件裁剪/Provider manifest/社区 Provider 沙箱）留待发布期，详见 `docs/plans/2026-08-25-music-source-architecture-evolution-plan.md`。
-- 网易云代理固定 `NeteaseCloudMusicApi` 4.32.0，生产依赖经过兼容更新并生成 `providers-manifest.json`；当前 `npm audit --omit=dev` 仍报告上游 `music-metadata`/`file-type` 链上的 3 项告警（1 中危、2 高危），升级到不兼容旧接口的版本前需单独评估。
-- 酷狗代理生产锁文件已在兼容范围内更新，`npm ci --omit=dev --ignore-scripts` 与 `npm audit --omit=dev` 验证通过（0 项告警）；代理源码基线与本地补丁记录在 `server-kugou/VENDOR.md`。
-- 播放 URL 安全校验分两层：`MediaUriPolicy` fail-closed 校验初始地址（scheme/禁段/DNS/凭据）；`PlaybackRedirectGuard` 在解析期主动跟随重定向并逐跳复检（观察型，只拒绝观察到的违规跳转，探测超时/不可得放行原 URL，残余风险为恶意源停滞探测规避与 TOCTOU 窗口，已文档化）。DNS 校验与播放连接是两次独立解析，重绑定 TOCTOU 窗口同样属已接受残余。音源声明的播放请求头经 `PlaybackHeaders` 白名单端到端投递（UA/Cookie 走 `:http-user-agent`/`:http-cookies` 可靠，Referer 尽力投递——libvlc 3 核心 HTTP 客户端不支持，上游限制），带注入防护。
-- Node.js 便携包下载即按官方 SHASUMS256 值做 fail-closed 校验，yt-dlp 固定官方 release 版本 + SHA256 校验（不追随 latest）。
-- 原生音频设备异常属于运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试。
-- Light/Dark 双主题经 WCAG 对比度审计（文字对 ≥4.5:1，Light 主题三处超标 token 已修正）；后续视觉调整需保持该标准。
+### 构建变体
+
+```bash
+# 不含 Node/yt-dlp 音源的核心构建（设置页不显示实验性音源区块）：
+dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -p:TuanRadioEnableNodeProviders=false -v:minimal
+```
+
+非标准 Node 安装位置可用 `-p:TuanRadioNodeDir=<目录>` 指定；首次完整构建联网执行 `npm ci` 安装音源代理依赖。VSCode 中 F5 会先构建再启动（`preLaunchTask` 配置随仓库共享）。
+
+### 首次配置要点
+
+- **LLM**：设置页选择 OpenAI 兼容 / Anthropic 兼容 / 本地模型三种接口格式之一，填 API Key、Base URL 与模型名，支持连接测试与失败原因提示。
+- **音源**：本地曲库（文件夹索引可搜索）与 Audius（无 Key 可用）默认可用；OpenSubsonic 在设置页配置服务器与账号，凭据存入系统安全存储，可选自动/原始/128 kbps 省流量音质；网易云、酷狗需完整构建，酷狗支持扫码登录，风控触发时自动弹出浏览器滑块验证（约 10 分钟冷却，设置页另有手动验证入口）。
+- **音源治理**：设置页可启停与排序各音源、选择全局源策略（覆盖/稳定/音质优先——影响跨源回退顺序与搜索源偏好，不改首选源）、运行逐源连接诊断（含健康记录与熔断状态）。
+- **界面**：中英双语，设置页切换；Light/Dark 主题切换。
+- **数据位置**：设置、歌单、收听画像、本地曲库索引与日志均在 `%APPDATA%\AIRadio\`（日志在 `logs\airadio-*.log`，播放中断、音源超时优先从这里排查）。
+
+## 项目结构
+
+```text
+AIRadio.Desktop/            宿主应用
+  Assets/                   应用图标
+  Converters/               共享 XAML Converter
+  Models/                   ChatMessage、DJProfile、推荐模型等
+  Services/                 播放、AI DJ、LLM、TTS、推荐、歌词、ASR、天气等服务
+  Services/Music/Playback/  播放队列预检（依赖 Avalonia/ReactiveUI 调度，留守宿主）
+  Themes/                   Colors.axaml 主题 token（Light/Dark）
+  ViewModels/ Views/        ReactiveUI ViewModel 与 Avalonia 视图
+  server/ server-kugou/     网易 / 酷狗 Node.js 代理
+AIRadio.Desktop.Music/      音乐域类库（宿主单向引用，命名空间不变）
+  Models/                   Track 等模型
+  Services/Music/           Contracts（契约）、Broker（聚合）、Providers（本地/OpenSubsonic/Audius）、
+                            Adapters（实验性音源适配）、Playback（URL 安全校验/重定向复检/解析缓存）
+AIRadio.Desktop.Tests/      xUnit 测试
+```
+
+## 架构与稳定性
+
+- `AudioService` 管理播放、TTS 播报与调频音效；`MusicSourceBroker` 承接多源搜索编排、逐源状态报告、跨源回退择优、连接诊断与熔断、全局源策略；业务层依赖 `IMusicSourceBroker` 接口，不对聚合器做具体类型 cast。
+- `RecommendationService` 生成节目单候选，`ListeningProfileService` 维护长期收听画像，`DJService` 负责 AI 对话与串场，`MainWindowViewModel` 组合各模块并在 Radio Mode 触发自动续播。
+- 播放 URL 进 LibVLC 前经两层校验：`MediaUriPolicy` fail-closed 校验初始地址（scheme 白名单、IPv4/IPv6 禁段、DNS 解析后复查、禁内嵌凭据），`PlaybackRedirectGuard` 在解析期逐跳复检重定向链（观察型）；用户配置的 OpenSubsonic 私有服务器只允许同源 stream 路径。
+- 播放解析结果内存缓存（重复点播/推荐直接命中，凭据变化自动清对应源）；URL 失效时依次刷新当前源、尝试替代源、再续播，避免同一试听片段循环重放。
+- LibVLC/WASAPI/NAudio 操作统一串行、释放采用有界等待；在线搜索、LLM、推荐、TTS、语音识别全链路支持超时与应用生命周期取消。
+- 播放列表与设置采用临时文件替换的原子写入；跨线程访问返回快照。
+- 供应链校验：Node.js 便携包按官方 SHASUMS256 值 fail-closed 校验，yt-dlp 固定官方 release 版本 + SHA256。
+
+### 相关文档
+
+- [ai-radio-plan.md](ai-radio-plan.md) — 当前实施计划与产品定位
+- [docs/plans/](docs/plans/) — 各阶段设计实录（音源架构演进、收听画像、歌词模式、Broker 拆分等）
+- [DESIGN.md](DESIGN.md) / [ARCHITECTURE_REDESIGN.md](ARCHITECTURE_REDESIGN.md) — 历史文档（早期视觉参考与架构迁移方案）
+
+## 已知限制
+
+- 外部音乐 API 和 yt-dlp 可能因上游接口、地区限制或版权状态变化失效；当前以硬超时、逐源状态、队列后三首解析预检和跨源回退降级应对。酷我、咪咕需显式设置 `AIRADIO_ENABLE_LEGACY_WEB_SOURCES=1` 才注册，且上游接口已实际失效（风控/门户劫持），仅作遗留通道保留。
+- 网易云代理固定 `NeteaseCloudMusicApi` 4.32.0，`npm audit --omit=dev` 余 7 项（1 中危、6 高危）锁死在上游依赖链（node-forge 等），升级到不兼容旧接口的版本前需单独评估；酷狗代理生产依赖审计 0 项（源码基线与本地补丁见 `server-kugou/VENDOR.md`）。
+- 音源声明的 Referer 播放请求头为尽力投递——libvlc 3 核心 HTTP 客户端不支持该选项，属上游限制；UA/Cookie 通道可靠。
+- 长期收听画像纯本地文件（`listener-profile.json`），不跨设备同步（有意不做云端）。
+- 原生音频设备异常属运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试（自动化耐久测试覆盖电台 30 轮续播、真实 LibVLC 四曲连播、画像 30 会话积累等场景）。
+- Light/Dark 双主题经 WCAG 对比度审计（文字对 ≥4.5:1），后续视觉调整需保持该标准。
