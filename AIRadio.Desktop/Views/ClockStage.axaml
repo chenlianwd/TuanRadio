@@ -58,12 +58,13 @@
     </StackPanel>
 
     <!-- 歌词图层：仅替换中栏时钟，两侧频谱与星空常驻（频谱/歌词共存）；
-         中栏固定宽防逐行长度变化带动频谱抖动；点击中栏面板切换（标题栏旧按钮已移除） -->
+         中栏宽度由代码后置按舞台尺寸自适应（min(540, 可用宽×0.55)，见 OnStageSizeChanged），
+         两次尺寸变化之间保持定值防逐行歌词长度变化带动频谱抖动；点击中栏面板切换（标题栏旧按钮已移除） -->
         <Grid x:Name="LyricsLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding IsLyricsMode}">
             <local:SpectrumView x:Name="LyricsSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
                                 HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
                                 Height="118" Margin="0,0,18,0"/>
-            <StackPanel x:Name="LyricsPanel" Grid.Column="1" Width="540" Background="Transparent"
+            <StackPanel x:Name="LyricsPanel" Grid.Column="1" Background="Transparent"
                         Classes.clickable="{Binding HasCurrentTrack}"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
                 <TextBlock Text="{Binding LyricsVM.PreviousLineText}" FontSize="12" Opacity="0.7"

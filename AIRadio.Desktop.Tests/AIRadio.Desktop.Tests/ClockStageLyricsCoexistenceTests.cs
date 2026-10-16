@@ -291,4 +291,56 @@ public class ClockStageLyricsCoexistenceTests
         }
         Assert.True(persisted, "频谱样式应在超时内持久化到 settings.json");
     }
+
+    [AvaloniaFact]
+    public void LyricsPanel_AdaptiveWidth_GivesSpectrumRoom_CapsAtMax_StableAcrossLyricChanges()
+    {
+        // 中栏自适应：小窗口按可用宽 55% 收窄给频谱让位（旧固定 540 时每侧频谱仅 ~68px
+        // 成细条）；大窗口 540 封顶；歌词内容变化（状态行出现）不带动面板宽度（防抖动）
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "netease:2035455652" };
+        var trackChanged = new Subject<Track?>();
+        var vm = CreateViewModel(track, trackChanged);
+
+        Window? window = null;
+        try
+        {
+            var stage = new ClockStage { DataContext = vm };
+            window = new Window { Content = stage, Width = 760, Height = 760 };
+            window.Show();
+            vm.IsLyricsMode = true;
+            Dispatcher.UIThread.RunJobs();
+
+            var panel = FindNamed<StackPanel>(stage, "LyricsPanel");
+            var leftSpectrum = FindSpectrum(stage, "LyricsSpectrumLeft");
+            var expectedNarrow = Math.Clamp((stage.Bounds.Width - 48) * 0.55, 220, 540);
+
+            Assert.Equal(expectedNarrow, panel.Width);
+            Assert.True(panel.Width < 540, $"760 宽窗口下中栏应收窄，实际 {panel.Width}");
+            Assert.True(leftSpectrum.Bounds.Width > 100,
+                $"频谱每侧应 >100px（旧固定 540 时 ~68px），实际 {leftSpectrum.Bounds.Width}");
+
+            // 防抖动锚点：曲目变化驱动歌词状态行出现/翻转（内容尺寸需求变化），面板宽度不动
+            var widthBeforeLyricContent = panel.Width;
+            trackChanged.OnNext(track);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.LyricsVM.HasStatusText); // 取词失败/加载态的状态行已出现
+            var statusDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DateTime.UtcNow < statusDeadline &&
+                   (vm.LyricsVM.LyricStatusText.Contains("获取") || vm.LyricsVM.LyricStatusText.Contains("Loading")))
+            {
+                Dispatcher.UIThread.RunJobs();
+                Thread.Sleep(20);
+            }
+            Assert.Equal(widthBeforeLyricContent, panel.Width);
+
+            // 大窗口 540 封顶（歌词行宽仍给足）
+            window.Width = 1500;
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(540, panel.Width);
+        }
+        finally
+        {
+            window?.Close();
+        }
+    }
 }

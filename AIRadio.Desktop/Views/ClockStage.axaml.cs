@@ -14,6 +14,15 @@ namespace AIRadio.Desktop.Views;
 /// <summary>时钟舞台：时钟（绑 VM.Now）+ ClockDots 装饰 + Starfield 自订阅 SpectrumVM（spec §5.5）。</summary>
 public partial class ClockStage : UserControl
 {
+    // 歌词中栏宽度契约：固定 540 在默认 760 宽窗口会把两侧频谱列（*）压到 ~68px，
+    // 32 根柱被钳到 2px 下限成细条；按舞台可用宽 55% 自适应、540 封顶，
+    // 下限兜底极窄窗口。两次尺寸变化之间保持定值——逐行歌词长度变化
+    // 依旧不带动频谱（原固定宽的防抖语义保留）。
+    private const double LyricsPanelMaxWidth = 540;
+    private const double LyricsPanelMinWidth = 220;
+    private const double LyricsLayerHorizontalMargin = 48; // LyricsLayer 左右 Margin 24
+    private const double LyricsPanelWidthRatio = 0.55;
+
     private IDisposable? _starfieldVisSub;
     private Action<float[]>? _spectrumHandler;
     private SpectrumViewModel? _spectrumSource;
@@ -24,6 +33,15 @@ public partial class ClockStage : UserControl
         FillClockDots();
         DataContextChanged += OnDataContextChanged;
         AddHandler(Gestures.TappedEvent, OnStageTapped, RoutingStrategies.Bubble);
+        StageRoot.SizeChanged += OnStageSizeChanged;
+    }
+
+    private void OnStageSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (LyricsPanel is not { } panel)
+            return;
+        var available = e.NewSize.Width - LyricsLayerHorizontalMargin;
+        panel.Width = Math.Clamp(available * LyricsPanelWidthRatio, LyricsPanelMinWidth, LyricsPanelMaxWidth);
     }
 
     private void FillClockDots()
