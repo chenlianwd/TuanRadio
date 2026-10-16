@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Media;
 using System;
 using System.Threading.Tasks;
 
@@ -6,56 +7,33 @@ namespace AIRadio.Desktop.Views;
 
 public static class Animations
 {
-    public static Task FadeOutAsync(Control control, TimeSpan duration)
-    {
-        var animation = new OpacityFadeAnimation(duration, 1.0, 0.0);
-        return animation.RunAsync(control);
-    }
-
-    public static async Task FadeInAsync(Control control, TimeSpan duration)
-    {
-        var animation = new OpacityFadeAnimation(duration, control.Opacity, 1.0);
-        await animation.RunAsync(control);
-    }
-
+    // 徽章"说话"弹跳：两连跳的真实位移动画（首跳大、二跳小，抛物线轨迹）。
+    // 旧实现是透明度闪烁——深色徽章在深色头栏上肉眼不可见，用户从未感知到，已废弃。
     public static async Task PlayBounceAsync(Border border)
     {
-        await FadeOutAsync(border, TimeSpan.FromMilliseconds(80));
-        await FadeInAsync(border, TimeSpan.FromMilliseconds(120));
-        await Task.Delay(30);
-        await FadeOutAsync(border, TimeSpan.FromMilliseconds(80));
-        await FadeInAsync(border, TimeSpan.FromMilliseconds(100));
-    }
-}
+        if (border.RenderTransform is not TranslateTransform translate)
+        {
+            translate = new TranslateTransform();
+            border.RenderTransform = translate;
+        }
 
-public class OpacityFadeAnimation
-{
-    private readonly TimeSpan _duration;
-    private readonly double _from;
-    private readonly double _to;
-
-    public OpacityFadeAnimation(TimeSpan duration, double from, double to)
-    {
-        _duration = duration;
-        _from = from;
-        _to = to;
+        await HopAsync(translate, amplitude: 7, durationMs: 280);
+        await Task.Delay(60);
+        await HopAsync(translate, amplitude: 4, durationMs: 240);
+        translate.Y = 0;
     }
 
-    public async Task RunAsync(Control control)
+    private static async Task HopAsync(TranslateTransform translate, double amplitude, double durationMs)
     {
         var start = DateTimeOffset.Now;
-        var original = control.Opacity;
-        control.Opacity = _from;
-
         while (true)
         {
-            var elapsed = DateTimeOffset.Now - start;
-            var progress = Math.Min(1.0, elapsed.TotalMilliseconds / _duration.TotalMilliseconds);
-            control.Opacity = _from + (_to - _from) * progress;
-
+            var progress = Math.Min(1.0, (DateTimeOffset.Now - start).TotalMilliseconds / durationMs);
+            // 抛物线 4t(1-t)：起跳/落地速度最大、顶点速度为零，符合物理直觉的"跳"
+            translate.Y = -amplitude * 4 * progress * (1 - progress);
             if (progress >= 1.0) break;
             await Task.Delay(16);
         }
-        control.Opacity = _to;
+        translate.Y = 0;
     }
 }
