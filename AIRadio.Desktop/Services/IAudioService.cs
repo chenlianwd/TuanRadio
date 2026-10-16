@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 
@@ -30,7 +31,7 @@ public interface IAudioService
     void Stop();
     void Seek(TimeSpan position);
     void Next();
-    void SetNextCallback(Func<Task<Track?>>? callback);
+    void SetNextCallback(Func<CancellationToken, Task<Track?>>? callback);
     void Previous();
     void Shuffle();
     void SetRepeatMode(string mode);

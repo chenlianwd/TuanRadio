@@ -230,9 +230,11 @@ public class RecommendationService : IRecommendationService
     /// 供消费方按"Detail 存归一化氛围值"契约记录画像事件。</summary>
     public string? SetMoodBias(string? mood)
     {
+        string? normalized;
         lock (_stateGate)
-            _moodBias = NormalizeMood(mood);
-        return _moodBias;
+            _moodBias = normalized = NormalizeMood(mood);
+        // 返回值在锁内取局部快照：锁外读 _moodBias 在并发两次调用时可能拿到对方刚写入的值
+        return normalized;
     }
 
     /// <summary>电台轮换选曲启发式：优先避开与当前曲同歌手，避免连播同一歌手。</summary>

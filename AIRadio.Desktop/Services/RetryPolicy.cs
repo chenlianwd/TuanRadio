@@ -47,10 +47,13 @@ public static class RetryPolicy
     }
 
     // HttpClient 超时表现为 TaskCanceledException（派生自 OCE）——是最常见的瞬态网络
-    // 故障之一；用户主动取消（外部 token 已触发）绝不能重试
+    // 故障之一；用户主动取消（外部 token 已触发）绝不能重试。
+    // LLM 服务端 5xx（ApiFailureKind.Server）与连接失败同族——上游瞬态过载可重试；
+    // 4xx（鉴权/限额/坏请求）重试无意义且放大压力，不列入
     private static bool IsTransient(Exception ex, CancellationToken cancellationToken)
         => ex is HttpRequestException or TimeoutException ||
-           (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested);
+           (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested) ||
+           (ex is LlmApiException llm && llm.Failure.Kind == ApiFailureKind.Server);
 
     /// <summary>同上：无 token 的 void 重载，仅供测试/无取消场景，生产调用用带 token 的重载。</summary>
     public static async Task ExecuteAsync(

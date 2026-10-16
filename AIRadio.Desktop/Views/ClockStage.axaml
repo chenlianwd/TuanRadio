@@ -6,7 +6,9 @@
              x:DataType="vm:MainWindowViewModel">
 
     <!-- 注意：环境指示器子树必须用 {Binding WeatherVM.X} 路径绑定——DataContext="{Binding WeatherVM}"
-         重定向与编译绑定组合会静默破坏整个程序集的 XAML 预编译（ChatAreaMicButtonTests 回归锚定） -->
+         重定向与"同页编译绑定"组合会静默破坏整个程序集的 XAML 预编译（ChatAreaMicButtonTests 回归锚定）。
+         本文件 SpectrumView 的 DataContext="{Binding SpectrumVM}" 重定向是安全的：SpectrumView 自带
+         x:DataType、其绑定在独立编译单元内编译，危险的是"重定向 + 本页作用域的编译绑定"混用 -->
     <UserControl.Styles>
         <!-- 中栏（时钟/歌词面板）手型光标仅在可点时提示（有在播曲目）：
              无曲目时点击静默，光标不得谎报可点；频谱条随时可点（切样式），恒手型 -->

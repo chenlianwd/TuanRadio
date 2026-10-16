@@ -127,7 +127,7 @@ public class AudioService : IAudioService, IDisposable
     private static readonly TimeSpan NextCallbackTimeout = TimeSpan.FromSeconds(60);
     private bool _isFading;
     private readonly System.Threading.Timer _fadeTimer;
-    private Func<Task<Track?>>? _nextCallback;
+    private Func<CancellationToken, Task<Track?>>? _nextCallback;
     private EventHandler<StoppedEventArgs>? _ttsPlaybackStoppedHandler;
 
     public IReadOnlyList<Track> PlaybackQueue
@@ -827,7 +827,7 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
-    public void SetNextCallback(Func<Task<Track?>>? callback)
+    public void SetNextCallback(Func<CancellationToken, Task<Track?>>? callback)
     {
         if (!IsDisposed)
             _nextCallback = callback;
@@ -870,13 +870,21 @@ public class AudioService : IAudioService, IDisposable
             if (_repeatMode == "radio" && nextCallback != null)
             {
                 // 推荐回调不回到 UI 线程执行：网络推荐完成后避免在 Avalonia UI 线程
-                // 上做 LibVLC 原生 Stop/Media/Play 同步调用
+                // 上做 LibVLC 原生 Stop/Media/Play 同步调用。
+                // 超时令牌同时传给回调与 WaitAsync：回调方贯穿令牌即可真正取消底层
+                // LLM/搜索请求（不再白跑到自身预算），不贯穿则退化为只放弃等待
                 Track? track = null;
                 try
                 {
-                    track = await nextCallback()
-                        .WaitAsync(NextCallbackTimeout, CancellationToken.None)
+                    using var callbackCts = new CancellationTokenSource(NextCallbackTimeout);
+                    track = await nextCallback(callbackCts.Token)
+                        .WaitAsync(callbackCts.Token)
                         .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // 超时令牌触发（回调贯穿令牌时其内部 OCE 也源于此）：按超时兜底列表轮换
+                    Serilog.Log.Warning("Radio next callback timed out after {Seconds}s; falling back to playlist rotation", NextCallbackTimeout.TotalSeconds);
                 }
                 catch (TimeoutException)
                 {
@@ -893,9 +901,14 @@ public class AudioService : IAudioService, IDisposable
                         Track? retry = null;
                         try
                         {
-                            retry = await nextCallback()
-                                .WaitAsync(NextCallbackTimeout, CancellationToken.None)
+                            using var retryCts = new CancellationTokenSource(NextCallbackTimeout);
+                            retry = await nextCallback(retryCts.Token)
+                                .WaitAsync(retryCts.Token)
                                 .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            Serilog.Log.Warning("Radio next callback retry timed out");
                         }
                         catch (TimeoutException)
                         {

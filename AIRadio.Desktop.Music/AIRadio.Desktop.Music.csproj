@@ -6,6 +6,8 @@
     <AssemblyName>AIRadio.Desktop.Music</AssemblyName>
     <Product>TuanRadio FM</Product>
     <Description>Music domain library: provider contracts, sources, broker and account family</Description>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>

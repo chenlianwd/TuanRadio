@@ -445,7 +445,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // AudioService 的 _trackUrlResolver 委托只在刷新/恢复语境被调用（重试前刷新、
         // 播放前后台换新直链），必须 forceRefresh 绕过缓存——否则重试会拿到刚失败的陈旧 URL
         string? url;
-        ResolveTrackResult? resolved = null;        if (requireAlternative)
+        ResolveTrackResult? resolved = null;
+        if (requireAlternative)
         {
             url = await multi.GetAlternativePlayUrlAsync(onlineTrack, cancellationToken);
         }
@@ -962,9 +963,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (IsDisposed || cancellationToken.IsCancellationRequested)
                 return;
 
-            // LLM 失败/未配置时 GenerateChatResponseAsync 返回兜底文案并置 LastFailure：
+            // LLM 失败/未配置时 GenerateChatResponseAsync 返回兜底文案并置 LastChatFailure：
             // 问候路径不能把兜底或“请先在设置中配置 AI 服务。”当角色台词播报
-            if (_djService.LastFailure is { })
+            if (_djService.LastChatFailure is { })
                 return;
 
             var text = StripDjControlTags(response);
@@ -1084,7 +1085,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed)
             return false;
 
-        var recommended = await GetRecommendedTrackAsync(current);
+        var recommended = await GetRecommendedTrackAsync(current, _lifetimeCts.Token);
         if (IsDisposed || recommended == null)
         {
             Log.Information("Fresh recommendation returned null, falling back to playlist rotation");
@@ -1093,7 +1094,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         if (current != null && IsSameTrackIdentity(recommended, current))
         {
-            var retry = await GetRecommendedTrackAsync(current);
+            var retry = await GetRecommendedTrackAsync(current, _lifetimeCts.Token);
             if (IsDisposed)
                 return false;
 
@@ -1171,14 +1172,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
     }
 
-    private async System.Threading.Tasks.Task<Track?> GetRecommendedTrackAsync(Track? current)
+    private async System.Threading.Tasks.Task<Track?> GetRecommendedTrackAsync(Track? current, CancellationToken cancellationToken)
     {
         AttachRecommendationContext(current);
         var request = CreateRecommendationRequest(current);
 
         try
         {
-            var recommended = await RequestRecommendedTrackAsync(request, _lifetimeCts.Token);
+            var recommended = await RequestRecommendedTrackAsync(request, cancellationToken);
             if (IsDisposed)
                 return null;
 
@@ -1218,23 +1219,26 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private Task<Track?> GetNextTrackForAudioServiceAsync()
+    private Task<Track?> GetNextTrackForAudioServiceAsync(CancellationToken cancellationToken)
     {
         if (IsDisposed)
             return Task.FromResult<Track?>(null);
 
         if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
-            return GetNextTrackForAudioServiceCoreAsync();
+            return GetNextTrackForAudioServiceCoreAsync(cancellationToken);
 
         var completion = new TaskCompletionSource<Track?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var cancellationRegistration = _lifetimeCts.Token.Register(
             () => completion.TrySetResult(null));
+        // AudioService 的 60s 超时令牌到达即解除等待（底层推荐请求经 CoreAsync 贯穿同一令牌真正取消）
+        var timeoutRegistration = cancellationToken.Register(
+            () => completion.TrySetCanceled(cancellationToken));
         Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
         {
             try
             {
-                completion.TrySetResult(await GetNextTrackForAudioServiceCoreAsync());
+                completion.TrySetResult(await GetNextTrackForAudioServiceCoreAsync(cancellationToken));
             }
             catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
             {
@@ -1248,26 +1252,27 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             finally
             {
                 cancellationRegistration.Dispose();
+                timeoutRegistration.Dispose();
             }
         });
         return completion.Task;
     }
 
-    private async Task<Track?> GetNextTrackForAudioServiceCoreAsync()
+    private async Task<Track?> GetNextTrackForAudioServiceCoreAsync(CancellationToken cancellationToken)
     {
         if (IsDisposed)
             return null;
 
-        await _advanceGate.WaitAsync(_lifetimeCts.Token);
+        await _advanceGate.WaitAsync(cancellationToken);
         try
         {
             if (IsDisposed)
                 return null;
 
-            await DjTtsInterop.StopTtsWithoutBlockingUiAsync(_audioService, _lifetimeCts.Token);
+            await DjTtsInterop.StopTtsWithoutBlockingUiAsync(_audioService, cancellationToken);
             var current = _audioService.CurrentTrack;
             AttachRecommendationContext(current);
-            var recommended = await GetRecommendedTrackAsync(current);
+            var recommended = await GetRecommendedTrackAsync(current, cancellationToken);
             if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current))
                 return null;
 

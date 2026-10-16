@@ -4,4 +4,7 @@
 // 静默对局域网暴露，且健康检查无法发现
 process.env.PORT = '37251';
 process.env.HOST = '127.0.0.1';
+// 桌面形态标记：server.js 据此关闭 X-Forwarded-For 信任（监听 127.0.0.1 时所有
+// 对端都是回环，'loopback' 策略挡不住本机伪造）
+process.env.TUANRADIO_DESKTOP = '1';
 require('./app.js');
