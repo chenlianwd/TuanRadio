@@ -220,8 +220,13 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 Tracks.Add(t);
                 _audioService.AddTracks(new[] { t });
                 TabIndex = 0;
-                await SaveAsync();
-                SetSearchStatus(() => AppLanguage.T($"已添加《{track.Title}》。", $"Added \"{track.Title}\"."));
+                // 保存失败必须可见：与 ImportKugouPlaylistAsync 同口径，否则磁盘满/文件
+                // 被占用时用户看到"已添加"，重启后静默丢失
+                var saveSucceeded = await TrySaveAsync();
+                SetSearchStatus(() => saveSucceeded
+                    ? AppLanguage.T($"已添加《{track.Title}》。", $"Added \"{track.Title}\".")
+                    : AppLanguage.T($"已添加《{track.Title}》到本会话，但保存失败；请重试添加。",
+                        $"Added \"{track.Title}\" for this session, but saving failed; retry."));
             }
             catch (OperationCanceledException)
             {
@@ -589,20 +594,29 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                     LastSyncedAt = playlist.LastSyncedAt
                 }).ToList()
             };
-            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            var json = await Task.Run(
+                () => JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }),
+                _lifetimeCts.Token);
 
-            Directory.CreateDirectory(_playlistDir);
-            KeepLegacyBackupOrThrow();
+            // 快照已在 UI 线程生成（顺序性见上）；序列化与写盘移出 UI 线程——数千曲库
+            // 或杀软扫描锁文件时，同步 IO 挂在 UI 线程上每次列表变更都会造成可感知卡顿
+            var playlistDir = _playlistDir;
+            var playlistFile = _playlistFile;
             if (_customWriter)
             {
-                await _writeAllTextAsync(_playlistFile, json);
+                await _writeAllTextAsync(playlistFile, json);
             }
             else
             {
                 // 先写同目录临时文件，再替换正式文件，避免应用退出/磁盘异常时留下半份 JSON。
-                var tempPath = _playlistFile + ".tmp";
-                await File.WriteAllTextAsync(tempPath, json, _lifetimeCts.Token);
-                File.Move(tempPath, _playlistFile, overwrite: true);
+                await Task.Run(() =>
+                {
+                    Directory.CreateDirectory(playlistDir);
+                    KeepLegacyBackupOrThrow();
+                    var tempPath = playlistFile + ".tmp";
+                    File.WriteAllText(tempPath, json);
+                    File.Move(tempPath, playlistFile, overwrite: true);
+                }, _lifetimeCts.Token);
             }
 
             Log.Debug("Playlist saved: {Count} tracks, {FavCount} favorites", data.Tracks.Count, data.FavoriteIds.Count);
@@ -717,8 +731,12 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             _audioService.AddTracks(new[] { t });
             _audioService.PlayTrack(t);
             TabIndex = 0;
-            await SaveAsync();
-            SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
+            // 保存失败必须可见（同 AddOnlineCommand 口径），防"正在播放"假象后静默丢失
+            var saveSucceeded = await TrySaveAsync();
+            SetSearchStatus(() => saveSucceeded
+                ? AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\".")
+                : AppLanguage.T($"正在播放《{track.Title}》，但保存失败；重启后会丢失。",
+                    $"Now playing \"{track.Title}\", but saving failed; it will be lost on restart."));
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {

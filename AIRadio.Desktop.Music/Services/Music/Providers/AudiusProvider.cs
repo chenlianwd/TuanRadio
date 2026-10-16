@@ -137,7 +137,10 @@ public sealed class AudiusProvider : IMusicProvider
              IsFalse(access, "stream")))
             return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.AuthRequired);
         if (!IsTrue(item, "is_streamable") || IsFalse(item, "is_available"))
-            return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.SourceUnavailable);
+            // 曲目级下架/不可流播（收藏或历史曲后续变化的既定场景）：接口本身有正常响应，
+            // 走业务失败口径（NotFound 族）而非 SourceUnavailable——后者会被 Broker 计入
+            // 传输故障熔断，连续 3 首曲目级失败即殃及整源搜索
+            return MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound);
         // Audius 返回公开 API 地址，实际媒体会重定向到内容节点。
         var uri = new Uri(ApiRoot, "tracks/" + track.TrackId + "/stream?app_name=TuanRadio");
         return MediaResolutionResult.Playable(new ResolvedMedia(track, uri));

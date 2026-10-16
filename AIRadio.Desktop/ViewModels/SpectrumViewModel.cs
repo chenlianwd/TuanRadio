@@ -2,41 +2,25 @@ using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Services;
 using System;
-using System.Collections.ObjectModel;
 using System.Reactive.Linq;
 
 namespace AIRadio.Desktop.ViewModels;
 
 public partial class SpectrumViewModel : ViewModelBase, IDisposable
 {
-    public ObservableCollection<float> Bands { get; } = new();
     [Reactive] public partial string SelectedStyle { get; set; } = "bars";
     private readonly IDisposable _spectrumSub;
 
     public event Action<float[]>? SpectrumReceived;
 
-    private const int BandCount = 32;
-
     public SpectrumViewModel(IAudioService audioService)
     {
-        for (int i = 0; i < BandCount; i++)
-            Bands.Add(0f);
-
+        // 频谱渲染全部走 SpectrumReceived 事件（SpectrumView/CompactPlayer/ClockStage
+        // 直连 Renderer），不经 ObservableCollection——30Hz×32 的集合通知在 UI 线程
+        // 空转无消费者
         _spectrumSub = audioService.SpectrumData
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(data =>
-            {
-                var count = Math.Min(data.Length, BandCount);
-                for (int i = 0; i < BandCount; i++)
-                {
-                    // 尾部残留旧值要清零；显著未变化的频段跳过 Replace 通知，
-                    // 30Hz×32 的集合通知是频谱 UI 的主要开销
-                    var value = i < count ? data[i] : 0f;
-                    if (Math.Abs(Bands[i] - value) > 0.01f)
-                        Bands[i] = value;
-                }
-                SpectrumReceived?.Invoke(data);
-            });
+            .Subscribe(data => SpectrumReceived?.Invoke(data));
     }
 
     public void Dispose()

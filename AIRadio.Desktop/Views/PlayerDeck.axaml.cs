@@ -25,6 +25,11 @@ public partial class PlayerDeck : UserControl
             OnProgressSliderReleased,
             RoutingStrategies.Bubble,
             handledEventsToo: true);
+        // 系统打断拖拽（窗口被激活事件抢占、触摸取消等）时 PointerReleased 不会送达，
+        // 捕获丢失兜底结束拖拽，防 _isDragging 悬置把进度条 thumb 冻结在断点
+        ProgressSlider.AddHandler(
+            InputElement.PointerCaptureLostEvent,
+            OnProgressSliderCaptureLost);
     }
 
     private void OnProgressSliderPressed(object? sender, PointerPressedEventArgs e)
@@ -35,6 +40,13 @@ public partial class PlayerDeck : UserControl
 
     private void OnProgressSliderReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (DataContext is MainWindowViewModel vm)
+            vm.PlayerVM.EndSeek(ProgressSlider.Value);
+    }
+
+    private void OnProgressSliderCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        // 正常松开时捕获也会丢失并走到这里：EndSeek 幂等（重复 Seek 同值无害）
         if (DataContext is MainWindowViewModel vm)
             vm.PlayerVM.EndSeek(ProgressSlider.Value);
     }

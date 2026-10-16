@@ -165,8 +165,10 @@ public sealed class PlaybackPreflightService : IDisposable
             track.Playability = TrackPlayability.Unchecked;
         _checkedTracks = Array.Empty<Track>();
         var previous = Interlocked.Exchange(ref _run, new CancellationTokenSource());
+        // 只 Cancel 不 Dispose：立即 Dispose 会让在途解析内部后续的 token.Register 抛
+        // ObjectDisposedException（被消费方 catch 吞掉并误归类 SourceUnavailable），
+        // 已取消且无定时器的 CTS 交由 GC 回收即可
         previous.Cancel();
-        previous.Dispose();
     }
 
     public void Dispose()
@@ -183,6 +185,9 @@ public sealed class PlaybackPreflightService : IDisposable
         if (_openSubsonic != null)
             _openSubsonic.ConfigurationChanged -= OnAccountChanged;
         Cancel();
+        // 先 Cancel 再 Dispose：只 Dispose 不 Cancel 会让应用退出后在途预检解析
+        // 继续跑完自身预算（纯网络浪费）
+        _run.Cancel();
         _run.Dispose();
     }
 }

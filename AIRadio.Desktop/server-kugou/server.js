@@ -29,7 +29,12 @@ const { cookieToJson, randomString, getGuid, calculateMid, generateWebGLHash, is
 const { cryptoMd5 } = require('./util/crypto');
 const { createRequest } = require('./util/request');
 const dotenv = require('dotenv');
-const cache = require('./util/apicache').middleware;
+const apicache = require('./util/apicache');
+const cache = apicache.middleware;
+
+// Set-Cookie 不缓存重放：重放过期登录态会把已失效会话当有效；黑名单须在全局层设置
+// （filterBlacklistedHeaders 读 globalOptions，局部 localOptions 对它不生效）
+apicache.options({ headerBlacklist: ['set-cookie'] });
 
 /**
  * @typedef {Object} ModuleDefinition
@@ -191,8 +196,10 @@ async function consturctServer(moduleDefs) {
   // 从环境变量读取允许的跨域来源，若未配置则回退到请求头中的 origin 或 '*'
   const { CORS_ALLOW_ORIGIN } = process.env;
 
-  // 启用反向代理信任，确保 req.ip 能正确获取客户端真实 IP（如经过 Nginx 反代）
-  app.set('trust proxy', true);
+  // 仅信任回环对端的 X-Forwarded-For：桌面形态监听 127.0.0.1 且无真实反代，
+  // trust proxy=true 会让本机任意进程伪造客户端 IP 参与上游风控判定；loopback
+  // 保留 Docker 形态下同机反代的正常路径
+  app.set('trust proxy', 'loopback');
 
   /**
    * ============================================================
@@ -363,8 +370,16 @@ async function consturctServer(moduleDefs) {
    *
    * 绕过缓存的方式：在请求 URL 后附加不同的 timestamp 参数，
    * 例如: /personal/fm?timestamp=1691256061923
+   *
+   * 缓存键追登录态（Authorization/userid）：纯 URL 键在换号/登出窗口（≤2 分钟）
+   * 可能互读对方的账号级响应（如 /user/detail）。非 GET 请求不经缓存（见 apicache 改动）。
    */
-  app.use(cache('2 minutes', (_, res) => res.statusCode === 200));
+  app.use(cache(
+    '2 minutes',
+    (_, res) => res.statusCode === 200,
+    {
+      appendKey: (req) => `${req.headers.authorization || ''}|${(req.cookies && req.cookies.userid) || ''}`,
+    }));
 
   /**
    * ============================================================

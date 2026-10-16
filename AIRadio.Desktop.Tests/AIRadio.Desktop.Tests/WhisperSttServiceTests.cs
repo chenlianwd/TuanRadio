@@ -22,55 +22,65 @@ public class WhisperSttServiceTests : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
-    [Fact]
-    public async Task TranscribeAsync_MissingModelFile_ReturnsEmptyOrNull()
+    [SkippableFact]
+    public async Task TranscribeAsync_MinimalWav_CompletesAndReturnsText()
     {
-        // 隔离防护：模型缺失时 TranscribeAsync 内部会触发 ~148MB 真实下载，
-        // 仅在模型已就位时执行，否则跳过
-        if (!IsModelAlreadyDownloaded())
-            return;
+        // 隔离防护：模型缺失时 TranscribeAsync 内部（EnsureModelReadyCoreAsync）会触发
+        // ~148MB 真实下载，仅在模型已就位时执行；Skip.If 让干净机器上的跳过计入摘要
+        Skip.If(!IsModelAlreadyDownloaded(), "Whisper model (~148MB) not present; skipping to avoid a real download");
 
-        // WhisperSttService requires a model file; without it, TranscribeAsync should handle gracefully
         var service = new WhisperSttService();
-        var wavPath = Path.Combine(_tempDir, "test.wav");
-
-        // Create a minimal valid WAV file
-        File.WriteAllBytes(wavPath, CreateMinimalWav());
-
-        // Without calling EnsureModelReadyAsync, the model won't be downloaded
-        // The service should either return empty or throw a handled exception
         try
         {
-            var result = await service.TranscribeAsync(wavPath);
-            // If it succeeds, result should be a string (possibly empty)
-            Assert.NotNull(result);
+            var wavPath = Path.Combine(_tempDir, "test.wav");
+            File.WriteAllBytes(wavPath, CreateMinimalWav());
+
+            try
+            {
+                var result = await service.TranscribeAsync(wavPath);
+                Assert.NotNull(result);
+            }
+            catch (NullReferenceException)
+            {
+                // NRE 是内部缺陷不是"无效输入的预期失败"：本机无模型时该路径无法实证，
+                // 有模型机器上 NRE 必须显形而非绿灯（原版连 ex.Message 非空都算断言）
+                throw;
+            }
+            // 极小 WAV 对 whisper-net 属边界输入，明确的解码/格式异常可接受
         }
-        catch (Exception ex)
+        finally
         {
-            // Expected: model not found or initialization failure
-            Assert.NotNull(ex.Message);
+            service.Dispose();
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task TranscribeAsync_EmptyWavFile_HandlesGracefully()
     {
-        // 同上：避免在干净机器上触发模型下载
-        if (!IsModelAlreadyDownloaded())
-            return;
+        Skip.If(!IsModelAlreadyDownloaded(), "Whisper model (~148MB) not present; skipping to avoid a real download");
 
         var service = new WhisperSttService();
-        var wavPath = Path.Combine(_tempDir, "empty.wav");
-        File.WriteAllBytes(wavPath, Array.Empty<byte>());
-
         try
         {
-            var result = await service.TranscribeAsync(wavPath);
-            Assert.NotNull(result);
+            var wavPath = Path.Combine(_tempDir, "empty.wav");
+            File.WriteAllBytes(wavPath, Array.Empty<byte>());
+
+            try
+            {
+                var result = await service.TranscribeAsync(wavPath);
+                Assert.NotNull(result);
+            }
+            catch (NullReferenceException)
+            {
+                // NRE 是内部缺陷不是"无效输入的预期失败"：原空 catch 连 NRE 都绿灯，
+                // 这里必须让它显形
+                throw;
+            }
+            // 其余异常（无效 WAV 的解码失败等）属可接受的明确失败
         }
-        catch (Exception)
+        finally
         {
-            // Expected: invalid WAV format
+            service.Dispose();
         }
     }
 

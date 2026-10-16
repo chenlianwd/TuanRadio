@@ -390,8 +390,11 @@ public class ChatViewModelTests
         try
         {
             service.PlayTtsAudio(Array.Empty<byte>());
-            // TTS ends quickly when no data — wait briefly for async playback to complete
-            Thread.Sleep(500);
+            // TTS 空数据经 MediaFoundationReader 失败→结束链路异步完成：事件驱动轮询替代
+            // 固定等待，慢机器/无声卡环境不会因 500ms 不够而误报
+            var deadline = Environment.TickCount64 + 5000;
+            while (!ttsEnded && Environment.TickCount64 < deadline)
+                Thread.Sleep(20);
             Assert.True(ttsEnded, "TTS should have ended after playing empty data");
         }
         finally

@@ -100,7 +100,8 @@ public class ChatAreaMicButtonTests
                 KeyModifiers.None, 1));
 
             if (!vm.ChatVM.IsListening)
-                return; // 机器无输入设备（如 CI）：成功路径不可用，仅验证被拒路径
+                return; // 机器无输入设备（如 CI）：成功路径不可用，仅验证被拒路径。
+                        // AvaloniaFact 与 SkippableFact 机制不兼容，只能注释化静默跳过
 
             Assert.Same(mic, pointer.Captured);
             var pressedBrush = Assert.IsType<SolidColorBrush>(mic.Background);

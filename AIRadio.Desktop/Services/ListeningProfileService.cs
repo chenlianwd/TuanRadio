@@ -724,23 +724,30 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
-    private static string BuildDigestPrompt(DigestPromptInput input) => AppLanguage.Current == "en"
-        ? $"""
+    private static string BuildDigestPrompt(DigestPromptInput input)
+    {
+        // 元数据消毒：歌手/曲目来自第三方音源，可能携带控制块标记，进提示词前剥除（纵深防御）
+        string Join(string sep, IEnumerable<string> parts)
+            => string.Join(sep, parts.Select(PromptHygiene.StripControlMarkers));
+
+        return AppLanguage.Current == "en"
+            ? $"""
             Summarize this listener's music taste in 3-5 short sentences: preferred genres, languages, eras and moods.
             Output only the summary — no greetings or explanations.
-            Favorite artists (by listening score): {string.Join(", ", input.TopArtists)}
-            Avoided artists: {string.Join(", ", input.AvoidArtists)}
-            Recently played: {string.Join("; ", input.RecentTracks)}
-            Frequent moods: {string.Join(", ", input.MoodUsage)}
+            Favorite artists (by listening score): {Join(", ", input.TopArtists)}
+            Avoided artists: {Join(", ", input.AvoidArtists)}
+            Recently played: {Join("; ", input.RecentTracks)}
+            Frequent moods: {Join(", ", input.MoodUsage)}
             """
-        : $"""
+            : $"""
             用 3-5 句话归纳这位听众的音乐口味：偏好的流派、语言、年代和氛围。
             只输出归纳结果本身：不要问候、开场白或任何解释。
-            常听歌手（按收听分排序）：{string.Join("、", input.TopArtists)}
-            回避歌手：{string.Join("、", input.AvoidArtists)}
-            最近在听：{string.Join("；", input.RecentTracks)}
-            常见氛围：{string.Join("、", input.MoodUsage)}
+            常听歌手（按收听分排序）：{Join("、", input.TopArtists)}
+            回避歌手：{Join("、", input.AvoidArtists)}
+            最近在听：{Join("；", input.RecentTracks)}
+            常见氛围：{Join("、", input.MoodUsage)}
             """;
+    }
 
     private DigestPromptInput BuildPromptInputLocked(ListenerProfileSnapshot snapshot, string language)
     {

@@ -57,7 +57,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private int _disposed;
     [Reactive] public partial bool HasFailure { get; set; }
     private bool _isStatusNoticeDismissed;
-    private string _failureStatusText = "AI ERROR";
     // 保留未本地化的原始失败信息，语言切换时按当前语言重译常驻/可召回通知
     private ApiFailureInfo? _failureInfo;
     private IDisposable? _statusAutoDismissSub;
@@ -71,13 +70,11 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool IsSpeaking { get; set; }
     [Reactive] public partial bool IsConversationMode { get; set; }
     [Reactive] public partial string DjEmotion { get; set; } = "neutral";
-    [Reactive] public partial string StatusText { get; set; } = "READY";
     [Reactive] public partial string StatusHeadline { get; set; } = string.Empty;
     [Reactive] public partial string StatusDetail { get; set; } = string.Empty;
     [Reactive] public partial string StatusRecoveryHint { get; set; } = string.Empty;
     [Reactive] public partial bool ShowStatusNotice { get; set; }
     [Reactive] public partial bool ShowStatusRecall { get; set; }
-    [Reactive] public partial string MicButtonText { get; set; } = "HOLD";
 
     public event Action<string, string>? DjVisualCue; // expression, motion
 
@@ -327,7 +324,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             waveIn.StartRecording();
             IsListening = true;
             IsRecognizing = false;
-            MicButtonText = "HOLD";
             RefreshStatus();
             Log.Information("Mic recording started");
         }
@@ -355,8 +351,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             }
             IsListening = false;
             IsRecognizing = false;
-            MicButtonText = "HOLD";
-            StatusText = "MIC ERROR";
         }
     }
 
@@ -370,7 +364,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             _waveIn?.StopRecording();
             IsListening = false;
             IsRecognizing = true;
-            MicButtonText = "HOLD";
             RefreshStatus();
             Log.Information("Mic recording stopped");
         }
@@ -379,8 +372,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             Log.Warning(ex, "Error stopping mic");
             IsListening = false;
             IsRecognizing = false;
-            MicButtonText = "HOLD";
-            StatusText = "MIC ERROR";
         }
     }
 
@@ -424,7 +415,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                         {
                             // AI 仍在回复：拦住并发发送（Execute 不检查 canExecute），
                             // 识别文本留在输入框，当前回复结束后可手动发送
-                            StatusText = "AI BUSY";
                             return;
                         }
 
@@ -441,7 +431,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 {
                     if (Volatile.Read(ref _disposed) == 0)
                     {
-                        StatusText = "NO SPEECH";
                         if (IsConversationMode)
                             _restartConversationListening = true; // 复位 IsRecognizing 后由 finally 重启
                     }
@@ -457,8 +446,10 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             Log.Warning(ex, "Speech recognition failed");
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (Volatile.Read(ref _disposed) == 0)
-                    StatusText = "STT ERROR";
+                if (Volatile.Read(ref _disposed) != 0)
+                    return;
+
+                RefreshStatus();
             });
         }
         finally
@@ -471,7 +462,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                         return;
 
                     IsRecognizing = false;
-                    MicButtonText = "HOLD";
                     RefreshStatus();
                     _sendAfterHoldToTalk = false;
                     if (_restartConversationListening && IsConversationMode)
@@ -623,7 +613,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
         if (willSpeak)
         {
-            StatusText = "VOICE...";
             SetWorkingNotice(AppLanguage.T("正在生成语音", "Generating voice"), AppLanguage.T("AI 文字已返回，正在调用语音服务。", "AI text is back; calling the voice service."));
             var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
             if (speechData is { Length: > 0 })
@@ -654,54 +643,14 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task SpeakAsync(string displayText)
-    {
-        if (!_djService.TtsEnabled)
-        {
-            StatusText = "VOICE OFF";
-            return;
-        }
-
-        var ttsText = StripEmoji(displayText);
-        if (string.IsNullOrWhiteSpace(ttsText)) return;
-
-        StatusText = "VOICE...";
-        SetWorkingNotice(AppLanguage.T("正在生成语音", "Generating voice"), AppLanguage.T("正在调用语音服务。", "Calling the voice service."));
-        var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
-        if (speechData is { Length: > 0 })
-        {
-            _audioService.PlayTtsAudio(speechData);
-        }
-        else
-        {
-            if (_djService.LastFailure is { } speechFailure)
-                SetFailureNotice(speechFailure);
-            else
-                SetFailureNotice(new ApiFailureInfo(
-                    ApiFailureKind.InvalidResponse,
-                    AppLanguage.T("语音生成失败", "Voice generation failed"),
-                    AppLanguage.T("语音服务没有返回可播放的音频数据。", "The voice service returned no playable audio."),
-                    AppLanguage.T("检查 API Key、账号权限和 TTS 额度后重试。", "Check the API key, account permissions and TTS quota, then retry.")));
-            Log.Warning("TTS returned empty audio");
-        }
-    }
-
     private void RefreshStatus()
     {
         if (HasFailure && !IsProcessing && !IsSpeaking && !IsRecognizing && !IsListening)
         {
-            StatusText = _failureStatusText;
             ShowStatusNotice = !_isStatusNoticeDismissed;
             ShowStatusRecall = _isStatusNoticeDismissed;
             return;
         }
-
-        StatusText = IsSpeaking ? "SPEAKING"
-            : IsRecognizing ? "RECOGNIZING"
-            : IsListening ? "LISTENING"
-            : IsProcessing ? "THINKING"
-            : IsConversationMode ? "CONVERSATION"
-            : "READY";
 
         if (IsProcessing)
         {
@@ -736,16 +685,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         failure = ApiFailureLocalization.ForCurrentLanguage(failure);
         HasFailure = true;
         _isStatusNoticeDismissed = false;
-        _failureStatusText = failure.Kind switch
-        {
-            ApiFailureKind.MissingApiKey => "API KEY MISSING",
-            ApiFailureKind.Authentication => "API AUTH ERROR",
-            ApiFailureKind.Timeout => "AI TIMEOUT",
-            ApiFailureKind.Network => "NETWORK ERROR",
-            ApiFailureKind.RateLimited => "API LIMITED",
-            _ => "AI ERROR"
-        };
-        StatusText = _failureStatusText;
         StatusHeadline = failure.Title;
         StatusDetail = failure.Detail;
         StatusRecoveryHint = failure.RecoveryHint;
@@ -808,12 +747,25 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         var displayText = Regex.Replace(response, @"\[(happy|sad|calm|neutral|angry|surprised)\]", "", RegexOptions.IgnoreCase);
         string? command = null;
 
-        var jsonMatch = Regex.Match(displayText, @"<cmd>\s*(\{.*?\})\s*</cmd>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-        if (jsonMatch.Success)
-        {
-            command = ParseJsonCommand(jsonMatch.Groups[1].Value);
-            displayText = displayText.Remove(jsonMatch.Index, jsonMatch.Length);
-        }
+        // 系统提示词要求"恰好一个控制块"，但模型偶发违规输出多块：全部移除防后续块
+        // 原样泄漏进气泡（首块解析为命令）。控制体按 <cmd>…</cmd> 标记切取而非
+        // 正则花括号配对（首块内界以标记为准；值内含 "</cmd>" 字面量的极端形态由
+        // PromptHygiene 元数据消毒前置斩断）。MatchEvaluator 由 Regex.Replace 同步
+        // 按序调用，first 标记可靠
+        var firstBlock = true;
+        displayText = Regex.Replace(
+            displayText,
+            @"<cmd>([\s\S]*?)</cmd>",
+            match =>
+            {
+                if (firstBlock)
+                {
+                    command = ParseJsonCommand(match.Groups[1].Value.Trim());
+                    firstBlock = false;
+                }
+                return string.Empty;
+            },
+            RegexOptions.IgnoreCase);
         // 旧文本尾标格式（【play:…】/【next】等）已按计划移除：协议只认 JSON 控制块，
         // 系统提示词自始只教学 JSON 格式，遗留解析分支不再保留
 
@@ -1189,14 +1141,16 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             else if (command.StartsWith("change_mood:", StringComparison.OrdinalIgnoreCase))
             {
                 var mood = command["change_mood:".Length..].Trim();
-                // 会话级氛围偏好：真正影响后续节目单的意图检测与搜索词
-                _recommendationService?.SetMoodBias(mood);
+                // 会话级氛围偏好：真正影响后续节目单的意图检测与搜索词。
+                // 画像事件按契约存归一化结果（原始 LLM 文本超长时会进 MoodUsage 键
+                // 拼进 digest 提示词，造成语义漂移），展示文案仍用用户可见的原文
+                var normalizedMood = _recommendationService?.SetMoodBias(mood);
                 // 长期画像记 mood 历史（仅聊天指令走 MoodSet；CALM/FIRE 按钮走 Calmer/Energetic 事件）
-                if (_listeningProfile != null && !string.IsNullOrWhiteSpace(mood))
+                if (_listeningProfile != null && !string.IsNullOrWhiteSpace(normalizedMood))
                     _listeningProfile.RecordEvent(new ListeningEventData
                     {
                         Type = ListeningEventType.MoodSet,
-                        Detail = mood,
+                        Detail = normalizedMood,
                     });
                 AddMessage(new ChatMessage
                 {

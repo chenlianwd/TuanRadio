@@ -7,39 +7,12 @@ using Xunit;
 
 namespace AIRadio.Desktop.Tests;
 
+/// <summary>
+/// 频谱 VM 只保留 SpectrumReceived 事件通道（全部渲染经此直连）；
+/// 曾有的 Bands ObservableCollection 零消费者，已按 2026-10-15 审查裁决移除。
+/// </summary>
 public class SpectrumViewModelTests
 {
-    [Fact]
-    public void Constructor_Initializes32BandsAtZero()
-    {
-        var audioMock = new Mock<IAudioService>();
-        audioMock.Setup(x => x.SpectrumData).Returns(Observable.Empty<float[]>());
-
-        using var vm = new SpectrumViewModel(audioMock.Object);
-
-        Assert.Equal(32, vm.Bands.Count);
-        Assert.All(vm.Bands, b => Assert.Equal(0f, b));
-    }
-
-    [Fact]
-    public void SpectrumData_UpdatesBands()
-    {
-        var spectrum = new Subject<float[]>();
-        var audioMock = new Mock<IAudioService>();
-        audioMock.Setup(x => x.SpectrumData).Returns(spectrum);
-
-        using var vm = new SpectrumViewModel(audioMock.Object);
-
-        var data = new float[32];
-        data[0] = 0.5f;
-        data[1] = 0.8f;
-        spectrum.OnNext(data);
-
-        Assert.Equal(0.5f, vm.Bands[0]);
-        Assert.Equal(0.8f, vm.Bands[1]);
-        Assert.Equal(0f, vm.Bands[2]);
-    }
-
     [Fact]
     public void SpectrumData_FiresSpectrumReceivedEvent()
     {
@@ -67,10 +40,12 @@ public class SpectrumViewModelTests
         audioMock.Setup(x => x.SpectrumData).Returns(spectrum);
 
         var vm = new SpectrumViewModel(audioMock.Object);
+        float[]? received = null;
+        vm.SpectrumReceived += data => received = data;
         vm.Dispose();
 
-        // Should not throw or update after dispose
+        // Dispose 后不再向下游转发
         spectrum.OnNext(new float[32]);
-        Assert.Equal(0f, vm.Bands[0]);
+        Assert.Null(received);
     }
 }

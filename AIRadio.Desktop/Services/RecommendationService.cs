@@ -225,11 +225,14 @@ public class RecommendationService : IRecommendationService
         }
     }
 
-    /// <summary>会话级氛围偏好：覆盖意图正则检测出的 mood，并注入搜索词生成提示。传 null/空白清除。</summary>
-    public void SetMoodBias(string? mood)
+    /// <summary>会话级氛围偏好：覆盖意图正则检测出的 mood，并注入搜索词生成提示。传 null/空白清除。
+    /// 返回归一化结果（结构化 calm/energetic/sad 或 ≤12 字自由词；超长/空白为 null），
+    /// 供消费方按"Detail 存归一化氛围值"契约记录画像事件。</summary>
+    public string? SetMoodBias(string? mood)
     {
         lock (_stateGate)
             _moodBias = NormalizeMood(mood);
+        return _moodBias;
     }
 
     /// <summary>电台轮换选曲启发式：优先避开与当前曲同歌手，避免连播同一歌手。</summary>
@@ -344,30 +347,35 @@ public class RecommendationService : IRecommendationService
             var moodHint = string.IsNullOrWhiteSpace(moodBias)
                 ? string.Empty
                 : AppLanguage.T($"\n氛围偏好：{moodBias}", $"\nMood preference: {moodBias}");
+            // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
             var recentTracks = recentHistory
                 .Reverse()
                 .DistinctBy(track => $"{track.Title.Trim()}|{track.Artist.Trim()}", StringComparer.OrdinalIgnoreCase)
                 .Take(8)
-                .Select(track => $"{track.Title} - {track.Artist}");
+                .Select(track => $"{PromptHygiene.StripControlMarkers(track.Title)} - {PromptHygiene.StripControlMarkers(track.Artist)}");
             var profileSection = BuildProfilePromptSection(profileSnapshot);
+            var currentTitle = PromptHygiene.StripControlMarkers(request.CurrentTrack?.Title);
+            var currentArtist = PromptHygiene.StripControlMarkers(request.CurrentTrack?.Artist);
+            var favoritesText = string.Join(", ", request.Favorites.Take(5)
+                .Select(x => $"{PromptHygiene.StripControlMarkers(x.Title)} {PromptHygiene.StripControlMarkers(x.Artist)}"));
             var prompt = AppLanguage.Current == "en"
                 ? $"""
                     Generate 3 short music-search queries, one per line.
                     Infer the shared genre, era, language and mood of recently played tracks instead of repeating one title.{profileSection.ExploreInstruction}
                     Output only the queries — no greetings, preamble or explanations.
                     User intent: {userIntent}
-                    Current track: {request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
+                    Current track: {currentTitle} - {currentArtist}
                     Recently played: {string.Join(", ", recentTracks)}
-                    Favorites: {string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}{profileSection.Context}
+                    Favorites: {favoritesText}{moodHint}{profileSection.Context}
                     """
                 : $"""
                     根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
                     关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。{profileSection.ExploreInstruction}
                     只输出关键词本身：不要问候、开场白或任何解释。
                     用户意图：{userIntent}
-                    当前歌曲：{request.CurrentTrack?.Title} - {request.CurrentTrack?.Artist}
+                    当前歌曲：{currentTitle} - {currentArtist}
                     最近已播放：{string.Join(", ", recentTracks)}
-                    收藏参考：{string.Join(", ", request.Favorites.Take(5).Select(x => $"{x.Title} {x.Artist}"))}{moodHint}{profileSection.Context}
+                    收藏参考：{favoritesText}{moodHint}{profileSection.Context}
                     """;
             var response = await ChatAsync(prompt, cancellationToken);
             var queries = SanitizeSearchQueries(

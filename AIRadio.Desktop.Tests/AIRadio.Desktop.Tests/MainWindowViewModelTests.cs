@@ -99,8 +99,8 @@ public class MainWindowViewModelTests
             await Task.Delay(250);
 
             Assert.Contains(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
-            Assert.Single(vm.PlaylistVM.Tracks.Where(t => t.SourceId == "test:recommended"));
-            Assert.Single(audio.Playlist.Where(t => t.SourceId == "test:recommended"));
+            Assert.Single(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
+            Assert.Single(audio.Playlist, t => t.SourceId == "test:recommended");
         }
         finally
         {

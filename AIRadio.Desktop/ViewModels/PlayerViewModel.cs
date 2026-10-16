@@ -36,15 +36,12 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string TrackPreviewText { get; set; } = AppLanguage.T("试听片段", "Preview");
     [Reactive] public partial bool TrackIsPreview { get; set; }
     [Reactive] public partial bool IsPlaying { get; set; }
-    [Reactive] public partial string PlayPauseText { get; set; } = "▶";
     [Reactive] public partial double CurrentSeconds { get; set; }
-    [Reactive] public partial double DisplaySeconds { get; set; }
     [Reactive] public partial double TotalSeconds { get; set; }
     [Reactive] public partial float Volume { get; set; } = 0.8f;
     [Reactive] public partial string PositionText { get; set; } = "0:00";
     [Reactive] public partial string DurationText { get; set; } = "0:00";
     [Reactive] public partial bool IsShuffled { get; set; }
-    [Reactive] public partial string ShuffleText { get; set; } = "🔀";
     [Reactive] public partial string RepeatMode { get; set; } = "radio";
     [Reactive] public partial string RepeatText { get; set; } = "DJ";
     [Reactive] public partial string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
@@ -77,7 +74,6 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         {
             _audioService.Shuffle();
             IsShuffled = _audioService.IsShuffled;
-            ShuffleText = IsShuffled ? "🔀 ON" : "🔀";
         });
 
         ToggleRepeatCommand = ReactiveCommand.Create(() =>
@@ -139,7 +135,6 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             .Subscribe(state =>
             {
                 IsPlaying = state == PlaybackState.Playing;
-                PlayPauseText = IsPlaying ? "⏸" : "▶";
             });
 
         _posSub = _audioService.PositionChanged
@@ -150,7 +145,6 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
                 if (!_isDragging)
                 {
                     CurrentSeconds = pos.TotalSeconds;
-                    DisplaySeconds = pos.TotalSeconds;
                 }
                 PositionText = FormatTime(pos);
             });

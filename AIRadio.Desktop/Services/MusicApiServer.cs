@@ -47,15 +47,51 @@ public class MusicApiServer : IDisposable
     }
 
     /// <summary>
-    /// 网易代理等无专属环境需求的启动环境。代理侧对携带 Origin 的请求做准入
-    /// （仅放行同源与 CORS_ALLOW_ORIGIN 白名单，见 server/start.js）：CORS 响应头
-    /// 只能阻止浏览器读取响应，拦不住跨站简单请求发出并执行，准入检查才是防线。
+    /// 网易代理的启动环境：固定 CORS（响应头只拦浏览器读取，请求准入在代理侧）+
+    /// 安装级身份令牌（KugouDevice 摘要，LoadAsync 已在代理启动前恢复为持久化值）。
+    /// 代理侧 /tuanradio/identity 返回令牌摘要，收养判定据此比对——仅受 start.js
+    /// 控制的自有进程持有注入的令牌，端口上的冒充者答不上来。
     /// </summary>
-    public static IReadOnlyDictionary<string, string> RestrictedCorsEnvironment { get; } =
-        new Dictionary<string, string>(StringComparer.Ordinal)
+    public static IReadOnlyDictionary<string, string> BuildNeteaseProxyEnvironment(MusicAccountStore accounts)
+    {
+        return new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["CORS_ALLOW_ORIGIN"] = "http://tuanradio.local"
+            ["CORS_ALLOW_ORIGIN"] = "http://tuanradio.local",
+            ["TUANRADIO_PROXY_IDENTITY"] = accounts.KugouDevice.ComputeProxyIdentityHash(),
         };
+    }
+
+    /// <summary>代理身份令牌的摘要（与代理侧 sha256(令牌) 同口径）。</summary>
+    public static string ProxyIdentityHash(string token)
+        => Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))
+            .ToLowerInvariant();
+
+    /// <summary>酷狗/网易共用的 /tuanradio/identity 响应校验（服务名 + 协议版 + 令牌摘要比对）。</summary>
+    public static bool MatchesProxyIdentityResponse(string? json, string serviceName, string expectedHash)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Length > 16 * 1024)
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return root.ValueKind == JsonValueKind.Object &&
+                   root.TryGetProperty("status", out var status) &&
+                   status.TryGetInt32(out var statusCode) && statusCode == 1 &&
+                   root.TryGetProperty("service", out var service) &&
+                   string.Equals(service.GetString(), serviceName, StringComparison.Ordinal) &&
+                   root.TryGetProperty("protocol", out var protocol) &&
+                   protocol.TryGetInt32(out var protocolVersion) && protocolVersion == 1 &&
+                   root.TryGetProperty("device_hash", out var deviceHash) &&
+                   string.Equals(deviceHash.GetString(), expectedHash, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// 本地 Node 音乐 API 代理管理器。默认参数对应网易云代理（server 目录 + 37250 端口），

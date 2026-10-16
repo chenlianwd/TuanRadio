@@ -107,11 +107,16 @@ public sealed class SpectrumAnalyzer : IDisposable
 
     private void OnDataAvailable(object? sender, WaveInEventArgs e)
     {
-        if (_capture == null || Volatile.Read(ref _disposed) != 0) return;
+        if (Volatile.Read(ref _disposed) != 0) return;
+
+        // 重建窗口的竞态防护：旧实例已 detach 但在飞回调仍会进入，且此刻 _capture 可能
+        // 已指向新实例——以 sender 为准取格式并校验仍是当前实例，否则与新建实例的回调
+        // 互相踩踏共享缓冲/按错误格式解析
+        if (sender is not WasapiLoopbackCapture active || !ReferenceEquals(active, _capture)) return;
 
         try
         {
-            var format = _capture.WaveFormat;
+            var format = active.WaveFormat;
             var channels = Math.Max(1, format.Channels);
             var bytesPerSample = Math.Max(1, format.BitsPerSample / 8);
             var blockAlign = format.BlockAlign > 0
@@ -224,6 +229,8 @@ public sealed class SpectrumAnalyzer : IDisposable
                     return;
                 }
                 _capture = replacement;
+                // 旧设备缓冲的残留样本不得混入新设备的帧：重建即重置累积计数
+                _bufferCount = 0;
             }
             replacement.StartRecording();
             // StartRecording 与 Dispose 并发的极窄窗口：二次确认已退出则立即停录回收，

@@ -103,7 +103,7 @@ public class KuwoMusicService : IMusicSearchService
         var id = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
         try
         {
-            var url = $"https://www.kuwo.cn/api/v1/www/music/playUrl?mid={id}&type=music&httpsStatus=1";
+            var url = $"https://www.kuwo.cn/api/v1/www/music/playUrl?mid={Uri.EscapeDataString(id)}&type=music&httpsStatus=1";
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Referer", "https://www.kuwo.cn/");
             // Kuwo requires these headers; the token value "0" works as a placeholder
@@ -123,7 +123,10 @@ public class KuwoMusicService : IMusicSearchService
                 data.ValueKind == JsonValueKind.Object &&
                 data.TryGetProperty("url", out var urlEl))
             {
-                return urlEl.ValueKind == JsonValueKind.String ? urlEl.GetString() : null;
+                // 与酷狗/咪咕同口径：非 http(s) 值不得流入 LibVLC（否则下游 Uri.TryCreate
+                // 拒绝后被归类为"地址不安全"传输失败，语义失真为"无地址"才对）
+                var firstUrl = urlEl.ValueKind == JsonValueKind.String ? urlEl.GetString() : null;
+                return IsHttpUrl(firstUrl) ? firstUrl : null;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -137,4 +140,9 @@ public class KuwoMusicService : IMusicSearchService
         }
         return null;
     }
+
+    private static bool IsHttpUrl(string? url)
+        => url is not null &&
+           (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
 }

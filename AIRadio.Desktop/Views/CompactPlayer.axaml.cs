@@ -36,6 +36,10 @@ public partial class CompactPlayer : UserControl
             OnProgressSliderReleased,
             RoutingStrategies.Bubble,
             handledEventsToo: true);
+        // 系统打断拖拽时 PointerReleased 不会送达，捕获丢失兜底结束拖拽（同 PlayerDeck）
+        CompactProgressSlider.AddHandler(
+            InputElement.PointerCaptureLostEvent,
+            OnProgressSliderCaptureLost);
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -74,6 +78,13 @@ public partial class CompactPlayer : UserControl
 
     private void OnProgressSliderReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (DataContext is MainWindowViewModel vm)
+            vm.PlayerVM.EndSeek(CompactProgressSlider.Value);
+    }
+
+    private void OnProgressSliderCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        // 正常松开时捕获也会丢失并走到这里：EndSeek 幂等（重复 Seek 同值无害）
         if (DataContext is MainWindowViewModel vm)
             vm.PlayerVM.EndSeek(CompactProgressSlider.Value);
     }

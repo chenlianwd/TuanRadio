@@ -148,6 +148,9 @@ public sealed class WeatherService : IWeatherService
 
     private async Task<(double Lat, double Lon, string Name)?> LocateByIpAsync(CancellationToken cancellationToken)
     {
+        // 明文 HTTP 是上游限制的明知取舍：ip-api 免费版仅支持 HTTP（HTTPS 需付费），
+        // 暴露面为经未加密信道返回的 lat/lon/城市名（仅天气展示定位，无凭据）；
+        // 中间人最多篡改天气定位的展示，不影响其余任何链路。设置页配置城市后本路径不触发
         var url = "http://ip-api.com/json?fields=status,lat,lon,city";
         using var response = await _http.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();

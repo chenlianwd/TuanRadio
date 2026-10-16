@@ -379,7 +379,7 @@ public class AudioServiceTests
         await Task.Delay(200);
 
         Assert.Equal(2, svc.Playlist.Count);
-        Assert.Single(svc.Playlist.Where(t => t.SourceId == "test:recommended"));
+        Assert.Single(svc.Playlist, t => t.SourceId == "test:recommended");
         svc.Dispose();
     }
 

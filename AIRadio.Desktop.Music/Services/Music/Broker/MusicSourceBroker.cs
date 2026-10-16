@@ -970,7 +970,9 @@ public class MusicSourceBroker : IMusicSourceBroker
         }
     }
 
-    /// <summary>ResolvedMedia 到播放 URL 的形态转换：本地文件源回本地路径，其余逐字保留原始 URL。</summary>
+    /// <summary>ResolvedMedia 到播放 URL 的形态转换：本地文件源回本地路径，其余逐字保留原始 URL。
+    /// 本地路径往返依赖 new Uri 对 DOS 形态路径的 legacy 解析（'#'/'%' 等正确转义、
+    /// LocalPath 完整还原），不要在生产/消费任一侧做额外转义（见 LocalLibraryProvider 注释）。</summary>
     private static string? ToPlayableUrl(IMusicProvider provider, ResolvedMedia? media)
         => media == null
             ? null
