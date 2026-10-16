@@ -65,7 +65,6 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private bool _digestInProgress;
     private int _digestFailureCount;
     private DateTime? _lastDigestFailureAt;
-    private bool _languageRegenDone;
 
     // 跳过判定瞬时状态（全部在 _gate 内）；"已播 ≥10s"用进度样本衡量（暂停不计时）
     private string? _playingKey;
@@ -264,7 +263,6 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             _digest = null;
             _digestFailureCount = 0;
             _lastDigestFailureAt = null;
-            _languageRegenDone = false;
             _futureFormatSkipped = false;
             _epoch++;
             _dirty = false;
@@ -371,15 +369,16 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 return;
 
             var language = AppLanguage.Current;
+            // 语言差异触发归纳：成功即 _digest.Language 与当前语言一致（条件自满足），
+            // 失败则与水位/老化触发同待遇——由连续失败退避统一限流，下一个事件可重试。
+            // （曾有 _languageRegenDone 前置标记防重复扣费，但会让失败后的旧语言摘要
+            // 整会话不再因语言差异重试，已移除）
             var need = _digest == null ||
                        _totalEventsIngested - _digest.EventWatermark >= DigestWatermarkEvents ||
                        now - _digest.GeneratedAt >= DigestMaxAge ||
-                       (!string.Equals(_digest.Language, language, StringComparison.OrdinalIgnoreCase) && !_languageRegenDone);
+                       !string.Equals(_digest.Language, language, StringComparison.OrdinalIgnoreCase);
             if (!need)
                 return;
-
-            if (_digest != null && !string.Equals(_digest.Language, language, StringComparison.OrdinalIgnoreCase))
-                _languageRegenDone = true;
 
             _digestInProgress = true;
             input = BuildPromptInputLocked(snapshot, language);

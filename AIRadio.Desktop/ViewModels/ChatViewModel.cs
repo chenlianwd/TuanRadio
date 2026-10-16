@@ -539,7 +539,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             }
 
             var response = await _djService.GenerateChatResponseAsync(text, _lifetimeCts.Token);
-            if (_djService.LastFailure is { } chatFailure)
+            if (_djService.LastChatFailure is { } chatFailure)
             {
                 AddFailureMessage(AppLanguage.T("AI 回复失败", "AI reply failed"), chatFailure);
                 SetFailureNotice(chatFailure);
@@ -623,7 +623,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                if (_djService.LastFailure is { } speechFailure)
+                if (_djService.LastTtsFailure is { } speechFailure)
                     SetFailureNotice(speechFailure);
                 else
                     SetFailureNotice(new ApiFailureInfo(

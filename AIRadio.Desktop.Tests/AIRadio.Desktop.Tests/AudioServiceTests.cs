@@ -261,7 +261,7 @@ public class AudioServiceTests
         var callbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var recommendation = new TaskCompletionSource<Track?>(TaskCreationOptions.RunContinuationsAsynchronously);
         svc.SetRepeatMode("radio");
-        svc.SetNextCallback(() =>
+        svc.SetNextCallback(_ =>
         {
             callbackStarted.TrySetResult();
             return recommendation.Task;
@@ -369,7 +369,7 @@ public class AudioServiceTests
             }
         });
         svc.SetRepeatMode("radio");
-        svc.SetNextCallback(() =>
+        svc.SetNextCallback(_ =>
         {
             svc.AddTracks(new[] { recommended });
             return Task.FromResult<Track?>(recommended);
@@ -405,7 +405,7 @@ public class AudioServiceTests
                 }
             });
             svc.SetRepeatMode("radio");
-            svc.SetNextCallback(() => Task.FromResult<Track?>(null));
+            svc.SetNextCallback(_ => Task.FromResult<Track?>(null));
 
             svc.Next();
             await Task.Delay(100);

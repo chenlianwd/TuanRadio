@@ -191,8 +191,10 @@ public class MusicApiServer : IDisposable
 
                     process.OutputDataReceived += (_, e) =>
                     {
+                        // 代理 stdout 原样落 Debug 文件日志：kugou 侧有 redactUrl 但上游日志
+                        // 形态可能变化，C# 侧按脱敏键集兜底（与 AddSearchReport/UrlForLog 同族）
                         if (!string.IsNullOrEmpty(e.Data))
-                            Log.Debug("{Tag}: {Line}", _logTag, e.Data);
+                            Log.Debug("{Tag}: {Line}", _logTag, SensitiveDataSanitizer.Sanitize(e.Data));
                     };
 
                     process.ErrorDataReceived += (_, e) =>

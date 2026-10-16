@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using AIRadio.Desktop.ViewModels;
+using AIRadio.Desktop.Models;
 
 namespace AIRadio.Desktop.Services;
 

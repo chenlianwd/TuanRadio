@@ -196,10 +196,11 @@ async function consturctServer(moduleDefs) {
   // 从环境变量读取允许的跨域来源，若未配置则回退到请求头中的 origin 或 '*'
   const { CORS_ALLOW_ORIGIN } = process.env;
 
-  // 仅信任回环对端的 X-Forwarded-For：桌面形态监听 127.0.0.1 且无真实反代，
-  // trust proxy=true 会让本机任意进程伪造客户端 IP 参与上游风控判定；loopback
-  // 保留 Docker 形态下同机反代的正常路径
-  app.set('trust proxy', 'loopback');
+  // X-Forwarded-For 信任策略按运行形态区分：桌面形态（start.js 注入 TUANRADIO_DESKTOP）
+  // 监听 127.0.0.1 且无真实反代——所有本机进程的对端都是回环，'loopback' 策略下 XFF
+  // 照旧被信任、本机伪造客户端 IP 参与上游风控判定的面不变，必须 false（req.ip 恒为
+  // socket 地址 127.0.0.1）；Docker 形态保留 'loopback'（同机反代的正常路径）
+  app.set('trust proxy', process.env.TUANRADIO_DESKTOP ? false : 'loopback');
 
   /**
    * ============================================================

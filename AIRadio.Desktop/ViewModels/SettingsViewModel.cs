@@ -18,12 +18,6 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
-public class VoiceOption
-{
-    public string Id { get; init; } = "";
-    public string DisplayName { get; init; } = "";
-}
-
 public sealed class MusicProviderOption : ReactiveObject
 {
     private bool _enabled;
@@ -957,6 +951,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(_ =>
             {
+                if (Volatile.Read(ref _disposed) != 0)
+                    return; // Dispose 后的一次性计时到期：不再触碰已释放 VM 的状态
                 if (Volatile.Read(ref _resetArmVersion) == version && Volatile.Read(ref _listenerProfileResetArmed) != 0)
                 {
                     Interlocked.Exchange(ref _listenerProfileResetArmed, 0);

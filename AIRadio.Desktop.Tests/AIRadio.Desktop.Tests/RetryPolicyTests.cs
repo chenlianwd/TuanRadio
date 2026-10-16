@@ -53,6 +53,38 @@ public class RetryPolicyTests
                 throw new InvalidOperationException("not http"), maxRetries: 3, baseDelayMs: 1));
     }
 
+    // LLM 服务端 5xx 与连接失败同族（上游瞬态过载可重试）；4xx 家族重试无意义不重试
+    [Fact]
+    public async Task ExecuteAsync_RetriesOnLlmServerFailure()
+    {
+        int attempts = 0;
+        var result = await RetryPolicy.ExecuteAsync(() =>
+        {
+            attempts++;
+            if (attempts < 2)
+                throw new LlmApiException(ApiFailureInfo.FromStatusCode(
+                    System.Net.HttpStatusCode.BadGateway, "upstream overload"));
+            return Task.FromResult("ok");
+        }, maxRetries: 3, baseDelayMs: 1);
+
+        Assert.Equal("ok", result);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotRetryLlmAuthenticationOrRateLimitFailure()
+    {
+        int attempts = 0;
+        await Assert.ThrowsAsync<LlmApiException>(() =>
+            RetryPolicy.ExecuteAsync<string>(() =>
+            {
+                attempts++;
+                throw new LlmApiException(ApiFailureInfo.FromStatusCode(
+                    System.Net.HttpStatusCode.Unauthorized, "bad key"));
+            }, maxRetries: 3, baseDelayMs: 1));
+        Assert.Equal(1, attempts);
+    }
+
     [Fact]
     public async Task ExecuteAsync_VoidOverload_Works()
     {

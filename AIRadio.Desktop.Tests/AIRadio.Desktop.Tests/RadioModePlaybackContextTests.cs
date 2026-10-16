@@ -113,7 +113,7 @@ public class RadioModePlaybackContextTests
             svc.SetRepeatMode("radio");
             var recommendation = new TaskCompletionSource<Track?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
-            svc.SetNextCallback(() => recommendation.Task);
+            svc.SetNextCallback(_ => recommendation.Task);
 
             var played = new TaskCompletionSource<Track?>(
                 TaskCreationOptions.RunContinuationsAsynchronously);

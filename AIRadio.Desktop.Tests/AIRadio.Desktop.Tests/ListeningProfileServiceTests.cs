@@ -378,10 +378,57 @@ public class ListeningProfileServiceTests : IDisposable
         Assert.False(service.GetSnapshot().MeetsInjectionThreshold);
     }
 
+    // 语言切换触发的归纳失败后不锁死：语言差异维度与水位/老化触发同待遇，由连续失败
+    // 退避统一限流，下一个事件可重试（曾有 _languageRegenDone 前置置位，失败后整会话
+    // 不再因语言差异重试）
+    [Fact]
+    public async Task Digest_LanguageSwitch_FailureDoesNotLockRetry()
+    {
+        var original = AppLanguage.Current;
+        var calls = 0;
+        _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Returns(() =>
+            {
+                calls++;
+                return calls == 2
+                    ? Task.FromException<string>(new InvalidOperationException("boom"))
+                    : Task.FromResult("摘要");
+            });
+        try
+        {
+            AppLanguage.Apply("zh");
+            var service = await CreateLoadedServiceAsync();
+            await SeedDigestReadyServiceAsync(service);
+
+            // zh 首次归纳成功
+            await service.RefreshDigestAsync(CancellationToken.None);
+            Assert.NotNull(service.GetSnapshot().Digest);
+
+            // 切英文触发语言差异归纳，LLM 失败
+            AppLanguage.Apply("en");
+            await service.RefreshDigestAsync(CancellationToken.None);
+            _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(2));
+
+            // 无水位/老化变化，语言差异仍成立：失败不锁死，新事件后重试并成功
+            service.RecordEvent(new ListeningEventData
+            {
+                Type = ListeningEventType.Played,
+                Title = "新歌",
+                Artist = "歌手",
+                Time = _now,
+            });
+            await service.RefreshDigestAsync(CancellationToken.None);
+            _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(3));
+        }
+        finally
+        {
+            AppLanguage.Apply(original);
+        }
+    }
+
     [Fact]
     public async Task Digest_FailuresBackOffAfterThreeStrikes()
-    {
-        _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+    {        _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
         var service = await CreateLoadedServiceAsync();
         await SeedDigestReadyServiceAsync(service);

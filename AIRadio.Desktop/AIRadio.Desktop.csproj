@@ -9,6 +9,10 @@
     <AssemblyName>AIRadio</AssemblyName>
     <Product>TuanRadio FM</Product>
     <Description>AI-powered personal radio station</Description>
+    <!-- "0 警 0 错"从人工纪律升级为机器强制 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NuGet 依赖锁定（与 npm 侧 lockfile 治理对齐）；提交 packages.lock.json -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>

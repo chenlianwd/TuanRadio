@@ -22,7 +22,8 @@ public class DJService : IDJService
 
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
-    public ApiFailureInfo? LastFailure { get; private set; }
+    public ApiFailureInfo? LastChatFailure { get; private set; }
+    public ApiFailureInfo? LastTtsFailure { get; private set; }
 
     public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null,
         IListeningProfileService? profile = null)
@@ -189,7 +190,7 @@ Response rules:
         // （角色问候路径会直接朗读该文案）；按失败口径上报，让调用方走设置引导分支
         if (_llm is LLMService llmService && !llmService.IsConfigured())
         {
-            LastFailure = ApiFailureInfo.MissingApiKey();
+            LastChatFailure = ApiFailureInfo.MissingApiKey();
             return AppLanguage.T("请先在设置中配置 AI 服务。", "Configure the AI service in Settings first.");
         }
 
@@ -244,9 +245,8 @@ Response rules:
                 }
 
                 _currentEmotion = DetectEmotion(response);
-                // 在成功返回前才清空失败标记：方法开头就清会让并发路径（如 TTS 失败）写入的
-                // 状态在长 await 期间无法与本调用结果区分，角色问候会因此误判为聊天失败
-                LastFailure = null;
+                // 失败标记按流程分字段（LastChatFailure/LastTtsFailure）：并发路径互不覆盖
+                LastChatFailure = null;
                 return response;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -255,7 +255,7 @@ Response rules:
             }
             catch (Exception ex)
             {
-                LastFailure = ApiFailureInfo.FromException(ex);
+                LastChatFailure = ApiFailureInfo.FromException(ex);
                 Log.Error(ex, "Failed to generate chat response");
                 return _profile.Language == "en"
                     ? "Sorry, the signal drifted for a moment. Say that again? [calm]"
@@ -402,7 +402,7 @@ Response rules:
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
-        LastFailure = null;
+        LastTtsFailure = null;
         try
         {
             if (_tts == null) return Array.Empty<byte>();
@@ -422,7 +422,7 @@ Response rules:
         }
         catch (Exception ex)
         {
-            LastFailure = ApiFailureInfo.FromException(ex);
+            LastTtsFailure = ApiFailureInfo.FromException(ex);
             Log.Warning(ex, "TTS failed");
             return null;
         }
