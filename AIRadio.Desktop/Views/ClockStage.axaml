@@ -11,7 +11,8 @@
          x:DataType、其绑定在独立编译单元内编译，危险的是"重定向 + 本页作用域的编译绑定"混用 -->
     <UserControl.Styles>
         <!-- 中栏（时钟/歌词面板）手型光标仅在可点时提示（有在播曲目）：
-             无曲目时点击静默，光标不得谎报可点；频谱条随时可点（切样式），恒手型 -->
+             无曲目时点击静默，光标不得谎报可点；频谱列随时可点（切样式），恒手型。
+             频谱列整列为命中区（SpectrumView 内透明命中层），不再依赖跳动的绘制几何 -->
         <Style Selector="StackPanel.clickable">
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
@@ -30,8 +31,8 @@
                              IsHitTestVisible="False"/>
         <Grid x:Name="ClockLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding !IsLyricsMode}">
             <local:SpectrumView x:Name="ClockSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
-                                Height="118" Margin="0,0,18,0"/>
+                                HorizontalAlignment="Stretch" Cursor="Hand"
+                                Margin="0,0,18,0"/>
             <StackPanel x:Name="ClockPanel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4"
                         Background="Transparent" Classes.clickable="{Binding HasCurrentTrack}">
                 <TextBlock Text="{Binding Now, StringFormat='HH:mm'}" FontSize="56" FontWeight="700"
@@ -43,12 +44,15 @@
                            Foreground="{DynamicResource C_FF858594}" HorizontalAlignment="Center"/>
             </StackPanel>
             <local:SpectrumView x:Name="ClockSpectrumRight" Grid.Column="2" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
-                                Height="118" Margin="18,0,0,0"/>
+                                HorizontalAlignment="Stretch" Cursor="Hand"
+                                Margin="18,0,0,0"/>
         </Grid>
 
-        <!-- 环境指示器（天气）：时钟/歌词两种模式常显；默认仅图标，悬停出详情（日历徽标 2026-10-13 移除） -->
+        <!-- 环境指示器（天气）：时钟/歌词两种模式常显；默认仅图标，悬停出详情（日历徽标 2026-10-13 移除）。
+             Transparent 命中层：指示器带落在频谱列整列命中区内，须自身吸收点击保持"无动作"契约，
+             光标维持显式 Arrow（不被频谱列手型覆盖） -->
         <StackPanel x:Name="EnvironmentIndicators" Orientation="Horizontal" Spacing="12" Cursor="Arrow"
+                    Background="Transparent"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,18,10">
         <TextBlock Text="{Binding WeatherVM.WeatherGlyph}" FontSize="14"
                    FontFamily="Segoe UI Symbol, Microsoft YaHei UI"
@@ -62,8 +66,8 @@
          两次尺寸变化之间保持定值防逐行歌词长度变化带动频谱抖动；点击中栏面板切换（标题栏旧按钮已移除） -->
         <Grid x:Name="LyricsLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding IsLyricsMode}">
             <local:SpectrumView x:Name="LyricsSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
-                                Height="118" Margin="0,0,18,0"/>
+                                HorizontalAlignment="Stretch" Cursor="Hand"
+                                Margin="0,0,18,0"/>
             <StackPanel x:Name="LyricsPanel" Grid.Column="1" Background="Transparent"
                         Classes.clickable="{Binding HasCurrentTrack}"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
@@ -81,8 +85,8 @@
                            HorizontalAlignment="Center" IsVisible="{Binding LyricsVM.HasStatusText}"/>
             </StackPanel>
             <local:SpectrumView x:Name="LyricsSpectrumRight" Grid.Column="2" DataContext="{Binding SpectrumVM}"
-                                HorizontalAlignment="Stretch" VerticalAlignment="Center" Cursor="Hand"
-                                Height="118" Margin="18,0,0,0"/>
+                                HorizontalAlignment="Stretch" Cursor="Hand"
+                                Margin="18,0,0,0"/>
         </Grid>
     </Grid>
 </UserControl>

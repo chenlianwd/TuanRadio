@@ -9,8 +9,11 @@ using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.ViewModels;
 using AIRadio.Desktop.Views;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Moq;
@@ -290,6 +293,93 @@ public class ClockStageLyricsCoexistenceTests
             Thread.Sleep(20);
         }
         Assert.True(persisted, "频谱样式应在超时内持久化到 settings.json");
+    }
+
+    [AvaloniaFact]
+    public void RealPointer_SpectrumColumnClick_CyclesStyle_AnywhereInColumn()
+    {
+        // 2026-10-16 用户反馈回归：纯自绘 SpectrumRenderer 无可命中背景，实机命中只剩
+        // 合成器上的绘制几何——频谱随音频跳动导致"必须点中柱子"。修复 = SpectrumView
+        // 根部整列透明命中层（与中栏 ClockPanel 同法）。经 headless 真实指针管线
+        // （MouseMove/MouseDown/MouseUp → Tapped）锚定：列内任意点都切换样式，
+        // 不依赖绘制内容（headless 无频谱数据，renderer 零绘制几何仍可点）。
+        var vm = CreateViewModel(null); // 频谱切样式无曲目也生效
+        Window? window = null;
+        try
+        {
+            var stage = new ClockStage { DataContext = vm };
+            window = new Window { Content = stage, Width = 1000, Height = 700 };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal("bars", vm.SettingsVM.SelectedSpectrumStyle);
+
+            var left = FindSpectrum(stage, "ClockSpectrumLeft");
+            var size = left.Bounds.Size;
+
+            void Click(Point pInWindow)
+            {
+                window.MouseMove(pInWindow);
+                Dispatcher.UIThread.RunJobs();
+                window.MouseDown(pInWindow, MouseButton.Left);
+                window.MouseUp(pInWindow, MouseButton.Left);
+                Dispatcher.UIThread.RunJobs();
+            }
+
+            // 列区顶部空白（频带 118px 之外）：旧行为点不到，修复后应切换
+            Click(left.TranslatePoint(new Point(size.Width / 2, 12), window)!.Value);
+            Assert.Equal("mirror", vm.SettingsVM.SelectedSpectrumStyle);
+
+            // 频带中央（headless 下 renderer 无绘制内容，恰好锚定命中不靠绘制几何）
+            Click(left.TranslatePoint(new Point(size.Width / 2, size.Height / 2), window)!.Value);
+            Assert.Equal("wave", vm.SettingsVM.SelectedSpectrumStyle);
+
+            // 舞台边缘（频谱列 Margin 之外）不属于任何区域：无动作
+            Click(new Point(5, 5));
+            Assert.Equal("wave", vm.SettingsVM.SelectedSpectrumStyle);
+
+            // 指示器带落在频谱列整列命中区内：自身须有透明命中层吸收点击保"无动作"契约。
+            // 真实天气数据 headless 不可得（指示器不可见、尺寸为 0，无法指针点击），
+            // 命中层接线以绑定断言锚定，路由行为由既有直驱测试覆盖
+            Assert.NotNull(FindNamed<StackPanel>(stage, "EnvironmentIndicators").Background);
+        }
+        finally
+        {
+            window?.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void RealPointer_CenterPanelClick_StillTogglesLyrics()
+    {
+        // 中栏既有行为回归：频谱命中层改造不动中栏，真实指针点击时钟面板仍切歌词
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var trackChanged = new Subject<Track?>();
+        var vm = CreateViewModel(track, trackChanged);
+        trackChanged.OnNext(track);
+
+        Window? window = null;
+        try
+        {
+            var stage = new ClockStage { DataContext = vm };
+            window = new Window { Content = stage, Width = 1000, Height = 700 };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var clockPanel = FindNamed<StackPanel>(stage, "ClockPanel");
+            var p = clockPanel.TranslatePoint(
+                new Point(clockPanel.Bounds.Width / 2, clockPanel.Bounds.Height / 2), window)!.Value;
+            window.MouseMove(p);
+            Dispatcher.UIThread.RunJobs();
+            window.MouseDown(p, MouseButton.Left);
+            window.MouseUp(p, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(vm.IsLyricsMode);
+        }
+        finally
+        {
+            window?.Close();
+        }
     }
 
     [AvaloniaFact]
