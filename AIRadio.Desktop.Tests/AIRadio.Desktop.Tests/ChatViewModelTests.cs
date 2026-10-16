@@ -427,10 +427,17 @@ public class ChatViewModelTests
     public void BeginHoldToTalk_SetsListeningState()
     {
         var (vm, _, _, _) = CreateVm();
-        vm.BeginHoldToTalk();
-
-        // Should not throw; IsListening depends on AudioService state
-        Assert.False(vm.IsProcessing);
+        // 注入假录音设备：headless 测试不得打开真实麦克风
+        vm.RecordingDeviceFactory = () => new FakeWaveIn();
+        try
+        {
+            Assert.True(vm.BeginHoldToTalk());
+            Assert.True(vm.IsListening);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
     }
 
     [Fact]
