@@ -13,8 +13,15 @@
         </LinearGradientBrush>
     </UserControl.Resources>
 
-    <local:SpectrumRenderer x:Name="Renderer"
-                            StyleName="{Binding SelectedStyle}"
-                            PrimaryBrush="{StaticResource SpectrumPrimary}"
-                            SecondaryBrush="{DynamicResource C_FFA783FF}"/>
+    <!-- 透明命中层：本版 Avalonia 纯自绘 Control（SpectrumRenderer）无可命中背景，
+         实机命中只剩合成器上的绘制几何——频谱随音频跳动导致点不中（2026-10-16 用户反馈）。
+         Transparent 背景让控件整个范围内确定性可命中（与中栏 ClockPanel 同法），
+         Renderer 保持 118 高居中，频带视觉位置不变。 -->
+    <Grid Background="Transparent">
+        <local:SpectrumRenderer x:Name="Renderer"
+                                StyleName="{Binding SelectedStyle}"
+                                Height="118" VerticalAlignment="Center"
+                                PrimaryBrush="{StaticResource SpectrumPrimary}"
+                                SecondaryBrush="{DynamicResource C_FFA783FF}"/>
+    </Grid>
 </UserControl>
