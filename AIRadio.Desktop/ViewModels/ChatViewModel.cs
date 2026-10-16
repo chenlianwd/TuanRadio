@@ -44,9 +44,11 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private bool _pendingCommandSpeechStarted;
     private Track? _pendingRecommendedTrack;
 
-    private WaveInEvent? _waveIn;
+    private IWaveIn? _waveIn;
     private WaveFileWriter? _waveWriter;
     private string? _tempWavPath;
+    // 录音设备注入点：headless 测试注入假设备，避免触碰真实麦克风（会打开设备直到进程退出）
+    internal Func<IWaveIn>? RecordingDeviceFactory { get; set; }
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
     // 对话模式空识别后待 IsRecognizing 复位再重启监听：识别未结束时直接调
@@ -269,7 +271,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         if (IsRecognizing)
             return;
 
-        WaveInEvent? waveIn = null;
+        IWaveIn? waveIn = null;
         WaveFileWriter? writer = null;
         string? wavPath = null;
         EventHandler<WaveInEventArgs>? dataHandler = null;
@@ -278,10 +280,10 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         {
             wavPath = Path.Combine(Path.GetTempPath(), $"stt_{Guid.NewGuid():N}.wav");
 
-            waveIn = new WaveInEvent
-            {
-                WaveFormat = new WaveFormat(16000, 16, 1)
-            };
+            // 工厂返回 null 一律按"启动失败"走异常清理，绝不静默回退真实麦克风
+            waveIn = RecordingDeviceFactory is null
+                ? new WaveInEvent { WaveFormat = new WaveFormat(16000, 16, 1) }
+                : RecordingDeviceFactory();
             writer = new WaveFileWriter(wavPath, waveIn.WaveFormat);
             _tempWavPath = wavPath;
             _waveIn = waveIn;

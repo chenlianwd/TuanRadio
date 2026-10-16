@@ -35,10 +35,10 @@ public class ChatAreaMicButtonTests
         var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var dj = new Mock<IDJService>();
-        // 空闲路径真录音会走完识别管线：纠错未 Setup 时 Moq 返回结果为 null 的已完成 task
+        // 空闲路径（假设备）录音会走完识别管线：纠错未 Setup 时 Moq 返回结果为 null 的已完成 task
         dj.Setup(x => x.CorrectTranscriptionAsync(It.IsAny<string>(), It.IsAny<System.Threading.CancellationToken>()))
             .ReturnsAsync((string transcript, System.Threading.CancellationToken _) => transcript);
-        return new MainWindowViewModel(
+        var vm = new MainWindowViewModel(
             audio.Object,
             dj.Object,
             new Mock<ILLMService>().Object,
@@ -47,6 +47,9 @@ public class ChatAreaMicButtonTests
             new Mock<ISttService>().Object,
             Path.Combine(dir, "playlist.json"),
             settingsFile: Path.Combine(dir, "settings.json"));
+        // 按住说话回归走假录音设备：真实 WaveInEvent 会打开系统麦克风（会话级开到测试进程退出）
+        vm.ChatVM.RecordingDeviceFactory = () => new FakeWaveIn();
+        return vm;
     }
 
     // 回归：Button 的类处理器会把 PointerPressed/PointerReleased 标记为 Handled，
@@ -92,17 +95,14 @@ public class ChatAreaMicButtonTests
                 new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
                 KeyModifiers.None, MouseButton.Left));
 
-            // —— 空闲路径：真正开始录音才有按压视觉与捕获 ——
+            // —— 空闲路径：真正开始录音才有按压视觉与捕获（假录音设备，headless 不碰系统麦克风） ——
             vm.ChatVM.IsProcessing = false;
             mic.RaiseEvent(new PointerPressedEventArgs(
                 mic, pointer, mic, new Point(5, 5), 0,
                 new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
                 KeyModifiers.None, 1));
 
-            if (!vm.ChatVM.IsListening)
-                return; // 机器无输入设备（如 CI）：成功路径不可用，仅验证被拒路径。
-                        // AvaloniaFact 与 SkippableFact 机制不兼容，只能注释化静默跳过
-
+            Assert.True(vm.ChatVM.IsListening);
             Assert.Same(mic, pointer.Captured);
             var pressedBrush = Assert.IsType<SolidColorBrush>(mic.Background);
             Assert.Equal(Color.FromUInt32(0xFF56F5C4), pressedBrush.Color);
