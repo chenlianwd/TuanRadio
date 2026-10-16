@@ -1503,26 +1503,31 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     .Select(item => item.Id).ToArray(),
                 character_overrides = overridesJson
             };
-            // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager
-            var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
-            var tempPath = _settingsFile + ".tmp";
-            await File.WriteAllTextAsync(tempPath, json, _lifetimeCts.Token);
-            // 旧配置轮转为 .bak：settings.json 被外部进程覆盖或写坏时留有恢复途径；
-            // .bak 被占用等备份失败只降级为直接覆盖，不能阻塞保存
-            if (File.Exists(_settingsFile))
+            // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager.
+            // 序列化与写盘移出 UI 线程：主题切换等 UI 事件触发的保存不得挂住界面
+            var settingsFile = _settingsFile;
+            await Task.Run(() =>
             {
-                try
+                var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
+                var tempPath = settingsFile + ".tmp";
+                File.WriteAllText(tempPath, json);
+                // 旧配置轮转为 .bak：settings.json 被外部进程覆盖或写坏时留有恢复途径；
+                // .bak 被占用等备份失败只降级为直接覆盖，不能阻塞保存
+                if (File.Exists(settingsFile))
                 {
-                    File.Replace(tempPath, _settingsFile, _settingsFile + ".bak");
+                    try
+                    {
+                        File.Replace(tempPath, settingsFile, settingsFile + ".bak");
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        Log.Warning(ex, "Failed to rotate settings backup, overwriting directly");
+                        File.Move(tempPath, settingsFile, overwrite: true);
+                    }
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    Log.Warning(ex, "Failed to rotate settings backup, overwriting directly");
-                    File.Move(tempPath, _settingsFile, overwrite: true);
-                }
-            }
-            else
-                File.Move(tempPath, _settingsFile);
+                else
+                    File.Move(tempPath, settingsFile);
+            }, _lifetimeCts.Token);
 
             if (characterSettingsChanged)
                 CharacterSettingsChanged?.Invoke();

@@ -1,7 +1,9 @@
 // Auto-start NeteaseCloudMusicApi server for TuanRadio
 const fs = require('fs');
 const path = require('path');
-const tmpPath = require('os').tmpdir();
+const os = require('os');
+const crypto = require('crypto');
+const tmpPath = os.tmpdir();
 
 // Set port and bind to localhost only before requiring the API module
 process.env.PORT = '37250';
@@ -27,6 +29,23 @@ async function start() {
   const upstreamHandlers = server.listeners('request');
   server.removeAllListeners('request');
   server.on('request', (req, res) => {
+    // 与酷狗代理同构的身份端点：仅受本包装层控制的进程才持有 C# 注入的
+    // TUANRADIO_PROXY_IDENTITY（安装级令牌），外部手动起的实例/端口冒充者答不上来，
+    // 防止收养后把含 MUSIC_U 的 Cookie 发给陌生进程
+    if (req.method === 'GET' && req.url.split('?')[0] === '/tuanradio/identity') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({
+        status: 1,
+        service: 'tuanradio-netease-proxy',
+        protocol: 1,
+        device_hash: crypto
+          .createHash('sha256')
+          .update(String(process.env.TUANRADIO_PROXY_IDENTITY || ''), 'utf8')
+          .digest('hex'),
+      }));
+      return;
+    }
+
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}` && origin !== process.env.CORS_ALLOW_ORIGIN) {
       res.writeHead(403);

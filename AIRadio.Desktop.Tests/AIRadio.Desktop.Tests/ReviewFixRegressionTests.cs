@@ -57,6 +57,28 @@ public class ReviewFixRegressionTests
         Assert.Equal("play:晴天", response.Command);
     }
 
+    // 模型偶发违规输出多个控制块：全部移除防泄漏进气泡，首块解析为命令
+    [Fact]
+    public void ParseDjResponse_MultipleBlocks_AllRemovedFirstParsed()
+    {
+        var response = ChatViewModel.ParseDjResponse(
+            "好的马上了 <cmd>{\"action\":\"play\",\"query\":\"晴天\"}</cmd> 中间文案 <cmd>{\"action\":\"next\"}</cmd> 结尾");
+        Assert.Equal("play:晴天", response.Command);
+        Assert.Equal("好的马上了  中间文案  结尾", response.DisplayText);
+    }
+
+    // query 值内含 "}" 的回归锚点：旧正则靠尾部 </cmd> 锚点回溯也能匹配完整 JSON
+    // （并非修复动机，勿据此回退标记切取）；标记切取对普通花括号行为等价且更直白。
+    // 值内含 "</cmd>" 字面量的极端形态两侧实现同限（需 JSON 感知扫描），由
+    // PromptHygiene 元数据消毒前置斩断，不在此覆盖
+    [Fact]
+    public void ParseDjResponse_QueryWithClosingBrace_NotTruncated()
+    {
+        var response = ChatViewModel.ParseDjResponse(
+            "<cmd>{\"action\":\"play\",\"query\":\"A}B\"}</cmd>");
+        Assert.Equal("play:A}B", response.Command);
+    }
+
     // ---------- L-P5: TrackComparer 大小写口径 ----------
 
     [Fact]

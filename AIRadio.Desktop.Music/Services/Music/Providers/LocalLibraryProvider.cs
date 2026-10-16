@@ -253,6 +253,9 @@ public sealed class LocalLibraryProvider : IMusicProvider
             !Volatile.Read(ref _entries).TryGetValue(track.TrackId, out var entry) ||
             !File.Exists(entry.Path))
             return Task.FromResult(MediaResolutionResult.Failed(track.ProviderId, PlaybackFailureKind.NotFound));
+        // 注意：不要对 path 预转义 '#'/'?'——new Uri 对 DOS 形态路径走 legacy 解析，
+        // '#' 会被正确转义且 LocalPath 完整往返；预转义反而让 %23 被当作既成转义
+        // 破坏往返（LocalLibraryProviderTests.HashInFileName 锚定此行为）
         return Task.FromResult(MediaResolutionResult.Playable(new ResolvedMedia(track, new Uri(entry.Path))));
     }
 

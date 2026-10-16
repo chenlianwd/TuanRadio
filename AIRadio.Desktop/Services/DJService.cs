@@ -473,11 +473,14 @@ Response rules:
 
     private string BuildRecommendationPrompt(Track? current)
     {
+        // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
         var favorites = GetFavorites(current);
         var favoriteContext = "";
         if (favorites.Count > 0)
         {
-            var favList = favorites.Take(10).Select(t => $"{t.Title} by {t.Artist}").ToList();
+            var favList = favorites.Take(10)
+                .Select(t => $"{PromptHygiene.StripControlMarkers(t.Title)} by {PromptHygiene.StripControlMarkers(t.Artist)}")
+                .ToList();
             favoriteContext = $" The user likes these songs: {string.Join(", ", favList)}. ";
         }
 
@@ -485,14 +488,14 @@ Response rules:
             .Reverse()
             .Where(track => current == null || !IsSameTrack(track, current))
             .Take(8)
-            .Select(track => $"{track.Title} by {track.Artist}")
+            .Select(track => $"{PromptHygiene.StripControlMarkers(track.Title)} by {PromptHygiene.StripControlMarkers(track.Artist)}")
             .ToList();
         var listeningContext = recentlyPlayed.Count == 0
             ? string.Empty
             : $" The user recently played: {string.Join(", ", recentlyPlayed)}. Infer their shared style and recommend a related track, rather than copying one title. ";
 
         return current != null
-            ? $"Based on the song '{current.Title}' by '{current.Artist}', {listeningContext}{favoriteContext}recommend ONE NEW similar or related song that is NOT already in the user's playlist. Do not recommend '{current.Title}'. Reply with ONLY the song name and artist if known."
+            ? $"Based on the song '{PromptHygiene.StripControlMarkers(current.Title)}' by '{PromptHygiene.StripControlMarkers(current.Artist)}', {listeningContext}{favoriteContext}recommend ONE NEW similar or related song that is NOT already in the user's playlist. Do not recommend '{PromptHygiene.StripControlMarkers(current.Title)}'. Reply with ONLY the song name and artist if known."
             : "Recommend one NEW popular song for an AI radio station. Reply with ONLY the song name and artist if known.";
     }
 

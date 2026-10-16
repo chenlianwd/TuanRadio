@@ -329,8 +329,8 @@ public class KugouMusicServiceTests
         Assert.Equal("https://cdn.example/legacy.mp3", url);
         Assert.Equal(3, capture.Requests.Count(request =>
             request.RequestUri!.AbsolutePath == "/song/url/auth/merge"));
-        var legacy = Assert.Single(capture.Requests.Where(request =>
-            request.RequestUri!.AbsolutePath == "/song/url"));
+        var legacy = Assert.Single(capture.Requests, request =>
+            request.RequestUri!.AbsolutePath == "/song/url");
         Assert.Contains("hash=PRIMARY", legacy.RequestUri!.Query, StringComparison.OrdinalIgnoreCase);
     }
 

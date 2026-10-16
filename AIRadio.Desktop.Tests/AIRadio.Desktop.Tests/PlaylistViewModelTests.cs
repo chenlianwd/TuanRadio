@@ -733,7 +733,7 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public Task SearchAsync_ClearsAndFillsSearchResults()
+    public async Task SearchAsync_ClearsAndFillsSearchResults()
     {
         var (vm, _, searchMock) = CreateVm();
         var results = new List<OnlineTrack>
@@ -745,22 +745,18 @@ public class PlaylistViewModelTests
             .ReturnsAsync(results);
 
         vm.SearchText = "test";
-        vm.SearchCommand.Execute().Subscribe();
-
-        // Wait a moment for async to complete
-        System.Threading.Thread.Sleep(100);
+        // IObservable 可直接 await 首个结果：命令异步完成即断言，替代固定 Sleep
+        await vm.SearchCommand.Execute();
 
         Assert.Equal(2, vm.SearchResults.Count);
         Assert.Equal(2, vm.TabIndex); // auto-switches to search tab
-        return Task.CompletedTask;
     }
 
     [Fact]
-    public void SearchAsync_DoesNothingWhenTextEmpty()
+    public async Task SearchAsync_DoesNothingWhenTextEmpty()
     {
         var (vm, _, searchMock) = CreateVm();
-        vm.SearchCommand.Execute().Subscribe();
-        System.Threading.Thread.Sleep(50);
+        await vm.SearchCommand.Execute();
         searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<System.Threading.CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }

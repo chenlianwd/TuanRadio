@@ -105,7 +105,7 @@ public class MiguMusicService : IMusicSearchService
         var id = trackId.Contains(':') ? trackId.Split(':')[1] : trackId;
         try
         {
-            var url = $"https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/queryListenSongInfo.do?copyrightId={id}&toneType=SQ&netType=01";
+            var url = $"https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/queryListenSongInfo.do?copyrightId={Uri.EscapeDataString(id)}&toneType=SQ&netType=01";
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36");
 
@@ -129,7 +129,7 @@ public class MiguMusicService : IMusicSearchService
             }
 
             // Try alternative endpoint
-            var url2 = $"https://music.migu.cn/v3/api/music/audioPlayer/getSongInfo?copyrightId={id}";
+            var url2 = $"https://music.migu.cn/v3/api/music/audioPlayer/getSongInfo?copyrightId={Uri.EscapeDataString(id)}";
             using var request2 = new HttpRequestMessage(HttpMethod.Get, url2);
             request2.Headers.Add("Referer", "https://music.migu.cn/");
 

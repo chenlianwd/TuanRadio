@@ -86,10 +86,18 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
 #if !TUANRADIO_SLIM_CORE
-                // 网易代理上游默认反射任意 Origin：固定 CORS 封死浏览器跨域访问本地端口
-                _musicApiServer = new MusicApiServer(
-                    environmentFactory: () => MusicApiServer.RestrictedCorsEnvironment);
                 var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
+                // 网易代理收养判定与酷狗同构升级为身份摘要比对：原先仅凭"像搜索响应的
+                // JSON"即收养端口上任意进程，随后会把含 MUSIC_U 的 Cookie 发给它。
+                // 与酷狗一样每次探测时读取当前身份（不能在构造阶段捕获随机初始值）
+                const string neteaseProxyService = "tuanradio-netease-proxy";
+                _musicApiServer = new MusicApiServer(
+                    healthQuery: "/tuanradio/identity",
+                    healthResponseValidator: body => MusicApiServer.MatchesProxyIdentityResponse(
+                        body, neteaseProxyService,
+                        MusicApiServer.ProxyIdentityHash(musicAccounts.KugouDevice.ComputeProxyIdentityHash())),
+                    logTag: "MusicApi",
+                    environmentFactory: () => MusicApiServer.BuildNeteaseProxyEnvironment(musicAccounts));
                 _kugouApiServer = new MusicApiServer(
                     port: MusicApiServer.KugouProxyPort,
                     serverDirName: "server-kugou",

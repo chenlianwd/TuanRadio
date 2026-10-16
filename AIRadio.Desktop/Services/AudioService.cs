@@ -1359,6 +1359,10 @@ public class AudioService : IAudioService, IDisposable
                                   filePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
                 if (isRetry || string.IsNullOrWhiteSpace(filePath))
                 {
+                    // 恢复歌单的在线曲目（FilePath 懒解析）非重试点播时旧曲可能仍在出声：
+                    // 先停播放器再进刷新流程，避免最长 8s 的"声音与 Stopped 状态/新曲信息不一致"
+                    if (!isRetry)
+                        TryPlayerOperation(() => _player.Stop());
                     _ = RefreshAndPlayTrackAsync(index, track, requestId, isRetry);
                     SetState(PlaybackState.Stopped);
                     NotifyTrackChanged();
@@ -1392,6 +1396,10 @@ public class AudioService : IAudioService, IDisposable
             if (!TryPlayerOperation(() =>
             {
                 previousMedia = _player.Media;
+                // getter 返回需调用方释放的新包装：立即逃逸到外层 oldMedia，使后续
+                // Stop/new Media 抛出时 finally 的延迟释放也能覆盖（播放器此刻已拿不到
+                // 新媒体，旧 Media 即便仍挂在 player 上也已 Stop，2s 后释放安全）
+                oldMedia = previousMedia;
                 _player.Stop();
                 newMedia = new Media(_libVLC, filePath, isUrl ? FromType.FromLocation : FromType.FromPath);
                 if (isUrl)
@@ -1404,9 +1412,6 @@ public class AudioService : IAudioService, IDisposable
                 }
 
                 _player.Media = newMedia;
-                // 此点之后旧 Media 已脱离播放器：立即记录，lambda 后续（Play）抛出时
-                // finally 的延迟释放仍能覆盖，不会悬挂到进程结束
-                oldMedia = previousMedia;
                 mediaAssigned = true;
                 _player.Play();
             }))

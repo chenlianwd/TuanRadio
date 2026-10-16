@@ -63,6 +63,47 @@ public sealed class LocalLibraryProviderTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // '#' 与字面 '%23' 均为 Windows 合法文件名：.NET 10 的 new Uri(DOS 路径) 走 legacy
+    // 解析正确转义，LocalPath 完整往返。审查曾疑此链路丢 Fragment（实为误报），这两个
+    // 测试锚定真实行为——未来任何一侧引入"额外转义"都会立即被抓住
+    [Fact]
+    public async Task HashInFileName_ResolvesToOriginalPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "airadio-local-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var hashFile = Path.Combine(root, "a#b.mp3");
+            await File.WriteAllBytesAsync(hashFile, [0, 1, 2, 3]);
+            var provider = new LocalLibraryProvider(Path.Combine(root, "index.json"));
+            Assert.Equal(1, await provider.AddFilesAsync([hashFile]));
+
+            var found = Assert.Single(await provider.SearchAsync("a#b", 10, CancellationToken.None));
+            var broker = new MusicSourceBroker(provider);
+            Assert.Equal(hashFile, await broker.GetPlayUrlAsync(found, CancellationToken.None));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task LiteralPercentSequenceInFileName_ResolvesToOriginalPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "airadio-local-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var pctFile = Path.Combine(root, "pct%23file.mp3");
+            await File.WriteAllBytesAsync(pctFile, [0, 1, 2, 3]);
+            var provider = new LocalLibraryProvider(Path.Combine(root, "index.json"));
+            Assert.Equal(1, await provider.AddFilesAsync([pctFile]));
+
+            var found = Assert.Single(await provider.SearchAsync("pct", 10, CancellationToken.None));
+            var broker = new MusicSourceBroker(provider);
+            Assert.Equal(pctFile, await broker.GetPlayUrlAsync(found, CancellationToken.None));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public async Task FailedIndexSave_DoesNotRetainUncommittedFolder()
     {

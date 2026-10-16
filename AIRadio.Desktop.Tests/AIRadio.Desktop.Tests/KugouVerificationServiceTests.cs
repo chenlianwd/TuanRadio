@@ -156,8 +156,20 @@ public class KugouVerificationServiceTests
         service.EndVerification();
         Assert.False(service.TryBeginAutoTrigger()); // 冷却仍在
 
-        Thread.Sleep(80);
-        Assert.True(service.TryBeginAutoTrigger());  // 冷却过期后恢复
+        // 轮询冷却过期（50ms 冷却 + 80ms 固定睡在慢 CI 上边界余量不足）；
+        // 冷却期内 TryBeginAutoTrigger 无副作用，可安全重试
+        var recovered = false;
+        var deadline = Environment.TickCount64 + 2000;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (service.TryBeginAutoTrigger())
+            {
+                recovered = true;
+                break;
+            }
+            Thread.Sleep(10);
+        }
+        Assert.True(recovered);   // 冷却过期后恢复自动触发
         service.EndVerification();
     }
 

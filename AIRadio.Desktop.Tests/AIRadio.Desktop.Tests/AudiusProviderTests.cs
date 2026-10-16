@@ -47,6 +47,24 @@ public sealed class AudiusProviderTests
         Assert.Equal("open song", System.Web.HttpUtility.ParseQueryString(requests[0].Query)["query"]);
     }
 
+    // 曲目级不可流播（收藏/历史曲后续下架的既定场景）是业务口径 NotFound：
+    // 接口有正常响应，不得因 SourceUnavailable 被 Broker 计入传输故障熔断
+    //（连续 3 首曲目级失败即殃及整源搜索）
+    [Fact]
+    public async Task Resolve_UnstreamableTrack_MapsToBusinessNotFoundNotSourceUnavailable()
+    {
+        using var http = new HttpClient(new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"data":{"id":"offline","is_streamable":false,"is_available":true}}""")
+        }));
+        var provider = new AudiusProvider(http);
+
+        var result = await provider.ResolveAsync(new ProviderTrackRef("audius", "offline"), null,
+            CancellationToken.None);
+
+        Assert.Equal(PlaybackFailureKind.NotFound, result.Failure);
+    }
+
     [Fact]
     public async Task Resolve_RejectsNewlyGatedTrackAndInvalidId()
     {

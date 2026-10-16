@@ -8,7 +8,7 @@ namespace AIRadio.Desktop.Services;
 /// VM 动态文案经 <see cref="T"/> 即时读取当前语言；持有常驻文案的 VM 订阅 Changed 重算；
 /// XAML 静态文案由宿主（AIRadio.Desktop 的 AppLanguageUi）订阅 Changed 重填资源字典触发
 /// DynamicResource 刷新——本类不依赖任何 UI 框架，可安全驻留类库。
-/// 两份字符串表的键集奇偶由 StringResourceParityTests 校验。
+/// 两份字符串表的键集奇偶由 AppLanguageTests.StringTables_HaveIdenticalKeySetsAndNonEmptyValues 校验。
 /// </summary>
 public static class AppLanguage
 {

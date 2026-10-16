@@ -883,6 +883,11 @@ function ApiCache() {
       if (req.headers['x-apicache-bypass'] || req.headers['x-apicache-force-fetch']) {
         return bypass();
       }
+      // 非 GET 请求既不命中也不存储：POST/PUT 与同 URL 的 GET 响应语义无关，
+      // 纯 URL 键会让 POST 命中 GET 的缓存响应、POST 200 也会被缓存
+      if (req.method !== 'GET') {
+        return bypass();
+      }
 
       // 记录请求开始时间（用于计算耗时）
       req.apicacheTimer = new Date();
