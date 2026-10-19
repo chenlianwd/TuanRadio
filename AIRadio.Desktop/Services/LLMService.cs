@@ -17,7 +17,10 @@ namespace AIRadio.Desktop.Services;
 /// </summary>
 public class LLMService : ILLMService
 {
-    private const int MaxOutputTokens = 800;
+    // 思考型模型的推理 token 与正文共用 max_tokens：800 会被思考阶段烧光、
+    // 正文块不生成（GLM 实机踩坑），2048 给短串场/台词留足余量；计费按实际
+    // 生成量，上调上限不增加典型响应成本
+    private const int MaxOutputTokens = 2048;
 
     private static readonly Dictionary<string, string> Providers = new()
     {
@@ -388,6 +391,28 @@ public class LLMService : ILLMService
 
                     if (textParts.Count > 0)
                         return string.Join("\n", textParts);
+
+                    // content 存在但没有任何正文块：思考型模型把 max_tokens 烧在思考阶段
+                    // 是典型场景（GLM 等），与"结构不符"分开报，不再误导排查方向
+                    var stopReason = root.TryGetProperty("stop_reason", out var stopReasonEl) &&
+                                     stopReasonEl.ValueKind == JsonValueKind.String
+                        ? stopReasonEl.GetString()
+                        : null;
+                    throw new LlmApiException(stopReason == "max_tokens"
+                        ? new ApiFailureInfo(
+                            ApiFailureKind.InvalidResponse,
+                            AppLanguage.T("AI 思考超限未产出正文", "AI ran out of output budget while thinking"),
+                            AppLanguage.T("模型的思考过程耗尽了输出上限（max_tokens），正文没有生成。",
+                                "The model's reasoning consumed the entire output budget (max_tokens) before any text was generated."),
+                            AppLanguage.T("请重试，或更换输出更紧凑的模型。",
+                                "Try again, or switch to a more concise model."))
+                        : new ApiFailureInfo(
+                            ApiFailureKind.InvalidResponse,
+                            AppLanguage.T("AI 返回了空回复", "AI returned an empty reply"),
+                            AppLanguage.T("模型未返回任何正文内容（可能被内容过滤拦截）。",
+                                "The model returned no body text (possibly blocked by content filtering)."),
+                            AppLanguage.T("请重试，或检查模型/服务是否支持当前请求。",
+                                "Try again, or check whether the model/service supports this request.")));
                 }
             }
 

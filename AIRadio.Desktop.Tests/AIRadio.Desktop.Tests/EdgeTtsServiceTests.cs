@@ -10,16 +10,30 @@ namespace AIRadio.Desktop.Tests;
 
 public class EdgeTtsServiceTests
 {
+    // 向量锚定 edge-tts（GPL-3.0）drm.py generate_sec_ms_gec_v2 的实际输出（2026-10-16 核对，
+    // 该算法实现已用上游 Python 本体实机握手 101 通过）。v2 令牌 = "CS64(16hex)-SHA256变体(64hex)"。
+    [Theory]
+    [InlineData(1792200000, "3FEE85BA91F5659F-208F9842BF097D2CEB54190A308C5B353EA9A86DCF57BA52447E4B5676147133")]
+    [InlineData(1792200299, "3FEE85BA91F5659F-208F9842BF097D2CEB54190A308C5B353EA9A86DCF57BA52447E4B5676147133")]
+    [InlineData(1792200300, "39AD7E8E666B3188-618521B694AE3D094DB78E4E98F3A03527CD371DB21B039DF1DC5EE592782A9C")]
+    [InlineData(1600000000, "1F5E89103EC98A08-E69D008C1241797258F0EE06F56044C11FAEC4B60F95C6AB0DB3C5E79BE2F010")]
+    public void GenerateSecMsGec_MatchesV2ReferenceVectors(long unixSeconds, string expected)
+    {
+        var token = EdgeTtsService.GenerateSecMsGec(DateTimeOffset.FromUnixTimeSeconds(unixSeconds));
+
+        Assert.Equal(expected, token);
+    }
+
     [Fact]
     public void GenerateSecMsGec_IsStableWithinFiveMinuteWindow()
     {
-        var time = new DateTimeOffset(2026, 7, 10, 11, 32, 10, TimeSpan.Zero);
+        var time = DateTimeOffset.FromUnixTimeSeconds(1792200000);
 
         var first = EdgeTtsService.GenerateSecMsGec(time);
-        var sameWindow = EdgeTtsService.GenerateSecMsGec(time.AddMinutes(2));
-        var nextWindow = EdgeTtsService.GenerateSecMsGec(time.AddMinutes(5));
+        var sameWindow = EdgeTtsService.GenerateSecMsGec(time.AddSeconds(299));
+        var nextWindow = EdgeTtsService.GenerateSecMsGec(time.AddSeconds(300));
 
-        Assert.Equal(64, first.Length);
+        Assert.Equal(16 + 1 + 64, first.Length);
         Assert.Equal(first, sameWindow);
         Assert.NotEqual(first, nextWindow);
     }

@@ -103,6 +103,79 @@ public class LLMServiceTests
         Assert.Equal("正文", result);
     }
 
+    private static LLMService CreateAnthropicService(string responseJson, Action<HttpRequestMessage>? onRequest = null)
+        => new(CreateMockHttpClient(responseJson, onRequest));
+
+    private static LLMConfig AnthropicConfig => new()
+    {
+        Provider = "anthropic",
+        BaseUrl = "https://proxy.example/v1",
+        Model = "glm-thinking",
+        ApiKey = "k"
+    };
+
+    // 思考型模型把 max_tokens 烧在思考阶段：只有 thinking 块、无正文块，
+    // 报错必须指向预算耗尽而不是误导性的"无法识别的格式"
+    [Fact]
+    public async Task ChatAsync_AnthropicFormat_ThinkingOnlyWithMaxTokensReportsBudgetFailure()
+    {
+        var original = AppLanguage.Current;
+        LLMService service = CreateAnthropicService(
+            """{"stop_reason":"max_tokens","content":[{"type":"thinking","thinking":"思考中"}]}""");
+        try
+        {
+            AppLanguage.Apply("zh");
+            service.Configure(AnthropicConfig);
+
+            var ex = await Assert.ThrowsAsync<LlmApiException>(
+                () => service.ChatAsync("hello", new List<ChatMessage>()));
+
+            Assert.Contains("思考超限", ex.Failure.Title);
+        }
+        finally
+        {
+            AppLanguage.Apply(original);
+        }
+    }
+
+    [Fact]
+    public async Task ChatAsync_AnthropicFormat_ThinkingOnlyWithoutMaxTokensReportsEmptyReply()
+    {
+        var original = AppLanguage.Current;
+        LLMService service = CreateAnthropicService(
+            """{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":"思考中"}]}""");
+        try
+        {
+            AppLanguage.Apply("zh");
+            service.Configure(AnthropicConfig);
+
+            var ex = await Assert.ThrowsAsync<LlmApiException>(
+                () => service.ChatAsync("hello", new List<ChatMessage>()));
+
+            Assert.Contains("空回复", ex.Failure.Title);
+        }
+        finally
+        {
+            AppLanguage.Apply(original);
+        }
+    }
+
+    [Fact]
+    public async Task ChatAsync_AnthropicFormat_SendsExpandedMaxTokens()
+    {
+        // 请求在 LLMService 内部 using 释放，body 须在发送前的回调里读出
+        string? body = null;
+        var service = CreateAnthropicService(
+            """{"content":[{"type":"text","text":"正文"}]}""",
+            request => body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+        service.Configure(AnthropicConfig);
+
+        await service.ChatAsync("hello", new List<ChatMessage>());
+
+        Assert.NotNull(body);
+        Assert.Contains("\"max_tokens\":2048", body);
+    }
+
     [Fact]
     public void BuildMessages_PreservesPersonaSystemPromptWhenHistoryReachesCap()
     {

@@ -1,11 +1,12 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Net.WebSockets;
-using System.Security.Cryptography;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -23,7 +24,7 @@ public class EdgeTtsService : ITtsService, IDisposable
 {
     private const string TrustedClientToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
     private const string ChromiumFullVersion = "143.0.3650.75";
-    private const string SecMsGecVersion = $"1-{ChromiumFullVersion}";
+    private const string SecMsGecVersion = $"2-{ChromiumFullVersion}";
     /// <summary>单次 SynthesizeAsync（首试+重试）的总时限，略高于单次 60s 内部超时。</summary>
     private static readonly TimeSpan TotalSynthesisTimeout = TimeSpan.FromSeconds(75);
     private const string WssUrl = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
@@ -371,6 +372,89 @@ public class EdgeTtsService : ITtsService, IDisposable
         return LegacyVoiceMap.GetValueOrDefault(voiceId, voiceId);
     }
 
+    // ---- Sec-MS-GEC v2 令牌 ----
+    // 微软已将 Edge Read Aloud 的防滥用令牌从 v1（纯 SHA256）升级为 v2 并作废 v1
+    // （握手一律 403）。算法移植自 edge-tts（GPL-3.0）src/edge_tts/drm.py 的
+    // generate_sec_ms_gec_v2：对 "ticks(300s 窗口)+TrustedClientToken" 串先算改造版
+    // SHA-256（自定义初始状态/调度表，首轮 K[14] 被替换），再算自定义 CS64 摘要，
+    // 输出 "CS64(16hex大写)-SHA256(64hex大写)"。
+    // 原实现用任意精度整数做"移位不截断、异或后再相加"的混淆运算；由于加减进位只
+    // 向上传播、异或按位独立，所有中间量在 32 位截断处与标准 uint 环绕运算逐位一致
+    // （由锚定上游实现的向量测试保证）。
+    private static readonly uint[] SecMsGecSha256Initial =
+    {
+        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+        0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+    };
+    private static readonly uint[] SecMsGecSha256State =
+    {
+        0xFD9FBEA2, 0x91243CE7, 0xBE499094, 0xCD2E1E0A,
+        0x6C006F49, 0x04BD35AB, 0xFEB0A7E4, 0x03EFFBD2,
+    };
+    private static readonly uint[] SecMsGecSha256Schedule =
+    {
+        0xEB24BF9E, 0x1558691F, 0xA0C09EE2, 0x0CFA32BA,
+        0xA622EE8C, 0xD1DD9491, 0xC0DD25A0, 0xF9E70AB6,
+        0xF0C31573, 0x7058CE4E, 0x7188E606, 0x00E5AB33,
+        0xD258B060, 0x72766564,
+    };
+    private static readonly uint[] SecMsGecSha256RoundConstants =
+    {
+        0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
+        0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+        0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
+        0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+        0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC,
+        0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+        0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7,
+        0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+        0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13,
+        0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+        0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3,
+        0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+        0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5,
+        0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+        0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208,
+        0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
+    };
+    // K[14] 位置被 SecMsGecSha256Adjustment 替换（其余与标准轮常数相同）
+    private static readonly uint[] SecMsGecFirstBlockConstants =
+    {
+        0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
+        0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+        0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
+        0x72BE5D74, 0x80DEB1FE, 0xC9DC06A7, 0xC19BF174,
+        0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC,
+        0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+        0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7,
+        0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+        0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13,
+        0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+        0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3,
+        0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+        0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5,
+        0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+        0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208,
+        0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
+    };
+    private const uint SecMsGecSha256Adjustment = 0xC9DC06A7;
+    private const uint SecMsGecSigma0Adjustment = 0x059C0B80;
+    private const uint SecMsGecSigma1Adjustment = 0x000B92C0;
+    private static readonly uint[] SecMsGecCs64Coefficients =
+    {
+        // 每项 (乘 term 系数, 乘 offset 系数) 成对展开存放
+        0xE82E91B1, 0xB32700D0, 0x44DE24C6, 0x88DFF51D,
+        0x3BEB65BC, 0x29514038, 0xC89C5933, 0xB328CBDF,
+        0x8D1EC211, 0xD405B4D5, 0x314EF5D5, 0x26E55F3C,
+        0xE92491B1, 0x607801C6, 0xF0A5B9D5, 0x82B2C1FB,
+        0x06064CF3, 0xFA51A3DA, 0xDA79FA60, 0x207CC464,
+        0xBED20560, 0x3C3C74F3, 0x89F9C9F8, 0xD2D14B61,
+        0x35FA38C6, 0xBB04A2C1, 0xCB49E3C6, 0xC5626167,
+    };
+    private const uint SecMsGecCs64Factor = 0x82893933;
+    private const uint SecMsGecCs64Adjustment0 = 0xF2F90B1A;
+    private const uint SecMsGecCs64Adjustment1 = 0x0B1A0000;
+
     internal static string GenerateSecMsGec(DateTimeOffset utcNow)
     {
         const long windowsEpochSeconds = 11_644_473_600;
@@ -378,7 +462,182 @@ public class EdgeTtsService : ITtsService, IDisposable
         seconds -= seconds % 300;
         var ticks = checked(seconds * 10_000_000);
         var input = ticks.ToString(CultureInfo.InvariantCulture) + TrustedClientToken;
-        return Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(input)));
+        var data = Encoding.ASCII.GetBytes(input);
+
+        var digest = SecMsGecSha256Digest(data);
+        var cs64 = SecMsGecCs64Digest(data, digest);
+        var cs64Hex = new byte[8];
+        BinaryPrimitives.WriteUInt32LittleEndian(cs64Hex, cs64.A);
+        BinaryPrimitives.WriteUInt32LittleEndian(cs64Hex.AsSpan(4), cs64.B);
+        return $"{Convert.ToHexString(cs64Hex)}-{Convert.ToHexString(digest)}";
+    }
+
+    private static uint SecMsGecSigma0(uint value)
+        => BitOperations.RotateRight(value, 7) ^ BitOperations.RotateRight(value, 18) ^ (value >> 3);
+
+    private static uint SecMsGecSigma1(uint value)
+        => BitOperations.RotateRight(value, 17) ^ BitOperations.RotateRight(value, 19) ^ (value >> 10);
+
+    private static void SecMsGecExpandSchedule(Span<uint> words, int firstWord)
+    {
+        for (var i = firstWord; i < 64; i++)
+        {
+            var x = words[i - 2];
+            var y = words[i - 15];
+            var sigma1 = BitOperations.RotateRight(x, 17) ^ BitOperations.RotateRight(x, 19) ^ (x >> 10);
+            var sigma0 = BitOperations.RotateRight(y, 7) ^ BitOperations.RotateRight(y, 18) ^ (y >> 3);
+            words[i] = sigma1 + words[i - 7] + sigma0 + words[i - 16];
+        }
+    }
+
+    private static uint[] SecMsGecSha256Rounds(uint[] state, Span<uint> words, int firstRound)
+    {
+        var constants = firstRound == 14 ? SecMsGecFirstBlockConstants : SecMsGecSha256RoundConstants;
+        var (a, b, c, d, e, f, g, h) = (state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7]);
+        for (var i = firstRound; i < 64; i++)
+        {
+            var t1 = h
+                     + (BitOperations.RotateRight(e, 6) ^ BitOperations.RotateRight(e, 11) ^ BitOperations.RotateRight(e, 25))
+                     + (g ^ (e & (f ^ g)))
+                     + constants[i]
+                     + words[i];
+            var t2 = (BitOperations.RotateRight(a, 2) ^ BitOperations.RotateRight(a, 13) ^ BitOperations.RotateRight(a, 22))
+                     + ((a & b) | (c & (a | b)));
+            var newA = t1 + t2;
+            var newE = d + t1;
+            (a, b, c, d, e, f, g, h) = (newA, a, b, c, newE, e, f, g);
+        }
+        return [a, b, c, d, e, f, g, h];
+    }
+
+    private static uint[] SecMsGecSha256Init(byte[] data)
+    {
+        var words = new uint[64];
+        words[14] = (uint)((data[0] << 16) | (data[1] << 8) | data[2]);
+        words[15] = BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(3, 4));
+        for (var i = 16; i < 30; i++)
+        {
+            var value = SecMsGecSha256Schedule[i - 16];
+            if (i - 2 >= 14)
+                value += i == 16
+                    ? SecMsGecSigma1(words[i - 2]) ^ SecMsGecSigma1Adjustment
+                    : SecMsGecSigma1(words[i - 2]);
+            if (i - 7 >= 14)
+                value += words[i - 7];
+            if (i - 15 >= 14)
+                value += i == 29
+                    ? SecMsGecSigma0(words[i - 15]) ^ SecMsGecSigma0Adjustment
+                    : SecMsGecSigma0(words[i - 15]);
+            words[i] = value;
+        }
+        words[30] = SecMsGecSigma1(words[28]) + words[23] + SecMsGecSigma0(words[15])
+                    + words[14] + SecMsGecSha256Adjustment - SecMsGecSha256RoundConstants[14];
+        SecMsGecExpandSchedule(words, 31);
+
+        var working = SecMsGecSha256Rounds(SecMsGecSha256State, words, 14);
+        var state = new uint[8];
+        for (var i = 0; i < 8; i++)
+            state[i] = SecMsGecSha256Initial[i] + working[i];
+        return state;
+    }
+
+    private static byte[] SecMsGecSha256Digest(byte[] data)
+    {
+        if (data.Length < 7)
+            throw new ArgumentException("Token salt must contain at least seven bytes");
+
+        var length = 57 + data.Length;
+        var zeroCount = ((55 - length) % 64 + 64) % 64;
+        var padded = new byte[data.Length - 7 + 1 + zeroCount + 8];
+        data.AsSpan(7).CopyTo(padded);
+        padded[data.Length - 7] = 0x80;
+        BinaryPrimitives.WriteUInt64BigEndian(padded.AsSpan(^8), (ulong)length * 8);
+
+        var state = SecMsGecSha256Init(data);
+        var blockWords = new uint[64];
+        for (var offset = 0; offset < padded.Length; offset += 64)
+        {
+            for (var i = 0; i < 16; i++)
+                blockWords[i] = BinaryPrimitives.ReadUInt32BigEndian(padded.AsSpan(offset + i * 4, 4));
+            SecMsGecExpandSchedule(blockWords, 16);
+            var working = SecMsGecSha256Rounds(state, blockWords, 0);
+            for (var i = 0; i < 8; i++)
+                state[i] += working[i];
+        }
+
+        var digest = new byte[32];
+        for (var i = 0; i < 8; i++)
+            BinaryPrimitives.WriteUInt32BigEndian(digest.AsSpan(i * 4), state[i]);
+        return digest;
+    }
+
+    private static (uint A, uint B) SecMsGecCs64Digest(byte[] data, byte[] digest)
+    {
+        var keyA = BinaryPrimitives.ReadUInt32LittleEndian(digest) | 1u;
+        var keyB = BinaryPrimitives.ReadUInt32LittleEndian(digest.AsSpan(4)) | 1u;
+        var factorA = keyA * SecMsGecCs64Factor;
+        var factorB = keyB * SecMsGecCs64Factor;
+
+        // 与上游一致：数据流前置一个 0x00 字节、补零到 4 字节对齐后按小端 uint32 切词，
+        // 奇数词数再补一个零词
+        var stream = new byte[(data.Length + 4) / 4 * 4];
+        data.CopyTo(stream, 1);
+        var streamWords = stream.Length / 4;
+        var wordCount = streamWords + (streamWords % 2);
+
+        var terms = new uint[SecMsGecCs64Coefficients.Length / 2 + wordCount];
+        var offsets = new uint[terms.Length];
+        for (var i = 0; i < SecMsGecCs64Coefficients.Length / 2; i++)
+        {
+            terms[i] = SecMsGecCs64Coefficients[i * 2] * (i % 2 == 0 ? factorA : factorB);
+            offsets[i] = SecMsGecCs64Coefficients[i * 2 + 1];
+        }
+
+        var index = SecMsGecCs64Coefficients.Length / 2;
+        for (var w = 0; w < wordCount; w++)
+        {
+            // 超出补零缓冲的词（奇数补位）恒为 0
+            var word = w < streamWords
+                ? BinaryPrimitives.ReadUInt32LittleEndian(stream.AsSpan(w * 4, 4))
+                : 0u;
+            var term = word * (w % 2 == 0 ? keyA : keyB);
+            var offset = BitOperations.RotateLeft(word, 16) * (w % 2 == 0 ? 0xEF0569FBu : 0xC31713DBu);
+            if (w == 0)
+            {
+                term += SecMsGecCs64Adjustment0 * factorA;
+                offset += SecMsGecCs64Adjustment1;
+            }
+            terms[index] = term;
+            offsets[index] = offset;
+            index++;
+        }
+
+        uint swapAcc = 0, swapLast = 0, csState = 0, acc = 0;
+        for (var i = 0; i < index; i += 2)
+        {
+            var x = terms[i];
+            var y = terms[i + 1];
+            var t = BitOperations.RotateLeft(offsets[i] + x, 16);
+            var q = t * 0x76F50F34u;
+            swapAcc += BitOperations.RotateLeft(q, 16) * 0xC3EFEA97u + q;
+            t = BitOperations.RotateLeft(offsets[i + 1] + y, 16);
+            q = t * 0x1881CE3Cu;
+            swapLast = BitOperations.RotateLeft(q, 16) * 0x35BD1EC9u + q;
+            swapAcc += swapLast;
+
+            csState = csState * keyA + x;
+            csState = BitOperations.RotateLeft(csState, 16) * 0xCF98B111u;
+            csState = BitOperations.RotateLeft(csState, 16) * 0x87085B9Fu;
+            csState = BitOperations.RotateLeft(csState, 16) * 0x12CEB96Du;
+            csState = BitOperations.RotateLeft(csState, 16) * 0x257E1D83u;
+            acc += csState;
+            t = csState * keyB + y;
+            t = BitOperations.RotateLeft(t, 16) * 0xA27416F5u;
+            t = BitOperations.RotateLeft(t, 16) * 0xD38396FFu;
+            csState = BitOperations.RotateLeft(BitOperations.RotateLeft(t, 16) * 0x7C932B89u, 16) * 0xBFA49F69u;
+            acc += csState;
+        }
+        return (swapLast ^ csState, swapAcc ^ acc);
     }
 
     private static string BuildSsmlMessage(string ssml)
