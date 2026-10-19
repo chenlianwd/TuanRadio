@@ -14,6 +14,31 @@
         </LinearGradientBrush>
     </UserControl.Resources>
 
+    <!-- 音量按钮是全应用唯一 ToggleButton：Avalonia 类型选择器只匹配精确类型（headless 实证，
+         Button 样式对 ToggleButton 不生效），MainWindow 的 Button 样式族覆盖不到它——Fluent 默认
+         给未选中态半透明白浅底（视觉近似 hover）、选中态实心 Accent 填充（图标同为 AccentGreen，
+         绿底绿字看不清字形）。在此补齐与 Button 家族同款基础视觉；checked（音量弹层展开）改用
+         半透明强调色示"接合"（同 ChatArea 录音态描边语汇），不再吃 Fluent 实心 Accent。 -->
+    <UserControl.Styles>
+        <Style Selector="ToggleButton">
+            <Setter Property="Background" Value="{DynamicResource C_11121620}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_333A3D4A}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="ToggleButton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
+        </Style>
+        <Style Selector="ToggleButton:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_3356F5C4}"/>
+        </Style>
+        <Style Selector="ToggleButton:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_6656F5C4}"/>
+        </Style>
+    </UserControl.Styles>
+
     <Border Margin="6" Background="{DynamicResource SurfaceShell}"
             BorderBrush="{DynamicResource BorderShell}" BorderThickness="1"
             CornerRadius="12" ClipToBounds="True">
