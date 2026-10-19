@@ -39,3 +39,6 @@ Desktop.ini
 
 # ZCode agent session workspace
 .zcode/
+
+# Test results (trx)
+TestResults/

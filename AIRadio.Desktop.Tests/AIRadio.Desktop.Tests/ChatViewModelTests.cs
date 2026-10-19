@@ -95,6 +95,40 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public void TtsPlaying_DoesNotShowWorkingNotice()
+    {
+        // 过程态（TTS 播报中）不再弹通知：反馈由品牌头徽章辉光与底部状态栏 SPEAKING 承担。
+        // 直驱 RefreshStatus：TtsStateChanged 订阅经 ObserveOn(MainThreadScheduler) 派发
+        // 在无 dispatcher 的纯 Fact 下不定时
+        var (vm, _) = CreateVmWithTtsErrors();
+
+        vm.IsSpeaking = true;
+        vm.RefreshStatus();
+
+        Assert.False(vm.ShowStatusNotice);
+        Assert.False(vm.ShowStatusRecall);
+    }
+
+    [Fact]
+    public void NewRoundAfterFailure_OldFailureDoesNotResurface()
+    {
+        // 失败通知显示后进入新一轮播报：旧失败翻篇，播报结束后不得经首个分支复活
+        var (vm, _) = CreateVmWithTtsErrors();
+
+        vm.HasFailure = true;
+        vm.RefreshStatus();
+        Assert.True(vm.ShowStatusNotice);
+
+        vm.IsSpeaking = true;
+        vm.RefreshStatus();
+        vm.IsSpeaking = false;
+        vm.RefreshStatus();
+
+        Assert.False(vm.ShowStatusNotice);
+        Assert.False(vm.ShowStatusRecall);
+    }
+
+    [Fact]
     public void ParseResponse_StripsEmotionTags()
     {
         // 旧文本尾标已移除：情绪标签照常剥离，【next】不再是指令、按普通文本保留

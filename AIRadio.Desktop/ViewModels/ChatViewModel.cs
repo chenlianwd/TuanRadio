@@ -503,7 +503,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         InputText = string.Empty;
         IsProcessing = true;
         RefreshStatus();
-        SetWorkingNotice(AppLanguage.T("AI 正在回复", "AI is replying"), AppLanguage.T("正在请求 AI 服务，最多等待 30 秒。", "Requesting the AI service; waiting up to 30 seconds."));
         // 上一轮 DJ 已承诺的播放动作不能随新消息静默丢弃：说"播放晴天"后在播报期间
         // 追加消息是常见交互，此时立即兑现承诺（TTS 马上会被停止，不再等播报结束）
         if (_pendingCommand != null)
@@ -622,7 +621,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
         if (willSpeak)
         {
-            SetWorkingNotice(AppLanguage.T("正在生成语音", "Generating voice"), AppLanguage.T("AI 文字已返回，正在调用语音服务。", "AI text is back; calling the voice service."));
             var speechData = await DjTtsInterop.GenerateSpeechAsync(_djService, ttsText, _lifetimeCts.Token);
             if (speechData is { Length: > 0 })
             {
@@ -652,7 +650,9 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void RefreshStatus()
+    // internal 供测试直驱（同 RouteStageTap 手法）：ObserveOn(MainThreadScheduler)
+    // 在无 dispatcher 的纯 Fact 下派发不定，时序等待测不出真实语义
+    internal void RefreshStatus()
     {
         if (HasFailure && !IsProcessing && !IsSpeaking && !IsRecognizing && !IsListening)
         {
@@ -661,30 +661,16 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (IsProcessing)
+        // 过程态（AI 回复/生成语音/TTS 播报）不再弹通知：播报反馈由品牌头徽章
+        // 辉光呼吸与底部状态栏 SPEAKING 承担；进入新一轮交互即翻篇旧失败，
+        // 防其过程结束后经首个分支复活
+        if (IsProcessing || IsSpeaking)
         {
-            SetWorkingNotice(AppLanguage.T("AI 正在回复", "AI is replying"), AppLanguage.T("正在请求 AI 服务，最多等待 30 秒。", "Requesting the AI service; waiting up to 30 seconds."));
+            HasFailure = false;
+            _failureInfo = null;
+            _isStatusNoticeDismissed = false;
         }
-        else if (IsSpeaking)
-        {
-            SetWorkingNotice(AppLanguage.T("正在播报语音", "Speaking"), AppLanguage.T("AI 回复已生成，正在播放 TTS 音频。", "AI reply is ready; playing TTS audio."));
-        }
-        else
-        {
-            ShowStatusNotice = false;
-            ShowStatusRecall = false;
-        }
-    }
-
-    private void SetWorkingNotice(string headline, string detail)
-    {
-        HasFailure = false;
-        _failureInfo = null;
-        _isStatusNoticeDismissed = false;
-        StatusHeadline = headline;
-        StatusDetail = detail;
-        StatusRecoveryHint = string.Empty;
-        ShowStatusNotice = true;
+        ShowStatusNotice = false;
         ShowStatusRecall = false;
     }
 
