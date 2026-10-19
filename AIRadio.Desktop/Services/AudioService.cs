@@ -202,6 +202,9 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
     public IObservable<string> TtsError => _ttsErrorSubject.AsObservable();
 
+    /// <summary>TTS 播放链实时峰值（0..1，WaveOutEvent 播放线程触发，仅轻量计算）。</summary>
+    public event Action<float>? TtsLevelChanged;
+
     public void SetUrlResolver(Func<string, Task<string?>> resolver)
     {
         if (!IsDisposed)
@@ -2426,8 +2429,10 @@ public class AudioService : IAudioService, IDisposable
         try
         {
             reader = new MediaFoundationReader(filePath);
+            // 播放链内嵌音量探针：徽章辉光跟随真实音量，不依赖系统 loopback（蓝牙 HFP 下频谱采不到数据）
+            var tap = new TtsLevelTap(reader, level => TtsLevelChanged?.Invoke(level));
             output = new WaveOutEvent { DesiredLatency = 120 };
-            output.Init(reader);
+            output.Init(tap);
             TrySetTtsVolume(output, 1.0f);
             EventHandler<StoppedEventArgs> stoppedHandler = (_, e) => OnTtsPlaybackStopped(e, sessionId, tempPath);
             output.PlaybackStopped += stoppedHandler;

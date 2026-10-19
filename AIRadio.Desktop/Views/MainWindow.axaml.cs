@@ -1,6 +1,8 @@
 using System;
 using System.Reactive;
 using System.Reactive.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -18,6 +20,11 @@ public partial class MainWindow : Window, IDisposable
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
     private Action<string, string>? _djVisualCueHandler;
+    private Action<float>? _ttsLevelHandler;
+    private IDisposable? _speakingSub;
+    private CancellationTokenSource? _glowCts;
+    private volatile float _ttsTargetLevel;
+    private float _glowCurrent;
     private IDisposable? _compactModeSub;
     private IDisposable? _compactTopmostSub;
     private WindowBoundsSnapshot? _standardBounds;
@@ -40,10 +47,17 @@ public partial class MainWindow : Window, IDisposable
                     _compactModeSub = null;
                     _compactTopmostSub?.Dispose();
                     _compactTopmostSub = null;
+                    _speakingSub?.Dispose();
+                    _speakingSub = null;
+                    StopGlow();
                     if (_djVisualCueHandler != null)
                     {
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
                         _activeVm.DjVisualCue -= _djVisualCueHandler;
+                    }
+                    if (_ttsLevelHandler != null)
+                    {
+                        _activeVm.ChatVM.TtsLevelChanged -= _ttsLevelHandler;
                     }
                 }
 
@@ -51,6 +65,13 @@ public partial class MainWindow : Window, IDisposable
                 _djVisualCueHandler = OnDjVisualCue;
                 vm.ChatVM.DjVisualCue += _djVisualCueHandler;
                 vm.DjVisualCue += _djVisualCueHandler;
+                _ttsLevelHandler = OnTtsLevelChanged;
+                vm.ChatVM.TtsLevelChanged += _ttsLevelHandler;
+
+                // 说话中徽章辉光随 TTS 播放链真实音量起伏；停止说话复位常亮
+                _speakingSub = vm.ChatVM.WhenAnyValue(x => x.IsSpeaking)
+                    .ObserveOn(RxApp.MainThreadScheduler)
+                    .Subscribe(OnSpeakingChanged);
 
                 // 简洁模式切换时收缩/还原窗口尺寸；订阅先于 InitializeAsync 的模式恢复
                 _compactModeSub = vm.WhenAnyValue(x => x.IsCompactMode)
@@ -153,16 +174,70 @@ public partial class MainWindow : Window, IDisposable
         base.OnClosed(e);
     }
 
+    // 播放线程调用：只写目标值，UI 侧由辉光循环轮询消费，不触碰控件
+    internal void OnTtsLevelChanged(float level) => _ttsTargetLevel = level;
+
+    private void OnSpeakingChanged(bool speaking)
+    {
+        if (speaking)
+            StartGlow();
+        else
+            StopGlow();
+    }
+
+    private void StartGlow()
+    {
+        if (_avatarBorder is not Border badge)
+            return;
+        _glowCts?.Cancel(); // 串场分段 true→false→true 快速翻转时避免双循环交错写
+        _glowCts = new CancellationTokenSource();
+        _ = RunGlowAsync(badge, _glowCts.Token);
+    }
+
+    private void StopGlow()
+    {
+        _glowCts?.Cancel();
+        if (_avatarBorder is Border badge)
+            badge.Opacity = 1;
+    }
+
+    // 说话期徽章辉光：目标取播放链实时峰值（γ=0.5 抬高弱信号的可感对比），30fps
+    // 线性趋近——有声抬向 1、句间停顿落回 0.55 基线，徽章随 DJ 真实音量呼吸而非常亮
+    private async Task RunGlowAsync(Border badge, CancellationToken token)
+    {
+        const float minOpacity = 0.55f;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                var target = (float)Math.Sqrt(_ttsTargetLevel);
+                _glowCurrent += (target - _glowCurrent) * 0.35f;
+                badge.Opacity = minOpacity + (1 - minOpacity) * Math.Clamp(_glowCurrent, 0f, 1f);
+                await Task.Delay(33, token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 停止说话的透明度复位由 StopGlow 负责
+        }
+    }
+
     public void Dispose()
     {
         _compactModeSub?.Dispose();
         _compactTopmostSub?.Dispose();
+        _speakingSub?.Dispose();
+        StopGlow();
         if (_activeVm != null)
         {
             if (_djVisualCueHandler != null)
             {
                 _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
                 _activeVm.DjVisualCue -= _djVisualCueHandler;
+            }
+            if (_ttsLevelHandler != null)
+            {
+                _activeVm.ChatVM.TtsLevelChanged -= _ttsLevelHandler;
             }
         }
     }
