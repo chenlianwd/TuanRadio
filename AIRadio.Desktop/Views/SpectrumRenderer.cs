@@ -54,6 +54,9 @@ public sealed class SpectrumRenderer : Control
         InvalidateVisual();
     }
 
+    /// <summary>测试钩子：headless 无法断言绘制输出，事件→SetBands 接线以此锚定。</summary>
+    internal float[] Bands => _bands;
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);

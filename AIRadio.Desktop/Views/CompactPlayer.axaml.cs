@@ -1,4 +1,5 @@
 using System;
+using System.Reactive;
 using AIRadio.Desktop.ViewModels;
 using Avalonia;
 using Avalonia.Controls;
@@ -9,11 +10,11 @@ using Avalonia.VisualTree;
 
 namespace AIRadio.Desktop.Views;
 
-/// <summary>简洁模式两行紧凑卡：行 1 拖动/双击还原，行 2 播放控制 + 进度 + 迷你频谱。</summary>
+/// <summary>简洁模式两行紧凑卡：行 1 拖动/双击还原，行 2 播放控制 + 进度 + 迷你频谱（样式与主界面同步，点击循环）。</summary>
 public partial class CompactPlayer : UserControl
 {
-    private const float MinBarHeight = 2f;
-    private const float MaxBarHeight = 18f;
+    private const int MiniBandCount = 8;
+    private readonly float[] _miniBands = new float[MiniBandCount];
     private MainWindowViewModel? _currentVm;
     private Point? _infoPressPos;
     private bool _infoPressed;
@@ -58,16 +59,38 @@ public partial class CompactPlayer : UserControl
         if (!IsVisible)
             return;
 
-        // SpectrumViewModel 已把事件切到 UI 线程；只更新 8 段小柱高度，开销可忽略
-        var bars = SpectrumPanel.Children;
-        for (int i = 0; i < bars.Count; i++)
-        {
-            if (bars[i] is not Border bar)
-                continue;
+        // SpectrumViewModel 已把事件切到 UI 线程；32 段降采样为 8 段（分组均值）——
+        // 46px 宽内 32 柱会被钳到 2px 宽度下限相互重叠
+        DownsampleBands(data, _miniBands);
+        CompactSpectrum.SetBands(_miniBands);
+    }
 
-            var value = i < data.Length ? data[i] : 0f;
-            bar.Height = Math.Clamp(MinBarHeight + value * (MaxBarHeight - MinBarHeight), MinBarHeight, MaxBarHeight);
+    /// <summary>把 FFT 频段降采样到迷你频谱段数（分组均值）。internal static 供测试直驱。</summary>
+    internal static void DownsampleBands(float[] data, float[] target)
+    {
+        if (data.Length <= target.Length)
+        {
+            for (var i = 0; i < target.Length; i++)
+                target[i] = i < data.Length ? data[i] : 0f;
+            return;
         }
+
+        for (var i = 0; i < target.Length; i++)
+        {
+            var start = i * data.Length / target.Length;
+            var end = (i + 1) * data.Length / target.Length;
+            float sum = 0;
+            for (var j = start; j < end; j++)
+                sum += data[j];
+            target[i] = sum / (end - start);
+        }
+    }
+
+    private void OnSpectrumTapped(object? sender, TappedEventArgs e)
+    {
+        // 与主舞台频谱列同一手势语义：点击循环样式（CycleSpectrumStyleCommand 内含持久化）
+        if (DataContext is MainWindowViewModel vm)
+            vm.CycleSpectrumStyleCommand.Execute(Unit.Default).Subscribe();
     }
 
     private void OnProgressSliderPressed(object? sender, PointerPressedEventArgs e)
