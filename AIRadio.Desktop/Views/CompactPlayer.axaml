@@ -2,11 +2,16 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AIRadio.Desktop.ViewModels"
              xmlns:conv="using:AIRadio.Desktop.Converters"
+             xmlns:local="using:AIRadio.Desktop.Views"
              x:Class="AIRadio.Desktop.Views.CompactPlayer"
              x:DataType="vm:MainWindowViewModel">
 
     <UserControl.Resources>
         <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
+        <LinearGradientBrush x:Key="MiniSpectrumPrimary" StartPoint="0%,0%" EndPoint="0%,100%">
+            <GradientStop Offset="0" Color="{DynamicResource C_FFB9FFE8}"/>
+            <GradientStop Offset="1" Color="{DynamicResource C_FF56F5C4}"/>
+        </LinearGradientBrush>
     </UserControl.Resources>
 
     <Border Margin="6" Background="{DynamicResource SurfaceShell}"
@@ -165,18 +170,19 @@
                         </Border>
                     </Popup>
                 </Panel>
-                <!-- 迷你频谱：8 段，code-behind 订阅 SpectrumVM.SpectrumReceived 更新高度 -->
-                <StackPanel x:Name="SpectrumPanel" Grid.Column="8" Orientation="Horizontal" Spacing="2"
-                            Width="46" Height="20" VerticalAlignment="Center">
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                    <Border Width="4" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Background="{DynamicResource C_6656F5C4}"/>
-                </StackPanel>
+                <!-- 迷你频谱：复用主舞台 SpectrumRenderer（四种样式同一绘制器），
+                     StyleName 绑 SpectrumVM.SelectedStyle 与主界面实时同步；点击循环样式
+                     （同主舞台频谱列手势）。透明命中层：纯自绘 Renderer 无可命中背景
+                     （同 SpectrumView 2026-10-16 修复）；code-behind 订阅
+                     SpectrumVM.SpectrumReceived 降采样 32→8 段喂 Renderer -->
+                <Grid x:Name="CompactSpectrumHost" Grid.Column="8" Width="46" Height="20"
+                      VerticalAlignment="Center" Background="Transparent" Cursor="Hand"
+                      Tapped="OnSpectrumTapped">
+                    <local:SpectrumRenderer x:Name="CompactSpectrum"
+                                            StyleName="{Binding SpectrumVM.SelectedStyle}"
+                                            PrimaryBrush="{StaticResource MiniSpectrumPrimary}"
+                                            SecondaryBrush="{DynamicResource C_FFA783FF}"/>
+                </Grid>
             </Grid>
         </Grid>
     </Border>
