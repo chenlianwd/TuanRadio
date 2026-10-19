@@ -80,6 +80,11 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
     public event Action<string, string>? DjVisualCue; // expression, motion
 
+    /// <summary>TTS 播放链实时峰值转发（AudioService 播放线程 → MainWindow 说话徽章辉光）。</summary>
+    public event Action<float>? TtsLevelChanged;
+
+    private void OnTtsLevelFromService(float level) => TtsLevelChanged?.Invoke(level);
+
     public ReactiveCommand<Unit, Unit> SendMessageCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleVoiceInputCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleConversationModeCommand { get; }
@@ -115,6 +120,8 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 IsSpeaking = playing;
                 RefreshStatus();
             });
+
+        _audioService.TtsLevelChanged += OnTtsLevelFromService;
 
         // Handle pending command after TTS ends (separate subscription to avoid async void).
         // pending 在语音生成的网络等待期间就已挂上，期间任何别的 TTS 结束通知（如上一段
@@ -1377,6 +1384,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
         _lifetimeCts.Cancel();
         _ttsSub.Dispose();
+        _audioService.TtsLevelChanged -= OnTtsLevelFromService;
         _ttsCommandSub.Dispose();
         _commandQueueSub.Dispose();
         _commandQueue.Dispose();

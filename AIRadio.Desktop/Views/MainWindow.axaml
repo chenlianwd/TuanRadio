@@ -55,7 +55,8 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="0"/>
         </Style>
-        <!-- DJ 说话中（TTS 正在出声，ChatVM.IsSpeaking）：徽章描强调绿圈、主播名点亮 -->
+        <!-- DJ 说话中（TTS 正在出声，ChatVM.IsSpeaking）：徽章描强调绿圈、主播名点亮；
+             圈的辉光另由 code-behind 随 TTS 播放链真实音量驱动（MainWindow.RunGlowAsync） -->
         <Style Selector="Border#AvatarBorder.speaking">
             <Setter Property="BorderThickness" Value="1.5"/>
             <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>

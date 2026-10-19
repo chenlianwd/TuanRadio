@@ -161,4 +161,99 @@ public class BrandHeaderHostNameTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    // 说话徽章辉光随 TTS 播放链真实音量：IsSpeaking 置位即开辉光循环（首帧同步落基线），
+    // 透明度跟随峰值目标起伏，停止说话立即复位 1.0。旧"常亮无生命感"实现复活会在此暴露
+    // （IsSpeaking 期间 Opacity 恒 1 即失败）。
+    [AvaloniaFact]
+    public async Task SpeakingBadge_GlowFollowsTtsLevel_AndResetsWhenDone()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var badge = window.FindControl<Border>("AvatarBorder")
+                ?? throw new InvalidOperationException("AvatarBorder not found");
+
+            vm.ChatVM.IsSpeaking = true;
+            Dispatcher.UIThread.RunJobs();
+            // 辉光循环同步首帧：说话一开始就落到基线（而非停留在 1）
+            Assert.True(badge.Opacity < 1.0);
+
+            ((MainWindow)window).OnTtsLevelChanged(1.0f);
+            var brightDeadline = DateTimeOffset.Now.AddSeconds(2);
+            var sawBright = false;
+            while (DateTimeOffset.Now < brightDeadline)
+            {
+                if (badge.Opacity > 0.95)
+                {
+                    sawBright = true;
+                    break;
+                }
+                await Task.Delay(8);
+            }
+            Assert.True(sawBright, $"glow never brightened, opacity={badge.Opacity}");
+
+            ((MainWindow)window).OnTtsLevelChanged(0f);
+            var dimDeadline = DateTimeOffset.Now.AddSeconds(2);
+            var sawDim = false;
+            while (DateTimeOffset.Now < dimDeadline)
+            {
+                if (badge.Opacity < 0.75)
+                {
+                    sawDim = true;
+                    break;
+                }
+                await Task.Delay(8);
+            }
+            Assert.True(sawDim, $"glow never dimmed, opacity={badge.Opacity}");
+
+            vm.ChatVM.IsSpeaking = false;
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(80); // 让已取消循环的收尾 continuation 跑完
+            Assert.Equal(1.0, badge.Opacity);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 非说话期间的峰值事件不得驱动徽章（辉光只在 IsSpeaking 期间运行）
+    [AvaloniaFact]
+    public async Task SpeakingBadge_IgnoresTtsLevel_WhenNotSpeaking()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var badge = window.FindControl<Border>("AvatarBorder")
+                ?? throw new InvalidOperationException("AvatarBorder not found");
+
+            ((MainWindow)window).OnTtsLevelChanged(1.0f);
+            await Task.Delay(150);
+
+            Assert.Equal(1.0, badge.Opacity);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

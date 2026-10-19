@@ -53,6 +53,8 @@ public interface IAudioService
     void PlayTtsAudio(byte[] audioData);
     void StopTts();
     IObservable<bool> TtsStateChanged { get; }
+    /// <summary>TTS 播放链实时峰值（0..1，播放线程触发）。消费方：说话徽章辉光。</summary>
+    event Action<float>? TtsLevelChanged;
     IObservable<string> TtsError { get; }
     bool IsRadioSoundFxEnabled { get; set; }
     void PlayRadioSoundFx(RadioFxKind kind);
