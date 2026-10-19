@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Http;
+using System.Net.WebSockets;
 using System.Threading.Tasks;
 
 namespace AIRadio.Desktop.Services;
@@ -45,6 +46,21 @@ public sealed record ApiFailureInfo(
                 "无法连接 AI 服务",
                 "请求没有成功发送到 AI 服务，通常是网络、DNS、代理或 TLS 连接问题。",
                 "检查网络后重试。");
+        }
+
+        // 只有 Edge TTS 走 ClientWebSocket，WebSocket 异常必为语音服务失败；
+        // 不落 Unknown 兜底（会显示"AI 服务异常"+英文原文，误导排查方向）。
+        // 文案经 AppLanguage.T 自带双语，ForCurrentLanguage 对已匹配当前语言的
+        // 文案直接放行，不会被 Kind 级英文模板覆盖
+        if (ex is WebSocketException)
+        {
+            return new ApiFailureInfo(
+                ApiFailureKind.Network,
+                AppLanguage.T("语音服务连接失败", "Voice service connection failed"),
+                AppLanguage.T("与在线语音合成服务的连接没有建立成功（握手被拒绝或网络中断）。",
+                    "The connection to the online voice service could not be established (handshake rejected or interrupted)."),
+                AppLanguage.T("检查系统时间、网络与代理后重试；持续失败可在设置里暂时关闭语音播报。",
+                    "Check the system clock, network and proxy, then retry. If it keeps failing, disable voice playback in Settings for now."));
         }
 
         return new ApiFailureInfo(
