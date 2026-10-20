@@ -315,6 +315,9 @@ public class AudioService : IAudioService, IDisposable
                 if (_ttsWasPlayingWhenMusicPaused)
                 {
                     try { output?.Pause(); } catch (Exception ex) { Log.Debug(ex, "TTS pause failed"); }
+                    // 暂停后探针不再被读、事件停发（且 IsSpeaking 保持 true）：
+                    // 显式归零让徽章辉光落回基线呼吸暂停，而非冻结在暂停前峰值恒亮
+                    TtsLevelChanged?.Invoke(0f);
                 }
             }
             else if (state == PlaybackState.Playing)
@@ -2551,6 +2554,8 @@ public class AudioService : IAudioService, IDisposable
         }
 
         DisposeTtsResources(output, reader, ttsFile);
+        // 强停路径没有 EOF 读，探针停在最后峰值：显式归零，防残留电平带入下一说话段首帧
+        TtsLevelChanged?.Invoke(0f);
 
         if (notifyState && !IsDisposed)
             _ttsStateSubject.OnNext(false);

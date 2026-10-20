@@ -20,9 +20,12 @@ namespace AIRadio.Desktop.Tests;
 
 public class ChatAreaMicButtonTests
 {
-    internal static MainWindowViewModel CreateViewModel()
+    internal static MainWindowViewModel CreateViewModel() => CreateViewModel(out _);
+
+    /// <summary>带 audio mock 的重载：供需要 Raise 服务事件的端到端测试使用（如辉光事件链）。</summary>
+    internal static MainWindowViewModel CreateViewModel(out Mock<IAudioService> audio)
     {
-        var audio = new Mock<IAudioService>();
+        audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
         audio.Setup(x => x.TrackChanged).Returns(new Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
