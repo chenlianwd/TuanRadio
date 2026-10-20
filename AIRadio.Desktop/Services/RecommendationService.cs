@@ -248,21 +248,6 @@ public class RecommendationService : IRecommendationService
         return candidates[Random.Shared.Next(candidates.Count)];
     }
 
-    /// <summary>启动推荐选曲启发式：收藏优先，排除正在播放的曲目，再做同歌手分散。</summary>
-    public static Track? PickStartupRecommendation(
-        IReadOnlyList<Track> favorites,
-        IReadOnlyList<Track> allTracks,
-        Track? current)
-    {
-        var source = favorites.Count > 0 ? favorites : allTracks;
-        if (source.Count == 0) return null;
-
-        var candidates = source.Where(t => t != current).ToList();
-        if (candidates.Count == 0)
-            candidates = source.ToList();
-        return PickDiversifiedTrack(candidates, current);
-    }
-
     private static string? NormalizeMood(string? mood)
     {
         if (string.IsNullOrWhiteSpace(mood)) return null;

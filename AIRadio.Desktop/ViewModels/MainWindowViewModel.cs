@@ -951,10 +951,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (IsDisposed)
                 return;
 
+            // 非空歌单的开台播放已并入 AnnounceWelcomeAsync（欢迎语后直接播 DJ 推荐新歌），
+            // 这里只保留空歌单的引导开场
             if (PlaylistVM.Tracks.Count == 0)
                 await AnnounceEmptyLibraryAsync(cancellationToken);
-            else
-                await AnnounceStartupRecommendationAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || IsDisposed)
         {
@@ -994,10 +994,86 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         ChatVM.AddAssistantMessage(text);
         DjVisualCue?.Invoke("smile", "wave");
+
+        if (PlaylistVM.Tracks.Count == 0)
+        {
+            // 空歌单保留引导开场（AnnounceStartupFollowupAsync），不发起推荐也不开播
+            await SpeakDjTextAsync(text, cancellationToken);
+            return;
+        }
+
+        // 开台即播 DJ 推荐新歌：推荐搜索与欢迎语 TTS 并行，说完衔接介绍词开播。
+        // LoadTracks 后 CurrentTrack 默认指向歌单第 1 首（未播放态），以它为开台基线：
+        // staleness 守卫按"基线未被用户换掉"判定，若传 null 会在真实语义下全程短路。
+        // 预取挂独立 linked CTS：链条放弃（让位/超时）时显式取消，
+        // 防止迟到结果经 staleness 闸门（兜底播的正是基线曲，CurrentTrack 未变）推节目单气泡/台呼
+        var baseline = _audioService.CurrentTrack;
+        using var prefetchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var prefetched = GetRecommendedTrackAsync(baseline, prefetchCts.Token);
         await SpeakDjTextAsync(text, cancellationToken);
-        if (!IsDisposed && !cancellationToken.IsCancellationRequested &&
-            PlaylistVM.Tracks.Count > 0 && !_audioService.IsPlaying)
+        if (IsDisposed || cancellationToken.IsCancellationRequested)
+            return;
+
+        await StartStationPlaybackAsync(baseline, prefetched, prefetchCts, cancellationToken);
+    }
+
+    /// <summary>开台推荐预取预算：欢迎语 TTS 已并行消化大半，超时不再等待，交给歌单轮换先出声。</summary>
+    private static readonly TimeSpan StartupRecommendationBudget = TimeSpan.FromSeconds(15);
+
+    /// <summary>开台播放：消费欢迎语期间预取的推荐并播放 DJ 挑的新歌；
+    /// 推荐超预算或失败时沿 歌单轮换→歌单第 1 首 阶梯回退，保证开台总能出声。</summary>
+    private async System.Threading.Tasks.Task StartStationPlaybackAsync(
+        Track? baselineTrack,
+        System.Threading.Tasks.Task<Track?> prefetchedRecommendation,
+        CancellationTokenSource prefetchCts,
+        CancellationToken cancellationToken)
+    {
+        // 用户已在播（如欢迎语前自己点了歌）：开台链让位不抢播，预取一并作废
+        if (_audioService.IsPlaying)
+        {
+            prefetchCts.Cancel();
+            return;
+        }
+
+        var played = false;
+        try
+        {
+            Track? recommended = null;
+            try
+            {
+                recommended = await prefetchedRecommendation.WaitAsync(StartupRecommendationBudget);
+            }
+            catch (TimeoutException)
+            {
+                prefetchCts.Cancel();
+                Log.Information(
+                    "Startup recommendation exceeded {Budget:F0}s budget, falling back to playlist rotation",
+                    StartupRecommendationBudget.TotalSeconds);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 预取自身 fault（真实服务几乎不可能）：留痕后照常走轮换阶梯
+                Log.Warning(ex, "Startup recommendation prefetch failed");
+            }
+
+            played = recommended != null && await PlayWithFreshRecommendation(baselineTrack, recommended);
+            if (!played && !IsDisposed && !cancellationToken.IsCancellationRequested)
+                played = await PlayWithPlaylistRotation(baselineTrack);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || IsDisposed)
+        {
+            // 应用关闭时取消开台播放。
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Startup station playback failed");
+        }
+
+        if (!played && !IsDisposed && !cancellationToken.IsCancellationRequested &&
+            !_audioService.IsPlaying && PlaylistVM.Tracks.Count > 0)
+        {
             _audioService.Play();
+        }
     }
 
     private async System.Threading.Tasks.Task AnnounceCharacterGreetingAsync(CancellationToken cancellationToken)
@@ -1035,60 +1111,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to generate character greeting");
-        }
-    }
-
-    private async System.Threading.Tasks.Task AnnounceStartupRecommendationAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (IsDisposed || cancellationToken.IsCancellationRequested)
-                return;
-
-            var current = _audioService.CurrentTrack;
-            var originalTrack = current;
-            var originalCount = PlaylistVM.Tracks.Count;
-
-            // 选曲启发式（收藏优先、排除当前曲、避开同歌手）统一收敛在 RecommendationService
-            var recommended = RecommendationService.PickStartupRecommendation(
-                PlaylistVM.Favorites,
-                PlaylistVM.Tracks,
-                current);
-
-            if (recommended == null) return;
-
-            var script = await GenerateTrackIntroductionAsync(
-                current ?? new Track { Title = AppLanguage.T("无", "None"), Artist = AppLanguage.T("未知", "Unknown") },
-                recommended,
-                cancellationToken);
-
-            if (IsDisposed || cancellationToken.IsCancellationRequested)
-                return;
-
-            if (_audioService.IsPlaying ||
-                !IsSameTrack(_audioService.CurrentTrack, originalTrack) ||
-                PlaylistVM.Tracks.Count != originalCount)
-            {
-                Log.Debug("Skipped stale startup recommendation because playback changed");
-                return;
-            }
-
-            ChatVM.AddAssistantMessage(script.Text);
-            DjVisualCue?.Invoke(script.Expression, script.Motion);
-
-            if (_audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, originalTrack))
-            {
-                Log.Debug("Skipped startup recommendation TTS because playback started");
-                return;
-            }
-
-            await SpeakDjTextAsync(script.Text, cancellationToken);
-
-            Log.Information("AI recommended: {Track}", recommended.Title);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to generate startup recommendation");
         }
     }
 
@@ -1132,12 +1154,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async System.Threading.Tasks.Task<bool> PlayWithFreshRecommendation(Track current)
+    private async System.Threading.Tasks.Task<bool> PlayWithFreshRecommendation(
+        Track? current,
+        Track? preloadedRecommendation = null)
     {
         if (IsDisposed)
             return false;
 
-        var recommended = await GetRecommendedTrackAsync(current, _lifetimeCts.Token);
+        var recommended = preloadedRecommendation ?? await GetRecommendedTrackAsync(current, _lifetimeCts.Token);
         if (IsDisposed || recommended == null)
         {
             Log.Information("Fresh recommendation returned null, falling back to playlist rotation");
@@ -1161,8 +1185,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.AddExternalTrack(recommended);
         }
 
-        var script = await GenerateTrackIntroductionAsync(current!, recommended, _lifetimeCts.Token);
-        if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return true;
+        var script = await GenerateTrackIntroductionAsync(
+            current ?? CreateIntroPlaceholderTrack(), recommended, _lifetimeCts.Token);
+        // IsPlaying 复查：介绍词生成/TTS 的长窗口内用户可能手动开播（全局播放键播的正是基线曲，
+        // CurrentTrack 引用不变、staleness 拦不住），此时让位不抢播；电台链 EndReached 后恒 false 零影响。
+        // 返回"是否真的开播"：stale/未播一律 false，开台链据此走兜底阶梯（电台链轮换同样被拦，行为等价）
+        if (IsDisposed || _audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, current)) return false;
 
         ChatVM.AddAssistantMessage(script.Text);
         DjVisualCue?.Invoke(script.Expression, script.Motion);
@@ -1173,32 +1201,38 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 回退用与合并口径一致的宽松查找，保证总能拿到可播实例。
         var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended))
                        ?? PlaylistVM.FindMatchingTrack(recommended);
-        if (playable != null && IsSameTrack(_audioService.CurrentTrack, current))
+        if (playable != null && !_audioService.IsPlaying && IsSameTrack(_audioService.CurrentTrack, current))
+        {
             _audioService.PlayTrack(playable);
-        return true;
+            return true;
+        }
+        return false;
     }
 
-    private async System.Threading.Tasks.Task PlayWithPlaylistRotation(Track current)
+    /// <summary>返回是否真的调用了 PlayTrack 开播（staleness 守卫拦下或列表失效时为 false，由上层兜底）。</summary>
+    private async System.Threading.Tasks.Task<bool> PlayWithPlaylistRotation(Track? current)
     {
         if (IsDisposed)
-            return;
+            return false;
 
         var pool = PlaylistVM.Tracks.Where(t => t != current).ToList();
-        if (pool.Count == 0) return;
+        if (pool.Count == 0) return false;
 
         var next = RecommendationService.PickDiversifiedTrack(pool, current);
-        if (next == null) return;
+        if (next == null) return false;
 
         if (IsDisposed)
-            return;
+            return false;
 
         if (!PlaylistVM.Tracks.Contains(next))
             PlaylistVM.AddExternalTrack(next);
 
-        if (PlaylistVM.Tracks.IndexOf(next) < 0) return;
+        if (PlaylistVM.Tracks.IndexOf(next) < 0) return false;
 
-        var script = await GenerateTrackIntroductionAsync(current, next, _lifetimeCts.Token);
-        if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current)) return;
+        var script = await GenerateTrackIntroductionAsync(
+            current ?? CreateIntroPlaceholderTrack(), next, _lifetimeCts.Token);
+        // 同推荐档：IsPlaying 复查防介绍词窗口内被抢播（开台链基线曲引用不变的竞态）
+        if (IsDisposed || _audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, current)) return false;
 
         ChatVM.AddAssistantMessage(script.Text);
         DjVisualCue?.Invoke(script.Expression, script.Motion);
@@ -1206,9 +1240,21 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // 串场期间列表可能被增删，旧索引会指向错误曲目，播放前必须重查
         var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrack(t, next));
-        if (playable != null && !IsDisposed && IsSameTrack(_audioService.CurrentTrack, current))
+        if (playable != null && !IsDisposed && !_audioService.IsPlaying && IsSameTrack(_audioService.CurrentTrack, current))
+        {
             _audioService.PlayTrack(playable);
+            return true;
+        }
+        return false;
     }
+
+    /// <summary>开台场景介绍词的"当前曲"占位：无在播曲目时给 DJ 一个中性的"上一首"语义。</summary>
+    private static Track CreateIntroPlaceholderTrack()
+        => new()
+        {
+            Title = AppLanguage.T("无", "None"),
+            Artist = AppLanguage.T("未知", "Unknown")
+        };
 
     private void AttachRecommendationContext(Track? current)
     {
@@ -1236,7 +1282,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 return null;
 
             // 60 秒推荐超时被 AudioService 抛弃后它会自行做列表轮换兜底（当前曲目已变）：
-            // 这条迟到管线不能再更新节目单/推开场白气泡，否则播出内容与 UI 错位
+            // 这条迟到管线不能再更新节目单/推开场白气泡，否则播出内容与 UI 错位。
+            // 开台链超时后显式取消 linked token 走这里的取消分支，同理静默作废
             if (!IsSameTrack(_audioService.CurrentTrack, current))
                 return null;
 
@@ -1251,8 +1298,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (recommended != null)
                 return recommended;
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || IsDisposed)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested || IsDisposed)
         {
+            // 滤波器须认传入令牌：开台预取的 linked CTS 取消后这里干净返回 null，
+            // 否则 OCE 逃逸成 faulted task（无人 await）或误入下方 DJ 兜底白跑一轮
             return null;
         }
         catch (Exception ex)
