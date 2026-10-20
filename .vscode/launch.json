@@ -9,7 +9,12 @@
             "program": "${workspaceFolder}/AIRadio.Desktop/bin/Debug/net10.0/AIRadio.exe",
             "args": [],
             "cwd": "${workspaceFolder}/AIRadio.Desktop",
-            "console": "internalConsole"
+            "console": "internalConsole",
+            // JMC 模式下 vsdbg 对 when 过滤器/异步帧边界求值失败，会把已被
+            // 根级 catch 处理的取消/连接异常误报成 user-unhandled 弹窗
+            // （TTS 优雅关闭 995、代理探测超时等，dotnet/vscode-csharp#8869）。
+            // 关闭 JMC 后只拦真正逃逸的未处理异常。
+            "justMyCode": false
         }
     ]
 }
