@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Moq;
 using ReactiveUI;
 
 namespace AIRadio.Desktop.Tests;
@@ -248,6 +249,52 @@ public class BrandHeaderHostNameTests
             await Task.Delay(150);
 
             Assert.Equal(1.0, badge.Opacity);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 锚定辉光事件链的两级生产接线：AudioService 播放线程峰值 → ChatVM 转发（构造
+    // 时 += TtsLevelChanged）→ MainWindow 订阅消费（DataContextChanged 时 +=）。
+    // 直驱 MainWindow.OnTtsLevelChanged 的测试测不到这两级 +=，任一被误删则
+    // 辉光恒基线不动而测试全绿——本测试以 mock.Raise 走完整链路补上该缺口。
+    [AvaloniaFact]
+    public async Task SpeakingBadge_GlowWiredThroughFullEventChain()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel(out var audio);
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var badge = window.FindControl<Border>("AvatarBorder")
+                ?? throw new InvalidOperationException("AvatarBorder not found");
+
+            vm.ChatVM.IsSpeaking = true;
+            Dispatcher.UIThread.RunJobs();
+
+            // Moq 在调用线程同步触发事件（等效播放线程直调），订阅链只写 volatile 字段
+            audio.Raise(x => x.TtsLevelChanged += null, 1.0f);
+            var deadline = DateTimeOffset.Now.AddSeconds(2);
+            var sawBright = false;
+            while (DateTimeOffset.Now < deadline)
+            {
+                if (badge.Opacity > 0.95)
+                {
+                    sawBright = true;
+                    break;
+                }
+                await Task.Delay(8);
+            }
+            Assert.True(sawBright, $"glow event chain broken, opacity={badge.Opacity}");
         }
         finally
         {

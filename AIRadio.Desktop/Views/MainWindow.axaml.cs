@@ -220,6 +220,12 @@ public partial class MainWindow : Window, IDisposable
         {
             // 停止说话的透明度复位由 StopGlow 负责
         }
+        catch (Exception ex)
+        {
+            // 循环任务被丢弃（_ =）：非取消异常不捕获会成为 unobserved task exception
+            // 静默杀死辉光，至少留一条日志可查
+            Serilog.Log.Debug(ex, "TTS badge glow loop failed");
+        }
     }
 
     public void Dispose()
