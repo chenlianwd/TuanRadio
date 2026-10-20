@@ -20,19 +20,20 @@ using ReactiveUI;
 namespace AIRadio.Desktop.Tests;
 
 /// <summary>
-/// 回归：PlayerDeck 反馈行（LIKE/NOPE/SIM/CALM/FIRE/STORY）曾被用户整体判定"无效"。
-/// 实际接线完好，根因是各动作几乎全部静默——反馈只影响后续节目单、空闲时早退、
+/// 回归：PlayerDeck 反馈行（NOPE/SIM/CALM/FIRE/STORY，原 LIKE 已并入中部心形收藏）曾被用户
+/// 整体判定"无效"。实际接线完好，根因是各动作几乎全部静默——反馈只影响后续节目单、空闲时早退、
 /// STORY 生成失败也无提示。锚定三件事：
-/// 1. 六枚按钮的 Command 编译绑定必须解析到 MainWindowViewModel 对应命令实例；
+/// 1. 五枚按钮 + 心形的 Command 编译绑定必须解析到 MainWindowViewModel 对应命令实例；
 /// 2. 播放中每个动作都要有即时可见回应（DJ 气泡）并落到推荐/画像侧；
-/// 3. 空闲时给出引导气泡而非静默。
+/// 3. 空闲时反馈行给引导气泡、心形静默早退，而非统一无反应。
 /// 注：headless 下未渲染窗口无法投递指针输入，点击链路由 Avalonia Button 内部
 /// 状态机保证（与播放控制按钮同机制），测试以"绑定断言+命令直驱"覆盖行为。
 /// </summary>
 public class PlayerDeckFeedbackButtonTests
 {
-    private static (MainWindowViewModel Vm, Mock<IRecommendationService> Rec) CreateViewModel(
-        Track? currentTrack, Func<SongStory>? storyFactory = null)
+    private static (MainWindowViewModel Vm, Mock<IRecommendationService> Rec, Mock<IAudioService> Audio) CreateViewModel(
+        Track? currentTrack, Func<SongStory>? storyFactory = null,
+        Mock<IListeningProfileService>? profileMock = null)
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
@@ -71,8 +72,9 @@ public class PlayerDeckFeedbackButtonTests
             new Mock<ISttService>().Object,
             Path.Combine(dir, "playlist.json"),
             settingsFile: Path.Combine(dir, "settings.json"),
-            recommendationService: rec.Object);
-        return (vm, rec);
+            recommendationService: rec.Object,
+            listeningProfile: profileMock?.Object);
+        return (vm, rec, audio);
     }
 
     private static Button FindByContent(PlayerDeck view, string content)
@@ -89,7 +91,7 @@ public class PlayerDeckFeedbackButtonTests
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
         var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
-        var (vm, rec) = CreateViewModel(track);
+        var (vm, rec, _) = CreateViewModel(track);
         Window? window = null;
         try
         {
@@ -100,7 +102,6 @@ public class PlayerDeckFeedbackButtonTests
             // 绑定断言：编译绑定必须把 VM 命令实例解析到对应按钮上（防 XAML 重命名静默断裂）
             var bindings = new (string Label, System.Windows.Input.ICommand Cmd)[]
             {
-                ("LIKE", vm.LikeCurrentTrackCommand),
                 ("NOPE", vm.DislikeCurrentTrackCommand),
                 ("SIM", vm.SimilarToCurrentTrackCommand),
                 ("CALM", vm.CalmerRecommendationCommand),
@@ -110,15 +111,21 @@ public class PlayerDeckFeedbackButtonTests
             foreach (var (label, cmd) in bindings)
                 Assert.Same(cmd, FindByContent(view, label).Command);
 
+            // 心形（图标按钮无 Content，FindByContent 摸不到）按 Command 值锚定绑定
+            Assert.Contains(view.GetVisualDescendants().OfType<Button>(),
+                b => ReferenceEquals(b.Command, vm.ToggleCurrentFavoriteCommand));
+
             var chatBefore = vm.ChatVM.Messages.Count;
 
-            Execute(vm.LikeCurrentTrackCommand);
+            // 心形收藏即"喜欢"（原反馈行 LIKE 已并入）：收藏与正向反馈一起落
+            Execute(vm.ToggleCurrentFavoriteCommand);
+            Assert.True(vm.IsCurrentFavorite);
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
                 f => f.Action == MusicFeedbackAction.Like && f.TrackId == "src-1")), Times.Once);
             // 文案锚点：锁动作→文案映射（防 CALM/FIRE 等文案对调时仅靠计数通过）
-            Assert.True(vm.ChatVM.Messages[^1].Content.Contains("记下了") ||
-                        vm.ChatVM.Messages[^1].Content.Contains("Noted"),
-                "LIKE 执行后的最新气泡应是 Like 确认文案");
+            Assert.True(vm.ChatVM.Messages[^1].Content.Contains("已收藏") ||
+                        vm.ChatVM.Messages[^1].Content.Contains("Favorited"),
+                "心形收藏后的最新气泡应是收藏+口味画像确认文案");
 
             Execute(vm.DislikeCurrentTrackCommand);
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
@@ -143,7 +150,7 @@ public class PlayerDeckFeedbackButtonTests
             for (var i = 0; i < 40 && vm.ChatVM.Messages.Count < chatBefore + 6; i++)
                 await Task.Delay(50);
 
-            // 五枚反馈各一句即时确认 + STORY 讲述一句 = 6 条新消息
+            // 心形收藏一句 + 四枚反馈各一句 + STORY 讲述一句 = 6 条新消息
             Assert.Equal(chatBefore + 6, vm.ChatVM.Messages.Count);
             Assert.Contains(vm.ChatVM.Messages, m => m.Content.Contains("一段试播故事"));
         }
@@ -160,7 +167,7 @@ public class PlayerDeckFeedbackButtonTests
     {
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
-        var (vm, rec) = CreateViewModel(currentTrack: null);
+        var (vm, rec, _) = CreateViewModel(currentTrack: null);
         Window? window = null;
         try
         {
@@ -169,17 +176,18 @@ public class PlayerDeckFeedbackButtonTests
             window.Show();
 
             var chatBefore = vm.ChatVM.Messages.Count;
-            Execute(vm.LikeCurrentTrackCommand);
+            // 心形收藏无曲目时静默早退（控制区按钮语义，与反馈行的引导气泡不同）
+            Execute(vm.ToggleCurrentFavoriteCommand);
             Execute(vm.DislikeCurrentTrackCommand);
             Execute(vm.SimilarToCurrentTrackCommand);
             Execute(vm.CalmerRecommendationCommand);
             Execute(vm.EnergeticRecommendationCommand);
             Execute(vm.TellSongStoryCommand);
-            for (var i = 0; i < 40 && vm.ChatVM.Messages.Count < chatBefore + 6; i++)
+            for (var i = 0; i < 40 && vm.ChatVM.Messages.Count < chatBefore + 5; i++)
                 await Task.Delay(50);
 
-            // 空闲时不落反馈/不设氛围，但六次点击每次都要有引导气泡（静默=被当成"按钮无效"）
-            Assert.Equal(chatBefore + 6, vm.ChatVM.Messages.Count);
+            // 空闲时不落反馈/不设氛围，但五次反馈点击每次都要有引导气泡（静默=被当成"按钮无效"）
+            Assert.Equal(chatBefore + 5, vm.ChatVM.Messages.Count);
             rec.Verify(x => x.RecordFeedback(It.IsAny<UserMusicFeedback>()), Times.Never);
             rec.Verify(x => x.SetMoodBias(It.IsAny<string?>()), Times.Never);
         }
@@ -198,7 +206,7 @@ public class PlayerDeckFeedbackButtonTests
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
         var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
         // LLM 失败：DJService 返回空 Lines
-        var (vm, _) = CreateViewModel(track, storyFactory: () => new SongStory());
+        var (vm, _, _) = CreateViewModel(track, storyFactory: () => new SongStory());
         try
         {
             var chatBefore = vm.ChatVM.Messages.Count;
@@ -207,6 +215,147 @@ public class PlayerDeckFeedbackButtonTests
                 await Task.Delay(50);
 
             Assert.Equal(chatBefore + 1, vm.ChatVM.Messages.Count); // 兜底气泡而非静默
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    /// <summary>
+    /// 回归（2026-10-20 用户裁决：LIKE 并入心形收藏——点收藏=收藏到歌单+正向反馈双落）：
+    /// 收藏沿触发 Like 反馈（会话+长期画像双链）与确认气泡；取消收藏只动歌单，
+    /// 不回撤画像也不重复记（事件唯一事实）。
+    /// </summary>
+    [AvaloniaFact]
+    public void ToggleFavorite_RecordsLikeSignalOnlyOnFavoriteEdge()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var profile = new Mock<IListeningProfileService>();
+        var (vm, rec, _) = CreateViewModel(track, profileMock: profile);
+        try
+        {
+            Execute(vm.ToggleCurrentFavoriteCommand);
+            Assert.True(vm.IsCurrentFavorite);
+            rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
+                f => f.Action == MusicFeedbackAction.Like && f.TrackId == "src-1")), Times.Once);
+            profile.Verify(x => x.RecordEvent(It.Is<ListeningEventData>(
+                e => e.Type == ListeningEventType.Like && e.SourceId == "src-1" && e.Artist == "周杰伦")),
+                Times.Once);
+            var chatAfterFavorite = vm.ChatVM.Messages.Count;
+            Assert.Contains(vm.ChatVM.Messages, m =>
+                m.Content.Contains("已收藏") || m.Content.Contains("Favorited"));
+
+            // 取消收藏：移出收藏但不回撤画像（无第二条 Like）、不再给气泡
+            Execute(vm.ToggleCurrentFavoriteCommand);
+            Assert.False(vm.IsCurrentFavorite);
+            rec.Verify(x => x.RecordFeedback(It.IsAny<UserMusicFeedback>()), Times.Once);
+            profile.Verify(x => x.RecordEvent(It.IsAny<ListeningEventData>()), Times.Once);
+            Assert.Equal(chatAfterFavorite, vm.ChatVM.Messages.Count);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    /// <summary>
+    /// 回归（2026-10-20 用户反馈：不喜欢的时候没人愿意把歌听完）：NOPE 必须立即切歌。
+    /// 会话级避开只防"后续推荐再选它"，正在播的这首必须马上跳过；其余反馈动作不得切歌。
+    /// </summary>
+    [AvaloniaFact]
+    public void DislikeCurrentTrack_SkipsToNextTrackImmediately()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var (vm, rec, audio) = CreateViewModel(track);
+        // 电台模式经推荐回调取曲，切歌守卫永远放行
+        audio.Setup(x => x.RepeatMode).Returns("radio");
+        try
+        {
+            Execute(vm.ToggleCurrentFavoriteCommand);
+            Execute(vm.CalmerRecommendationCommand);
+            Execute(vm.SimilarToCurrentTrackCommand);
+            audio.Verify(x => x.Next(), Times.Never);
+
+            Execute(vm.DislikeCurrentTrackCommand);
+            audio.Verify(x => x.Next(), Times.Once);
+            rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
+                f => f.Action == MusicFeedbackAction.Dislike)), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    /// <summary>
+    /// 回归（复审发现）：单曲队列下 Next 会 (index+1)%count 绕回重播本曲——
+    /// 刚拉黑的歌从头再来是二次折磨。列表模式队列中无其它曲目时 NOPE 只记录不切歌，
+    /// 气泡同步收敛为不含"跳过"承诺；出现其它曲目后恢复立即切歌。
+    /// </summary>
+    [AvaloniaFact]
+    public void DislikeCurrentTrack_SingleTrackList_DoesNotReplayDislikedTrack()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var (vm, _, audio) = CreateViewModel(track);
+        audio.Setup(x => x.RepeatMode).Returns("list");
+        try
+        {
+            audio.Setup(x => x.Playlist).Returns(new List<Track> { track }.AsReadOnly());
+            Execute(vm.DislikeCurrentTrackCommand);
+            audio.Verify(x => x.Next(), Times.Never);
+            Assert.Contains(vm.ChatVM.Messages, m =>
+                m.Content.Contains("本轮不再安排") && !m.Content.Contains("这就跳过"));
+
+            audio.Setup(x => x.Playlist).Returns(new List<Track>
+            {
+                track,
+                new Track { Title = "七里香", Artist = "周杰伦", SourceId = "src-2" },
+            }.AsReadOnly());
+            Execute(vm.DislikeCurrentTrackCommand);
+            audio.Verify(x => x.Next(), Times.Once);
+            Assert.Contains(vm.ChatVM.Messages, m => m.Content.Contains("这就跳过"));
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    /// <summary>
+    /// 回归（2026-10-20 审核：SIM 名字暗示"马上来相似的"、实际只记长期画像零即时效果）：
+    /// 按下 SIM 必须立即以"与当前歌曲气质相近"意图重排节目单（不打断在播曲目）。
+    /// </summary>
+    [AvaloniaFact]
+    public async Task SimilarCurrentTrack_RegeneratesProgramWithSimilarIntent()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var (vm, rec, _) = CreateViewModel(track);
+        RecommendationRequest? captured = null;
+        rec.Setup(x => x.CreateProgramAsync(It.IsAny<RecommendationRequest>()))
+            .Callback<RecommendationRequest>(r => captured = r)
+            .ReturnsAsync(new RadioProgram());
+        try
+        {
+            Execute(vm.SimilarToCurrentTrackCommand);
+            for (var i = 0; i < 40 && captured == null; i++)
+                await Task.Delay(50);
+
+            Assert.NotNull(captured);
+            Assert.Equal(RecommendationIntentKeys.SimilarToCurrent, captured!.UserIntentKey);
+            Assert.Equal("晴天", captured.CurrentTrack?.Title);
         }
         finally
         {

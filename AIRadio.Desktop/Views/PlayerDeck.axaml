@@ -102,9 +102,6 @@
 
             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
                         HorizontalAlignment="Center" Margin="0,9,0,0">
-                <Button Width="42" Height="24" Padding="0" Content="LIKE"
-                        FontSize="9" Command="{Binding LikeCurrentTrackCommand}"
-                        ToolTip.Tip="{DynamicResource S_Like}" AutomationProperties.Name="{DynamicResource S_Like}"/>
                 <Button Width="42" Height="24" Padding="0" Content="NOPE"
                         FontSize="9" Command="{Binding DislikeCurrentTrackCommand}"
                         ToolTip.Tip="{DynamicResource S_Dislike}" AutomationProperties.Name="{DynamicResource S_Dislike}"/>

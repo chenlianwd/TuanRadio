@@ -134,7 +134,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> UseDarkThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> UseLightThemeCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCurrentFavoriteCommand { get; }
-    public ReactiveCommand<Unit, Unit> LikeCurrentTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> DislikeCurrentTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> SimilarToCurrentTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> CalmerRecommendationCommand { get; }
@@ -284,7 +283,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SettingsVM.SaveUiStateCommand.Execute().Subscribe();
         });
         ToggleCurrentFavoriteCommand = ReactiveCommand.Create(ToggleCurrentFavorite);
-        LikeCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Like));
         DislikeCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Dislike));
         SimilarToCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Similar));
         CalmerRecommendationCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Calmer));
@@ -478,7 +476,34 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         PlaylistVM.ToggleFavoriteCommand.Execute(current).Subscribe();
         // 命令内部切换的是列表内的匹配实例（与 current 可能不是同一引用），必须从匹配实例回读
-        IsCurrentFavorite = PlaylistVM.FindMatchingTrack(current)?.IsFavorite ?? current.IsFavorite;
+        var favorited = PlaylistVM.FindMatchingTrack(current)?.IsFavorite ?? current.IsFavorite;
+        IsCurrentFavorite = favorited;
+
+        // 收藏即"喜欢"信号（原反馈行 LIKE 已并入心形）：正向反馈同时落会话与长期画像，
+        // 推荐与 DJ 聊天两条消费链都会越来越偏向这类歌。取消收藏只动歌单不回撤画像
+        // （事件为唯一事实不可撤回，听感影响随半衰期自然衰减）。
+        if (!favorited)
+            return;
+
+        var trackId = current.SourceId;
+        if (string.IsNullOrWhiteSpace(trackId))
+            trackId = current.Id;
+        if (!string.IsNullOrWhiteSpace(trackId))
+            _recommendationService.RecordFeedback(new UserMusicFeedback
+            {
+                TrackId = trackId,
+                Action = MusicFeedbackAction.Like
+            });
+        _listeningProfile?.RecordEvent(new ListeningEventData
+        {
+            Type = ListeningEventType.Like,
+            Title = current.Title,
+            Artist = current.Artist,
+            SourceId = trackId ?? string.Empty
+        });
+        ChatVM.AddAssistantMessage(AppLanguage.T(
+            "已收藏，这首也会记进你的长期口味画像。",
+            "Favorited — this also goes into your long-term taste profile."));
     }
 
     private async Task OpenProgramAsync()
@@ -489,7 +514,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             await LoadProgramAsync(force: false);
     }
 
-    private async Task LoadProgramAsync(bool force)
+    private async Task LoadProgramAsync(bool force, string? intentKey = null)
     {
         if (IsDisposed || (!force && HasCurrentRadioProgram))
             return;
@@ -505,7 +530,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             IsProgramLoading = true;
             ProgramStatusText = AppLanguage.T("DJ 正在编排节目单…", "The DJ is curating your program...");
-            var request = CreateRecommendationRequest(_audioService.CurrentTrack);
+            var request = CreateRecommendationRequest(_audioService.CurrentTrack, intentKey);
             var program = _recommendationService is RecommendationService recommendationService
                 ? await recommendationService.CreateProgramAsync(request, _lifetimeCts.Token)
                 : await _recommendationService.CreateProgramAsync(request).WaitAsync(_lifetimeCts.Token);
@@ -548,12 +573,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _audioService.PlayTrack(existing);
     }
 
-    private RecommendationRequest CreateRecommendationRequest(Track? current)
+    private RecommendationRequest CreateRecommendationRequest(Track? current, string? intentKey = null)
     {
         var recentlyPlayed = GetRecentlyPlayedSnapshot();
+        intentKey ??= RecommendationIntentKeys.ContinueStation;
         return new RecommendationRequest
         {
-            UserIntentKey = RecommendationIntentKeys.ContinueStation,
+            UserIntentKey = intentKey,
+            UserIntent = intentKey == RecommendationIntentKeys.SimilarToCurrent
+                ? AppLanguage.T("与当前歌曲气质相近", "similar in vibe to the current track")
+                : string.Empty,
             CurrentTrack = current,
             Favorites = PlaylistVM.Favorites.ToList(),
             Playlist = PlaylistVM.Tracks.ToList(),
@@ -693,7 +722,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             var profileType = action switch
             {
-                MusicFeedbackAction.Like => ListeningEventType.Like,
                 MusicFeedbackAction.Dislike => ListeningEventType.Dislike,
                 MusicFeedbackAction.Similar => ListeningEventType.Similar,
                 MusicFeedbackAction.Calmer => ListeningEventType.Calmer,
@@ -716,18 +744,29 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         else if (action == MusicFeedbackAction.Energetic)
             _recommendationService.SetMoodBias("energetic");
 
+        // NOPE 立即切歌：没人会把不喜欢的歌听完；会话避开已落，Next 的推荐回调不会再选它。
+        // 单曲队列下 Next 会绕回重播本曲（刚拉黑的歌从头再来是二次折磨），切不动就只记录不切。
+        var skipRequested = action == MusicFeedbackAction.Dislike && CanSkipAwayFromCurrentTrack();
+        if (skipRequested)
+            _audioService.Next();
+
+        // SIM 立即以当前歌为锚重排节目单（不打断在播曲目，歌单模式只更新节目单 tab）
+        if (action == MusicFeedbackAction.Similar)
+            _ = LoadProgramAsync(force: true, intentKey: RecommendationIntentKeys.SimilarToCurrent);
+
         // 反馈只影响后续节目单，用户无感即"按钮无效"：每个动作给一句即时可见回应
         var ack = action switch
         {
-            MusicFeedbackAction.Like => AppLanguage.T(
-                "记下了，这类歌会多出现在你的电台里。",
-                "Noted — more of this vibe will show up on your station."),
-            MusicFeedbackAction.Dislike => AppLanguage.T(
-                "收到，这首本轮先避开。",
-                "Got it. I will avoid this track in the current session."),
+            MusicFeedbackAction.Dislike => skipRequested
+                ? AppLanguage.T(
+                    "收到，这就跳过，本轮不再安排它。",
+                    "Got it — skipping it now; benched for this session.")
+                : AppLanguage.T(
+                    "收到，本轮不再安排它。",
+                    "Got it — benched for this session."),
             MusicFeedbackAction.Similar => AppLanguage.T(
-                "收到，往后多安排些和这首气质相近的歌。",
-                "Got it — I'll line up more tracks with a similar vibe."),
+                "收到，正在以这首为锚重新编排接下来的节目单。",
+                "Got it — re-curating the upcoming program around this track."),
             MusicFeedbackAction.Calmer => AppLanguage.T(
                 "好，接下来把氛围调得舒缓一点。",
                 "Sure — easing the vibe down from here."),
@@ -738,6 +777,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         if (!string.IsNullOrEmpty(ack))
             ChatVM.AddAssistantMessage(ack);
+    }
+
+    /// <summary>
+    /// NOPE 切歌前置判定：电台模式经推荐回调取曲（Dislike 已落会话避开）永远切得动；
+    /// 列表模式下队列里除当前曲外还有别的曲目才切——单曲绕回会重播刚拉黑的歌。
+    /// </summary>
+    private bool CanSkipAwayFromCurrentTrack()
+    {
+        if (_audioService.RepeatMode == "radio")
+            return true;
+
+        var current = _audioService.CurrentTrack;
+        return _audioService.Playlist.Any(track => !IsSameTrackIdentity(track, current));
     }
 
     private void SwitchCharacter(CharacterProfile character)

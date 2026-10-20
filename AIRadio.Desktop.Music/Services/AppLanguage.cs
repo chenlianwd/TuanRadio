@@ -82,7 +82,7 @@ public static class AppLanguage
         ["S_ReleaseToTranscribe"] = "松开结束说话…",
         ["S_Transcribing"] = "正在识别语音…",
         // 简洁播放器
-        ["S_Favorite"] = "收藏",
+        ["S_Favorite"] = "收藏（同时记入长期口味）",
         ["S_TopMost"] = "置顶",
         ["S_Minimize"] = "最小化",
         ["S_Close"] = "关闭",
@@ -94,9 +94,8 @@ public static class AppLanguage
         ["S_CompactLyricsTip"] = "点击在歌词与歌曲信息之间切换",
         // 标题栏
         ["S_CompactMode"] = "简洁模式",
-        // 播放控制区
-        ["S_FavCurrent"] = "收藏当前歌曲",
-        ["S_Like"] = "喜欢",
+        // 播放控制区（心形收藏已并入"喜欢"信号，点击同时记入口味画像）
+        ["S_FavCurrent"] = "收藏（同时记入长期口味）",
         ["S_Dislike"] = "不喜欢",
         ["S_Similar"] = "再来类似",
         ["S_Calmer"] = "换安静一点",
@@ -205,7 +204,7 @@ public static class AppLanguage
         ["S_ReleaseToTranscribe"] = "Release to transcribe…",
         ["S_Transcribing"] = "Transcribing speech…",
         // Compact player
-        ["S_Favorite"] = "Favorite",
+        ["S_Favorite"] = "Favorite (feeds your taste profile)",
         ["S_TopMost"] = "Always on top",
         ["S_Minimize"] = "Minimize",
         ["S_Close"] = "Close",
@@ -217,9 +216,8 @@ public static class AppLanguage
         ["S_CompactLyricsTip"] = "Click to toggle between lyrics and track info",
         // Title bar
         ["S_CompactMode"] = "Compact mode",
-        // Player deck
-        ["S_FavCurrent"] = "Favorite this track",
-        ["S_Like"] = "Like",
+        // Player deck (heart favorite doubles as the "like" signal, feeding the taste profile)
+        ["S_FavCurrent"] = "Favorite (feeds your taste profile)",
         ["S_Dislike"] = "Dislike",
         ["S_Similar"] = "More like this",
         ["S_Calmer"] = "Something calmer",
