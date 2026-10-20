@@ -142,6 +142,7 @@ public class LyricService : ILyricService
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
+        ThrowIfAnomalousKugouStatus(root, "kugou lyric download");
 
         if (!root.TryGetProperty("status", out var status) ||
             status.ValueKind != JsonValueKind.Number ||
@@ -164,7 +165,11 @@ public class LyricService : ILyricService
         return $"{_kugouBase}/search/lyric?{query}&duration={durationMs}";
     }
 
-    /// <summary>status==200 且有候选 → 返回按 ±3s 时长过滤后的候选 id/accesskey；status==404/其余无候选 → null（允许上层继续关键词兜底）。</summary>
+    /// <summary>status==200 且有候选 → 返回按 ±3s 时长过滤后的候选 id/accesskey；status==404/其余无候选 → null（允许上层继续关键词兜底）。
+    /// 非 200/404 的 status 是上游异常形状（实机观测：网关抖动窗口对歌词搜索返回 status:1 的
+    /// 歌曲搜索形状响应）——按获取失败上抛处理，否则会被当"确认无词"写入无 TTL 负缓存，
+    /// 该曲目整会话恒无词。
+    /// </summary>
     private async Task<(string Id, string Accesskey)?> SearchCandidateAsync(
         string url,
         long durationMs,
@@ -175,6 +180,7 @@ public class LyricService : ILyricService
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
+        ThrowIfAnomalousKugouStatus(root, "kugou lyric search");
 
         if (!root.TryGetProperty("status", out var status) ||
             status.ValueKind != JsonValueKind.Number ||
@@ -212,6 +218,21 @@ public class LyricService : ILyricService
         return string.IsNullOrEmpty(id) || string.IsNullOrEmpty(accesskey)
             ? null
             : (id, accesskey);
+    }
+
+    /// <summary>
+    /// 酷狗歌词接口的异常形状防线：status 缺失或非 200/404 时抛出，让上层按"获取失败"
+    /// 处理（不入负缓存、下次重试）。合法无匹配的口径是 404（含空 candidates），
+    /// 其余 status 是网关错路由/风控降级等异常（实机观测 status:1 + 歌曲搜索形状）。
+    /// </summary>
+    private static void ThrowIfAnomalousKugouStatus(JsonElement root, string source)
+    {
+        if (!root.TryGetProperty("status", out var status) ||
+            status.ValueKind != JsonValueKind.Number)
+            throw new InvalidOperationException($"{source}: response missing numeric status");
+        var value = status.GetInt32();
+        if (value is not (200 or 404))
+            throw new InvalidOperationException($"{source}: anomalous upstream status {value}");
     }
 
     /// <summary>占位判定：解析结果全部行 Trim 后均为"暂无歌词"（未收录歌曲的占位 lrc）。</summary>

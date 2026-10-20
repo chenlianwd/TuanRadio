@@ -13,7 +13,8 @@ namespace AIRadio.Desktop.Tests;
 
 /// <summary>
 /// 歌词取词链路：网易单步 /lyric、酷狗 /search/lyric + /lyric 两步与关键词兜底、
-/// 三态契约（null / IsInstrumental / 有词）、前缀分发不发网络、会话级缓存。
+/// 三态契约（null / IsInstrumental / 有词）、前缀分发不发网络、会话级缓存、
+/// 上游异常形状（非 200/404）按失败处理不入负缓存。
 /// </summary>
 public class LyricServiceTests
 {
@@ -348,6 +349,80 @@ public class LyricServiceTests
         var result = await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None);
         Assert.NotNull(result);
         Assert.Single(capture.Requests);
+    }
+
+    // 上游异常形状（非 200/404；实机观测网关抖动窗口对歌词搜索返回 status:1 的歌曲搜索
+    // 形状响应）必须按"获取失败"处理：不入无 TTL 负缓存，下次取词重试——否则一次抖动
+    // 就让该曲目整会话恒"暂无歌词"。异常时也不再烧预算做关键词兜底（抖动期兜底同样拿
+    // 不到有效响应），失败立即上抛
+    [Fact]
+    public async Task Kugou_AnomalousSearchStatus_NotNegativeCached_RetriedOnNextFetch()
+    {
+        var anomalous = true;
+        var (client, capture) = CreateClient(request =>
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            if (!url.Contains("/search/lyric", StringComparison.Ordinal))
+                return "{\"status\":200,\"decodeContent\":\"[00:08.00]恢复后的词\\n\"}";
+            if (anomalous)
+            {
+                anomalous = false;
+                return "{\"status\":1,\"error_code\":0,\"data\":{\"lists\":[{\"FileName\":\"x\"}]}}";
+            }
+            return "{\"status\":200,\"candidates\":[{\"id\":\"ID1\",\"accesskey\":\"K1\"}]}";
+        });
+        var service = new LyricService(client);
+
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+        // 异常形状在 hash 搜索一步即失败：不烧预算做关键词兜底
+        Assert.Single(capture.Requests);
+
+        var result = await service.GetLyricsAsync(KugouTrack(), CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal("恢复后的词", result!.Lines[0].Text);
+    }
+
+    [Fact]
+    public async Task Kugou_AnomalousDownloadStatus_NotNegativeCached_RetriedOnNextFetch()
+    {
+        var anomalous = true;
+        var (client, _) = CreateClient(request =>
+        {
+            if (!request.RequestUri!.AbsoluteUri.Contains("/search/lyric", StringComparison.Ordinal))
+            {
+                if (anomalous)
+                {
+                    anomalous = false;
+                    return "{\"status\":1,\"error_code\":0,\"data\":{}}";
+                }
+                return "{\"status\":200,\"decodeContent\":\"[00:08.00]恢复后的词\\n\"}";
+            }
+            return "{\"status\":200,\"candidates\":[{\"id\":\"ID1\",\"accesskey\":\"K1\"}]}";
+        });
+        var service = new LyricService(client);
+
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+
+        var result = await service.GetLyricsAsync(KugouTrack(), CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal("恢复后的词", result!.Lines[0].Text);
+    }
+
+    // 与异常形状相反的另一半语义：全链 404 是服务端明确回答"无匹配"的确认结果，
+    // 仍入缓存不重试（hash → title → title+artist 三步走完）
+    [Fact]
+    public async Task Kugou_AllSearch404_IsConfirmed_CachedWithoutRetry()
+    {
+        var (client, capture) = CreateClient(request =>
+            request.RequestUri!.AbsoluteUri.Contains("/search/lyric", StringComparison.Ordinal)
+                ? "{\"status\":404,\"candidates\":[]}"
+                : "{\"status\":200,\"decodeContent\":\"词\"}");
+        var service = new LyricService(client);
+
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+
+        Assert.Equal(3, capture.Requests.Count);
     }
 
     private sealed class RequestCapture
