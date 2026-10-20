@@ -22,6 +22,7 @@ public class DJService : IDJService
 
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
+    public string DjName => _profile.Name;
     public ApiFailureInfo? LastChatFailure { get; private set; }
     public ApiFailureInfo? LastTtsFailure { get; private set; }
 

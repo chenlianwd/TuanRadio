@@ -208,6 +208,14 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
     private void AddMessage(ChatMessage message)
     {
+        // 助手气泡署当前 DJ 实名：入列时落快照，历史气泡保留发言时的名字，
+        // 切换主播不回溯改名；署名为空（DJ 名不可得）时回退通用"AI 主播"标签
+        if (message.Role == MessageRole.Assistant && string.IsNullOrWhiteSpace(message.AuthorName))
+        {
+            var author = _djService.DjName;
+            if (!string.IsNullOrWhiteSpace(author))
+                message.AuthorName = author;
+        }
         Messages.Add(message);
         // UI 集合不设上限会让长电台会话内存缓慢膨胀、语言切换的全量刷新越来越慢
         while (Messages.Count > MaxChatMessages)

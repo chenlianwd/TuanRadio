@@ -236,6 +236,7 @@ public class RecommendationRequest
 public static class RecommendationIntentKeys
 {
     public const string ContinueStation = "continue-station";
+    public const string SimilarToCurrent = "similar-to-current";
 }
 
 public class UserMusicFeedback
@@ -274,10 +275,14 @@ public class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     public MessageRole Role { get; set; }
     public string Content { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.Now;
+    /// <summary>发言主播实名（Assistant 消息入列时落快照）；空则回退通用标签。</summary>
+    public string AuthorName { get; set; } = string.Empty;
     public string SenderName => Role switch
     {
         MessageRole.User => AppLanguage.T("我", "Me"),
-        MessageRole.Assistant => AppLanguage.T("AI 主播", "AI DJ"),
+        MessageRole.Assistant => string.IsNullOrWhiteSpace(AuthorName)
+            ? AppLanguage.T("AI 主播", "AI DJ")
+            : AuthorName,
         MessageRole.System => AppLanguage.T("系统", "System"),
         _ => string.Empty
     };

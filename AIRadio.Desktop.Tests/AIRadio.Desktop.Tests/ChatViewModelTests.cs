@@ -68,6 +68,33 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public void AddAssistantMessage_StampsCurrentDjNameAsSender()
+    {
+        var (vm, djMock, _, _) = CreateVm();
+        djMock.SetupGet(x => x.DjName).Returns("Lumen");
+
+        vm.AddAssistantMessage("晚上好，欢迎回到电台。");
+
+        var msg = vm.Messages.Last();
+        Assert.Equal(MessageRole.Assistant, msg.Role);
+        Assert.Equal("Lumen", msg.AuthorName);
+        Assert.Equal("Lumen", msg.SenderName);
+    }
+
+    [Fact]
+    public void AddMessage_DjNameUnavailable_FallsBackToGenericLabel()
+    {
+        // DjName 未设置（Moq 宽松 mock 返回 null）时不署名，气泡回退通用标签
+        var (vm, _, _, _) = CreateVm();
+
+        vm.AddAssistantMessage("兜底路径消息");
+
+        var msg = vm.Messages.Last();
+        Assert.Equal(string.Empty, msg.AuthorName);
+        Assert.Equal("AI 主播", msg.SenderName);
+    }
+
+    [Fact]
     public void DismissStatusNotice_HidesNoticeAndShowsRecall()
     {
         var (vm, ttsErrors) = CreateVmWithTtsErrors();
