@@ -87,10 +87,6 @@
                         ToolTip.Tip="{DynamicResource S_Library}" AutomationProperties.Name="{DynamicResource S_Library}">
                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L20,18"/>
                 </Button>
-                <Button Width="32" Height="30" Padding="0" Command="{Binding OpenFavoritesCommand}"
-                        ToolTip.Tip="{DynamicResource S_FavoritesTab}" AutomationProperties.Name="{DynamicResource S_FavoritesTab}">
-                    <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
-                </Button>
                 <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF8A8A96}" VerticalAlignment="Center"/>
                 <Slider Width="90" MinWidth="0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
