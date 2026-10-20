@@ -30,6 +30,12 @@
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontFamily" Value="Consolas"/>
             <Setter Property="FontSize" Value="11"/>
+            <!-- Fluent 模板内容对齐默认 Stretch：文字 TextBlock 被 arrange 到整个内容区、
+                 字形从左上起排（ContentPresenter.ArrangeOverrideImpl 的 Stretch 分支不收缩
+                 尺寸也不加偏移）→ 纯文本按钮（反馈行 NOPE 等）字形贴上沿偏约 4px 且偏左；
+                 图标按钮因 PathIcon 固定尺寸拉不动而幸免。显式 Center 双向居中 -->
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{DynamicResource C_24212632}"/>

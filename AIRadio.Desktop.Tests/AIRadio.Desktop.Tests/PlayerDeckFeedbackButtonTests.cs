@@ -363,4 +363,43 @@ public class PlayerDeckFeedbackButtonTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    /// <summary>
+    /// 回归（2026-10-20 用户反馈：红框内 LIKE/NOPE/SIM/CALM/FIRE/STORY 文字与按钮没对齐）：
+    /// 根因——Fluent Button 模板的内容对齐 TemplateBinding 到按钮属性而 ControlTheme 未设
+    /// Center（ContentControl 双向默认 Stretch），ContentPresenter.ArrangeOverrideImpl 的
+    /// Stretch 分支把隐式 TextBlock arrange 到整个内容区、不收缩也不加偏移，字形从左上起
+    /// 排——实机像素测量垂直贴上沿偏约 4px（顶距 3px/底距 11px）、水平偏左（小字号下
+    /// 视觉以垂直为主）。图标按钮因 PathIcon 固定尺寸拉不动而幸免。锚定：MainWindow
+    /// 样式族必须给 Button 显式双向 Center 内容对齐（删 Setter 即红）。
+    /// </summary>
+    [AvaloniaFact]
+    public void FeedbackRow_TextButtons_HaveCenteredContentAlignment()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            // 样式族挂在 MainWindow.Window.Styles，断言必须在真实窗口作用域内做
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            foreach (var label in new[] { "NOPE", "SIM", "CALM", "FIRE", "STORY" })
+            {
+                var button = window.GetVisualDescendants().OfType<Button>()
+                    .FirstOrDefault(b => string.Equals(b.Content as string, label, StringComparison.Ordinal))
+                    ?? throw new InvalidOperationException($"{label} button not found in MainWindow");
+                Assert.Equal(Avalonia.Layout.HorizontalAlignment.Center, button.HorizontalContentAlignment);
+                Assert.Equal(Avalonia.Layout.VerticalAlignment.Center, button.VerticalContentAlignment);
+            }
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }
