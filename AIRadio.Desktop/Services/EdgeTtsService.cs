@@ -32,14 +32,25 @@ public class EdgeTtsService : ITtsService, IDisposable
     private const string EdgeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
 
+    // 旧 MiniMax 音色 ID → Edge 免费端点音色的近似映射。免费池普通话仅 6 条
+    // （女声晓晓/晓伊、男声云希/云夏/云健/云扬），按听感对齐标签：
+    // 云扬沉稳专业配"精英"、云健激情有力配"霸道"；女声池没有第三条声线，
+    // 「成熟女声」与「知性女声」共用晓伊，靠 VoiceBaselineProsody 基线韵律区分
     private static readonly Dictionary<string, string> LegacyVoiceMap = new()
     {
         ["female-shaonv"] = "zh-CN-XiaoxiaoNeural",
         ["female-yujie"] = "zh-CN-XiaoyiNeural",
-        ["female-chengshu"] = "zh-CN-XiaoxiaoNeural",
+        ["female-chengshu"] = "zh-CN-XiaoyiNeural",
         ["male-qn-qingse"] = "zh-CN-YunxiNeural",
-        ["male-qn-jingying"] = "zh-CN-YunjianNeural",
-        ["male-qn-badao"] = "zh-CN-YunyangNeural"
+        ["male-qn-jingying"] = "zh-CN-YunyangNeural",
+        ["male-qn-badao"] = "zh-CN-YunjianNeural"
+    };
+
+    // 音色级基线韵律（与情绪韵律数值叠加）：免费池没有低沉女声，
+    // 「成熟女声」在晓伊上整体压低放缓，与「知性女声」的原生晓伊拉开听感
+    private static readonly Dictionary<string, (int PitchHz, int RatePct)> VoiceBaselineProsody = new()
+    {
+        ["female-chengshu"] = (-3, -5)
     };
 
     private readonly HttpClient _httpClient;
@@ -79,7 +90,7 @@ public class EdgeTtsService : ITtsService, IDisposable
 
         try
         {
-            var audio = await SynthesizeViaWebSocketAsync(text, voice, emotion, linkedCts.Token);
+            var audio = await SynthesizeViaWebSocketAsync(text, voice, emotion, voiceId, linkedCts.Token);
             // 空音频说明本次合成没有产出任何数据，按失败处理走重试，避免"合成成功但无声"
             if (audio.Length > 0)
                 return audio;
@@ -96,7 +107,7 @@ public class EdgeTtsService : ITtsService, IDisposable
             Log.Warning(firstAttempt, "Edge TTS first attempt failed for voice {Voice}, retrying with fresh connection", voice);
             try
             {
-                var audio = await SynthesizeViaWebSocketAsync(text, voice, emotion, linkedCts.Token);
+                var audio = await SynthesizeViaWebSocketAsync(text, voice, emotion, voiceId, linkedCts.Token);
                 if (audio.Length > 0)
                     return audio;
                 throw new InvalidOperationException("Edge TTS returned empty audio after retry");
@@ -204,6 +215,7 @@ public class EdgeTtsService : ITtsService, IDisposable
         string text,
         string voice,
         string emotion,
+        string? sourceVoiceId,
         CancellationToken cancellationToken)
     {
         await _wsLock.WaitAsync(cancellationToken);
@@ -218,7 +230,7 @@ public class EdgeTtsService : ITtsService, IDisposable
             await SendWebSocketMessageAsync(ws, configMsg, timeoutCts.Token);
 
             // Send SSML
-            var ssml = BuildSsml(text, voice, emotion);
+            var ssml = BuildSsml(text, voice, emotion, sourceVoiceId);
             var ssmlMsg = BuildSsmlMessage(ssml);
             await SendWebSocketMessageAsync(ws, ssmlMsg, timeoutCts.Token);
 
@@ -315,22 +327,27 @@ public class EdgeTtsService : ITtsService, IDisposable
         return $"X-Timestamp:{timestamp}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{json}";
     }
 
-    internal static string BuildSsml(string text, string voice, string? emotion = null)
+    internal static string BuildSsml(string text, string voice, string? emotion = null, string? sourceVoiceId = null)
     {
         // Escape XML special characters
         var escaped = EscapeXml(text);
         // voice 名进入单引号属性：与正文一致转义，防含引号/尖括号的值破坏 SSML 结构
         var voiceAttr = EscapeXml(voice);
 
-        var (pitch, rate, volume) = ResolveProsody(emotion);
+        // 情绪与音色基线按数值叠加后格式化，避免解析拼合已格式化的字符串
+        var (pitchHz, ratePct, volumePct) = ResolveEmotionProsody(emotion);
+        var (basePitchHz, baseRatePct) = ResolveVoiceBaseline(sourceVoiceId);
 
         // xml:lang 跟随音色 locale（如 en-US-AriaNeural → en-US），英文音色不再声明成 zh-CN
         return $"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{ResolveLocale(voice)}'>" +
                $"<voice name='{voiceAttr}'>" +
-               $"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>" +
+               $"<prosody pitch='{FormatSigned(basePitchHz + pitchHz)}Hz' rate='{FormatSigned(baseRatePct + ratePct)}%' volume='{FormatSigned(volumePct)}%'>" +
                $"{escaped}" +
                "</prosody></voice></speak>";
     }
+
+    private static string FormatSigned(int value)
+        => value >= 0 ? $"+{value}" : value.ToString();
 
     private static string EscapeXml(string value)
         => value
@@ -353,16 +370,21 @@ public class EdgeTtsService : ITtsService, IDisposable
         return "zh-CN";
     }
 
-    internal static (string Pitch, string Rate, string Volume) ResolveProsody(string? emotion)
+    internal static (int PitchHz, int RatePct, int VolumePct) ResolveEmotionProsody(string? emotion)
         => emotion?.Trim().ToLowerInvariant() switch
         {
-            "happy" => ("+2Hz", "+8%", "+0%"),
-            "sad" => ("-2Hz", "-8%", "-5%"),
-            "calm" => ("-1Hz", "-12%", "-5%"),
-            "angry" => ("+3Hz", "+12%", "+3%"),
-            "surprised" => ("+4Hz", "+10%", "+2%"),
-            _ => ("+0Hz", "+0%", "+0%")
+            "happy" => (2, 8, 0),
+            "sad" => (-2, -8, -5),
+            "calm" => (-1, -12, -5),
+            "angry" => (3, 12, 3),
+            "surprised" => (4, 10, 2),
+            _ => (0, 0, 0)
         };
+
+    internal static (int PitchHz, int RatePct) ResolveVoiceBaseline(string? voiceId)
+        => voiceId != null && VoiceBaselineProsody.TryGetValue(voiceId, out var baseline)
+            ? baseline
+            : (0, 0);
 
     internal static string ResolveVoice(string? voiceId)
     {

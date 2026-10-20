@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using Xunit;
 
@@ -40,7 +41,11 @@ public class EdgeTtsServiceTests
 
     [Theory]
     [InlineData("female-shaonv", "zh-CN-XiaoxiaoNeural")]
-    [InlineData("male-qn-jingying", "zh-CN-YunjianNeural")]
+    [InlineData("female-yujie", "zh-CN-XiaoyiNeural")]
+    [InlineData("female-chengshu", "zh-CN-XiaoyiNeural")]
+    [InlineData("male-qn-qingse", "zh-CN-YunxiNeural")]
+    [InlineData("male-qn-jingying", "zh-CN-YunyangNeural")]
+    [InlineData("male-qn-badao", "zh-CN-YunjianNeural")]
     [InlineData("zh-CN-XiaoyiNeural", "zh-CN-XiaoyiNeural")]
     [InlineData("", "zh-CN-XiaoxiaoNeural")]
     public void ResolveVoice_MapsLegacyIds(string voiceId, string expected)
@@ -73,6 +78,40 @@ public class EdgeTtsServiceTests
         Assert.Contains(expectedPitch, ssml);
         Assert.Contains(expectedRate, ssml);
         Assert.Contains(expectedVolume, ssml);
+    }
+
+    [Fact]
+    public void BuildSsml_VoiceBaselineStacksOnEmotion()
+    {
+        var ssml = EdgeTtsService.BuildSsml("测试", "zh-CN-XiaoyiNeural", "happy", "female-chengshu");
+
+        // 基线（-3Hz/-5%）与情绪（+2Hz/+8%）数值叠加
+        Assert.Contains("pitch='-1Hz'", ssml);
+        Assert.Contains("rate='+3%'", ssml);
+    }
+
+    [Fact]
+    public void BuildSsml_NoBaselineForNonProfiledVoices()
+    {
+        var ssml = EdgeTtsService.BuildSsml("测试", "zh-CN-XiaoyiNeural", null, "female-yujie");
+
+        Assert.Contains("pitch='+0Hz'", ssml);
+        Assert.Contains("rate='+0%'", ssml);
+    }
+
+    [Fact]
+    public void CharacterDefaults_DistinctVoiceOrBaselinePerHost()
+    {
+        // 免费池女声仅两条：晓伊被「知性女声」与「成熟女声」共用，后者靠
+        // 基线韵律区分；断言每位主播默认的（声线, 基线）组合互不相同，
+        // 换主播听不出换人的缺陷（如曾经的 Lumen/Noir 同为晓晓）即失败
+        var combos = CharacterProfile.Presets
+            .Select(p => (Voice: EdgeTtsService.ResolveVoice(p.VoiceId),
+                Baseline: EdgeTtsService.ResolveVoiceBaseline(p.VoiceId)))
+            .ToArray();
+
+        Assert.All(combos, c => Assert.False(string.IsNullOrEmpty(c.Voice)));
+        Assert.Equal(combos.Length, combos.Distinct().Count());
     }
 
     [Fact]

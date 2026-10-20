@@ -412,7 +412,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             new() { Id = "male-qn-jingying", DisplayName = AppLanguage.T("精英男声", "Elite male") },
             new() { Id = "male-qn-badao", DisplayName = AppLanguage.T("霸道男声", "Bold male") },
             new() { Id = "female-shaonv", DisplayName = AppLanguage.T("少女音", "Girl voice") },
-            new() { Id = "female-yujie", DisplayName = AppLanguage.T("御姐音", "Mature female") },
+            new() { Id = "female-yujie", DisplayName = AppLanguage.T("知性女声", "Refined female") },
             new() { Id = "female-chengshu", DisplayName = AppLanguage.T("成熟女声", "Grown female") },
         };
         if (voiceId != null)

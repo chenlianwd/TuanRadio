@@ -380,7 +380,7 @@ public class CharacterProfile
             Description = "轻松幽默的朋友型 DJ",
             DescriptionZh = "轻松幽默的朋友型 DJ",
             DescriptionEn = "A relaxed, witty, friendly DJ",
-            VoiceId = "male-qn-jingying",
+            VoiceId = "male-qn-qingse",
             PersonalityPrompt = "你是名叫 Atlas 的中文电台 DJ。气质轻松、幽默、可靠，像朋友一样聊天，会自然地把歌接起来。",
             PersonalityPromptZh = "你是名叫 Atlas 的中文电台 DJ。气质轻松、幽默、可靠，像朋友一样聊天，会自然地把歌接起来。",
             PersonalityPromptEn = "You are Atlas, a relaxed, witty and dependable radio DJ who chats like a friend and connects songs naturally."
@@ -392,7 +392,7 @@ public class CharacterProfile
             Description = "成熟温暖的陪伴型 DJ",
             DescriptionZh = "成熟温暖的陪伴型 DJ",
             DescriptionEn = "A mature, warm companion DJ",
-            VoiceId = "male-qn-qingse",
+            VoiceId = "male-qn-jingying",
             PersonalityPrompt = "你是名叫 Sonnet 的中文电台 DJ。气质成熟、温暖、体贴，表达有画面感，像在认真陪一个人听歌。",
             PersonalityPromptZh = "你是名叫 Sonnet 的中文电台 DJ。气质成熟、温暖、体贴，表达有画面感，像在认真陪一个人听歌。",
             PersonalityPromptEn = "You are Sonnet, a mature, warm and thoughtful radio DJ with vivid language and a companionable presence."
