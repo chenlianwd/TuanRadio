@@ -20,6 +20,8 @@ public interface IDJService
     Task<byte[]?> GenerateSpeechAsync(string text);
     string CurrentEmotion { get; }
     bool TtsEnabled { get; }
+    /// <summary>当前 DJ 实名（人设 DisplayName，随 Initialize 更新），供聊天署名等展示。</summary>
+    string DjName { get; }
     /// <summary>最近一次聊天生成的失败信息（成功即清空）。与 TTS 失败分字段存放：
     /// 后台串场 TTS 与用户聊天并发时，共享单字段会互相覆盖导致聊天侧误报/漏报。</summary>
     ApiFailureInfo? LastChatFailure { get; }
