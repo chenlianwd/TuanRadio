@@ -561,6 +561,12 @@ public class RecommendationService : IRecommendationService
             return AppLanguage.T("继续当前电台", "Continue current station");
         }
 
+        if (key == RecommendationIntentKeys.SimilarToCurrent ||
+            fallback is "与当前歌曲气质相近" or "similar in vibe to the current track")
+        {
+            return AppLanguage.T("与当前歌曲气质相近", "similar in vibe to the current track");
+        }
+
         return fallback ?? string.Empty;
     }
 
