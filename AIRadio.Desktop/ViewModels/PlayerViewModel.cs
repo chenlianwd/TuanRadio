@@ -28,7 +28,8 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string TrackTitle { get; set; } = AppLanguage.T("未播放", "Nothing playing");
     [Reactive] public partial string TrackArtist { get; set; } = "";
     [Reactive] public partial string TrackSource { get; set; } = "";
-    // 实际播放编码/码率：LibVLC 解析值为准，音源声明值（OpenSubsonic 等）作兜底；空串隐藏徽标
+    // 实际播放音质：行内显示品级文案（标准/高清/无损），编码/码率等技术细节见 Tooltip；
+    // LibVLC 解析值为准，音源声明值（OpenSubsonic 等）作兜底；空串隐藏徽标
     [Reactive] public partial string TrackQualityText { get; set; } = "";
     [Reactive] public partial string TrackQualityShort { get; set; } = "";
     [Reactive] public partial string TrackQualityDetail { get; set; } = "";
@@ -212,19 +213,53 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         var codec = info?.Codec ?? track.DeclaredCodec;
         var bitrateKbps = info?.BitrateKbps ?? track.DeclaredBitrateKbps;
         TrackQualityText = FormatQualityText(codec, bitrateKbps);
-        TrackQualityShort = FormatQualityText(codec, bitrateKbps, shortForm: true);
+        TrackQualityShort = FormatQualityText(codec, bitrateKbps);
         TrackQualityDetail = FormatQualityDetail(codec, bitrateKbps, info?.SampleRateHz, info?.Channels);
         HasQuality = !string.IsNullOrEmpty(TrackQualityText);
         TrackIsPreview = track.IsPreviewStream;
     }
 
-    private static string FormatQualityText(string? codec, int? bitrateKbps, bool shortForm = false)
+    /// <summary>行内展示音质品级文案（标准/高清/无损）；品级不可判时回退裸编码名，保住悬停技术细节的入口。</summary>
+    private static string FormatQualityText(string? codec, int? bitrateKbps)
     {
-        if (string.IsNullOrEmpty(codec))
-            return string.Empty;
-        return bitrateKbps is > 0
-            ? shortForm ? $"{codec} {bitrateKbps}k" : $"{codec} · {bitrateKbps} kbps"
-            : codec;
+        return ClassifyQualityTier(codec, bitrateKbps) switch
+        {
+            QualityTier.Lossless => AppLanguage.T("无损", "Lossless"),
+            QualityTier.HighDefinition => AppLanguage.T("高清", "HD"),
+            QualityTier.Standard => AppLanguage.T("标准", "Standard"),
+            _ => codec ?? string.Empty
+        };
+    }
+
+    // 无损编码短名：MediaCodecNames 产出的 FLAC/ALAC/PCM 与各音源声明值的常见写法，忽略大小写
+    private static readonly HashSet<string> LosslessCodecs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "FLAC", "ALAC", "PCM", "WAV", "AIFF", "APE"
+    };
+
+    // 已知有损编码短名：无论码率多高都不判无损（DTS 1411k、AC3 640k 等高码率有损真实存在）；
+    // 未收录的编码名（含 LibVLC 未识别的回退串）保留 hires 声明码率兜底路径
+    private static readonly HashSet<string> LossyCodecs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "MP3", "AAC", "AC3", "EAC3", "DTS", "WMA", "OPUS", "VORBIS"
+    };
+
+    /// <summary>
+    /// 音质品级归类：无损编码（无需码率）判无损；已知有损编码按码率分档但封顶高清；
+    /// 编码缺失或未识别时按码率分档、≥600k 视 hires 判无损；有损编码缺码率无法诚实分档判 None。
+    /// </summary>
+    internal static QualityTier ClassifyQualityTier(string? codec, int? bitrateKbps)
+    {
+        if (!string.IsNullOrEmpty(codec) && LosslessCodecs.Contains(codec))
+            return QualityTier.Lossless;
+        if (bitrateKbps is >= 600 && (string.IsNullOrEmpty(codec) || !LossyCodecs.Contains(codec)))
+            return QualityTier.Lossless;
+        return bitrateKbps switch
+        {
+            >= 256 => QualityTier.HighDefinition,
+            > 0 => QualityTier.Standard,
+            _ => QualityTier.None
+        };
     }
 
     private static string FormatQualityDetail(string? codec, int? bitrateKbps, int? sampleRateHz, int? channels)
@@ -264,4 +299,12 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             _ => ("OFF", AppLanguage.T("关闭循环", "Repeat off"))
         };
     }
+}
+
+internal enum QualityTier
+{
+    None,
+    Standard,
+    HighDefinition,
+    Lossless
 }

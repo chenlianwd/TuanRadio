@@ -25,7 +25,7 @@
                                FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FF9A9AA8}"
                                TextTrimming="CharacterEllipsis" MaxWidth="128"
                                ToolTip.Tip="{Binding PlayerVM.TrackArtist}"/>
-                    <!-- 音源 · 实际编码/码率 ·（试听片段）：实际值来自 LibVLC 解析，无数据时整段隐藏 -->
+                    <!-- 音源 · 音质品级（试听片段）：编码/码率细节悬停 Tooltip 可见，无数据时整段隐藏 -->
                     <StackPanel Orientation="Horizontal" Spacing="4" MaxWidth="128">
                         <TextBlock Text="{Binding PlayerVM.TrackSource}" FontSize="10"
                                    Foreground="{DynamicResource C_FF9A9AA8}" TextTrimming="CharacterEllipsis"/>
