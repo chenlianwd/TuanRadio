@@ -132,47 +132,6 @@ public class LLMService : ILLMService
         }
     }
 
-    public Task<string> GenerateTrackIntroductionAsync(Track current, Track next)
-        => GenerateTrackIntroductionAsync(current, next, CancellationToken.None);
-
-    public async Task<string> GenerateTrackIntroductionAsync(
-        Track current,
-        Track next,
-        CancellationToken cancellationToken)
-    {
-        if (!IsConfigured())
-            return AppLanguage.T($"接下来播放 {next.Title}。", $"Up next: {next.Title}.");
-
-        try
-        {
-            // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
-            var prevTitle = PromptHygiene.StripControlMarkers(current.Title);
-            var prevArtist = PromptHygiene.StripControlMarkers(current.Artist);
-            var nextTitle = PromptHygiene.StripControlMarkers(next.Title);
-            var nextArtist = PromptHygiene.StripControlMarkers(next.Artist);
-            var prompt = AppLanguage.T(
-                $"你现在是 AI 电台 DJ。上一首歌是《{prevTitle}》（{prevArtist}），下一首是《{nextTitle}》（{nextArtist}）。请用一句话自然地衔接两首歌，像电台 DJ 一样。必须完整念出下一首歌名和歌手名，句子要完整收尾，严禁在歌名或句子中间截断；全句不超过40字。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。",
-                $"You are an AI radio DJ. The previous track was '{prevTitle}' by {prevArtist}; the next is '{nextTitle}' by {nextArtist}. Connect them naturally in one short sentence. You must include the full next title and artist, and finish the sentence completely — never cut off mid-title or mid-sentence. End with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].");
-
-            var messages = new List<object>
-            {
-                new { role = "system", content = AppLanguage.T("你是一个中文电台 DJ，用自然的口语衔接歌曲。", "You are an English-speaking radio DJ who connects songs naturally.") },
-                new { role = "user", content = prompt }
-            };
-
-            return await CallChatCompletionAsync(messages, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Track introduction generation failed");
-            return AppLanguage.T($"接下来播放 {next.Title}。", $"Up next: {next.Title}.");
-        }
-    }
-
     internal List<object> BuildMessages(List<ChatMessage> history, string userMessage)
     {
         var messages = new List<object>

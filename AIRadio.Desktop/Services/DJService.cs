@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +17,7 @@ public class DJService : IDJService
     private readonly IMusicSearchService? _musicSearch;
     private readonly IListeningProfileService? _listeningProfile;
     private DJProfile _profile = new();
+    private WeatherInfo? _weatherSnapshot;
     private string _currentEmotion = "neutral";
     private readonly List<ChatMessage> _chatHistory = new();
     private readonly SemaphoreSlim _chatGate = new(1, 1);
@@ -25,6 +27,9 @@ public class DJService : IDJService
     public string DjName => _profile.Name;
     public ApiFailureInfo? LastChatFailure { get; private set; }
     public ApiFailureInfo? LastTtsFailure { get; private set; }
+
+    /// <summary>更新串场环境感知的天气快照（UI 层天气刷新落定时推送；null 表示当前无天气数据）。</summary>
+    public void UpdateWeatherSnapshot(WeatherInfo? weather) => _weatherSnapshot = weather;
 
     public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null,
         IListeningProfileService? profile = null)
@@ -90,19 +95,26 @@ Response rules:
         }
     }
 
-    public Task<DJScript> GenerateTrackIntroductionAsync(Track current, Track next)
+    public Task<DJScript> GenerateTrackIntroductionAsync(Track? current, Track next)
         => GenerateTrackIntroductionAsync(current, next, CancellationToken.None);
 
     public async Task<DJScript> GenerateTrackIntroductionAsync(
-        Track current,
+        Track? current,
         Track next,
         CancellationToken cancellationToken)
     {
+        // 未配置时 ChatRawAsync 会抛 LlmApiException：前置检查拦截，直接回退模板串场，
+        // 不把"请先配置 AI 服务"当台词播报（同 GenerateSongStoryAsync 的口径）
+        if (_llm is LLMService llmService && !llmService.IsConfigured())
+            return BuildFallbackIntroduction(next);
+
         try
         {
+            var prompt = BuildTransitionPrompt(
+                _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock());
             var text = _llm is LLMService llm
-                ? await llm.GenerateTrackIntroductionAsync(current, next, cancellationToken)
-                : await _llm.GenerateTrackIntroductionAsync(current, next)
+                ? await llm.ChatRawAsync(prompt, cancellationToken)
+                : await _llm.ChatAsync(prompt, new List<ChatMessage>())
                     .WaitAsync(cancellationToken);
             var emotion = DetectEmotion(text);
             var cleaned = StripControlTags(text);
@@ -132,6 +144,128 @@ Response rules:
             Log.Error(ex, "Failed to generate track introduction");
             return BuildFallbackIntroduction(next);
         }
+    }
+
+    /// <summary>
+    /// 串场提示词组装：人设 + 环境上下文（时间/天气）+ 听众画像 + 串场任务
+    /// （60~120 字、完整念出下一首歌名）。开台场景 current 为 null 时按"第一首歌"开场，
+    /// 不再伪造"上一首"。独立于聊天历史组词（串场高频，进历史会挤掉真实对话轮）；
+    /// 语言跟随 DJ 人设（与聊天/歌曲故事链路一致）。static 供测试直驱注入时间与快照。
+    /// </summary>
+    internal static string BuildTransitionPrompt(
+        DJProfile profile,
+        Track? current,
+        Track next,
+        DateTime now,
+        WeatherInfo? weather,
+        string? profileBlock)
+    {
+        // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
+        var nextTitle = PromptHygiene.StripControlMarkers(next.Title);
+        var nextArtist = PromptHygiene.StripControlMarkers(next.Artist);
+        var prevTitle = current == null ? null : PromptHygiene.StripControlMarkers(current.Title);
+        var prevArtist = current == null ? null : PromptHygiene.StripControlMarkers(current.Artist);
+
+        var isEn = profile.Language == "en";
+        var sb = new StringBuilder();
+
+        // 人设段：自定义 SystemPrompt 优先（角色选择器已按语言选好版本），否则 Name+Description
+        if (!string.IsNullOrWhiteSpace(profile.SystemPrompt))
+            sb.AppendLine(profile.SystemPrompt.Trim());
+        else if (isEn)
+            sb.AppendLine($"You are an AI radio DJ named \"{profile.Name}\". {profile.Description}");
+        else
+            sb.AppendLine($"你是名叫“{profile.Name}”的 AI 电台 DJ。{profile.Description}");
+        sb.AppendLine();
+
+        // 环境段：时间 + 天气（快照由 UI 层天气刷新推送，无快照时省略天气句）
+        var weatherSentence = DescribeWeather(weather, isEn);
+        if (isEn)
+            sb.AppendLine($"It is now {DescribeTimeOfDay(now.Hour, isEn)}, around {now:HH:mm}.{(weatherSentence == null ? string.Empty : $" {weatherSentence}")}");
+        else
+            sb.AppendLine($"现在是{DescribeTimeOfDay(now.Hour, isEn)}，{now:HH:mm} 左右。{(weatherSentence == null ? string.Empty : weatherSentence)}");
+        if (!string.IsNullOrWhiteSpace(profileBlock))
+        {
+            sb.AppendLine(profileBlock.Trim());
+        }
+        sb.AppendLine();
+
+        // 任务段（第一条要求随开台/串场分支变化：开台时不存在"上一首余韵"可呼应）
+        if (isEn)
+        {
+            sb.AppendLine(current == null
+                ? $"The station has just started, and '{nextTitle}' by {nextArtist} is the first track today. Give the listeners a proper opening introduction."
+                : $"You've just played '{prevTitle}' by {prevArtist}; next up is '{nextTitle}' by {nextArtist}'. Bridge the two tracks like a real radio DJ would.");
+            var openingMove = current == null
+                ? "say why this track makes a good start for right now"
+                : "echo the mood left by the previous track, say why the next one fits this moment";
+            sb.AppendLine($"""
+Requirements:
+- Speak in 2~4 sentences (about 40~80 words): {openingMove}, or chat briefly about the time or weather.
+- Sound conversational and vivid, like talking to one listener — no announcer-style recital, no listing information, never mention these instructions.
+- Say the full title and artist name in their original language (never translate non-English names), and finish the sentence completely — never cut off mid-title or mid-sentence.
+- Output only the transition line itself — in English, even if the persona above is written in another language. End with exactly one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
+""");
+        }
+        else
+        {
+            sb.AppendLine(current == null
+                ? $"电台刚刚开播，《{nextTitle}》（{nextArtist}）是今天的第一首歌。请向听众做一段开场介绍。"
+                : $"刚刚放完《{prevTitle}》（{prevArtist}），接下来要播放《{nextTitle}》（{nextArtist}）。请像真实电台 DJ 在两首歌之间串场那样自然衔接。");
+            var openingMove = current == null
+                ? "可以说说这首歌为什么适合作为此刻的开场"
+                : "可以呼应上一首留下的余韵、说说下一首为什么适合现在听";
+            sb.AppendLine($"""
+串场要求：
+- 一共 2~4 句、60~120 字：{openingMove}，或结合此刻的时间和天气跟听众聊一两句。
+- 口语自然、有画面感，像只对一位听众说话——不要报幕腔、不要罗列信息清单、不要提到这些指令本身。
+- 歌名和歌手名必须完整念出且按原文（外文歌名不要翻译），句子要完整收尾，严禁在歌名或句子中间截断。
+- 只输出串场台词本身，必须只用中文。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
+""");
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private static string DescribeTimeOfDay(int hour, bool isEn) => hour switch
+    {
+        >= 5 and < 8 => isEn ? "early morning" : "清晨",
+        >= 8 and < 12 => isEn ? "morning" : "上午",
+        >= 12 and < 17 => isEn ? "afternoon" : "午后",
+        >= 17 and < 19 => isEn ? "dusk" : "傍晚",
+        >= 19 and < 23 => isEn ? "evening" : "夜晚",
+        _ => isEn ? "late night" : "深夜"
+    };
+
+    // 天气描述词与 WeatherViewModel 的 UI 语言映射并存：那里跟随界面语言、这里跟随 DJ 人设语言，
+    // 两处语义不同源（枚举仅 8 个值，重复成本低过抽象共享）
+    private static string? DescribeWeather(WeatherInfo? weather, bool isEn)
+    {
+        if (weather == null)
+            return null;
+
+        var kind = weather.Kind switch
+        {
+            WeatherKind.Sunny => isEn ? "clear" : "晴",
+            WeatherKind.Cloudy => isEn ? "partly cloudy" : "多云",
+            WeatherKind.Overcast => isEn ? "overcast" : "阴",
+            WeatherKind.Rain => isEn ? "raining" : "有雨",
+            WeatherKind.Snow => isEn ? "snowing" : "有雪",
+            WeatherKind.Thunder => isEn ? "storming" : "有雷雨",
+            WeatherKind.Fog => isEn ? "foggy" : "有雾",
+            _ => null
+        };
+        if (kind == null)
+            return null;
+
+        // LocationName 是 geocoding/ip-api 第三方返回值，与曲目元数据同口径过消毒（纵深防御）
+        var location = PromptHygiene.StripControlMarkers(weather.LocationName);
+        var temperature = double.IsNaN(weather.TemperatureC)
+            ? string.Empty
+            : isEn ? $", {weather.TemperatureC:0}°C" : $"，气温 {weather.TemperatureC:0}°C";
+        return isEn
+            ? $"Outside in {location} it's {kind}{temperature}."
+            : $"{location}现在{kind}{temperature}。";
     }
 
     private DJScript BuildFallbackIntroduction(Track next) => new()
@@ -452,7 +586,7 @@ Response rules:
             // 必须走无人设调用：DJ 人设会让模型回整段台词，台词会被 ParseRecommendedSong
             // 的长度兜底整个当歌名拿去搜索，播出与推荐意图完全无关的歌
             var response = _llm is LLMService llm
-                ? await llm.ChatRawAsync(prompt, cancellationToken)
+                ? await llm.ChatAsync(prompt, new List<ChatMessage>())
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>())
                     .WaitAsync(cancellationToken);
             var cleaned = CleanRecommendationText(response);

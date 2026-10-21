@@ -7,7 +7,10 @@ namespace AIRadio.Desktop.Services;
 public interface IDJService
 {
     void Initialize(DJProfile profile);
-    Task<DJScript> GenerateTrackIntroductionAsync(Track current, Track next);
+    /// <summary>生成曲目串场词。current 为 null 表示电台刚开播，按"第一首歌"开场。</summary>
+    Task<DJScript> GenerateTrackIntroductionAsync(Track? current, Track next);
+    /// <summary>更新串场环境感知的天气快照（UI 层天气刷新落定时推送；null 表示当前无天气数据）。</summary>
+    void UpdateWeatherSnapshot(WeatherInfo? weather);
     Task<SongStory> GenerateSongStoryAsync(Track track);
     Task<SongStory> GenerateSongStoryAsync(Track track, CancellationToken cancellationToken)
         => GenerateSongStoryAsync(track);

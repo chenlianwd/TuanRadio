@@ -204,6 +204,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(city => _ = WeatherVM.RefreshWeatherAsync(city));
 
+        // 天气快照推给 DJ 串场的环境感知（时间/天气上下文，见 DJService.BuildTransitionPrompt）
+        WeatherVM.WeatherSnapshotChanged += OnWeatherSnapshotChanged;
+
         // 酷狗 20028 风控：命中挑战时自动弹浏览器滑块验证（冷却限频），完成后播放自然恢复
         if (_kugouVerification != null)
             _kugouVerification.ChallengeDetected += OnKugouChallengeDetected;
@@ -1186,7 +1189,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
 
         var script = await GenerateTrackIntroductionAsync(
-            current ?? CreateIntroPlaceholderTrack(), recommended, _lifetimeCts.Token);
+            current, recommended, _lifetimeCts.Token);
         // IsPlaying 复查：介绍词生成/TTS 的长窗口内用户可能手动开播（全局播放键播的正是基线曲，
         // CurrentTrack 引用不变、staleness 拦不住），此时让位不抢播；电台链 EndReached 后恒 false 零影响。
         // 返回"是否真的开播"：stale/未播一律 false，开台链据此走兜底阶梯（电台链轮换同样被拦，行为等价）
@@ -1230,7 +1233,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (PlaylistVM.Tracks.IndexOf(next) < 0) return false;
 
         var script = await GenerateTrackIntroductionAsync(
-            current ?? CreateIntroPlaceholderTrack(), next, _lifetimeCts.Token);
+            current, next, _lifetimeCts.Token);
         // 同推荐档：IsPlaying 复查防介绍词窗口内被抢播（开台链基线曲引用不变的竞态）
         if (IsDisposed || _audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, current)) return false;
 
@@ -1247,14 +1250,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         return false;
     }
-
-    /// <summary>开台场景介绍词的"当前曲"占位：无在播曲目时给 DJ 一个中性的"上一首"语义。</summary>
-    private static Track CreateIntroPlaceholderTrack()
-        => new()
-        {
-            Title = AppLanguage.T("无", "None"),
-            Artist = AppLanguage.T("未知", "Unknown")
-        };
 
     private void AttachRecommendationContext(Track? current)
     {
@@ -1404,12 +1399,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             : _recommendationService.GetNextTrackAsync(request).WaitAsync(cancellationToken);
 
     private Task<DJScript> GenerateTrackIntroductionAsync(
-        Track current,
+        Track? current,
         Track next,
         CancellationToken cancellationToken)
         => _djService is DJService djService
             ? djService.GenerateTrackIntroductionAsync(current, next, cancellationToken)
             : _djService.GenerateTrackIntroductionAsync(current, next).WaitAsync(cancellationToken);
+
+    private void OnWeatherSnapshotChanged(WeatherInfo? weather)
+        => _djService.UpdateWeatherSnapshot(weather);
 
     private static bool IsSameTrack(Track? left, Track? right) => TrackComparer.IsSameTrack(left, right);
 
@@ -1554,6 +1552,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
         _weatherCitySub.Dispose();
+        if (WeatherVM != null)
+            WeatherVM.WeatherSnapshotChanged -= OnWeatherSnapshotChanged;
         WeatherVM?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();

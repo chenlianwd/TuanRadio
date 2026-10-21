@@ -18,11 +18,6 @@ public interface ILLMService
     /// 聊天对话。
     /// </summary>
     Task<string> ChatAsync(string userMessage, List<ChatMessage> history);
-
-    /// <summary>
-    /// 生成歌曲介绍文本（纯文本，不含语音）。
-    /// </summary>
-    Task<string> GenerateTrackIntroductionAsync(Track current, Track next);
 }
 
 /// <summary>
