@@ -167,8 +167,8 @@
                         Value="{Binding PlayerVM.CurrentSeconds}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="5" Text="{Binding PlayerVM.DurationText}" FontSize="10" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                <!-- 实际播放编码/码率短徽标：完整信息（采样率/声道）见曲目 Tooltip -->
-                <TextBlock x:Name="CompactQualityBadge" Grid.Column="6" Text="{Binding PlayerVM.TrackQualityShort}" FontSize="9" FontFamily="Consolas"
+                <!-- 音质品级短徽标：编码/码率/采样率/声道见曲目 Tooltip -->
+                <TextBlock x:Name="CompactQualityBadge" Grid.Column="6" Text="{Binding PlayerVM.TrackQualityShort}" FontSize="9" FontFamily="Consolas, Microsoft YaHei UI"
                            Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center" Margin="0,0,6,0"
                            IsVisible="{Binding PlayerVM.HasQuality}"
                            ToolTip.Tip="{Binding PlayerVM.TrackQualityDetail}"/>

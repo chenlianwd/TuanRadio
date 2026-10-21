@@ -84,6 +84,8 @@ public class CompactPlayerTrackInfoTests
     {
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        // 断言品级中文文案，前置语言自足（同 PlayerViewModelTests 模式）
+        AppLanguage.Apply("zh");
         var (vm, tracks, _, track) = CreateViewModel();
         Window? window = null;
         try
@@ -100,13 +102,13 @@ public class CompactPlayerTrackInfoTests
             Assert.False(vm.PlayerVM.HasQuality);
             Assert.False(badge.IsVisible);
 
-            // 声明值（音源解析路径落到 Track）驱动短徽标
+            // 声明值（音源解析路径落到 Track）驱动品级短徽标
             track.DeclaredCodec = "MP3";
             track.DeclaredBitrateKbps = 320;
             tracks.OnNext(track);
             Assert.True(vm.PlayerVM.HasQuality);
             Assert.True(badge.IsVisible);
-            Assert.Equal("MP3 320k", badge.Text);
+            Assert.Equal("高清", badge.Text);
 
             // 切换曲目回到无数据状态：徽标重新隐藏
             tracks.OnNext(null);
@@ -117,6 +119,7 @@ public class CompactPlayerTrackInfoTests
         {
             window?.Close();
             vm.Dispose();
+            AppLanguage.Apply("zh");
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }

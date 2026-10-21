@@ -109,23 +109,30 @@ public class PlayerViewModelTests
                 DeclaredCodec = "FLAC", DeclaredBitrateKbps = 900, IsPreviewStream = true
             };
             tracks.OnNext(current);
-            Assert.Equal("FLAC · 900 kbps", vm.TrackQualityText);
-            Assert.Equal("FLAC 900k", vm.TrackQualityShort);
+            Assert.Equal("无损", vm.TrackQualityText);
+            Assert.Equal("无损", vm.TrackQualityShort);
+            Assert.Contains("FLAC · 900 kbps", vm.TrackQualityDetail);
             Assert.True(vm.HasQuality);
             Assert.True(vm.TrackIsPreview);
             Assert.Equal("试听片段", vm.TrackPreviewText);
 
-            // LibVLC 实际值到达后覆盖声明值
+            // LibVLC 实际值到达后覆盖声明值；行内显示品级，技术细节进 Tooltip
             mediaInfo.OnNext(new TrackMediaInfo(current.Id, "MP3", 320, 44100, 2));
-            Assert.Equal("MP3 · 320 kbps", vm.TrackQualityText);
-            Assert.Equal("MP3 320k", vm.TrackQualityShort);
+            Assert.Equal("高清", vm.TrackQualityText);
+            Assert.Equal("高清", vm.TrackQualityShort);
+            Assert.Contains("MP3 · 320 kbps", vm.TrackQualityDetail);
             Assert.Contains("44.1 kHz", vm.TrackQualityDetail);
             Assert.Contains("立体声", vm.TrackQualityDetail);
 
-            // 语言切换重算试听徽标与声道文案
+            // 语言切换重算品级文案（无损/高清/标准三档英文全锚定）与试听徽标
             AppLanguage.Apply("en");
+            Assert.Equal("HD", vm.TrackQualityText);
             Assert.Equal("Preview", vm.TrackPreviewText);
             Assert.Contains("stereo", vm.TrackQualityDetail);
+            mediaInfo.OnNext(new TrackMediaInfo(current.Id, "FLAC", null, null, null));
+            Assert.Equal("Lossless", vm.TrackQualityText);
+            mediaInfo.OnNext(new TrackMediaInfo(current.Id, "MP3", 128, null, null));
+            Assert.Equal("Standard", vm.TrackQualityText);
             AppLanguage.Apply("zh");
 
             // 快切歌：新曲目回到声明值（无声明则为空），旧媒体迟到信息被 TrackId 卫兵丢弃
@@ -136,10 +143,15 @@ public class PlayerViewModelTests
             mediaInfo.OnNext(new TrackMediaInfo("stale-id", "MP3", 320, 44100, 2));
             Assert.False(vm.HasQuality);
 
-            // 新曲目的实际值正常生效；无编码时徽标保持隐藏
+            // 新曲目的实际值正常生效；无损编码无码率也能判品级，全空时徽标保持隐藏
             mediaInfo.OnNext(new TrackMediaInfo(next.Id, "FLAC", null, 48000, 2));
-            Assert.Equal("FLAC", vm.TrackQualityText);
+            Assert.Equal("无损", vm.TrackQualityText);
             Assert.True(vm.HasQuality);
+            // 品级不可判（有损缺码率且无声明值可回落）：行内回退裸编码名，徽标可见、Tooltip 技术细节入口不丢
+            mediaInfo.OnNext(new TrackMediaInfo(next.Id, "OPUS", null, 48000, 2));
+            Assert.Equal("OPUS", vm.TrackQualityText);
+            Assert.True(vm.HasQuality);
+            Assert.Contains("48 kHz", vm.TrackQualityDetail);
             mediaInfo.OnNext(new TrackMediaInfo(next.Id, null, null, null, null));
             Assert.False(vm.HasQuality);
         }
@@ -148,6 +160,52 @@ public class PlayerViewModelTests
             AppLanguage.Apply("zh");
             RxApp.MainThreadScheduler = originalScheduler;
         }
+    }
+
+    [Fact]
+    public void QualityTier_ClassifiesByCodecAndBitrate()
+    {
+        // 有损编码按码率分档：128/192 标准，256/320 高清
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Standard,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("MP3", 128));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Standard,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("AAC", 192));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("MP3", 256));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("MP3", 320));
+        // 分档边界锚定：255/256 高清下限，599/600 hires 无损下限（编码缺失走声明码率兜底）
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Standard,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier(null, 255));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier(null, 256));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier(null, 599));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Lossless,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier(null, 600));
+        // 无损：编码优先（忽略大小写、无需码率）；编码缺失时 hires 声明码率兜底
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Lossless,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("FLAC", null));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Lossless,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("flac", 320));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Lossless,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("PCM", null));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.Lossless,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier(null, 999));
+        // 已知有损编码高码率不冒充无损（DTS 1411k、AC3 640k 等高码率有损真实存在），封顶高清
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("DTS", 1411));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("AC3", 640));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.HighDefinition,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("MP3", 999));
+        // 无法诚实分档（缺码率的有损编码/全空/非正值）→ None，行内回退裸编码名
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.None,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("MP3", null));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.None,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier(null, null));
+        Assert.Equal(AIRadio.Desktop.ViewModels.QualityTier.None,
+            AIRadio.Desktop.ViewModels.PlayerViewModel.ClassifyQualityTier("MP3", 0));
     }
 
     private static Mock<IAudioService> CreatePositionalAudioMock(Subject<TimeSpan> positions)
