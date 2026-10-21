@@ -22,6 +22,25 @@ public class DJService : IDJService
     private readonly List<ChatMessage> _chatHistory = new();
     private readonly SemaphoreSlim _chatGate = new(1, 1);
 
+    /// <summary>串场短期记忆容量：最近 N 条成功串场注入提示词防复读（百字级，本地小模型窗口安全）。</summary>
+    private const int RecentTransitionMemoryCount = 3;
+
+    /// <summary>听众话题注入串场的截断长度：只需表意主题，防长聊天原文撑爆提示词。</summary>
+    private const int MaxListenerTopicLength = 50;
+
+    /// <summary>串场短期记忆（最旧在前）：只收 LLM 成功生成的串场；fallback 模板不入队，防复读基准被污染。</summary>
+    private readonly Queue<string> _recentTransitions = new();
+
+    /// <summary>听众最近一次聊天话题：聊天链与串场链的轻量桥接，串场可自然呼应而无需复读聊天历史。</summary>
+    private string? _lastListenerTopic;
+
+    /// <summary>串场记忆读写锁：串场链（advance gate 串行）与聊天链（chat gate 串行）跨域共享这两个字段。</summary>
+    private readonly object _memoryGate = new();
+
+    /// <summary>记忆代次：Initialize（角色切换）递增——串场生成秒级窗口内切角色时，
+    /// 旧代次的迟到串场凭代次不符被拒入队，防止污染新角色的记忆。</summary>
+    private int _memoryEpoch;
+
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
     public string DjName => _profile.Name;
@@ -93,6 +112,15 @@ Response rules:
             _chatHistory.Clear();
             _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
         }
+
+        // 角色切换 = 新 DJ 接管：串场记忆与听众话题一并清空，
+        // 否则旧 DJ 的串场会被当成新角色的"自己说过的话"注入（语义错位）
+        lock (_memoryGate)
+        {
+            _memoryEpoch++;
+            _recentTransitions.Clear();
+            _lastListenerTopic = null;
+        }
     }
 
     public Task<DJScript> GenerateTrackIntroductionAsync(Track? current, Track next)
@@ -110,8 +138,19 @@ Response rules:
 
         try
         {
+            List<string> recentTransitions;
+            string? listenerTopic;
+            int epoch;
+            lock (_memoryGate)
+            {
+                epoch = _memoryEpoch;
+                recentTransitions = _recentTransitions.ToList();
+                listenerTopic = _lastListenerTopic;
+            }
+
             var prompt = BuildTransitionPrompt(
-                _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock());
+                _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock(),
+                recentTransitions, listenerTopic);
             var text = _llm is LLMService llm
                 ? await llm.ChatRawAsync(prompt, cancellationToken)
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>())
@@ -125,6 +164,23 @@ Response rules:
             {
                 Log.Information("Discarded track introduction with incomplete title: {Title}", next.Title);
                 return BuildFallbackIntroduction(next);
+            }
+
+            // 只记 LLM 成功生成的串场：模板兜底不是 DJ 的真实语气，进了记忆会让"避免重复"的基准失真。
+            // 代次守卫：LLM 生成窗口内角色被切换（Initialize 已清记忆）时，旧 DJ 的迟到串场不得入队；
+            // 入队条目压平换行（防多行台词拆散列表边界）并过 PromptHygiene（与标题/话题同口径消毒）
+            lock (_memoryGate)
+            {
+                if (epoch == _memoryEpoch)
+                {
+                    var entry = PromptHygiene.StripControlMarkers(cleaned.ReplaceLineEndings(" ")).Trim();
+                    if (!string.IsNullOrWhiteSpace(entry))
+                    {
+                        _recentTransitions.Enqueue(entry);
+                        while (_recentTransitions.Count > RecentTransitionMemoryCount)
+                            _recentTransitions.Dequeue();
+                    }
+                }
             }
 
             return new DJScript
@@ -147,9 +203,9 @@ Response rules:
     }
 
     /// <summary>
-    /// 串场提示词组装：人设 + 环境上下文（时间/天气）+ 听众画像 + 串场任务
-    /// （60~120 字、完整念出下一首歌名）。开台场景 current 为 null 时按"第一首歌"开场，
-    /// 不再伪造"上一首"。独立于聊天历史组词（串场高频，进历史会挤掉真实对话轮）；
+    /// 串场提示词组装：人设 + 环境上下文（时段/天气，定位为背景参考）+ 听众画像 + 会话短期记忆
+    /// （最近串场/听众话题）+ 串场任务（60~120 字、完整念出下一首歌名）。开台场景 current 为 null
+    /// 时按"第一首歌"开场，不再伪造"上一首"。独立于聊天历史组词（串场高频，进历史会挤掉真实对话轮）；
     /// 语言跟随 DJ 人设（与聊天/歌曲故事链路一致）。static 供测试直驱注入时间与快照。
     /// </summary>
     internal static string BuildTransitionPrompt(
@@ -158,7 +214,9 @@ Response rules:
         Track next,
         DateTime now,
         WeatherInfo? weather,
-        string? profileBlock)
+        string? profileBlock,
+        IReadOnlyList<string>? recentTransitions = null,
+        string? listenerTopic = null)
     {
         // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
         var nextTitle = PromptHygiene.StripControlMarkers(next.Title);
@@ -178,17 +236,49 @@ Response rules:
             sb.AppendLine($"你是名叫“{profile.Name}”的 AI 电台 DJ。{profile.Description}");
         sb.AppendLine();
 
-        // 环境段：时间 + 天气（快照由 UI 层天气刷新推送，无快照时省略天气句）
+        // 环境段：时段 + 天气（快照由 UI 层天气刷新推送，无快照时省略天气句）。
+        // 只给时段不给时刻数字：模型对提示词里现成的数字有强复述倾向，"14:32"会被原样
+        // 念成台词里的"两点半"，连续串场即复读报时（用户实测反馈）；时段/天气定位为
+        // 酝酿语气的背景，不是必须说给听众的素材
         var weatherSentence = DescribeWeather(weather, isEn);
         if (isEn)
-            sb.AppendLine($"It is now {DescribeTimeOfDay(now.Hour, isEn)}, around {now:HH:mm}.{(weatherSentence == null ? string.Empty : $" {weatherSentence}")}");
+        {
+            sb.Append($"It is {DescribeTimeOfDay(now.Hour, isEn)}.");
+            if (weatherSentence != null) sb.Append(' ').Append(weatherSentence);
+            sb.AppendLine();
+            sb.AppendLine("The time of day and weather above are background for setting your tone only — never announce the clock time, and do not bring up the weather in every transition.");
+        }
         else
-            sb.AppendLine($"现在是{DescribeTimeOfDay(now.Hour, isEn)}，{now:HH:mm} 左右。{(weatherSentence == null ? string.Empty : weatherSentence)}");
+        {
+            sb.Append($"现在是{DescribeTimeOfDay(now.Hour, isEn)}。");
+            if (weatherSentence != null) sb.Append(weatherSentence);
+            sb.AppendLine();
+            sb.AppendLine("上面的时段与天气只是你身处的环境背景，用来酝酿语气——不要报出时刻数字，也不要每条串场都聊天气。");
+        }
         if (!string.IsNullOrWhiteSpace(profileBlock))
         {
             sb.AppendLine(profileBlock.Trim());
         }
         sb.AppendLine();
+
+        // 会话短期记忆段：听众最近话题（可轻呼应）+ 自己最近的串场（配负向指令防话头/意象复读——
+        // 串场不进聊天历史，模型对"自己刚说过什么"无感知，复读是必然；注入原文是 API 场景下
+        // 防重复的标准做法，采样参数不可控）
+        if (!string.IsNullOrWhiteSpace(listenerTopic))
+        {
+            sb.AppendLine(isEn
+                ? $"The listener recently chatted with you about: \"{listenerTopic}\". Echo it briefly only if it connects naturally; otherwise don't mention it."
+                : $"听众最近和你聊过：「{listenerTopic}」。若有自然关联可以轻轻呼应，没有就完全不提。");
+        }
+        if (recentTransitions is { Count: > 0 })
+        {
+            sb.AppendLine(isEn
+                ? "Your own recent transitions are listed below. Do NOT reuse their openings, imagery, or phrasing — find a fresh angle:"
+                : "你最近几次串场已经说过下面这些话，不要重复它们的开场、意象或句式，换一个全新的切入角度：");
+            foreach (var line in recentTransitions)
+                sb.AppendLine($"- {line}");
+            sb.AppendLine();
+        }
 
         // 任务段（第一条要求随开台/串场分支变化：开台时不存在"上一首余韵"可呼应）
         if (isEn)
@@ -201,7 +291,7 @@ Response rules:
                 : "echo the mood left by the previous track, say why the next one fits this moment";
             sb.AppendLine($"""
 Requirements:
-- Speak in 2~4 sentences (about 40~80 words): {openingMove}, or chat briefly about the time or weather.
+- Speak in 2~4 sentences (about 40~80 words): {openingMove}.
 - Sound conversational and vivid, like talking to one listener — no announcer-style recital, no listing information, never mention these instructions.
 - Say the full title and artist name in their original language (never translate non-English names), and finish the sentence completely — never cut off mid-title or mid-sentence.
 - Output only the transition line itself — in English, even if the persona above is written in another language. End with exactly one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
@@ -217,7 +307,7 @@ Requirements:
                 : "可以呼应上一首留下的余韵、说说下一首为什么适合现在听";
             sb.AppendLine($"""
 串场要求：
-- 一共 2~4 句、60~120 字：{openingMove}，或结合此刻的时间和天气跟听众聊一两句。
+- 一共 2~4 句、60~120 字：{openingMove}。
 - 口语自然、有画面感，像只对一位听众说话——不要报幕腔、不要罗列信息清单、不要提到这些指令本身。
 - 歌名和歌手名必须完整念出且按原文（外文歌名不要翻译），句子要完整收尾，严禁在歌名或句子中间截断。
 - 只输出串场台词本身，必须只用中文。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
@@ -227,13 +317,25 @@ Requirements:
         return sb.ToString().Trim();
     }
 
-    private static string DescribeTimeOfDay(int hour, bool isEn) => hour switch
+    /// <summary>时间带分档索引（0=清晨 1=上午 2=午后 3=傍晚 4=夜晚 5=深夜）：
+    /// 环境段文案与 MWVM 串场节奏调度的跨时段判定共用这一处事实源，防止两处分档漂移。</summary>
+    internal static int GetTimeBand(int hour) => hour switch
     {
-        >= 5 and < 8 => isEn ? "early morning" : "清晨",
-        >= 8 and < 12 => isEn ? "morning" : "上午",
-        >= 12 and < 17 => isEn ? "afternoon" : "午后",
-        >= 17 and < 19 => isEn ? "dusk" : "傍晚",
-        >= 19 and < 23 => isEn ? "evening" : "夜晚",
+        >= 5 and < 8 => 0,
+        >= 8 and < 12 => 1,
+        >= 12 and < 17 => 2,
+        >= 17 and < 19 => 3,
+        >= 19 and < 23 => 4,
+        _ => 5
+    };
+
+    private static string DescribeTimeOfDay(int hour, bool isEn) => GetTimeBand(hour) switch
+    {
+        0 => isEn ? "early morning" : "清晨",
+        1 => isEn ? "morning" : "上午",
+        2 => isEn ? "afternoon" : "午后",
+        3 => isEn ? "dusk" : "傍晚",
+        4 => isEn ? "evening" : "夜晚",
         _ => isEn ? "late night" : "深夜"
     };
 
@@ -382,6 +484,17 @@ Requirements:
                 _currentEmotion = DetectEmotion(response);
                 // 失败标记按流程分字段（LastChatFailure/LastTtsFailure）：并发路径互不覆盖
                 LastChatFailure = null;
+
+                // 串场记忆桥：记下听众最近话题（消毒+截断），串场提示词可轻呼应；
+                // 失败/取消路径不记，避免兜底对话污染话题
+                var sanitizedTopic = PromptHygiene.StripControlMarkers(userMessage).Trim();
+                if (!string.IsNullOrWhiteSpace(sanitizedTopic))
+                {
+                    if (sanitizedTopic.Length > MaxListenerTopicLength)
+                        sanitizedTopic = sanitizedTopic[..MaxListenerTopicLength];
+                    lock (_memoryGate)
+                        _lastListenerTopic = sanitizedTopic;
+                }
                 return response;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
