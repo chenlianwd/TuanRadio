@@ -31,6 +31,9 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string WeatherGlyph { get; private set; } = string.Empty;
     [Reactive] public partial string WeatherTooltip { get; private set; } = string.Empty;
 
+    /// <summary>天气快照落定时触发（取数失败为 null 清空），供串场环境感知等消费方推送；UI 线程。</summary>
+    internal event Action<WeatherInfo?>? WeatherSnapshotChanged;
+
     /// <summary>创建环境指示器，所有异步天气结果均交回界面调度器。</summary>
     public WeatherViewModel(IWeatherService weather, IScheduler? uiScheduler = null)
     {
@@ -74,6 +77,7 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
                 return;
             _lastWeather = result;
             ApplyWeather();
+            WeatherSnapshotChanged?.Invoke(result);
         }, _uiScheduler).ToTask().ConfigureAwait(false);
     }
 
