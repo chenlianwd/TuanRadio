@@ -69,6 +69,45 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void TabIndex_DefaultsToAiPage()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            Assert.Equal(0, vm.TabIndex);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public void ShowTabCommands_SetTabIndex()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            vm.ShowMusicTabCommand.Execute().Subscribe();
+            Assert.Equal(1, vm.TabIndex);
+            vm.ShowHostTabCommand.Execute().Subscribe();
+            Assert.Equal(2, vm.TabIndex);
+            vm.ShowAppearanceTabCommand.Execute().Subscribe();
+            Assert.Equal(3, vm.TabIndex);
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.Equal(4, vm.TabIndex);
+            vm.ShowAiTabCommand.Execute().Subscribe();
+            Assert.Equal(0, vm.TabIndex);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
     public async Task AudiusKey_SavesToSecureStorageAndNeverToSettingsJson()
     {
         string? stored = null;

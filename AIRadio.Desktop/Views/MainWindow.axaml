@@ -163,9 +163,8 @@
                             <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
                         </Button>
                     </Grid>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <local:SettingsView DataContext="{Binding SettingsVM}"/>
-                    </ScrollViewer>
+                    <!-- 滚动职责在 SettingsView 内容区（侧边导航不随内容滚动） -->
+                    <local:SettingsView Grid.Row="1" DataContext="{Binding SettingsVM}"/>
                 </Grid>
             </Border>
 
