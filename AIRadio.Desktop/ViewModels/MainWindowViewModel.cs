@@ -51,6 +51,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private int _autoRadioAdvancing;
     private int _disposed;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
+    // 串场话密度：自上次 DJ 开口以来的电台自动推进次数（自然结束续播链；含正在推进的这次）。
+    // 手动切歌走 nextCallback 管线不经此计数（有意：跳过的歌不计入 DJ 节目节奏）。
+    // 真实电台与 Spotify AI DJ 都是每 4~5 首才开口一次，每首歌必串场本身就是机器人感的来源
+    private int _transitionsSinceLastSpeech;
+    // 上次开口时的时间带（DJService.GetTimeBand，跨时段报到判定基准；null=节奏链尚未开过口）
+    private int? _lastSpokenTimeBand;
     // 自然结束续播与手动 Next 的 nextCallback 两条推荐管线共用此门串行化，
     // 避免并发时双份推荐请求、双份加列表、双次切歌
     private readonly SemaphoreSlim _advanceGate = new(1, 1);
@@ -1059,9 +1065,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 Log.Warning(ex, "Startup recommendation prefetch failed");
             }
 
-            played = recommended != null && await PlayWithFreshRecommendation(baselineTrack, recommended);
+            // 开台必开口：stationOpening 标记走"第一首歌"开场并豁免静默节奏
+            played = recommended != null && await PlayWithFreshRecommendation(baselineTrack, recommended, stationOpening: true);
             if (!played && !IsDisposed && !cancellationToken.IsCancellationRequested)
-                played = await PlayWithPlaylistRotation(baselineTrack);
+                played = await PlayWithPlaylistRotation(baselineTrack, stationOpening: true);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || IsDisposed)
         {
@@ -1133,6 +1140,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current))
                     return;
 
+                // 换曲静默计数：在阶梯上游（推荐/轮换两档共用的入口）递增一次，
+                // 两档决策读到同一状态；开口的档位会经 MarkTransitionSpoken 清零
+                _transitionsSinceLastSpeech++;
                 await DjTtsInterop.StopTtsWithoutBlockingUiAsync(_audioService, _lifetimeCts.Token);
                 var success = await PlayWithFreshRecommendation(current);
                 if (!success && !IsDisposed)
@@ -1157,9 +1167,35 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>电台串场话密度：每 N 次换曲开口一次（对齐真实电台与 Spotify AI DJ 的 4~5 首一开口）。</summary>
+    internal const int TransitionSpeechInterval = 4;
+
+    /// <summary>
+    /// 串场节奏决策（决定权在应用层而非 LLM："说不说"可控可测，LLM 只负责"说什么"）：
+    /// 开台必说；跨时间带（如午后→傍晚）的第一首要开口报个到；其余静默到
+    /// <see cref="TransitionSpeechInterval"/> 次换曲才再说。点歌/聊天的应答走聊天链路
+    /// 天然必有回应，不经此调度。
+    /// </summary>
+    internal static bool ShouldSpeakTransition(
+        bool stationOpening,
+        int transitionsSinceLastSpeech,
+        int? lastSpokenTimeBand,
+        int currentTimeBand)
+        => stationOpening
+           || (lastSpokenTimeBand is { } band && band != currentTimeBand)
+           || transitionsSinceLastSpeech >= TransitionSpeechInterval;
+
+    /// <summary>记录"本次开口"：清零静默计数并以当前时间带刷新跨时段判定基准。</summary>
+    private void MarkTransitionSpoken()
+    {
+        _transitionsSinceLastSpeech = 0;
+        _lastSpokenTimeBand = DJService.GetTimeBand(DateTime.Now.Hour);
+    }
+
     private async System.Threading.Tasks.Task<bool> PlayWithFreshRecommendation(
         Track? current,
-        Track? preloadedRecommendation = null)
+        Track? preloadedRecommendation = null,
+        bool stationOpening = false)
     {
         if (IsDisposed)
             return false;
@@ -1188,16 +1224,27 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.AddExternalTrack(recommended);
         }
 
-        var script = await GenerateTrackIntroductionAsync(
-            current, recommended, _lifetimeCts.Token);
+        // 串场节奏：决策权在应用层（stationOpening/静默计数/跨时间带），LLM 只负责"说什么"。
+        // 开台时给串场的"上一首"传 null——开台链的 current 是未播过的基线曲，只作 staleness 参照，
+        // 直接传给串场会伪造"刚刚放完《基线曲》"（83ec2f4 的第一首歌分支自此在生产接线）
+        var speak = ShouldSpeakTransition(
+            stationOpening, _transitionsSinceLastSpeech, _lastSpokenTimeBand,
+            DJService.GetTimeBand(DateTime.Now.Hour));
+        DJScript? script = speak
+            ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, recommended, _lifetimeCts.Token)
+            : null;
         // IsPlaying 复查：介绍词生成/TTS 的长窗口内用户可能手动开播（全局播放键播的正是基线曲，
         // CurrentTrack 引用不变、staleness 拦不住），此时让位不抢播；电台链 EndReached 后恒 false 零影响。
         // 返回"是否真的开播"：stale/未播一律 false，开台链据此走兜底阶梯（电台链轮换同样被拦，行为等价）
         if (IsDisposed || _audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, current)) return false;
 
-        ChatVM.AddAssistantMessage(script.Text);
-        DjVisualCue?.Invoke(script.Expression, script.Motion);
-        await SpeakDjTextAsync(script.Text);
+        if (script != null)
+        {
+            ChatVM.AddAssistantMessage(script.Text);
+            DjVisualCue?.Invoke(script.Expression, script.Motion);
+            await SpeakDjTextAsync(script.Text);
+            MarkTransitionSpoken();
+        }
 
         // AddExternalTrack 在宽松同曲命中时“合并且不入列”，随后严格身份查找会落空，
         // 导致“return true 却不播放”且上层跳过轮换兜底 → 电台停播。
@@ -1213,7 +1260,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>返回是否真的调用了 PlayTrack 开播（staleness 守卫拦下或列表失效时为 false，由上层兜底）。</summary>
-    private async System.Threading.Tasks.Task<bool> PlayWithPlaylistRotation(Track? current)
+    private async System.Threading.Tasks.Task<bool> PlayWithPlaylistRotation(Track? current, bool stationOpening = false)
     {
         if (IsDisposed)
             return false;
@@ -1232,14 +1279,24 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         if (PlaylistVM.Tracks.IndexOf(next) < 0) return false;
 
-        var script = await GenerateTrackIntroductionAsync(
-            current, next, _lifetimeCts.Token);
+        // 同推荐档：开台按"第一首歌"开场 + 应用层节奏决策（计数在推荐/轮换阶梯上游统一递增，
+        // 两档看到同一状态，接力时不会重复计数）
+        var speak = ShouldSpeakTransition(
+            stationOpening, _transitionsSinceLastSpeech, _lastSpokenTimeBand,
+            DJService.GetTimeBand(DateTime.Now.Hour));
+        DJScript? script = speak
+            ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, next, _lifetimeCts.Token)
+            : null;
         // 同推荐档：IsPlaying 复查防介绍词窗口内被抢播（开台链基线曲引用不变的竞态）
         if (IsDisposed || _audioService.IsPlaying || !IsSameTrack(_audioService.CurrentTrack, current)) return false;
 
-        ChatVM.AddAssistantMessage(script.Text);
-        DjVisualCue?.Invoke(script.Expression, script.Motion);
-        await SpeakDjTextAsync(script.Text);
+        if (script != null)
+        {
+            ChatVM.AddAssistantMessage(script.Text);
+            DjVisualCue?.Invoke(script.Expression, script.Motion);
+            await SpeakDjTextAsync(script.Text);
+            MarkTransitionSpoken();
+        }
 
         // 串场期间列表可能被增删，旧索引会指向错误曲目，播放前必须重查
         var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrack(t, next));

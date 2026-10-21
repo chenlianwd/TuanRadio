@@ -277,6 +277,200 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task GenerateTrackIntroductionAsync_RecordsSuccessfulTransitionForNextPrompt()
+    {
+        // 串场短期记忆：成功生成的串场原文必须进入下一条串场的提示词（防复读的接线锚点）
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        var responses = new[] { "第一段日光斜斜的串场，来听《晴天》。[calm]", "第二段完全不同的串场，来听《七里香》。[happy]" };
+        var prompts = new List<string>();
+        var call = -1;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => { call++; prompts.Add(prompt); })
+            .Returns(() => Task.FromResult(responses[call]));
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+        await _djService.GenerateTrackIntroductionAsync(
+            new Track { Title = "晴天", Artist = "周杰伦" },
+            new Track { Title = "七里香", Artist = "周杰伦" });
+
+        Assert.Equal(2, prompts.Count);
+        Assert.Contains("第一段日光斜斜的串场", prompts[1]);
+        Assert.Contains("不要重复它们的开场", prompts[1]);
+        // 第一条串场时自己还没有历史可注入
+        Assert.DoesNotContain("最近几次串场", prompts[0]);
+    }
+
+    [Fact]
+    public async Task GenerateTrackIntroductionAsync_FallbackTemplateNotRecorded()
+    {
+        // 模板兜底不是 DJ 真实语气，进了记忆会让"避免重复"的基准失真（污染防复读基准）
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _mockLlm.Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ThrowsAsync(new Exception("Network error"));
+
+        var fallback = await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+        Assert.Contains("接下来为你带来", fallback.Text);
+
+        string? nextPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => nextPrompt = prompt)
+            .ReturnsAsync("真正生成的串场，来听《晴天》。[calm]");
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        Assert.NotNull(nextPrompt);
+        Assert.DoesNotContain("接下来为你带来", nextPrompt);
+        Assert.DoesNotContain("最近几次串场", nextPrompt);
+    }
+
+    [Fact]
+    public async Task GenerateTrackIntroductionAsync_TransitionMemoryCappedAtThree()
+    {
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        var responses = new[]
+        {
+            "第一条串场记忆来听《晴天》。[calm]",
+            "第二条串场记忆来听《七里香》。[calm]",
+            "第三条串场记忆来听《稻香》。[calm]",
+            "第四条串场记忆来听《夜曲》。[calm]",
+            "第五条串场记忆来听《搁浅》。[calm]"
+        };
+        var index = -1;
+        string? lastPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => lastPrompt = prompt)
+            .Returns(() => Task.FromResult(responses[++index]));
+
+        foreach (var title in new[] { "晴天", "七里香", "稻香", "夜曲", "搁浅" })
+            await _djService.GenerateTrackIntroductionAsync(
+                null, new Track { Title = title, Artist = "周杰伦" });
+
+        // 第 5 次生成时窗口只剩最近 3 条（第二/三/四条）：最早的"第一条"被裁掉
+        Assert.NotNull(lastPrompt);
+        Assert.DoesNotContain("第一条串场记忆", lastPrompt);
+        Assert.Contains("第二条串场记忆", lastPrompt);
+        Assert.Contains("第三条串场记忆", lastPrompt);
+        Assert.Contains("第四条串场记忆", lastPrompt);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_RecordsListenerTopicForTransitions()
+    {
+        // 聊天→串场的记忆桥：听众最近话题进串场提示词（可轻呼应）；聊天失败不记录
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _mockLlm.Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("好嘞，这就安排。[happy]");
+
+        await _djService.GenerateChatResponseAsync("今天加班好累，想听点放松的");
+
+        string? transitionPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => transitionPrompt = prompt)
+            .ReturnsAsync("聊聊这首歌，来听《晴天》。[calm]");
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        Assert.NotNull(transitionPrompt);
+        Assert.Contains("今天加班好累", transitionPrompt);
+        Assert.Contains("轻轻呼应", transitionPrompt);
+    }
+
+    [Fact]
+    public async Task GenerateTrackIntroductionAsync_InFlightCharacterSwitchDropsStaleEntry()
+    {
+        // TOCTOU 代次守卫：LLM 生成秒级窗口内切换角色（Initialize 清记忆+换代次），
+        // 旧 DJ 的迟到串场不得入队污染新角色的"自己说过的话"
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        var gate = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Returns(() => gate.Task);
+
+        var inFlight = _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        // 串场在途时新 DJ 接管
+        _djService.Initialize(new DJProfile { Name = "Aster", Language = "zh" });
+        gate.SetResult("旧DJ的串场词，来听《晴天》。[calm]");
+        var firstScript = await inFlight;
+        Assert.Contains("晴天", firstScript.Text);
+
+        string? nextPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => nextPrompt = prompt)
+            .ReturnsAsync("新DJ的串场词，来听《晴天》。[calm]");
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        Assert.NotNull(nextPrompt);
+        Assert.DoesNotContain("旧DJ的串场词", nextPrompt);
+        Assert.DoesNotContain("最近几次串场", nextPrompt);
+    }
+
+    [Fact]
+    public async Task Initialize_CharacterSwitchClearsTransitionMemory()
+    {
+        // 角色切换=新 DJ 接管：旧角色的串场与话题不得被当成新角色的"自己说过的话"注入
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        var responses = new[] { "第一段串场来听《晴天》。[calm]", "第二段串场来听《七里香》。[calm]" };
+        var call = -1;
+        string? lastPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => lastPrompt = prompt)
+            .Returns(() => Task.FromResult(responses[++call]));
+
+        await _djService.GenerateChatResponseAsync("想听粤语歌");
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        _djService.Initialize(new DJProfile { Name = "Aster", Language = "zh" });
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "七里香", Artist = "周杰伦" });
+
+        Assert.NotNull(lastPrompt);
+        Assert.DoesNotContain("第一段串场", lastPrompt);
+        Assert.DoesNotContain("想听粤语歌", lastPrompt);
+        Assert.DoesNotContain("最近几次串场", lastPrompt);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_FailureKeepsPreviousTopic()
+    {
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _mockLlm.SetupSequence(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("好的。[happy]")
+            .ThrowsAsync(new Exception("Network error"));
+
+        await _djService.GenerateChatResponseAsync("想听粤语歌");
+        await _djService.GenerateChatResponseAsync("算了随便吧");
+
+        string? transitionPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => transitionPrompt = prompt)
+            .ReturnsAsync("来听《晴天》。[calm]");
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        // 失败的"算了随便吧"不得覆盖既有话题（失败路径不记）
+        Assert.NotNull(transitionPrompt);
+        Assert.Contains("想听粤语歌", transitionPrompt);
+        Assert.DoesNotContain("算了随便吧", transitionPrompt);
+    }
+
+    [Fact]
     public void BuildTransitionPrompt_UsesCustomSystemPromptOverDefaults()
     {
         var prompt = DJService.BuildTransitionPrompt(
@@ -362,6 +556,86 @@ public class DJServiceTests
 
         Assert.DoesNotContain("<cmd>", prompt);
     }
+
+    [Fact]
+    public void BuildTransitionPrompt_TimeOfDayOnlyWithoutClockDigits()
+    {
+        // 用户实测反馈：每条串场都报"下午两点半"——提示词给了 HH:mm 时刻数字，
+        // 模型对现成数字有强复述倾向。时段降为背景参考后不得再出现时刻数字与"聊时间天气"引导
+        var zh = DJService.BuildTransitionPrompt(
+            new DJProfile { Name = "Lumen", Language = "zh" },
+            new Track { Title = "A", Artist = "X" },
+            new Track { Title = "B", Artist = "Y" },
+            new DateTime(2026, 10, 21, 14, 32, 0),
+            weather: null,
+            profileBlock: null);
+
+        Assert.Contains("午后", zh);
+        Assert.DoesNotContain("14:32", zh);
+        Assert.DoesNotContain("32", zh);
+        Assert.Contains("不要报出时刻数字", zh);
+        Assert.DoesNotContain("结合此刻的时间和天气", zh);
+
+        var en = DJService.BuildTransitionPrompt(
+            new DJProfile { Name = "Lumen", Language = "en" },
+            new Track { Title = "A", Artist = "X" },
+            new Track { Title = "B", Artist = "Y" },
+            new DateTime(2026, 10, 21, 14, 32, 0),
+            weather: null,
+            profileBlock: null);
+
+        Assert.Contains("afternoon", en);
+        Assert.DoesNotContain("14:32", en);
+        Assert.DoesNotContain("about the time or weather", en);
+    }
+
+    [Fact]
+    public void BuildTransitionPrompt_InjectsTransitionMemoryAndListenerTopic()
+    {
+        var prompt = DJService.BuildTransitionPrompt(
+            new DJProfile { Name = "Lumen", Language = "zh" },
+            new Track { Title = "A", Artist = "X" },
+            new Track { Title = "B", Artist = "Y" },
+            new DateTime(2026, 10, 21, 21, 0, 0),
+            weather: null,
+            profileBlock: null,
+            recentTransitions: new[] { "日光斜斜照进来，听听这首。", "夜色刚好，来点慢歌。" },
+            listenerTopic: "想听点放松的");
+
+        Assert.Contains("不要重复它们的开场、意象或句式", prompt);
+        Assert.Contains("日光斜斜照进来，听听这首。", prompt);
+        Assert.Contains("夜色刚好，来点慢歌。", prompt);
+        Assert.Contains("想听点放松的", prompt);
+        Assert.Contains("轻轻呼应", prompt);
+
+        // 无记忆时不出现记忆段（开台首条串场）
+        var bare = DJService.BuildTransitionPrompt(
+            new DJProfile { Name = "Lumen", Language = "zh" },
+            new Track { Title = "A", Artist = "X" },
+            new Track { Title = "B", Artist = "Y" },
+            new DateTime(2026, 10, 21, 21, 0, 0),
+            weather: null,
+            profileBlock: null);
+
+        Assert.DoesNotContain("最近几次串场", bare);
+        Assert.DoesNotContain("聊过", bare);
+    }
+
+    [Theory]
+    [InlineData(4, 5)]      // 深夜尾 → 清晨头
+    [InlineData(7, 0)]
+    [InlineData(8, 1)]
+    [InlineData(11, 1)]
+    [InlineData(12, 2)]
+    [InlineData(16, 2)]
+    [InlineData(17, 3)]
+    [InlineData(18, 3)]
+    [InlineData(19, 4)]
+    [InlineData(22, 4)]
+    [InlineData(23, 5)]
+    [InlineData(0, 5)]
+    public void GetTimeBand_Boundaries(int hour, int expected)
+        => Assert.Equal(expected, DJService.GetTimeBand(hour));
 
     [Fact]
     public async Task GenerateChatResponseAsync_UpdatesEmotion()

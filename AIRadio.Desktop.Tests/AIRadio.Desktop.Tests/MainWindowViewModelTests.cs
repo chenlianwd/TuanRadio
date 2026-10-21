@@ -481,6 +481,129 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void ShouldSpeakTransition_PacingRules()
+    {
+        // 节奏决策纯函数：开台必说；跨时间带第一首必说；其余静默到阈值（每 4 次换曲）才说
+        Assert.True(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: true, transitionsSinceLastSpeech: 0, lastSpokenTimeBand: null, currentTimeBand: 2));
+        Assert.True(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: true, transitionsSinceLastSpeech: 3, lastSpokenTimeBand: 2, currentTimeBand: 2));
+
+        // 跨时间带（午后 2 → 傍晚 3）的第一首要开口报个到
+        Assert.True(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: false, transitionsSinceLastSpeech: 1, lastSpokenTimeBand: 2, currentTimeBand: 3));
+
+        // 同时间带内静默计数未达阈值：不开口（每首歌必串场是机器人感的来源）
+        Assert.False(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: false, transitionsSinceLastSpeech: 1, lastSpokenTimeBand: 2, currentTimeBand: 2));
+        Assert.False(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: false, transitionsSinceLastSpeech: 3, lastSpokenTimeBand: 2, currentTimeBand: 2));
+
+        // 达到阈值（含本次推进计数）
+        Assert.True(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: false, transitionsSinceLastSpeech: 4, lastSpokenTimeBand: 2, currentTimeBand: 2));
+
+        // 尚未开口过（null）时只看计数：前几次推进静默
+        Assert.False(MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: false, transitionsSinceLastSpeech: 1, lastSpokenTimeBand: null, currentTimeBand: 2));
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_StationOpeningSpeaksWithoutPreviousTrack()
+    {
+        // 开台串场必须按"第一首歌"开场：给串场的 current 传 null，
+        // 不得把未播过的基线曲伪装成"刚刚放完的上一首"（83ec2f4 声明意图的生产接线锚点）
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+        var introCalled = false;
+        Track? capturedCurrent = null;
+        dj.Setup(x => x.GenerateTrackIntroductionAsync(It.IsAny<Track?>(), It.IsAny<Track>()))
+            .Callback<Track?, Track>((current, _) => { introCalled = true; capturedCurrent = current; })
+            .ReturnsAsync(new DJScript { Text = "intro" });
+        recommendations.Setup(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()))
+            .ReturnsAsync(new Track
+            {
+                Id = "recommended",
+                SourceId = "test:recommended",
+                Title = "Recommended",
+                Artist = "AIRadio",
+                FilePath = "http://example.com/recommended.mp3"
+            });
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            vm.PlaylistVM.AddExternalTrack(CreateStartupPlaylistTrack("a"));
+
+            await vm.StartSessionAsync();
+
+            Assert.True(introCalled);
+            Assert.Null(capturedCurrent);
+            dj.Verify(x => x.GenerateTrackIntroductionAsync(It.IsAny<Track?>(), It.IsAny<Track>()), Times.Once);
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task RadioContinuation_SpeaksEveryNthTransition()
+    {
+        // 电台节奏集成：开台后静默推进，第 4 次换曲才再次开口——DJ 话密度由应用层调度
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+        var introCalls = 0;
+        dj.Setup(x => x.GenerateTrackIntroductionAsync(It.IsAny<Track?>(), It.IsAny<Track>()))
+            .Callback<Track?, Track>((_, _) => introCalls++)
+            .ReturnsAsync(new DJScript { Text = "intro" });
+        var playCalls = 0;
+        audio.Setup(x => x.PlayTrack(It.IsAny<Track>()))
+            .Callback<Track>(_ => playCalls++);
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            foreach (var suffix in new[] { "a", "b", "c", "d", "e" })
+                vm.PlaylistVM.AddExternalTrack(CreateStartupPlaylistTrack(suffix));
+
+            var trackEnded = (Subject<Track?>)audio.Object.TrackEnded;
+            for (var i = 1; i <= 4; i++)
+            {
+                trackEnded.OnNext(playlist[0]);
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (playCalls < i && DateTime.UtcNow < deadline)
+                    await Task.Delay(50);
+                Assert.True(playCalls >= i, $"transition {i} did not advance within budget (playCalls={playCalls})");
+            }
+
+            // 4 次换曲推进全部换歌成功，但只有第 4 次（达阈值）开口串场
+            Assert.Equal(4, playCalls);
+            Assert.Equal(1, introCalls);
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
     public async Task StartSessionAsync_PrefetchesRecommendationDuringWelcomeSpeech()
     {
         var originalScheduler = RxApp.MainThreadScheduler;
