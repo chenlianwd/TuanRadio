@@ -1,279 +1,353 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
              x:Class="AIRadio.Desktop.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
 
-    <StackPanel Spacing="20">
-        <!-- LLM -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="{DynamicResource S_AiService}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
-            <ComboBox SelectedValue="{Binding SelectedProvider}"
-                      ItemsSource="{Binding LlmProviders}"
-                      SelectedValueBinding="{Binding Id}"
-                      DisplayMemberBinding="{Binding DisplayName}"
-                      HorizontalAlignment="Stretch"/>
-            <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="{DynamicResource S_ApiKeyWatermark}" PasswordChar="•"/>
-            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{DynamicResource S_BaseUrlWatermark}"/>
-            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="{DynamicResource S_ModelWatermark}"/>
-            <Button Command="{Binding TestConnectionCommand}"
-                    Content="{Binding TestConnectionButtonText}"
-                    IsEnabled="{Binding !IsTesting}"
-                    HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
-                    Foreground="{DynamicResource C_FF000000}"/>
-            <TextBlock Text="{DynamicResource S_AutoSaveHint}"
-                       Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
-            <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource C_FFFFC86B}"
-                       TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0"/>
-        </StackPanel>
+    <UserControl.Resources>
+        <conv:TabVisibleConverter x:Key="TabVisibleConverter"/>
+    </UserControl.Resources>
 
-        <!-- Music source accounts -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="{DynamicResource S_Accounts}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+    <UserControl.Styles>
+        <!-- 侧边导航按钮：基础态无边框透明底；hover/选中经模板内 ContentPresenter 落背景
+             （同 MainWindow.axaml Button:pointerover 手法）。选中文字用 C_FFEDEDF5——
+             C_FFB3B3B3 在 Light 主题选中底上对比度不达标，只用于未选中态。 -->
+        <Style Selector="Button.nav">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFB3B3B3}"/>
+        </Style>
+        <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
+        </Style>
+        <Style Selector="Button.nav.active">
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+        </Style>
+        <Style Selector="Button.nav.active /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_3356F5C4}"/>
+        </Style>
+        <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_6656F5C4}"/>
+        </Style>
+    </UserControl.Styles>
 
-            <StackPanel Spacing="4" IsVisible="{Binding HasExperimentalProviders}">
-                <TextBlock Text="{DynamicResource S_NeteaseTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Command="{Binding NeteaseQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
-                            Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
-                            Foreground="{DynamicResource C_FF000000}"/>
-                    <Button Command="{Binding NeteaseLogoutCommand}" Content="{DynamicResource S_Logout}"
-                            Padding="14,6" FontSize="12"/>
-                </StackPanel>
-                <TextBlock Text="{Binding NeteaseAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
-                           TextWrapping="Wrap"/>
-                <Image Source="{Binding NeteaseQrImage}" IsVisible="{Binding IsNeteaseQrVisible}"
-                       Width="180" Height="180" Stretch="Uniform"/>
-                <TextBlock Text="{DynamicResource S_NeteaseHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+    <Grid RowDefinitions="*,Auto" RowSpacing="16">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="16">
+            <!-- 侧边导航 -->
+            <StackPanel Grid.Column="0" Width="150" Spacing="4">
+                <Button x:Name="NavAi" Classes="nav" Command="{Binding ShowAiTabCommand}"
+                        Classes.active="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}"
+                        AutomationProperties.Name="{DynamicResource S_AiService}">
+                    <TextBlock Text="{DynamicResource S_AiService}" TextTrimming="CharacterEllipsis"/>
+                </Button>
+                <Button x:Name="NavMusic" Classes="nav" Command="{Binding ShowMusicTabCommand}"
+                        Classes.active="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}"
+                        AutomationProperties.Name="{DynamicResource S_SettingsNavMusic}">
+                    <TextBlock Text="{DynamicResource S_SettingsNavMusic}" TextTrimming="CharacterEllipsis"/>
+                </Button>
+                <Button x:Name="NavHost" Classes="nav" Command="{Binding ShowHostTabCommand}"
+                        Classes.active="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}"
+                        AutomationProperties.Name="{DynamicResource S_SettingsNavHost}">
+                    <TextBlock Text="{DynamicResource S_SettingsNavHost}" TextTrimming="CharacterEllipsis"/>
+                </Button>
+                <Button x:Name="NavAppearance" Classes="nav" Command="{Binding ShowAppearanceTabCommand}"
+                        Classes.active="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=3}"
+                        AutomationProperties.Name="{DynamicResource S_SettingsNavAppearance}">
+                    <TextBlock Text="{DynamicResource S_SettingsNavAppearance}" TextTrimming="CharacterEllipsis"/>
+                </Button>
+                <Button x:Name="NavProfile" Classes="nav" Command="{Binding ShowProfileTabCommand}"
+                        Classes.active="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}"
+                        AutomationProperties.Name="{DynamicResource S_ProfileGroup}">
+                    <TextBlock Text="{DynamicResource S_ProfileGroup}" TextTrimming="CharacterEllipsis"/>
+                </Button>
             </StackPanel>
 
-            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
-                <TextBlock Text="{DynamicResource S_KugouTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Command="{Binding KugouQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
-                            Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
-                            Foreground="{DynamicResource C_FF000000}"/>
-                    <Button Command="{Binding KugouVerifyCommand}" Content="{DynamicResource S_KugouVerify}"
-                            Padding="14,6" FontSize="12"/>
-                    <Button Command="{Binding KugouLogoutCommand}" Content="{DynamicResource S_Logout}"
-                            Padding="14,6" FontSize="12"/>
-                </StackPanel>
-                <TextBlock Text="{Binding KugouAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
-                           TextWrapping="Wrap"/>
-                <Image Source="{Binding KugouQrImage}" IsVisible="{Binding IsKugouQrVisible}"
-                       Width="180" Height="180" Stretch="Uniform"/>
-                <TextBlock Text="{DynamicResource S_KugouHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
-            </StackPanel>
+            <!-- 内容页：五页同格叠放，仅当前页可见（同 PlaylistDrawer.axaml 页签手法） -->
+            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <!-- 页 0：AI 服务 -->
+                    <StackPanel x:Name="PageAi" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
+                        <StackPanel Spacing="6">
+                            <ComboBox SelectedValue="{Binding SelectedProvider}"
+                                      ItemsSource="{Binding LlmProviders}"
+                                      SelectedValueBinding="{Binding Id}"
+                                      DisplayMemberBinding="{Binding DisplayName}"
+                                      HorizontalAlignment="Stretch"/>
+                            <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="{DynamicResource S_ApiKeyWatermark}" PasswordChar="•"/>
+                            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{DynamicResource S_BaseUrlWatermark}"/>
+                            <TextBox Text="{Binding Model, Mode=TwoWay}" Watermark="{DynamicResource S_ModelWatermark}"/>
+                            <Button Command="{Binding TestConnectionCommand}"
+                                    Content="{Binding TestConnectionButtonText}"
+                                    IsEnabled="{Binding !IsTesting}"
+                                    HorizontalAlignment="Left" Padding="18,8" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
+                                    Foreground="{DynamicResource C_FF000000}"/>
+                            <TextBlock Text="{DynamicResource S_AutoSaveHint}"
+                                       Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+                            <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource C_FFFFC86B}"
+                                       TextWrapping="Wrap" FontSize="12" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
 
-            <StackPanel Spacing="4" Margin="0,6,0,0">
-                <TextBlock Text="{DynamicResource S_OpenSubsonicTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <TextBox Text="{Binding OpenSubsonicServerUrl, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUrl}"/>
-                <TextBox Text="{Binding OpenSubsonicUsername, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUser}"/>
-                <TextBox Text="{Binding OpenSubsonicPassword, Mode=TwoWay}" PasswordChar="●"
-                         Watermark="{DynamicResource S_OpenSubsonicPassword}"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Command="{Binding ConnectOpenSubsonicCommand}"
-                            Content="{DynamicResource S_OpenSubsonicConnect}"
-                            IsEnabled="{Binding !IsConnectingOpenSubsonic}" Padding="14,6" FontSize="12"/>
-                    <Button Command="{Binding DisconnectOpenSubsonicCommand}"
-                            Content="{DynamicResource S_OpenSubsonicDisconnect}" Padding="14,6" FontSize="12"/>
-                </StackPanel>
-                <TextBlock Text="{DynamicResource S_OpenSubsonicQuality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <ComboBox SelectedValue="{Binding SelectedOpenSubsonicQuality, Mode=TwoWay}"
-                          ItemsSource="{Binding OpenSubsonicQualities}"
-                          SelectedValueBinding="{Binding Id}"
-                          DisplayMemberBinding="{Binding DisplayName}"
-                          HorizontalAlignment="Stretch"/>
-                <TextBlock Text="{DynamicResource S_OpenSubsonicQualityHint}" Foreground="{DynamicResource C_FF666666}"
-                           FontSize="11" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding OpenSubsonicStatus}" Foreground="{DynamicResource C_FFFFC86B}"
-                           FontSize="11" TextWrapping="Wrap"/>
-            </StackPanel>
+                    <!-- 页 1：音乐音源 -->
+                    <StackPanel x:Name="PageMusic" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_Accounts}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
 
-            <StackPanel Spacing="4" Margin="0,6,0,0">
-                <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <TextBox Text="{Binding AudiusApiKeyInput, Mode=TwoWay}" PasswordChar="●"
-                         Watermark="{DynamicResource S_AudiusApiKey}"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Command="{Binding SaveAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusSave}"
-                            Padding="14,6" FontSize="12"/>
-                    <Button Command="{Binding ClearAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusClear}"
-                            Padding="14,6" FontSize="12"/>
-                </StackPanel>
-                <TextBlock Text="{DynamicResource S_AudiusHint}" Foreground="{DynamicResource C_FF666666}"
-                           FontSize="11" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding AudiusStatus}" Foreground="{DynamicResource C_FFFFC86B}"
-                           FontSize="11" TextWrapping="Wrap"/>
-            </StackPanel>
+                            <StackPanel Spacing="4" IsVisible="{Binding HasExperimentalProviders}">
+                                <TextBlock Text="{DynamicResource S_NeteaseTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Command="{Binding NeteaseQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
+                                            Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
+                                            Foreground="{DynamicResource C_FF000000}"/>
+                                    <Button Command="{Binding NeteaseLogoutCommand}" Content="{DynamicResource S_Logout}"
+                                            Padding="14,6" FontSize="12"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding NeteaseAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
+                                           TextWrapping="Wrap"/>
+                                <Image Source="{Binding NeteaseQrImage}" IsVisible="{Binding IsNeteaseQrVisible}"
+                                       Width="180" Height="180" Stretch="Uniform"/>
+                                <TextBlock Text="{DynamicResource S_NeteaseHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
 
-            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
-                <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
-                          ItemsSource="{Binding YtdlpBrowsers}"
-                          SelectedValueBinding="{Binding Id}"
-                          DisplayMemberBinding="{Binding DisplayName}"
-                          HorizontalAlignment="Stretch"/>
-                <TextBlock Text="{DynamicResource S_YtdlpHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
-                           Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
-            </StackPanel>
+                            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
+                                <TextBlock Text="{DynamicResource S_KugouTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Command="{Binding KugouQrLoginCommand}" Content="{DynamicResource S_QrLogin}"
+                                            Padding="14,6" FontSize="12" Background="{DynamicResource C_FF9B59B0}"
+                                            Foreground="{DynamicResource C_FF000000}"/>
+                                    <Button Command="{Binding KugouVerifyCommand}" Content="{DynamicResource S_KugouVerify}"
+                                            Padding="14,6" FontSize="12"/>
+                                    <Button Command="{Binding KugouLogoutCommand}" Content="{DynamicResource S_Logout}"
+                                            Padding="14,6" FontSize="12"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding KugouAccountStatus}" Foreground="{DynamicResource C_FFFFC86B}" FontSize="12"
+                                           TextWrapping="Wrap"/>
+                                <Image Source="{Binding KugouQrImage}" IsVisible="{Binding IsKugouQrVisible}"
+                                       Width="180" Height="180" Stretch="Uniform"/>
+                                <TextBlock Text="{DynamicResource S_KugouHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
 
-            <!-- 全局源策略：覆盖/稳定/音质优先（影响回退与搜索源偏好，不改首选源） -->
-            <StackPanel Spacing="4" Margin="0,6,0,0">
-                <TextBlock Text="{DynamicResource S_MusicSourcePolicy}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <ComboBox SelectedValue="{Binding SelectedMusicSourcePolicy, Mode=TwoWay}"
-                          ItemsSource="{Binding MusicSourcePolicies}"
-                          SelectedValueBinding="{Binding Id}"
-                          DisplayMemberBinding="{Binding DisplayName}"
-                          HorizontalAlignment="Stretch"/>
-                <TextBlock Text="{DynamicResource S_MusicSourcePolicyHint}" Foreground="{DynamicResource C_FF666666}"
-                           FontSize="11" TextWrapping="Wrap"/>
-            </StackPanel>
+                            <StackPanel Spacing="4" Margin="0,6,0,0">
+                                <TextBlock Text="{DynamicResource S_OpenSubsonicTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <TextBox Text="{Binding OpenSubsonicServerUrl, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUrl}"/>
+                                <TextBox Text="{Binding OpenSubsonicUsername, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUser}"/>
+                                <TextBox Text="{Binding OpenSubsonicPassword, Mode=TwoWay}" PasswordChar="●"
+                                         Watermark="{DynamicResource S_OpenSubsonicPassword}"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Command="{Binding ConnectOpenSubsonicCommand}"
+                                            Content="{DynamicResource S_OpenSubsonicConnect}"
+                                            IsEnabled="{Binding !IsConnectingOpenSubsonic}" Padding="14,6" FontSize="12"/>
+                                    <Button Command="{Binding DisconnectOpenSubsonicCommand}"
+                                            Content="{DynamicResource S_OpenSubsonicDisconnect}" Padding="14,6" FontSize="12"/>
+                                </StackPanel>
+                                <TextBlock Text="{DynamicResource S_OpenSubsonicQuality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <ComboBox SelectedValue="{Binding SelectedOpenSubsonicQuality, Mode=TwoWay}"
+                                          ItemsSource="{Binding OpenSubsonicQualities}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                                <TextBlock Text="{DynamicResource S_OpenSubsonicQualityHint}" Foreground="{DynamicResource C_FF666666}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding OpenSubsonicStatus}" Foreground="{DynamicResource C_FFFFC86B}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
 
-            <StackPanel Spacing="4" Margin="0,6,0,0">
-                <TextBlock Text="{DynamicResource S_MusicProviderPriority}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                <TextBlock Text="{DynamicResource S_MusicProviderPriorityHint}" Foreground="{DynamicResource C_FF666666}"
-                           FontSize="11" TextWrapping="Wrap"/>
-                <ItemsControl ItemsSource="{Binding MusicProviders}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:MusicProviderOption">
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5" Margin="0,2">
-                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="12"
-                                           Foreground="{DynamicResource C_FFB3B3B3}"/>
-                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding Enabled, Mode=TwoWay}"
-                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"
-                                              Click="OnMusicProviderToggle"/>
-                                <Button Grid.Column="2" Content="↑" Click="OnMusicProviderUp"
-                                        ToolTip.Tip="{DynamicResource S_MusicProviderUp}" Padding="5,2"/>
-                                <Button Grid.Column="3" Content="↓" Click="OnMusicProviderDown"
-                                        ToolTip.Tip="{DynamicResource S_MusicProviderDown}" Padding="5,2"/>
+                            <StackPanel Spacing="4" Margin="0,6,0,0">
+                                <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <TextBox Text="{Binding AudiusApiKeyInput, Mode=TwoWay}" PasswordChar="●"
+                                         Watermark="{DynamicResource S_AudiusApiKey}"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Command="{Binding SaveAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusSave}"
+                                            Padding="14,6" FontSize="12"/>
+                                    <Button Command="{Binding ClearAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusClear}"
+                                            Padding="14,6" FontSize="12"/>
+                                </StackPanel>
+                                <TextBlock Text="{DynamicResource S_AudiusHint}" Foreground="{DynamicResource C_FF666666}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding AudiusStatus}" Foreground="{DynamicResource C_FFFFC86B}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
+                                <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
+                                          ItemsSource="{Binding YtdlpBrowsers}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                                <TextBlock Text="{DynamicResource S_YtdlpHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
+                                           Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_MusicBehaviorSub}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+
+                            <!-- 全局源策略：覆盖/稳定/音质优先（影响回退与搜索源偏好，不改首选源） -->
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{DynamicResource S_MusicSourcePolicy}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <ComboBox SelectedValue="{Binding SelectedMusicSourcePolicy, Mode=TwoWay}"
+                                          ItemsSource="{Binding MusicSourcePolicies}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                                <TextBlock Text="{DynamicResource S_MusicSourcePolicyHint}" Foreground="{DynamicResource C_FF666666}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <StackPanel Spacing="4" Margin="0,6,0,0">
+                                <TextBlock Text="{DynamicResource S_MusicProviderPriority}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <TextBlock Text="{DynamicResource S_MusicProviderPriorityHint}" Foreground="{DynamicResource C_FF666666}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                                <ItemsControl ItemsSource="{Binding MusicProviders}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="vm:MusicProviderOption">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5" Margin="0,2">
+                                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="12"
+                                                           Foreground="{DynamicResource C_FFB3B3B3}"/>
+                                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"
+                                                              Click="OnMusicProviderToggle"/>
+                                                <Button Grid.Column="2" Content="↑" Click="OnMusicProviderUp"
+                                                        ToolTip.Tip="{DynamicResource S_MusicProviderUp}" Padding="5,2"/>
+                                                <Button Grid.Column="3" Content="↓" Click="OnMusicProviderDown"
+                                                        ToolTip.Tip="{DynamicResource S_MusicProviderDown}" Padding="5,2"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+
+                            <!-- Per-source connection diagnostics -->
+                            <StackPanel Spacing="4" Margin="0,6,0,0">
+                                <Button Command="{Binding DiagnoseSourcesCommand}"
+                                        Content="{Binding DiagnoseSourcesButtonText}"
+                                        IsEnabled="{Binding !IsDiagnosingSources}"
+                                        HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
+                                <TextBlock Text="{Binding SourceDiagnosticsText}" Foreground="{DynamicResource C_FFFFC86B}"
+                                           FontSize="11" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- 页 2：主播与语音 -->
+                    <StackPanel x:Name="PageHost" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="{DynamicResource S_CharSettings}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+
+                            <ComboBox SelectedItem="{Binding SelectedCharacter}"
+                                      ItemsSource="{Binding Characters}"
+                                      DisplayMemberBinding="{Binding DisplayName}"
+                                      HorizontalAlignment="Stretch"/>
+
+                            <StackPanel Spacing="4" Margin="0,4,0,0">
+                                <TextBlock Text="{DynamicResource S_Voice}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
+                                <ComboBox SelectedItem="{Binding CharacterVoice}"
+                                          ItemsSource="{Binding Voices}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{DynamicResource S_Personality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
+                                <TextBox Text="{Binding CharacterPersonality, Mode=TwoWay}"
+                                         AcceptsReturn="True" Height="80" CornerRadius="8"
+                                         TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_TtsGroup}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{DynamicResource S_TtsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
                             </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{DynamicResource S_RadioSoundFx}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding RadioSoundFxEnabled, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+                            </Grid>
+                            <ComboBox SelectedValue="{Binding SpeechMixMode}"
+                                      ItemsSource="{Binding SpeechMixModes}"
+                                      SelectedValueBinding="{Binding Id}"
+                                      DisplayMemberBinding="{Binding DisplayName}"
+                                      HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+                    </StackPanel>
 
-            <!-- Per-source connection diagnostics -->
-            <StackPanel Spacing="4" Margin="0,6,0,0">
-                <Button Command="{Binding DiagnoseSourcesCommand}"
-                        Content="{Binding DiagnoseSourcesButtonText}"
-                        IsEnabled="{Binding !IsDiagnosingSources}"
-                        HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
-                <TextBlock Text="{Binding SourceDiagnosticsText}" Foreground="{DynamicResource C_FFFFC86B}"
-                           FontSize="11" TextWrapping="Wrap"/>
-            </StackPanel>
-        </StackPanel>
+                    <!-- 页 3：外观与通用 -->
+                    <StackPanel x:Name="PageAppearance" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=3}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_LanguageTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                            <ComboBox SelectedValue="{Binding SelectedLanguage}"
+                                      ItemsSource="{Binding Languages}"
+                                      SelectedValueBinding="{Binding Id}"
+                                      DisplayMemberBinding="{Binding DisplayName}"
+                                      HorizontalAlignment="Stretch"/>
+                            <TextBlock Text="{DynamicResource S_LanguageHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+                            <TextBox Text="{Binding WeatherCity, Mode=TwoWay}" Watermark="{DynamicResource S_WeatherCityWatermark}" Margin="0,4,0,0"/>
+                            <TextBlock Text="{DynamicResource S_WeatherCityHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+                        </StackPanel>
 
-        <!-- Language selection -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="{DynamicResource S_LanguageTitle}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
-            <ComboBox SelectedValue="{Binding SelectedLanguage}"
-                      ItemsSource="{Binding Languages}"
-                      SelectedValueBinding="{Binding Id}"
-                      DisplayMemberBinding="{Binding DisplayName}"
-                      HorizontalAlignment="Stretch"/>
-            <TextBlock Text="{DynamicResource S_LanguageHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
-            <TextBox Text="{Binding WeatherCity, Mode=TwoWay}" Watermark="{DynamicResource S_WeatherCityWatermark}" Margin="0,4,0,0"/>
-            <TextBlock Text="{DynamicResource S_WeatherCityHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
-        </StackPanel>
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{DynamicResource S_Starfield}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,180" ColumnSpacing="12">
+                                <TextBlock Text="{DynamicResource S_SpectrumStyle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ComboBox Grid.Column="1" SelectedValue="{Binding SelectedSpectrumStyle, Mode=TwoWay}"
+                                          ItemsSource="{Binding SpectrumStyles}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{DynamicResource S_TopMostToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactModeTopmost, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{DynamicResource S_CompactShowLyricsToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactShowLyrics, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
 
-        <!-- TTS -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="{DynamicResource S_TtsGroup}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{DynamicResource S_TtsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ToggleSwitch Grid.Column="1" IsChecked="{Binding TtsEnabled, Mode=TwoWay}"
-                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
-            </Grid>
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{DynamicResource S_RadioSoundFx}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ToggleSwitch Grid.Column="1" IsChecked="{Binding RadioSoundFxEnabled, Mode=TwoWay}"
-                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
-            </Grid>
-            <ComboBox SelectedValue="{Binding SpeechMixMode}"
-                      ItemsSource="{Binding SpeechMixModes}"
-                      SelectedValueBinding="{Binding Id}"
-                      DisplayMemberBinding="{Binding DisplayName}"
-                      HorizontalAlignment="Stretch"/>
-        </StackPanel>
-
-        <!-- Visual effects -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="{DynamicResource S_Visuals}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{DynamicResource S_Starfield}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ToggleSwitch Grid.Column="1" IsChecked="{Binding EnableStarfield, Mode=TwoWay}"
-                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
-            </Grid>
-            <Grid ColumnDefinitions="*,180" ColumnSpacing="12">
-                <TextBlock Text="{DynamicResource S_SpectrumStyle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ComboBox Grid.Column="1" SelectedValue="{Binding SelectedSpectrumStyle, Mode=TwoWay}"
-                          ItemsSource="{Binding SpectrumStyles}"
-                          SelectedValueBinding="{Binding Id}"
-                          DisplayMemberBinding="{Binding DisplayName}"/>
-            </Grid>
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{DynamicResource S_TopMostToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactModeTopmost, Mode=TwoWay}"
-                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
-            </Grid>
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{DynamicResource S_CompactShowLyricsToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactShowLyrics, Mode=TwoWay}"
-                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
-            </Grid>
-        </StackPanel>
-
-        <!-- Listening profile -->
-        <StackPanel Spacing="6">
-            <TextBlock Text="{DynamicResource S_ProfileGroup}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{DynamicResource S_ProfileLearn}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
-                           VerticalAlignment="Center"/>
-                <ToggleSwitch Grid.Column="1" IsChecked="{Binding ListenerProfileEnabled, Mode=TwoWay}"
-                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
-            </Grid>
-            <TextBlock Text="{DynamicResource S_ProfileHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
-            <Button Command="{Binding ResetListenerProfileCommand}"
-                    Content="{Binding ResetProfileButtonText}"
-                    HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
-        </StackPanel>
-
-        <!-- Character customization -->
-        <StackPanel Spacing="8">
-            <TextBlock Text="{DynamicResource S_CharSettings}" FontWeight="700" Foreground="{DynamicResource C_FFFFFFFF}" FontSize="13"/>
-
-            <ComboBox SelectedItem="{Binding SelectedCharacter}"
-                      ItemsSource="{Binding Characters}"
-                      DisplayMemberBinding="{Binding DisplayName}"
-                      HorizontalAlignment="Stretch"/>
-
-            <StackPanel Spacing="4" Margin="0,4,0,0">
-                <TextBlock Text="{DynamicResource S_Voice}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
-                <ComboBox SelectedItem="{Binding CharacterVoice}"
-                          ItemsSource="{Binding Voices}"
-                          DisplayMemberBinding="{Binding DisplayName}"
-                          HorizontalAlignment="Stretch"/>
-            </StackPanel>
-
-            <StackPanel Spacing="4">
-                <TextBlock Text="{DynamicResource S_Personality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
-                <TextBox Text="{Binding CharacterPersonality, Mode=TwoWay}"
-                         AcceptsReturn="True" Height="80" CornerRadius="8"
-                         TextWrapping="Wrap"/>
-            </StackPanel>
-        </StackPanel>
+                    <!-- 页 4：收听画像 -->
+                    <StackPanel x:Name="PageProfile" Spacing="6" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource S_ProfileLearn}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                       VerticalAlignment="Center"/>
+                            <ToggleSwitch Grid.Column="1" IsChecked="{Binding ListenerProfileEnabled, Mode=TwoWay}"
+                                          OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+                        </Grid>
+                        <TextBlock Text="{DynamicResource S_ProfileHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                        <Button Command="{Binding ResetListenerProfileCommand}"
+                                Content="{Binding ResetProfileButtonText}"
+                                HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
 
         <!-- Save -->
-        <Button Command="{Binding SaveCommand}" Content="{DynamicResource S_Save}"
+        <Button Grid.Row="1" Command="{Binding SaveCommand}" Content="{DynamicResource S_Save}"
                 HorizontalAlignment="Stretch" Padding="18,12" FontSize="14"
                 Background="{DynamicResource C_FF9B59B0}" Foreground="{DynamicResource C_FF000000}"/>
-
-    </StackPanel>
+    </Grid>
 </UserControl>

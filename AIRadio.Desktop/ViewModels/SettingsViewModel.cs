@@ -134,6 +134,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string SpeechMixMode { get; set; } = "duck";
     [Reactive] public partial string SelectedLanguage { get; set; } = "zh"; // "zh" or "en"
 
+    // 设置页侧边导航当前页：0=AI 服务, 1=音乐音源, 2=主播与语音, 3=外观与通用, 4=收听画像。
+    // 瞬态 UI 状态，不持久化到 settings.json。
+    [Reactive] public partial int TabIndex { get; set; }
+
     // 音源账号（网易扫码/酷狗扫码/yt-dlp cookies）
     [Reactive] public partial string NeteaseAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
     [Reactive] public partial IImage? NeteaseQrImage { get; set; }
@@ -188,6 +192,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouVerifyCommand { get; }
+
+    // 设置页侧边导航切页命令（同 PlaylistViewModel.ShowPlaylistCommand 族的无参切 tab 模式）
+    public ReactiveCommand<Unit, Unit> ShowAiTabCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowMusicTabCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowHostTabCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowAppearanceTabCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowProfileTabCommand { get; }
 
     // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
     // 磁盘上已有的 llm_* 字段原样保留
@@ -252,6 +263,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
+        ShowAiTabCommand = ReactiveCommand.Create(() => { TabIndex = 0; });
+        ShowMusicTabCommand = ReactiveCommand.Create(() => { TabIndex = 1; });
+        ShowHostTabCommand = ReactiveCommand.Create(() => { TabIndex = 2; });
+        ShowAppearanceTabCommand = ReactiveCommand.Create(() => { TabIndex = 3; });
+        ShowProfileTabCommand = ReactiveCommand.Create(() => { TabIndex = 4; });
         KugouQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunKugouQrLoginAsync());
         KugouLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutKugouAsync());
         KugouVerifyCommand = ReactiveCommand.CreateFromTask(() => RunKugouVerifyAsync());
