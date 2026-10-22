@@ -280,6 +280,30 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
+    public bool RemoveDislikeEvents(string? title, string? artist)
+    {
+        var normalizedTitle = MusicIdentity.NormalizeMusicText(title ?? string.Empty);
+        var normalizedArtist = MusicIdentity.NormalizeMusicText(artist ?? string.Empty);
+        // 镜像黑名单构建条件：空歌手不入黑名单（BuildSnapshotLocked），空标题是合法键
+        if (normalizedArtist.Length == 0)
+            return false;
+
+        lock (_gate)
+        {
+            // 未加载/未来版本跳过时事件列表为空，RemoveAll 自然返回 0，无需前置守卫；
+            // 学习开关不拦截：暂停期数据保留，赦免同样成立（快照侧 Enabled=false 不出数据）
+            var removed = _events.RemoveAll(e =>
+                e.Type == ListeningEventType.Dislike &&
+                string.Equals(MusicIdentity.NormalizeMusicText(e.Title), normalizedTitle, StringComparison.Ordinal) &&
+                string.Equals(MusicIdentity.NormalizeMusicText(e.Artist), normalizedArtist, StringComparison.Ordinal));
+            if (removed == 0)
+                return false;
+            _dirty = true;
+            ScheduleSave();
+            return true;
+        }
+    }
+
     public async Task LoadAsync(CancellationToken cancellationToken)
     {
         try
@@ -331,11 +355,11 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
-    public async Task RefreshDigestAsync(CancellationToken cancellationToken)
+    public async Task RefreshDigestAsync(CancellationToken cancellationToken, bool force = false)
     {
         try
         {
-            await RefreshDigestCoreAsync(cancellationToken);
+            await RefreshDigestCoreAsync(cancellationToken, force);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -348,7 +372,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         }
     }
 
-    private async Task RefreshDigestCoreAsync(CancellationToken cancellationToken)
+    private async Task RefreshDigestCoreAsync(CancellationToken cancellationToken, bool force)
     {
         if (!IsLlmUsable())
             return;
@@ -360,7 +384,9 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 return;
 
             var now = _clock();
-            if (_digestFailureCount >= DigestMaxConsecutiveFailures &&
+            // force（设置页手动重新归纳）跳过失败退避与下方触发条件判定；在途互斥不跳过
+            // （撞上直接返回，由 VM 的 digest 前后对比反馈「未完成」引导稍后重试）
+            if (!force && _digestFailureCount >= DigestMaxConsecutiveFailures &&
                 _lastDigestFailureAt is { } lastFailure && now - lastFailure < DigestBackoff)
                 return;
 
@@ -373,12 +399,15 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             // 失败则与水位/老化触发同待遇——由连续失败退避统一限流，下一个事件可重试。
             // （曾有 _languageRegenDone 前置标记防重复扣费，但会让失败后的旧语言摘要
             // 整会话不再因语言差异重试，已移除）
-            var need = _digest == null ||
-                       _totalEventsIngested - _digest.EventWatermark >= DigestWatermarkEvents ||
-                       now - _digest.GeneratedAt >= DigestMaxAge ||
-                       !string.Equals(_digest.Language, language, StringComparison.OrdinalIgnoreCase);
-            if (!need)
-                return;
+            if (!force)
+            {
+                var need = _digest == null ||
+                           _totalEventsIngested - _digest.EventWatermark >= DigestWatermarkEvents ||
+                           now - _digest.GeneratedAt >= DigestMaxAge ||
+                           !string.Equals(_digest.Language, language, StringComparison.OrdinalIgnoreCase);
+                if (!need)
+                    return;
+            }
 
             _digestInProgress = true;
             input = BuildPromptInputLocked(snapshot, language);

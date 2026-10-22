@@ -1202,6 +1202,128 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task RemoveBlacklistItem_TrueBranch_ConfirmsAndRefreshesList()
+    {
+        var hasItem = true;
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(() => hasItem
+            ? new ListenerProfileSnapshot { DislikeBlacklist = new[] { new ProfileMusicRef("晴天", "周杰伦") } }
+            : ListenerProfileSnapshot.Empty);
+        profile.Setup(x => x.RemoveDislikeEvents("晴天", "周杰伦"))
+            .Returns(true)
+            .Callback(() => hasItem = false);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.True(vm.ProfileHasBlacklist);
+
+            await vm.RemoveBlacklistItemCommand.Execute(new ProfileBlacklistItem("晴天", "周杰伦", "晴天 - 周杰伦"));
+
+            profile.Verify(x => x.RemoveDislikeEvents("晴天", "周杰伦"), Times.Once);
+            Assert.False(vm.ProfileHasBlacklist);
+            Assert.Contains("已移除", vm.StatusMessage);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RemoveBlacklistItem_FalseBranch_SilentRefreshWithoutConfirmation()
+    {
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(new ListenerProfileSnapshot
+        {
+            DislikeBlacklist = new[] { new ProfileMusicRef("晴天", "周杰伦") },
+        });
+        profile.Setup(x => x.RemoveDislikeEvents(It.IsAny<string?>(), It.IsAny<string?>())).Returns(false);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            await vm.RemoveBlacklistItemCommand.Execute(new ProfileBlacklistItem("晴天", "周杰伦", "晴天 - 周杰伦"));
+
+            // false（陈旧条目滑出 180 天窗/无匹配）：仅刷新列表，不发「已移除」的假确认
+            Assert.True(vm.ProfileHasBlacklist);
+            Assert.DoesNotContain("已移除", vm.StatusMessage);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RegenerateDigest_PassesForce_ReportsSuccessWhenDigestChanged()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var digestText = "旧归纳";
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(() => new ListenerProfileSnapshot
+        {
+            Digest = new TasteDigestData { Text = digestText },
+        });
+        profile.Setup(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(async (CancellationToken cancellationToken, bool force) =>
+            {
+                await gate.Task;
+                digestText = "新归纳";
+            });
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            var run = vm.RegenerateDigestCommand.Execute();
+            // Execute 把命令体调度到线程池：标志翻转与本测试续体无顺序保证，
+            // 带预算轮询（同 TTS 事件轮询惯例），线程池饥饿不假红
+            for (var i = 0; i < 200 && !vm.IsRegeneratingDigest; i++)
+                await Task.Delay(10);
+            Assert.True(vm.IsRegeneratingDigest);
+
+            gate.SetResult();
+            await run;
+
+            Assert.False(vm.IsRegeneratingDigest);
+            // force 实参锚定：漏传会静默落回自动触发语义，测试必须挡住
+            profile.Verify(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), true), Times.Once);
+            Assert.Contains("已重新归纳", vm.StatusMessage);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RegenerateDigest_UnchangedDigest_ReportsNotCompleted()
+    {
+        // 服务全内吞（LLM 未配置/归纳失败/门槛未过/在途跳过）时 digest 不变：
+        // 反馈必须诚实说「未完成」而不是假装成功
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(new ListenerProfileSnapshot
+        {
+            Digest = new TasteDigestData { Text = "归纳" },
+        });
+        profile.Setup(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            await vm.RegenerateDigestCommand.Execute();
+            Assert.Contains("归纳未完成", vm.StatusMessage);
+            Assert.False(vm.IsRegeneratingDigest);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task DiagnoseSources_RendersPerSourceClassifiedResults()
     {
         // 聚合服务双源：网易 code=0 → 登录态/代理失效；酷狗未登录 → 未登录分类文案

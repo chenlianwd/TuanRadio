@@ -355,7 +355,14 @@
                                            FontSize="13" FontWeight="SemiBold"/>
 
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="{DynamicResource S_ProfileDigestLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource S_ProfileDigestLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                                   VerticalAlignment="Center"/>
+                                        <Button Grid.Column="1" Command="{Binding RegenerateDigestCommand}"
+                                                Content="{DynamicResource S_ProfileRegenerateDigest}"
+                                                IsEnabled="{Binding !IsRegeneratingDigest}"
+                                                HorizontalAlignment="Right" Padding="8,2" FontSize="11"/>
+                                    </Grid>
                                     <TextBlock x:Name="ProfileCardDigest" Text="{Binding ProfileDigestText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                                                TextWrapping="Wrap" IsVisible="{Binding ProfileHasDigest}"/>
                                     <TextBlock Text="{Binding ProfileDigestMeta}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="10"
@@ -381,7 +388,14 @@
                                     <ItemsControl ItemsSource="{Binding ProfileBlacklistItems}" IsVisible="{Binding ProfileHasBlacklist}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="vm:ProfileBlacklistItem">
-                                                <TextBlock Text="{Binding DisplayText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <TextBlock Grid.Column="0" Text="{Binding DisplayText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                                               TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1" Content="{DynamicResource S_ProfileRemoveItem}"
+                                                            Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveBlacklistItemCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            Padding="8,2" FontSize="11" Margin="8,0,0,2" VerticalAlignment="Center"/>
+                                                </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>

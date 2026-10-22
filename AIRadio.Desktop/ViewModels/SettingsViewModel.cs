@@ -141,6 +141,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool ProfileHasAvoidArtists { get; set; }
     [Reactive] public partial string ProfileAvoidArtistsText { get; set; } = string.Empty;
     [Reactive] public partial bool ProfileHasBlacklist { get; set; }
+    // 重新归纳执行中（禁用按钮，canExecute 与 IsEnabled 双保险同 DiagnoseSources）
+    [Reactive] public partial bool IsRegeneratingDigest { get; set; }
     // 黑名单条目必须整体换新 List 实例（同 MusicProviders：就地 Clear+AddRange 绑定不刷新）
     [Reactive] public partial List<ProfileBlacklistItem> ProfileBlacklistItems { get; set; } = new();
     // 音源逐源连接诊断结果（随语言切换重建）
@@ -198,6 +200,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
     public ReactiveCommand<Unit, Unit> ResetListenerProfileCommand { get; }
+    public ReactiveCommand<ProfileBlacklistItem, Unit> RemoveBlacklistItemCommand { get; }
+    public ReactiveCommand<Unit, Unit> RegenerateDigestCommand { get; }
     public ReactiveCommand<Unit, Unit> DiagnoseSourcesCommand { get; }
     public ReactiveCommand<Unit, Unit> ConnectOpenSubsonicCommand { get; }
     public ReactiveCommand<Unit, Unit> DisconnectOpenSubsonicCommand { get; }
@@ -254,6 +258,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         SaveCommand = ReactiveCommand.CreateFromTask(() => SaveAsync());
         ResetListenerProfileCommand = ReactiveCommand.Create(ResetListenerProfile);
+        RemoveBlacklistItemCommand = ReactiveCommand.Create<ProfileBlacklistItem>(RemoveBlacklistItem);
+        RegenerateDigestCommand = ReactiveCommand.CreateFromTask(
+            RegenerateDigestAsync,
+            this.WhenAnyValue(x => x.IsRegeneratingDigest).Select(running => !running));
         DiagnoseSourcesCommand = ReactiveCommand.CreateFromTask(
             DiagnoseSourcesAsync,
             this.WhenAnyValue(x => x.IsDiagnosingSources).Select(running => !running));
@@ -1020,6 +1028,44 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ProfileAvoidArtistsText = string.Empty;
         ProfileHasBlacklist = false;
         ProfileBlacklistItems = new();
+    }
+
+    private void RemoveBlacklistItem(ProfileBlacklistItem item)
+    {
+        if (_listeningProfile == null || item is null)
+            return;
+        var removed = _listeningProfile.RemoveDislikeEvents(item.Title, item.Artist);
+        RefreshProfileCard();
+        // false（陈旧条目已滑出 180 天窗/无匹配事件）仅刷新列表，不发「已移除」的假确认
+        if (removed)
+            SetStatusMessage(() => AppLanguage.T("已移除，DJ 不再回避它", "Removed — the DJ won't avoid it anymore"));
+    }
+
+    private async Task RegenerateDigestAsync()
+    {
+        if (_listeningProfile == null)
+            return;
+        IsRegeneratingDigest = true;
+        try
+        {
+            var before = _listeningProfile.GetSnapshot().Digest;
+            var beforeText = before?.Text;
+            var beforeAt = before?.GeneratedAt;
+            await _listeningProfile.RefreshDigestAsync(_lifetimeCts.Token, force: true);
+            var after = _listeningProfile.GetSnapshot().Digest;
+            RefreshProfileCard();
+            // 服务全内吞：LLM 未配置/归纳失败/门槛未过/归纳在途四条静默路径；
+            // 成功路径必刷新 GeneratedAt——Text+GeneratedAt 双字段对比，
+            // 消除「归纳成功但 LLM 输出逐字相同」被误报未完成的假阴性
+            SetStatusMessage(() =>
+                !string.Equals(beforeText, after?.Text, StringComparison.Ordinal) || beforeAt != after?.GeneratedAt
+                    ? AppLanguage.T("已重新归纳口味", "Taste summary regenerated")
+                    : AppLanguage.T("归纳未完成——稍后再试或检查 AI 服务", "Summary not updated — try again later or check the AI service"));
+        }
+        finally
+        {
+            IsRegeneratingDigest = false;
+        }
     }
 
     /// <summary>
