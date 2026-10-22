@@ -117,15 +117,12 @@ public class PlayerDeckFeedbackButtonTests
 
             var chatBefore = vm.ChatVM.Messages.Count;
 
-            // 心形收藏即"喜欢"（原反馈行 LIKE 已并入）：收藏与正向反馈一起落
+            // 心形收藏即"喜欢"（原反馈行 LIKE 已并入）：收藏与正向反馈一起落；
+            // 收藏本身不再刷气泡（2026-10-22 用户反馈），图标态即反馈
             Execute(vm.ToggleCurrentFavoriteCommand);
             Assert.True(vm.IsCurrentFavorite);
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
                 f => f.Action == MusicFeedbackAction.Like && f.TrackId == "src-1")), Times.Once);
-            // 文案锚点：锁动作→文案映射（防 CALM/FIRE 等文案对调时仅靠计数通过）
-            Assert.True(vm.ChatVM.Messages[^1].Content.Contains("已收藏") ||
-                        vm.ChatVM.Messages[^1].Content.Contains("Favorited"),
-                "心形收藏后的最新气泡应是收藏+口味画像确认文案");
 
             Execute(vm.DislikeCurrentTrackCommand);
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
@@ -147,11 +144,11 @@ public class PlayerDeckFeedbackButtonTests
 
             // STORY 为 CreateFromTask，异步落气泡
             Execute(vm.TellSongStoryCommand);
-            for (var i = 0; i < 40 && vm.ChatVM.Messages.Count < chatBefore + 6; i++)
+            for (var i = 0; i < 40 && vm.ChatVM.Messages.Count < chatBefore + 5; i++)
                 await Task.Delay(50);
 
-            // 心形收藏一句 + 四枚反馈各一句 + STORY 讲述一句 = 6 条新消息
-            Assert.Equal(chatBefore + 6, vm.ChatVM.Messages.Count);
+            // 四枚反馈各一句 + STORY 讲述一句 = 5 条新消息（心形收藏无气泡）
+            Assert.Equal(chatBefore + 5, vm.ChatVM.Messages.Count);
             Assert.Contains(vm.ChatVM.Messages, m => m.Content.Contains("一段试播故事"));
         }
         finally
@@ -225,8 +222,8 @@ public class PlayerDeckFeedbackButtonTests
 
     /// <summary>
     /// 回归（2026-10-20 用户裁决：LIKE 并入心形收藏——点收藏=收藏到歌单+正向反馈双落）：
-    /// 收藏沿触发 Like 反馈（会话+长期画像双链）与确认气泡；取消收藏只动歌单，
-    /// 不回撤画像也不重复记（事件唯一事实）。
+    /// 收藏沿触发 Like 反馈（会话+长期画像双链）；取消收藏只动歌单，不回撤画像也不重复记
+    /// （事件唯一事实）。收藏/取消均不刷聊天气泡（2026-10-22 用户反馈：模板文案每点必现，图标态即反馈）。
     /// </summary>
     [AvaloniaFact]
     public void ToggleFavorite_RecordsLikeSignalOnlyOnFavoriteEdge()
@@ -246,10 +243,8 @@ public class PlayerDeckFeedbackButtonTests
                 e => e.Type == ListeningEventType.Like && e.SourceId == "src-1" && e.Artist == "周杰伦")),
                 Times.Once);
             var chatAfterFavorite = vm.ChatVM.Messages.Count;
-            Assert.Contains(vm.ChatVM.Messages, m =>
-                m.Content.Contains("已收藏") || m.Content.Contains("Favorited"));
 
-            // 取消收藏：移出收藏但不回撤画像（无第二条 Like）、不再给气泡
+            // 取消收藏：移出收藏但不回撤画像（无第二条 Like），两个沿都不刷气泡
             Execute(vm.ToggleCurrentFavoriteCommand);
             Assert.False(vm.IsCurrentFavorite);
             rec.Verify(x => x.RecordFeedback(It.IsAny<UserMusicFeedback>()), Times.Once);

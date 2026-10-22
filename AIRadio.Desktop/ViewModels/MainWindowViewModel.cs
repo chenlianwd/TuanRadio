@@ -345,6 +345,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 IsCurrentFavorite = track?.IsFavorite == true;
                 HasCurrentTrack = track != null;
+                PushStationContext();
             });
 
         // 跳过判定必须与 TrackChanged 发射同步评估：经 ObserveOn 派发到 UI 线程时，
@@ -367,6 +368,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                         _recommendationService.RecordPlayedTrack(current);
                         _listeningProfile?.NotifyPlaybackStarted(current);
                     }
+                    // 播放历史刚更新（RecordPlayedTrack），现场快照同步刷新
+                    PushStationContext();
                 }
                 else if (state == PlaybackState.Paused)
                 {
@@ -510,9 +513,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             Artist = current.Artist,
             SourceId = trackId ?? string.Empty
         });
-        ChatVM.AddAssistantMessage(AppLanguage.T(
-            "已收藏，这首也会记进你的长期口味画像。",
-            "Favorited — this also goes into your long-term taste profile."));
+        // 收藏不再刷聊天气泡（2026-10-22 用户反馈：模板文案每点必现、非 DJ 台词）——
+        // 心形点亮/熄灭（强调绿）即即时反馈，与 NOPE 切歌/SIM 重排这类"结果不可见"的动作不同
     }
 
     private async Task OpenProgramAsync()
@@ -1224,6 +1226,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.AddExternalTrack(recommended);
         }
 
+        // 先解析"实际会播的实例"再生成串场词：AddExternalTrack 宽松合并后 recommended 可能并未入列，
+        // 实际会播的是宽松命中的既有条目（同名不同版本）——先生成后解析会让 DJ 念的歌手与播出的
+        // 版本错位（实测反馈：开场白念 A 版歌手、实际播出 B 版）。解析不到的提前返回在当前同步
+        // 流程下不可达（刚入列/宽松合并必得其一），属解析漏斗的防御分支
+        var announceTarget = ResolveRecommendedPlayable(recommended);
+        if (announceTarget == null)
+            return false;
+
         // 串场节奏：决策权在应用层（stationOpening/静默计数/跨时间带），LLM 只负责"说什么"。
         // 开台时给串场的"上一首"传 null——开台链的 current 是未播过的基线曲，只作 staleness 参照，
         // 直接传给串场会伪造"刚刚放完《基线曲》"（83ec2f4 的第一首歌分支自此在生产接线）
@@ -1231,7 +1241,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             stationOpening, _transitionsSinceLastSpeech, _lastSpokenTimeBand,
             DJService.GetTimeBand(DateTime.Now.Hour));
         DJScript? script = speak
-            ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, recommended, _lifetimeCts.Token)
+            ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, announceTarget, _lifetimeCts.Token)
             : null;
         // IsPlaying 复查：介绍词生成/TTS 的长窗口内用户可能手动开播（全局播放键播的正是基线曲，
         // CurrentTrack 引用不变、staleness 拦不住），此时让位不抢播；电台链 EndReached 后恒 false 零影响。
@@ -1246,11 +1256,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             MarkTransitionSpoken();
         }
 
-        // AddExternalTrack 在宽松同曲命中时“合并且不入列”，随后严格身份查找会落空，
-        // 导致“return true 却不播放”且上层跳过轮换兜底 → 电台停播。
-        // 回退用与合并口径一致的宽松查找，保证总能拿到可播实例。
-        var playable = PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended))
-                       ?? PlaylistVM.FindMatchingTrack(recommended);
+        // 串场 TTS 窗口内列表可能被增删：播放前重查实际可播实例（晚绑定语义保持），解析不到走兜底阶梯
+        var playable = ResolveRecommendedPlayable(recommended);
         if (playable != null && !_audioService.IsPlaying && IsSameTrack(_audioService.CurrentTrack, current))
         {
             _audioService.PlayTrack(playable);
@@ -1258,6 +1265,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         return false;
     }
+
+    /// <summary>推荐曲的"实际会播实例"：严格身份命中优先，宽松回退与播放口径一致——
+    /// AddExternalTrack 宽松同曲命中时"合并且不入列"，随后严格身份查找会落空，
+    /// 宽松查找保证总能拿到可播实例（否则会"return true 却不播放"且上层跳过轮换兜底 → 电台停播）。</summary>
+    private Track? ResolveRecommendedPlayable(Track recommended)
+        => PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended))
+           ?? PlaylistVM.FindMatchingTrack(recommended);
 
     /// <summary>返回是否真的调用了 PlayTrack 开播（staleness 守卫拦下或列表失效时为 false，由上层兜底）。</summary>
     private async System.Threading.Tasks.Task<bool> PlayWithPlaylistRotation(Track? current, bool stationOpening = false)
@@ -1346,6 +1360,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 && !string.IsNullOrWhiteSpace(CurrentRadioProgram.DjOpening))
             {
                 ChatVM.AddAssistantMessage(CurrentRadioProgram.DjOpening);
+                // 开场白气泡与串场词同病：只在 UI 出现、聊天 LLM 看不见——记进现场记忆
+                _djService.RememberOnAirLine(CurrentRadioProgram.DjOpening);
             }
             if (recommended != null)
                 return recommended;
@@ -1465,6 +1481,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     private void OnWeatherSnapshotChanged(WeatherInfo? weather)
         => _djService.UpdateWeatherSnapshot(weather);
+
+    /// <summary>把"正在播什么 / 最近放过什么"推给 DJ 聊天链：聊天 LLM 需要现场感知才能接住
+    /// "这首歌 / X 的版本"类指代（串场不进聊天历史，DJ 自己的广播发言靠服务内现场记忆注入）。</summary>
+    private void PushStationContext()
+        => _djService.UpdateStationContext(_audioService.CurrentTrack, GetRecentlyPlayedSnapshot());
 
     private static bool IsSameTrack(Track? left, Track? right) => TrackComparer.IsSameTrack(left, right);
 
