@@ -50,7 +50,7 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task RadioNext_AddsRecommendedTrackToDisplayedPlaylist()
+    public async Task RadioNext_PlaysRecommendationAsTransientWithoutPlaylistWrite()
     {
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
@@ -98,9 +98,10 @@ public class MainWindowViewModelTests
             vm.PlayerVM.NextCommand.Execute().Subscribe();
             await Task.Delay(250);
 
-            Assert.Contains(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
-            Assert.Single(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
+            // 电台推荐 = 瞬态插播：当前曲正确、内部播放列表恰一份，持久歌单零写入
+            Assert.DoesNotContain(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
             Assert.Single(audio.Playlist, t => t.SourceId == "test:recommended");
+            Assert.Equal("test:recommended", audio.CurrentTrack?.SourceId);
         }
         finally
         {
@@ -166,6 +167,7 @@ public class MainWindowViewModelTests
             await (Task)method!.Invoke(vm, new object[] { current })!;
 
             audio.Verify(x => x.PlayAtIndex(It.IsAny<int>()), Times.Never);
+            audio.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
         }
         finally
         {
@@ -468,10 +470,10 @@ public class MainWindowViewModelTests
 
             await vm.StartSessionAsync();
 
-            // 开台即播 DJ 推荐新歌：不再回落歌单第 1 首
-            audio.Verify(x => x.PlayTrack(It.Is<Track>(t => t.SourceId == "test:recommended")), Times.Once);
+            // 开台即播 DJ 推荐新歌：不再回落歌单第 1 首；推荐曲瞬态插播不写主歌单
+            audio.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.SourceId == "test:recommended"), It.IsAny<string?>()), Times.Once);
             audio.Verify(x => x.Play(), Times.Never);
-            Assert.Contains(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
+            Assert.DoesNotContain(vm.PlaylistVM.Tracks, t => t.SourceId == "test:recommended");
         }
         finally
         {
@@ -606,8 +608,8 @@ public class MainWindowViewModelTests
             Assert.NotNull(announced);
             Assert.Equal("刘德华", announced!.Artist);
             Assert.Same(existing, announced);
-            audio.Verify(x => x.PlayTrack(It.Is<Track>(t => t.SourceId == "test:existing")), Times.Once);
-            audio.Verify(x => x.PlayTrack(It.Is<Track>(t => t.SourceId == "test:recommended")), Times.Never);
+            audio.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.SourceId == "test:existing"), It.IsAny<string?>()), Times.Once);
+            audio.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.SourceId == "test:recommended"), It.IsAny<string?>()), Times.Never);
         }
         finally
         {
@@ -756,7 +758,7 @@ public class MainWindowViewModelTests
             await vm.StartSessionAsync();
 
             Assert.True(welcomeSawRecommendation, "推荐应与欢迎语 TTS 并行发起");
-            audio.Verify(x => x.PlayTrack(It.Is<Track>(t => t.SourceId == "test:recommended")), Times.Once);
+            audio.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.SourceId == "test:recommended"), It.IsAny<string?>()), Times.Once);
         }
         finally
         {
@@ -829,6 +831,7 @@ public class MainWindowViewModelTests
 
             audio.Verify(x => x.Play(), Times.Once);
             audio.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
+            audio.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
         }
         finally
         {
@@ -860,6 +863,7 @@ public class MainWindowViewModelTests
             await vm.StartSessionAsync();
 
             audio.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
+            audio.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
             audio.Verify(x => x.Play(), Times.Never);
         }
         finally
@@ -914,6 +918,7 @@ public class MainWindowViewModelTests
             await vm.StartSessionAsync();
 
             audio.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
+            audio.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
             audio.Verify(x => x.Play(), Times.Never);
         }
         finally
@@ -979,7 +984,47 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task StartSessionAsync_EmptyPlaylistKeepsGuidanceWithoutStationPlayback()
+    public async Task StartSessionAsync_EmptyPlaylistPlaysRecommendedOpeningWithoutGuidance()
+    {
+        // 用户裁决：空歌单也走 DJ 推荐开台（画像/收藏驱动）；拿到推荐即播、跳过空歌单引导
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var audio = CreateAudioMock(new List<Track>(), () => null);
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+        recommendations.Setup(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()))
+            .ReturnsAsync(new Track
+            {
+                Id = "recommended",
+                SourceId = "test:recommended",
+                Title = "Recommended",
+                Artist = "AIRadio",
+                FilePath = "http://example.com/recommended.mp3"
+            });
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+
+            await vm.StartSessionAsync();
+
+            recommendations.Verify(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()), Times.Once);
+            audio.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.SourceId == "test:recommended"), It.IsAny<string?>()), Times.Once);
+            Assert.DoesNotContain(vm.ChatVM.Messages, m =>
+                m.Content.Contains("歌单还是空的") || m.Content.Contains("No tracks yet"));
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_EmptyPlaylistWithoutRecommendationFallsBackToGuidance()
     {
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
@@ -998,7 +1043,7 @@ public class MainWindowViewModelTests
 
             await vm.StartSessionAsync();
 
-            // 空歌单保留延迟引导开场（fire-and-forget，1.4s 延迟），轮询等待气泡落地
+            // 冷启动拿不到推荐：回落引导文案（欢迎语后同步落地，不再走 1.4s 延迟），不开播
             var found = false;
             for (var i = 0; i < 40 && !found; i++)
             {
@@ -1006,12 +1051,10 @@ public class MainWindowViewModelTests
                 found = vm.ChatVM.Messages.Any(m =>
                     m.Content.Contains("歌单还是空的") || m.Content.Contains("No tracks yet"));
             }
-            Assert.True(found, "空歌单应保留引导开场气泡");
+            Assert.True(found, "无推荐时空歌单应回落引导开场气泡");
 
-            // 空歌单不发起推荐、也不开播
-            recommendations.Verify(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()), Times.Never);
             audio.Verify(x => x.Play(), Times.Never);
-            audio.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
+            audio.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
         }
         finally
         {

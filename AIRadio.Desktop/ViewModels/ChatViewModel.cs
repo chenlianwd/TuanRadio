@@ -29,7 +29,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private readonly ISttService _sttService;
     private readonly IRecommendationService? _recommendationService;
     private readonly IListeningProfileService? _listeningProfile;
-    private readonly Action<Track>? _trackAdded;
     private readonly IDisposable _ttsSub;
     private readonly IDisposable _ttsCommandSub;
     // DJ 指令的统一串行执行队列（Concat）：多条来源（TTS 结束/失败兑现、新消息承诺兑现）共用
@@ -91,7 +90,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> DismissStatusNoticeCommand { get; }
     public ReactiveCommand<Unit, Unit> RestoreStatusNoticeCommand { get; }
 
-    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService, Action<Track>? trackAdded = null, IRecommendationService? recommendationService = null, IListeningProfileService? listeningProfile = null)
+    public ChatViewModel(IDJService djService, IAudioService audioService, IMusicSearchService musicSearchService, ISttService sttService, IRecommendationService? recommendationService = null, IListeningProfileService? listeningProfile = null)
     {
         _djService = djService;
         _audioService = audioService;
@@ -99,7 +98,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         _sttService = sttService;
         _recommendationService = recommendationService;
         _listeningProfile = listeningProfile;
-        _trackAdded = trackAdded;
 
         SendMessageCommand = ReactiveCommand.CreateFromTask(
             SendMessageAsync,
@@ -882,15 +880,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (!_audioService.Playlist.Any(t => IsSameTrack(t, recommended)))
-        {
-            if (_trackAdded != null)
-                _trackAdded(recommended);
-            else
-                _audioService.AddTracks(new[] { recommended });
-        }
-
-        // 经 pending 机制在 TTS 播完后切歌，与 play: 指令的行为一致
+        // 插播即瞬态播放（不写主歌单不落盘），经 pending 机制在 TTS 播完后切歌，与 play: 指令行为一致
         _pendingRecommendedTrack = recommended;
         var displayText = AppLanguage.T($"给你推荐《{recommended.Title}》 - {recommended.DisplayArtist}。", $"Here's a pick for you: \"{recommended.Title}\" - {recommended.DisplayArtist}.");
         await RespondWithCommandAsync(displayText, "play_recommended", "happy");
@@ -902,27 +892,8 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         _pendingRecommendedTrack = null;
         if (track == null) return;
 
-        // TTS 期间列表可能变化，播放前重查索引，避免旧索引指向错误曲目
-        var index = FindAudioTrackIndex(track.SourceId ?? track.Id, track.FilePath);
-        if (index < 0)
-        {
-            // 添加推荐时可能被宽松匹配合并（同名同歌手的既有条目），严格查找会落空；
-            // DJ 已宣布要播这首，回退宽松匹配定位既有条目，否则宣布后静默不播
-            index = FindAudioTrackIndexLoose(track);
-        }
-        if (index >= 0)
-            _audioService.PlayAtIndex(index);
-    }
-
-    private int FindAudioTrackIndexLoose(Track track)
-    {
-        var playlist = _audioService.Playlist;
-        for (int i = 0; i < playlist.Count; i++)
-        {
-            if (IsSameTrack(playlist[i], track))
-                return i;
-        }
-        return -1;
+        // 插播单曲：同曲已在歌单时 PlayOneShot 内部会复用既有实例
+        _audioService.PlayOneShot(track, AppLanguage.T("推荐", "Recommendation"));
     }
 
     private Task<Track?> RequestProgramRecommendationAsync(
@@ -1206,35 +1177,9 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            // 添加前先严格+宽松两级查重：AddExternalTrack 命中宽松合并时不会入列，
-            // 后续仅靠严格查找会落空；宽松预查让"已在列表"直接复用既有条目
-            var index = FindAudioTrackIndex(track.Id, t.FilePath);
-            if (index < 0)
-                index = FindAudioTrackIndexLoose(t);
-            if (index < 0)
-            {
-                Log.Debug("Adding track to playlist and playing...");
-                if (_trackAdded != null)
-                    _trackAdded(t);
-                else
-                    _audioService.AddTracks(new[] { t });
-
-                index = FindAudioTrackIndex(t.SourceId ?? t.Id, t.FilePath);
-                if (index < 0)
-                    index = FindAudioTrackIndexLoose(t);
-            }
-            if (index < 0)
-            {
-                // 两套口径都定位不到的极端情况：直加音频服务保证点歌有响应，
-                // 接受该曲暂时不出现在歌单 UI（不持久化）的降级
-                _audioService.AddTracks(new[] { t });
-                // AddTracks 对瞬态上下文曲目是原地替换而非尾部追加，Count-1 可能失准，
-                // 重新定位一次，仅最终兜底才用尾索引
-                index = FindAudioTrackIndex(t.SourceId ?? t.Id, t.FilePath);
-                if (index < 0)
-                    index = _audioService.Playlist.Count - 1;
-            }
-            _audioService.PlayAtIndex(index);
+            // 点歌 = 插播单曲（瞬态，不写主歌单不落盘）：同曲已在歌单时 PlayOneShot 内部
+            // 会复用既有实例；想留存由用户 ❤️ 收藏转正
+            _audioService.PlayOneShot(t, AppLanguage.T("点歌", "Request"));
             Log.Information("DJ track play initiated: {Track}", t);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -1312,45 +1257,6 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         var url = await _musicSearchService.GetPlayUrlAsync(track.Id)
             .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
         return string.IsNullOrWhiteSpace(url) ? null : track.ToTrack(url);
-    }
-
-    private int FindAudioTrackIndex(string sourceId, string filePath)
-    {
-        // 单次快照后遍历：Playlist 每次访问都会加锁复制数组，
-        // 循环里 Count 与 [i] 可能来自不同快照，并发增删时会越界
-        var playlist = _audioService.Playlist;
-        for (int i = 0; i < playlist.Count; i++)
-        {
-            var item = playlist[i];
-            if (!string.IsNullOrWhiteSpace(sourceId) && item.SourceId == sourceId)
-                return i;
-            if (!string.IsNullOrWhiteSpace(filePath) && item.FilePath == filePath)
-                return i;
-        }
-
-        return -1;
-    }
-
-    private static bool IsSameTrack(Track left, Track right)
-    {
-        if (!string.IsNullOrWhiteSpace(left.SourceId) &&
-            string.Equals(left.SourceId, right.SourceId, StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (!string.IsNullOrWhiteSpace(left.FilePath) &&
-            string.Equals(left.FilePath, right.FilePath, StringComparison.OrdinalIgnoreCase))
-            return true;
-        // 宽松兜底与 PlaylistViewModel.FindMatchingTrack 的合并口径保持一致
-        // （收紧后的 IsSameSongLoose + 双边已知时长 ±8s 兼容）：否则预查重会拦截
-        // 应新增的不同版本同名曲、回退查找会定位到错误条目
-        return MusicIdentity.IsSameSongLoose(left.Title, left.Artist, right.Title, right.Artist) &&
-               AreDurationsCompatible(left.Duration, right.Duration);
-    }
-
-    private static bool AreDurationsCompatible(TimeSpan left, TimeSpan right)
-    {
-        if (left <= TimeSpan.Zero || right <= TimeSpan.Zero)
-            return true;
-        return Math.Abs((left - right).TotalSeconds) <= 8;
     }
 
     private static string MapExpression(string emotion) => emotion switch

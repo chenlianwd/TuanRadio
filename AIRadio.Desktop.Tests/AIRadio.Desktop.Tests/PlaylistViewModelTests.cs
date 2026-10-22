@@ -590,29 +590,90 @@ public class PlaylistViewModelTests
     }
 
     [Fact]
-    public void PlayFavoriteCommand_PlaysMatchingTrack()
+    public void PlayFavoriteCommand_StartsContextOverFavoritesFromClickedTrack()
     {
         var (vm, audioMock, _) = CreateVm();
         var track1 = new Track { Title = "A", FilePath = "" };
         var track2 = new Track { Title = "B", FilePath = "" };
         vm.Tracks.Add(track1);
         vm.Tracks.Add(track2);
+        vm.Favorites.Add(track1);
+        vm.Favorites.Add(track2);
 
-        vm.PlayFavoriteCommand.Execute(track1).Subscribe();
+        IReadOnlyList<Track>? contextTracks = null;
+        var contextStartIndex = -1;
+        audioMock.Setup(x => x.StartPlaybackContext(
+                It.IsAny<IEnumerable<Track>>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<string?>()))
+            .Callback<IEnumerable<Track>, int, bool, string?>((tracks, index, _, _) =>
+            {
+                contextTracks = tracks.ToList();
+                contextStartIndex = index;
+            });
 
-        audioMock.Verify(x => x.PlayTrack(track1), Times.Once);
+        vm.PlayFavoriteCommand.Execute(track2).Subscribe();
+
+        audioMock.Verify(x => x.StartPlaybackContext(
+            It.Is<IEnumerable<Track>>(tracks => tracks.SequenceEqual(new[] { track1, track2 })),
+            1, false, "收藏"), Times.Once);
+        Assert.Equal(1, contextStartIndex);
+        Assert.NotNull(contextTracks);
     }
 
     [Fact]
-    public void PlayFavoriteCommand_DoesNothingWhenTrackNotInPlaylist()
+    public void PlayFavoriteCommand_TrackMissingFromFavoritesFallsBackToFirst()
+    {
+        // 收藏点播上下文化后不再有"不在主歌单则静默"语义：找不到点击项就从头播收藏
+        var (vm, audioMock, _) = CreateVm();
+        var track1 = new Track { Title = "A", FilePath = "" };
+        var outsider = new Track { Title = "NotInFavorites", FilePath = "" };
+        vm.Tracks.Add(track1);
+        vm.Favorites.Add(track1);
+
+        vm.PlayFavoriteCommand.Execute(outsider).Subscribe();
+
+        audioMock.Verify(x => x.StartPlaybackContext(
+            It.Is<IEnumerable<Track>>(tracks => tracks.SequenceEqual(new[] { track1 })),
+            0, false, "收藏"), Times.Once);
+    }
+
+    [Fact]
+    public void PlayOnlineCommand_StartsSearchResultContextWithoutPlaylistWrite()
     {
         var (vm, audioMock, _) = CreateVm();
-        var track = new Track { Title = "NotInList", FilePath = "" };
-        vm.Tracks.Add(new Track { Title = "A", FilePath = "" });
+        var result1 = new OnlineTrack { Id = "netease:a", Title = "A", Artist = "X" };
+        var result2 = new OnlineTrack { Id = "netease:b", Title = "B", Artist = "Y" };
+        vm.SearchResults.Add(result1);
+        vm.SearchResults.Add(result2);
 
-        vm.PlayFavoriteCommand.Execute(track).Subscribe();
+        vm.PlayOnlineCommand.Execute(result2).Subscribe();
 
+        // 上下文曲目 = 搜索结果快照（空 FilePath 懒解析），起点 = 点击项
+        audioMock.Verify(x => x.StartPlaybackContext(
+            It.Is<IEnumerable<Track>>(tracks => tracks
+                .Select(track => track.SourceId)
+                .SequenceEqual(new[] { "netease:a", "netease:b" })),
+            1, false, "搜索结果"), Times.Once);
+        // 点播不再隐式写主歌单、不触发入列与保存
+        Assert.Empty(vm.Tracks);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
         audioMock.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
+    }
+
+    [Fact]
+    public void PlayOnlineCommand_ResultMissingFromSnapshotFallsBackToIndexZero()
+    {
+        var (vm, audioMock, _) = CreateVm();
+        var result1 = new OnlineTrack { Id = "netease:a", Title = "A", Artist = "X" };
+        vm.SearchResults.Add(result1);
+        var clickedElsewhere = new OnlineTrack { Id = "netease:z", Title = "Z", Artist = "W" };
+
+        vm.PlayOnlineCommand.Execute(clickedElsewhere).Subscribe();
+
+        audioMock.Verify(x => x.StartPlaybackContext(
+            It.Is<IEnumerable<Track>>(tracks => tracks
+                .Select(track => track.SourceId)
+                .SequenceEqual(new[] { "netease:a" })),
+            0, false, "搜索结果"), Times.Once);
     }
 
     [Fact]

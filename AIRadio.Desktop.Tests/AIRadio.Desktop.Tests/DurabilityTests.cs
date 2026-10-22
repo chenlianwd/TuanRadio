@@ -69,11 +69,13 @@ public class DurabilityTests
     private static (MainWindowViewModel Vm, Func<Track?> Current, Mock<IRecommendationService> Rec, IDisposable Life) CreateRadioVm()
     {
         var playlist = new List<Track>();
-        // 同一局部变量被两个闭包共享：current() 读、PlayTrack 回调写（模拟真实 TrackChanged 推进）
+        // 同一局部变量被两个闭包共享：current() 读、PlayOneShot/PlayTrack 回调写（模拟真实 TrackChanged 推进）
         var currentTrack = MakeTrack("seed");
         var audio = CreateAudioMock(playlist, () => currentTrack);
         audio.Setup(x => x.PlayTrack(It.IsAny<Track>()))
             .Callback<Track>(t => currentTrack = t);
+        audio.Setup(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()))
+            .Callback<Track, string?>((t, _) => currentTrack = t);
 
         var dj = new Mock<IDJService>();
         dj.SetupGet(x => x.TtsEnabled).Returns(false);
@@ -120,11 +122,12 @@ public class DurabilityTests
             for (var i = 1; i <= 30; i++)
             {
                 await InvokeAutoRadioAsync(vm, current()!);
-                var id = $"radio-{i}";
-                Assert.Equal(1, vm.PlaylistVM.Tracks.Count(t => t.SourceId == id));
+                Assert.Equal("radio-" + i, current()!.SourceId);
             }
 
-            Assert.Equal(31, vm.PlaylistVM.Tracks.Count);
+            // 电台推荐瞬态插播：持久歌单恒定（只剩显式加入的 seed），当前曲逐轮推进
+            Assert.Single(vm.PlaylistVM.Tracks);
+            Assert.Equal("seed", vm.PlaylistVM.Tracks[0].SourceId);
             Assert.Equal("radio-30", current()!.SourceId);
             // 30 轮后推荐管线仍健康（未被中途击穿成 DJ 兜底）
             rec.Verify(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()), Times.Exactly(30));
@@ -141,7 +144,7 @@ public class DurabilityTests
     {
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
-        var (vm, current, _, life) = CreateRadioVm();
+        var (vm, current, rec, life) = CreateRadioVm();
         try
         {
             vm.PlaylistVM.AddExternalTrack(MakeTrack("seed"));
@@ -150,15 +153,19 @@ public class DurabilityTests
             {
                 var trackAtVolley = current()!;
                 var before = vm.PlaylistVM.Tracks.Count;
-                // 同一曲的并发自然结束：单飞守卫只放行一个，其余立即返回
+                // 同一曲的并发自然结束：单飞守卫（_autoRadioAdvancing）只放行一个，
+                // 其余立即返回；等门期间的迟到者由 staleness 复查作废
                 await Task.WhenAll(Enumerable.Range(0, 6)
                     .Select(_ => InvokeAutoRadioAsync(vm, trackAtVolley)));
-                // 至少推进一首且不会有 6 份重复（丢弃路径不产生 playlist 副本）
-                var after = vm.PlaylistVM.Tracks.Count;
-                Assert.InRange(after - before, 0, 3);
+                // 推荐瞬态插播后歌单不再增长：并发轮次前后恒定，无重复副本
+                Assert.Equal(before, vm.PlaylistVM.Tracks.Count);
             }
 
-            // 全程无重复身份、当前曲始终有效
+            // 单飞守护：每轮恰一次推荐（去持久化后歌单计数恒定不再能捕获重复推进，
+            // 改锚定推荐调用数——6 并发 × 8 轮全跑会是 48）
+            rec.Verify(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()), Times.Exactly(8));
+
+            // 全程无重复身份、当前曲始终有效且在推进
             var ids = vm.PlaylistVM.Tracks.Select(t => t.SourceId).ToList();
             Assert.Equal(ids.Count, ids.Distinct().Count());
             Assert.StartsWith("radio-", current()!.SourceId);

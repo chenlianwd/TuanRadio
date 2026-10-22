@@ -192,7 +192,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (musicSearchService is IMusicSourceBroker broker)
             _playbackPreflight = new PlaybackPreflightService(_audioService, broker, accountStore, openSubsonic);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
-            track => PlaylistVM.AddExternalTrack(track), _recommendationService, listeningProfile);
+            recommendationService: _recommendationService, listeningProfile: listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
             listeningProfile, musicSearchService, openSubsonic, audius);
         SpectrumVM = new SpectrumViewModel(_audioService);
@@ -343,7 +343,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(track =>
             {
-                IsCurrentFavorite = track?.IsFavorite == true;
+                // 宽松回查：插播/点播的瞬态曲与歌单内同曲（跨源）不是同一实例，
+                // 直接读实例标记会让已收藏的歌显示为未收藏
+                IsCurrentFavorite = track != null &&
+                    (PlaylistVM.FindMatchingTrack(track) ?? track).IsFavorite;
                 HasCurrentTrack = track != null;
                 PushStationContext();
             });
@@ -573,15 +576,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed || item is not { IsPlayable: true } || string.IsNullOrWhiteSpace(item.Track.FilePath))
             return;
 
-        var existing = PlaylistVM.FindMatchingTrack(item.Track);
-        if (existing == null)
-        {
-            PlaylistVM.AddExternalTrack(item.Track);
-            existing = PlaylistVM.FindMatchingTrack(item.Track) ?? item.Track;
-        }
-
-        if (PlaylistVM.Tracks.Any(track => IsSameTrackIdentity(track, existing)))
-            _audioService.PlayTrack(existing);
+        // 节目单点播 = 插播单曲（瞬态，不写主歌单不落盘）：同曲已在歌单时复用既有实例，
+        // 曲终回归电台推荐链
+        _audioService.PlayOneShot(item.Track, AppLanguage.T("节目单", "Program"));
     }
 
     private RecommendationRequest CreateRecommendationRequest(Track? current, string? intentKey = null)
@@ -914,9 +911,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
             return;
-
-        // AI startup recommendation: analyze playlist and recommend a song
-        _ = AnnounceStartupFollowupAsync(_lifetimeCts.Token);
     }
 
     private void ToggleCompactMode()
@@ -954,29 +948,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IsCharacterPickerOpen = false;
     }
 
-    private async System.Threading.Tasks.Task AnnounceStartupFollowupAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await System.Threading.Tasks.Task.Delay(1400, cancellationToken);
-            if (IsDisposed)
-                return;
-
-            // 非空歌单的开台播放已并入 AnnounceWelcomeAsync（欢迎语后直接播 DJ 推荐新歌），
-            // 这里只保留空歌单的引导开场
-            if (PlaylistVM.Tracks.Count == 0)
-                await AnnounceEmptyLibraryAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || IsDisposed)
-        {
-            // 应用关闭时取消启动串场，不再访问已释放的 ViewModel。
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Startup follow-up failed");
-        }
-    }
-
     private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync(CancellationToken cancellationToken)
     {
         if (IsDisposed || cancellationToken.IsCancellationRequested)
@@ -1008,8 +979,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         if (PlaylistVM.Tracks.Count == 0)
         {
-            // 空歌单保留引导开场（AnnounceStartupFollowupAsync），不发起推荐也不开播
+            // 空歌单也走 DJ 推荐开台（画像/收藏驱动），冷启动拿不到推荐才回落引导文案；
+            // 无基线曲，staleness 守卫以 CurrentTrack 保持 null 判定
+            using var emptyPrefetchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var emptyPrefetched = GetRecommendedTrackAsync(null, emptyPrefetchCts.Token);
             await SpeakDjTextAsync(text, cancellationToken);
+            if (IsDisposed || cancellationToken.IsCancellationRequested)
+                return;
+
+            var played = await StartStationPlaybackAsync(null, emptyPrefetched, emptyPrefetchCts, cancellationToken);
+            if (!played && !IsDisposed && !cancellationToken.IsCancellationRequested)
+                await AnnounceEmptyLibraryAsync(cancellationToken);
             return;
         }
 
@@ -1032,8 +1012,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private static readonly TimeSpan StartupRecommendationBudget = TimeSpan.FromSeconds(15);
 
     /// <summary>开台播放：消费欢迎语期间预取的推荐并播放 DJ 挑的新歌；
-    /// 推荐超预算或失败时沿 歌单轮换→歌单第 1 首 阶梯回退，保证开台总能出声。</summary>
-    private async System.Threading.Tasks.Task StartStationPlaybackAsync(
+    /// 推荐超预算或失败时沿 歌单轮换→歌单第 1 首 阶梯回退，保证开台总能出声。
+    /// 返回是否真的开播（空歌单链路据此决定是否回落引导文案）。</summary>
+    private async System.Threading.Tasks.Task<bool> StartStationPlaybackAsync(
         Track? baselineTrack,
         System.Threading.Tasks.Task<Track?> prefetchedRecommendation,
         CancellationTokenSource prefetchCts,
@@ -1043,7 +1024,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService.IsPlaying)
         {
             prefetchCts.Cancel();
-            return;
+            return false;
         }
 
         var played = false;
@@ -1086,6 +1067,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             _audioService.Play();
         }
+
+        return played;
     }
 
     private async System.Threading.Tasks.Task AnnounceCharacterGreetingAsync(CancellationToken cancellationToken)
@@ -1219,17 +1202,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 recommended = retry;
         }
 
-        if (!PlaylistVM.Tracks.Any(t => IsSameTrackIdentity(t, recommended)))
-        {
-            if (IsDisposed)
-                return false;
-            PlaylistVM.AddExternalTrack(recommended);
-        }
-
-        // 先解析"实际会播的实例"再生成串场词：AddExternalTrack 宽松合并后 recommended 可能并未入列，
-        // 实际会播的是宽松命中的既有条目（同名不同版本）——先生成后解析会让 DJ 念的歌手与播出的
-        // 版本错位（实测反馈：开场白念 A 版歌手、实际播出 B 版）。解析不到的提前返回在当前同步
-        // 流程下不可达（刚入列/宽松合并必得其一），属解析漏斗的防御分支
+        // 先解析"实际会播的实例"再生成串场词：宽松命中歌单内同曲（同名不同版本）时实际会播
+        // 既有条目——先生成后解析会让 DJ 念的歌手与播出的版本错位（实测反馈：开场白念 A 版歌手、
+        // 实际播出 B 版）；未命中则以推荐实例本身插播（瞬态，不写主歌单）
         var announceTarget = ResolveRecommendedPlayable(recommended);
         if (announceTarget == null)
             return false;
@@ -1256,22 +1231,25 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             MarkTransitionSpoken();
         }
 
-        // 串场 TTS 窗口内列表可能被增删：播放前重查实际可播实例（晚绑定语义保持），解析不到走兜底阶梯
+        // 串场 TTS 窗口内歌单可能被增删：播放前重查实际可播实例（晚绑定语义保持），解析不到走兜底阶梯
         var playable = ResolveRecommendedPlayable(recommended);
         if (playable != null && !_audioService.IsPlaying && IsSameTrack(_audioService.CurrentTrack, current))
         {
-            _audioService.PlayTrack(playable);
+            // 插播瞬态播放：不写主歌单不落盘，曲终回归电台推荐链
+            _audioService.PlayOneShot(playable, AppLanguage.T("电台", "Radio"));
             return true;
         }
         return false;
     }
 
     /// <summary>推荐曲的"实际会播实例"：严格身份命中优先，宽松回退与播放口径一致——
-    /// AddExternalTrack 宽松同曲命中时"合并且不入列"，随后严格身份查找会落空，
-    /// 宽松查找保证总能拿到可播实例（否则会"return true 却不播放"且上层跳过轮换兜底 → 电台停播）。</summary>
+    /// 宽松同曲命中歌单内既有条目时复用它（串场念的版本与播出的版本一致）；
+    /// 都未命中则回退推荐实例本身（瞬态插播），保证总有可播实例
+    /// （否则会"return true 却不播放"且上层跳过轮换兜底 → 电台停播）。</summary>
     private Track? ResolveRecommendedPlayable(Track recommended)
         => PlaylistVM.Tracks.FirstOrDefault(t => IsSameTrackIdentity(t, recommended))
-           ?? PlaylistVM.FindMatchingTrack(recommended);
+           ?? PlaylistVM.FindMatchingTrack(recommended)
+           ?? recommended;
 
     /// <summary>返回是否真的调用了 PlayTrack 开播（staleness 守卫拦下或列表失效时为 false，由上层兜底）。</summary>
     private async System.Threading.Tasks.Task<bool> PlayWithPlaylistRotation(Track? current, bool stationOpening = false)
@@ -1445,12 +1423,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (IsDisposed || !IsSameTrack(_audioService.CurrentTrack, current))
                 return null;
 
-            if (recommended != null &&
-                !PlaylistVM.Tracks.Any(t => IsSameTrack(t, recommended)))
+            // 推荐曲不再入主歌单（瞬态插播由 AudioService 侧 PlayTrackInstance(isContextTrack:true)
+            // 落地）：宽松同曲命中歌单内既有条目时换回该实例，避免新实例不带收藏标记、
+            // 正在播的歌在 UI 上显示为未收藏
+            if (recommended != null)
             {
-                PlaylistVM.AddExternalTrack(recommended);
-                // AddExternalTrack 宽松同曲命中时"合并且不入列"：返回 Tracks 内的既有实例，
-                // 否则新实例不带收藏标记等状态，正在播的歌在 UI 上显示为未收藏
                 var merged = PlaylistVM.FindMatchingTrack(recommended);
                 if (merged != null)
                     recommended = merged;

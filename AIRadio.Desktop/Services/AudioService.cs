@@ -928,7 +928,9 @@ public class AudioService : IAudioService, IDisposable
                     {
                         if (IsDisposed || intentVersion != _playbackIntentVersion) return;
                         ClearPlaybackContextCore();
-                        PlayTrackInstance(track, isContextTrack: false);
+                        // 推荐曲以瞬态身份播放：不进主歌单不落盘（电台播过的歌由 ❤️ 显式收藏），
+                        // 曲终回归电台推荐链；同曲已在歌单时 FindTrackIndex 会复用既有实例
+                        PlayTrackInstance(track, isContextTrack: true);
                     }
                 }
                 else
@@ -1073,6 +1075,14 @@ public class AudioService : IAudioService, IDisposable
         }
     }
 
+    public void PlayOneShot(Track track, string? contextName = null)
+    {
+        if (IsDisposed || track == null) return;
+        // 单元素上下文：曲目以瞬态身份播放，曲终由 TryAdvancePlaybackContext 的单元素护栏
+        // （列表循环）或非 wrap 耗尽（电台/顺序）回落到各模式既有分支
+        StartPlaybackContext(new[] { track }, startIndex: 0, shuffle: false, contextName);
+    }
+
     public void PlayNextInQueue(Track track)
     {
         if (IsDisposed || track == null) return;
@@ -1149,8 +1159,13 @@ public class AudioService : IAudioService, IDisposable
             var nextIndex = _playbackQueueIndex + 1;
             if (nextIndex >= _playbackQueue.Count)
             {
-                if (!allowWrap)
+                // 单元素队列 wrap 只会重播自己：主歌单有可回落曲目时视为耗尽（列表循环回主歌单、
+                // 手动 Next 进主歌单），主歌单为空时保持 wrap 兜底，防单曲瞬态 + 空歌单静默停摆
+                if (!allowWrap || (_playbackQueue.Count == 1 && HasCanonicalTrack()))
                 {
+                    // 非 wrap 耗尽维持 hadContext=true（手动 Next 不跳资料库的既有语义）；
+                    // 单元素 wrap 护栏则按无上下文回落（列表循环回主歌单）
+                    hadContext = !allowWrap;
                     _playbackQueue.Clear();
                     _playbackQueueIndex = -1;
                     _playbackContextName = string.Empty;
@@ -1165,6 +1180,13 @@ public class AudioService : IAudioService, IDisposable
         }
         PlayTrackInstance(next, isContextTrack: true);
         return true;
+    }
+
+    /// <summary>主歌单（canonical，除瞬态上下文曲外）是否还有曲目。调用方须持 _contextGate。</summary>
+    private bool HasCanonicalTrack()
+    {
+        lock (_playlistGate)
+            return _playlist.Any(track => !_transientContextTracks.Contains(track));
     }
 
     private bool TryMovePlaybackContext(int offset)
@@ -1296,7 +1318,10 @@ public class AudioService : IAudioService, IDisposable
             _playlist.AddRange(tracks);
             if (_currentIndex < 0 && _playlist.Count > 0)
             {
-                _currentIndex = 0;
+                // 调用方（PlayTrackInstance）随即播放尾项：置 lastIndex 让先行的通知就携带正确曲目。
+                // 置 0 会在"瞬态移除把 _currentIndex 归 -1"的窗口里发一次指向 _playlist[0] 的错误通知
+                // （电台稳态换曲每次必经：PlayerVM 标题闪跳、站点上下文误推一次）
+                _currentIndex = _playlist.Count - 1;
                 shouldNotify = true;
             }
             lastIndex = _playlist.Count - 1;
