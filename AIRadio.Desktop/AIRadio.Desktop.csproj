@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- windows10.0.19041 后缀引入 WinRT 投影（SMTC 系统媒体集成所需），SDK 随 TFM 自动引入；
+         依赖 LibVLCSharp >= 3.10——3.9.x 的 windows TFM 组传递依赖 WindowsAppSDK（140MB，
+         音频路径不需要），3.10 起 WinUI 集成独立成包 -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
@@ -94,7 +97,7 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
 
     <!-- Audio playback -->
-    <PackageReference Include="LibVLCSharp" Version="3.9.7.1" />
+    <PackageReference Include="LibVLCSharp" Version="3.10.2" />
     <PackageReference Include="System.Reactive" Version="6.1.0" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
 
