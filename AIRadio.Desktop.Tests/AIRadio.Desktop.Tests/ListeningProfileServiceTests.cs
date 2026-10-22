@@ -488,6 +488,223 @@ public class ListeningProfileServiceTests : IDisposable
         Assert.Null(service.GetSnapshot().Digest);
     }
 
+    // ---------- 手动重新归纳（force） ----------
+
+    [Fact]
+    public async Task RefreshDigest_Force_BypassesWatermarkAndAge()
+    {
+        var service = await CreateLoadedServiceAsync();
+        await SeedDigestReadyServiceAsync(service);
+
+        await service.RefreshDigestAsync(CancellationToken.None);
+        Assert.NotNull(service.GetSnapshot().Digest);
+
+        // 无水位/老化/语言变化：非 force 不再调 LLM（既有触发语义锚定）
+        await service.RefreshDigestAsync(CancellationToken.None);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
+
+        // force 绕过触发条件仍归纳
+        await service.RefreshDigestAsync(CancellationToken.None, force: true);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task RefreshDigest_Force_BypassesBackoffWindow()
+    {
+        _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        var service = await CreateLoadedServiceAsync();
+        await SeedDigestReadyServiceAsync(service);
+
+        for (var i = 0; i < 3; i++)
+            await service.RefreshDigestAsync(CancellationToken.None);
+        var calls = 3;
+
+        // 退避窗内非 force 不再调用
+        _now = _now.AddHours(1);
+        await service.RefreshDigestAsync(CancellationToken.None);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(calls));
+
+        // force 穿透退避窗口重试
+        await service.RefreshDigestAsync(CancellationToken.None, force: true);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(calls + 1));
+    }
+
+    [Fact]
+    public async Task RefreshDigest_ForceFailure_CountsIntoSharedBackoff()
+    {
+        _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        var service = await CreateLoadedServiceAsync();
+        await SeedDigestReadyServiceAsync(service);
+
+        // force 失败与自动触发共享同一退避计数
+        for (var i = 0; i < 3; i++)
+            await service.RefreshDigestAsync(CancellationToken.None, force: true);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(3));
+
+        // 退避窗内非 force 被挡；24 小时后恢复
+        await service.RefreshDigestAsync(CancellationToken.None);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(3));
+        _now = _now.AddHours(24);
+        await service.RefreshDigestAsync(CancellationToken.None);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Exactly(4));
+    }
+
+    [Fact]
+    public async Task RefreshDigest_Force_BelowThreshold_DoesNotCallLlm()
+    {
+        var service = await CreateLoadedServiceAsync();
+        service.NotifyPlaybackStarted(TrackOf("晴天", "周杰伦"));
+
+        await service.RefreshDigestAsync(CancellationToken.None, force: true);
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RefreshDigest_Force_WhileInFlight_ReturnsWithoutSecondCall()
+    {
+        var gate = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Returns(() => gate.Task);
+        var service = await CreateLoadedServiceAsync();
+        await SeedDigestReadyServiceAsync(service);
+
+        var first = service.RefreshDigestAsync(CancellationToken.None);
+        await Task.Yield();
+        // 在途归纳未完成时 force 到达：直接返回不抛、不二次调 LLM
+        var forced = service.RefreshDigestAsync(CancellationToken.None, force: true);
+        await forced;
+
+        gate.SetResult("摘要");
+        await first;
+
+        _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Once);
+        Assert.NotNull(service.GetSnapshot().Digest);
+    }
+
+    // ---------- 黑名单单条移除 ----------
+
+    [Fact]
+    public async Task RemoveDislikeEvents_RemovesMatchingVariantsAndKeepsOthers()
+    {
+        var service = await CreateLoadedServiceAsync();
+        // 播种顺序影响增量 clamp：正向事件先积累，Dislike 收尾压入回避名单。
+        // 同键两条（raw 含书名号/尾随空白，归一化折叠同键）+ 同歌手其它标题 + 同标题其它歌手；
+        // Skipped 与 Completed 是必须保留的非 Dislike 事件
+        for (var i = 0; i < 4; i++)
+            service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Completed, Title = "七里香", Artist = "周杰伦", Time = _now });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Skipped, Title = "晴天", Artist = "周杰伦", Time = _now });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "周杰伦", Time = _now });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "《晴天》 ", Artist = "周杰伦", Time = _now.AddMinutes(1) });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "告白气球", Artist = "周杰伦", Time = _now });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "林俊杰", Time = _now });
+
+        var before = service.GetSnapshot();
+        // 周杰伦：+4 −0.8 → +3.2，三连 Dislike 压到 −5.8 → 增量 clamp −5，进回避名单；
+        // 同键 Dislike 折叠后黑名单 3 条
+        Assert.Contains(before.AvoidArtists, a => a.Artist == "周杰伦");
+        Assert.Equal(3, before.DislikeBlacklist.Count);
+
+        Assert.True(service.RemoveDislikeEvents("晴天", "周杰伦"));
+
+        var after = service.GetSnapshot();
+        // 「只赦免这首歌」：同歌手其它标题、同标题其它歌手的 Dislike 均保留
+        Assert.Equal(2, after.DislikeBlacklist.Count);
+        Assert.Contains(after.DislikeBlacklist, x => x.Title == "告白气球" && x.Artist == "周杰伦");
+        Assert.Contains(after.DislikeBlacklist, x => x.Title == "晴天" && x.Artist == "林俊杰");
+        // Skipped(−0.8) 保留：移除两条 Dislike 后 −3 −0.8 +4 = +0.2（若误删 Skipped 则为 +1.0）
+        var jay = Assert.Single(after.TopArtists, a => a.Artist == "周杰伦");
+        Assert.Equal(0.2, jay.Score, precision: 6);
+        Assert.DoesNotContain(after.AvoidArtists, a => a.Artist == "周杰伦");
+    }
+
+    [Fact]
+    public async Task RemoveDislikeEvents_EmptyOrNullArtist_ReturnsFalse()
+    {
+        var service = await CreateLoadedServiceAsync();
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "周杰伦", Time = _now });
+
+        // 空歌手键永不匹配（镜像黑名单构建条件）；null 入参安全
+        Assert.False(service.RemoveDislikeEvents("晴天", " "));
+        Assert.False(service.RemoveDislikeEvents(null, null));
+        Assert.Single(service.GetSnapshot().DislikeBlacklist);
+    }
+
+    [Fact]
+    public async Task RemoveDislikeEvents_EmptyArtistEvent_GuardBlocksRemoval()
+    {
+        // 空歌手前置守卫的变异锚：没有守卫时空歌手事件会被谓词匹配删掉并返回 true
+        var service = await CreateLoadedServiceAsync();
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "", Time = _now });
+        // 空歌手本就不入黑名单（构建条件），但事件本体保留
+        Assert.Empty(service.GetSnapshot().DislikeBlacklist);
+        Assert.Equal(1, service.GetSnapshot().TotalEventsIngested);
+
+        Assert.False(service.RemoveDislikeEvents("晴天", ""));
+        Assert.Equal(1, service.GetSnapshot().TotalEventsIngested);
+    }
+
+    [Fact]
+    public async Task RemoveDislikeEvents_MarksDirtyForDisposeFlush()
+    {
+        // 移除必须自己置 _dirty：主动落盘清掉 dirty 后移除、再无新事件时，
+        // 只有移除置的 dirty 才能让退出兜底落盘带上删除（否则移除静默丢失）
+        var service = await CreateLoadedServiceAsync();
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "周杰伦", Time = _now });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "告白气球", Artist = "周杰伦", Time = _now });
+        await service.FlushAsync(CancellationToken.None);
+
+        Assert.True(service.RemoveDislikeEvents("晴天", "周杰伦"));
+        service.Dispose(); // 同步有界兜底落盘（FlushAsync().Wait）
+
+        var reloaded = new ListeningProfileService(_llm.Object, _profileFile, () => _now);
+        await reloaded.LoadAsync(CancellationToken.None);
+        var entry = Assert.Single(reloaded.GetSnapshot().DislikeBlacklist);
+        Assert.Equal("告白气球", entry.Title);
+        reloaded.Dispose();
+    }
+
+    [Fact]
+    public async Task RemoveDislikeEvents_NoMatchingEvent_ReturnsFalse()
+    {
+        var service = await CreateLoadedServiceAsync();
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "周杰伦", Time = _now });
+
+        Assert.False(service.RemoveDislikeEvents("七里香", "周杰伦"));
+        Assert.False(service.RemoveDislikeEvents("晴天", "林俊杰"));
+        Assert.Single(service.GetSnapshot().DislikeBlacklist);
+    }
+
+    [Fact]
+    public async Task RemoveDislikeEvents_EmptyTitleEntry_IsRemovable()
+    {
+        // 空标题是合法黑名单键（构建条件只要求歌手非空），不得被守卫拦截成永久不可移除
+        var service = await CreateLoadedServiceAsync();
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "", Artist = "周杰伦", Time = _now });
+        Assert.Single(service.GetSnapshot().DislikeBlacklist);
+
+        Assert.True(service.RemoveDislikeEvents("", "周杰伦"));
+        Assert.Empty(service.GetSnapshot().DislikeBlacklist);
+    }
+
+    [Fact]
+    public async Task RemoveDislikeEvents_PersistsAfterFlushAndReload()
+    {
+        var service = await CreateLoadedServiceAsync();
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "晴天", Artist = "周杰伦", Time = _now });
+        service.RecordEvent(new ListeningEventData { Type = ListeningEventType.Dislike, Title = "告白气球", Artist = "周杰伦", Time = _now });
+        Assert.True(service.RemoveDislikeEvents("晴天", "周杰伦"));
+        await service.FlushAsync(CancellationToken.None);
+        service.Dispose();
+
+        var reloaded = new ListeningProfileService(_llm.Object, _profileFile, () => _now);
+        await reloaded.LoadAsync(CancellationToken.None);
+        var entry = Assert.Single(reloaded.GetSnapshot().DislikeBlacklist);
+        Assert.Equal("告白气球", entry.Title);
+        reloaded.Dispose();
+    }
+
     // ---------- 持久化 ----------
 
     [Fact]

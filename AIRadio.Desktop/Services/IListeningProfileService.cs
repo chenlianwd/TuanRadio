@@ -50,8 +50,18 @@ public interface IListeningProfileService
     /// <summary>
     /// 后台刷新 LLM 口味摘要。内部自带水位/老化/语言触发条件、并发互斥与失败退避，
     /// 全异常内吞不抛出；节目单生成路径可安全 fire-and-forget。
+    /// force=true（设置页手动重新归纳）跳过触发条件与失败退避，仍保留冷启动门槛、
+    /// 在途互斥（撞上直接返回）与代次校验。
     /// </summary>
-    Task RefreshDigestAsync(CancellationToken cancellationToken);
+    Task RefreshDigestAsync(CancellationToken cancellationToken, bool force = false);
+
+    /// <summary>
+    /// 黑名单单条移除（设置页「不爱听的歌」）：删除该曲目（归一化 Title|Artist 键）的全部
+    /// Dislike 事件，统计随事件派生自然重算；其它类型事件不动、水位不回退、digest 不触发
+    /// 再生（旧归纳文本可能残留，由手动重新归纳兜底）。返回是否删到事件；空歌手键
+    /// 永不匹配（黑名单构建本就不收空歌手）。
+    /// </summary>
+    bool RemoveDislikeEvents(string? title, string? artist);
 
     /// <summary>尽力立即落盘（退出路径有界等待用）；防抖窗口内由内部定时器兜底。</summary>
     Task FlushAsync(CancellationToken cancellationToken);

@@ -1121,7 +1121,8 @@ public class DJServiceTests
         public void NotifyPlaybackPaused() { }
         public void Reset() { }
         public Task LoadAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task RefreshDigestAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RefreshDigestAsync(CancellationToken cancellationToken, bool force = false) => Task.CompletedTask;
+        public bool RemoveDislikeEvents(string? title, string? artist) => false;
         public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
