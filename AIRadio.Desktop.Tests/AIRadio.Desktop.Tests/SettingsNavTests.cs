@@ -70,4 +70,43 @@ public class SettingsNavTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [AvaloniaFact]
+    public void ProfileCard_NullServiceHidesCard_AndDirectPropertyDrivesVisibility()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            var view = window.FindDescendantOfType<SettingsView>()
+                ?? throw new InvalidOperationException("SettingsView not found");
+            var card = view.FindControl<Border>("ProfileCard")
+                ?? throw new InvalidOperationException("ProfileCard not found");
+            var digest = view.FindControl<TextBlock>("ProfileCardDigest")
+                ?? throw new InvalidOperationException("ProfileCardDigest not found");
+
+            // CreateViewModel 不注入画像服务（null）：切页命令可执行不抛，卡片保持隐藏
+            vm.SettingsVM.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.False(vm.SettingsVM.ProfileHasCard);
+            Assert.False(card.IsVisible);
+
+            // 直赋 VM 属性驱动卡片可见与 digest 文本绑定（绑定激活在逻辑树 attach，与 IsVisible 无关）
+            vm.SettingsVM.ProfileHasCard = true;
+            vm.SettingsVM.ProfileHasDigest = true;
+            vm.SettingsVM.ProfileDigestText = "测试归纳";
+            Assert.True(card.IsVisible);
+            Assert.Equal("测试归纳", digest.Text);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

@@ -37,6 +37,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _playbackHistorySub;
     private readonly IDisposable? _positionSampleSub;
     private readonly IDisposable _weatherCitySub;
+    private readonly IDisposable _settingsOpenSub;
     private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
@@ -209,6 +210,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .Throttle(TimeSpan.FromMilliseconds(600), RxApp.TaskpoolScheduler)
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(city => _ = WeatherVM.RefreshWeatherAsync(city));
+
+        // 弹层打开即刷新画像展示卡：设置页 TabIndex 会话内不重置，重开可直落收听画像页
+        // 而不走切页命令（那条路径上也挂了刷新，双保险不冲突）
+        _settingsOpenSub = this.WhenAnyValue(x => x.IsSettingsOpen)
+            .Where(open => open)
+            .Subscribe(_ => SettingsVM.RefreshProfileCard());
 
         // 天气快照推给 DJ 串场的环境感知（时间/天气上下文，见 DJService.BuildTransitionPrompt）
         WeatherVM.WeatherSnapshotChanged += OnWeatherSnapshotChanged;
@@ -1607,6 +1614,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
         _weatherCitySub.Dispose();
+        _settingsOpenSub.Dispose();
         if (WeatherVM != null)
             WeatherVM.WeatherSnapshotChanged -= OnWeatherSnapshotChanged;
         WeatherVM?.Dispose();

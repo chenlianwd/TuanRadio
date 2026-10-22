@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reactive.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -1004,6 +1005,8 @@ public class SettingsViewModelTests
     public void ResetListenerProfile_SecondClickWithinWindowExecutesClear()
     {
         var profile = new Mock<IListeningProfileService>();
+        // 清除后有 RefreshProfileCard 刷新：Loose Moq 会返回 null 违反 GetSnapshot 非空契约
+        profile.Setup(x => x.GetSnapshot()).Returns(ListenerProfileSnapshot.Empty);
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
             listeningProfile: profile.Object);
         var originalText = vm.ResetProfileButtonText;
@@ -1020,6 +1023,177 @@ public class SettingsViewModelTests
             vm.ResetListenerProfileCommand.Execute().Subscribe();
             profile.Verify(x => x.Reset(), Times.Once);
             Assert.Equal(originalText, vm.ResetProfileButtonText);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    private static ListenerProfileSnapshot CreatePopulatedSnapshot() => new()
+    {
+        TotalEventsIngested = 42,
+        TopArtists = new[]
+        {
+            new ArtistAffinity { Artist = "周杰伦", Score = 8.5, PlayCount = 32, LastPlayedAt = DateTime.Now },
+            new ArtistAffinity { Artist = "林俊杰", Score = 4.2, PlayCount = 0, LastPlayedAt = DateTime.Now },
+        },
+        AvoidArtists = new[] { new ArtistAffinity { Artist = "张三", Score = -2.1 } },
+        DislikeBlacklist = new[] { new ProfileMusicRef("晴天", "周杰伦") },
+        Digest = new TasteDigestData { Text = "偏爱华语流行与抒情摇滚", GeneratedAt = new DateTime(2026, 10, 21) },
+    };
+
+    [Fact]
+    public void ProfileCard_PopulatedSnapshot_MapsAllSections()
+    {
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(CreatePopulatedSnapshot());
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            // 切页命令是页 4 的刷新入口之一（另见弹层打开/开关翻转/清除）
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+
+            Assert.True(vm.ProfileHasCard);
+            Assert.Equal(string.Empty, vm.ProfileEmptyHint);
+            Assert.True(vm.ProfileHasDigest);
+            Assert.Equal("偏爱华语流行与抒情摇滚", vm.ProfileDigestText);
+            Assert.Equal("更新于 2026/10/21", vm.ProfileDigestMeta);
+            Assert.True(vm.ProfileHasTopArtists);
+            // PlayCount=0 的歌手只显名字（仅 Like 事件撑起正分的歌手没有播放次数）
+            Assert.Equal("周杰伦 ×32、林俊杰", vm.ProfileTopArtistsText);
+            Assert.True(vm.ProfileHasAvoidArtists);
+            Assert.Equal("张三", vm.ProfileAvoidArtistsText);
+            Assert.True(vm.ProfileHasBlacklist);
+            var item = Assert.Single(vm.ProfileBlacklistItems);
+            Assert.Equal("晴天 - 周杰伦", item.DisplayText);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ProfileCard_DataWithoutDigest_ShowsCardWithPlaceholderState()
+    {
+        // 已过冷启动有歌手/黑名单数据但 digest 未生成（LLM 未配置/归纳中/退避中）：
+        // 卡片照常显示、digest 段走占位态，不得回退「还不太了解你」的虚假归因
+        var snapshot = CreatePopulatedSnapshot();
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(new ListenerProfileSnapshot
+        {
+            TotalEventsIngested = snapshot.TotalEventsIngested,
+            TopArtists = snapshot.TopArtists,
+            DislikeBlacklist = snapshot.DislikeBlacklist,
+        });
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.True(vm.ProfileHasCard);
+            Assert.False(vm.ProfileHasDigest);
+            Assert.Equal(string.Empty, vm.ProfileDigestText);
+            Assert.True(vm.ProfileHasTopArtists);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ProfileCard_EmptySnapshot_ShowsColdStartHintAndRelocalizes()
+    {
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(ListenerProfileSnapshot.Empty);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.False(vm.ProfileHasCard);
+            Assert.Contains("还不太了解你", vm.ProfileEmptyHint);
+
+            // _onLanguageChanged 重建 VM 拼串文案（「更新于」/四态提示同源）
+            AppLanguage.Apply("en");
+            Assert.Contains("keep listening", vm.ProfileEmptyHint);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public void ProfileCard_DisabledToggle_ShowsPausedHint()
+    {
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(CreatePopulatedSnapshot());
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            // 先证明有数据时卡片可见
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.True(vm.ProfileHasCard);
+
+            // 关开关：toggle 订阅推服务 Enabled 并刷新卡片（GetSnapshot 此时返回 Empty 的暂停态）
+            vm.ListenerProfileEnabled = false;
+            profile.VerifySet(x => x.Enabled = false, Times.Once);
+            Assert.False(vm.ProfileHasCard);
+            Assert.Contains("学习已暂停", vm.ProfileEmptyHint);
+
+            // 重开开关恢复卡片（再次刷新）
+            vm.ListenerProfileEnabled = true;
+            Assert.True(vm.ProfileHasCard);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ProfileCard_NullService_CommandSafeAndCardHidden()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.False(vm.ProfileHasCard);
+            Assert.Equal(string.Empty, vm.ProfileEmptyHint);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ProfileCard_ResetClearsCardBackToColdStart()
+    {
+        var populated = CreatePopulatedSnapshot();
+        var hasData = true;
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot())
+            .Returns(() => hasData ? populated : ListenerProfileSnapshot.Empty);
+        profile.Setup(x => x.Reset()).Callback(() => hasData = false);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.True(vm.ProfileHasCard);
+
+            // 二次确认清除后刷新回落冷启动态
+            vm.ResetListenerProfileCommand.Execute().Subscribe();
+            vm.ResetListenerProfileCommand.Execute().Subscribe();
+            Assert.False(vm.ProfileHasCard);
+            Assert.Contains("还不太了解你", vm.ProfileEmptyHint);
         }
         finally
         {
