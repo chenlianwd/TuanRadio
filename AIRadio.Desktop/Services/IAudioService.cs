@@ -38,6 +38,8 @@ public interface IAudioService
     void PlayAtIndex(int index);
     void PlayTrack(Track track);
     void StartPlaybackContext(IEnumerable<Track> tracks, int startIndex = 0, bool shuffle = false, string? contextName = null);
+    /// <summary>插播单曲（单元素上下文）：瞬态播放不进主歌单，曲终按模式回落（电台回 DJ/列表循环回主歌单/顺序即止）。</summary>
+    void PlayOneShot(Track track, string? contextName = null);
     void PlayNextInQueue(Track track);
     void AddToQueue(Track track);
     void ClearPlaybackContext();

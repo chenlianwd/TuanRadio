@@ -33,7 +33,6 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly Action _onLanguageChanged;
     private readonly IDisposable _searchTextSub;
     private int _disposed;
-    private bool _isPlayingOnline;
     private bool _isLoading;
     private bool _isSearching;
     private CancellationTokenSource? _slowSearchCts;
@@ -194,7 +193,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         });
         ShowAllLibraryTracksCommand = ReactiveCommand.Create(() => { SelectedSyncedPlaylist = null; });
 
-        PlayOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(PlayOnlineAsync);
+        // 同步命令：上下文化点播没有 await 窗口，无需异步重入守卫
+        PlayOnlineCommand = ReactiveCommand.Create<OnlineTrack>(PlayOnline);
 
         AddOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(async track =>
         {
@@ -264,8 +264,14 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         PlayFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
-            if (Tracks.Contains(track))
-                _audioService.PlayTrack(track);
+            // 收藏点播 = 收藏列表为播放上下文（同搜索点播语义）：从点击项起连播收藏，
+            // 曲目本身已在主歌单（收藏必然入列），不产生新的持久化
+            var favorites = Favorites.ToList();
+            var startIndex = favorites.IndexOf(track);
+            if (startIndex < 0)
+                startIndex = 0;
+            _audioService.StartPlaybackContext(favorites, startIndex, shuffle: false,
+                AppLanguage.T("收藏", "Favorites"));
         });
 
         _selectedTrackSub = this.WhenAnyValue(x => x.SelectedTrack)
@@ -701,56 +707,27 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _pendingLegacyVersion = null;
     }
 
-    private async Task PlayOnlineAsync(OnlineTrack track)
+    private void PlayOnline(OnlineTrack track)
     {
-        if (_isPlayingOnline) return;
         CancelSlowSearch();
-        _isPlayingOnline = true;
-        try
-        {
-            SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》...", $"Playing \"{track.Title}\"..."));
-            var t = await ResolvePlayableTrackAsync(track);
-            if (t == null)
-            {
-                Log.Warning("No play URL for track {Id}", track.Id);
-                SetSearchStatus(() => AppLanguage.T("这首歌暂时无法获取播放地址，换一个结果试试。", "Couldn't get a playable URL for this track; try another result."));
-                return;
-            }
 
-            // Check if track already in playlist (stable identity, not the temporary URL)
-            var existing = Tracks.FirstOrDefault(existingTrack => MatchesOnlineTrack(existingTrack, track));
-            if (existing != null)
-            {
-                _audioService.PlayTrack(existing);
-                TabIndex = 0;
-                SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\"."));
-                return;
-            }
+        // 搜索结果点播 = 会话级播放上下文（同酷狗歌单语义）：从点击项起连播整个结果列表，
+        // 曲终按模式回落（列表循环在列表内循环、电台模式播完回归 DJ）。曲目以瞬态身份播放，
+        // 不写主歌单不落盘；想留存用行内「+」或播放器 ❤️。空 FilePath 由播放核懒解析，
+        // 不可播结果经自愈链自动跳到下一个结果。
+        var startIndex = SearchResults.IndexOf(track);
+        if (startIndex < 0)
+        {
+            Log.Debug("Play online track {Id} not found in current search results; starting from index 0", track.Id);
+            startIndex = 0;
+        }
+        var tracks = SearchResults.Select(item => item.ToTrack(string.Empty)).ToList();
+        if (tracks.Count == 0) return;
 
-            Tracks.Add(t);
-            _audioService.AddTracks(new[] { t });
-            _audioService.PlayTrack(t);
-            TabIndex = 0;
-            // 保存失败必须可见（同 AddOnlineCommand 口径），防"正在播放"假象后静默丢失
-            var saveSucceeded = await TrySaveAsync();
-            SetSearchStatus(() => saveSucceeded
-                ? AppLanguage.T($"正在播放《{track.Title}》。", $"Now playing \"{track.Title}\".")
-                : AppLanguage.T($"正在播放《{track.Title}》，但保存失败；重启后会丢失。",
-                    $"Now playing \"{track.Title}\", but saving failed; it will be lost on restart."));
-        }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
-        {
-            // 应用关闭/生命周期取消不算播放失败，不弹失败文案
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Play online failed for {Track}", track.Title);
-            SetSearchStatus(() => AppLanguage.T("播放失败，可能是音源不可用或网络超时。", "Playback failed; the source may be unavailable or the network timed out."));
-        }
-        finally
-        {
-            _isPlayingOnline = false;
-        }
+        _audioService.StartPlaybackContext(tracks, startIndex, shuffle: false,
+            AppLanguage.T("搜索结果", "Search results"));
+        SetSearchStatus(() => AppLanguage.T($"正在播放《{track.Title}》，后续按搜索结果顺序播放。",
+            $"Now playing \"{track.Title}\"; continuing in search result order."));
     }
 
     /// <summary>

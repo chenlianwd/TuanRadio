@@ -251,6 +251,153 @@ public class AudioServiceTests
     }
 
     [Fact]
+    public void SingleTrackContext_WrapWithCanonicalLibrary_TreatedAsExhausted()
+    {
+        // 护栏：单元素队列 wrap 只会重播自己，主歌单有曲可回落时视为耗尽（hadContext=false
+        // 让列表循环落回主歌单、手动 Next 进主歌单），不静默自循环
+        using var svc = new AudioService();
+        svc.LoadTracks(new[] { new Track { SourceId = "local:a", Title = "Local" } });
+        svc.StartPlaybackContext(new[]
+        {
+            new Track { SourceId = "kugou:solo", Title = "Solo", FilePath = "http://example.com/solo.mp3" }
+        }, contextName: "搜索结果");
+        var method = typeof(AudioService).GetMethod(
+            "TryAdvancePlaybackContext",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var args = new object[] { true, false };
+
+        var advanced = (bool)method.Invoke(svc, args)!;
+
+        Assert.False(advanced);
+        Assert.False((bool)args[1]);
+        Assert.Empty(svc.PlaybackQueue);
+        Assert.Equal(string.Empty, svc.PlaybackContextName);
+    }
+
+    [Fact]
+    public void SingleTrackContext_WrapWithEmptyLibrary_ReplaysCurrent()
+    {
+        // 护栏兜底：主歌单为空（canonical 全空）时保持 wrap 重播当前，防静默停摆
+        using var svc = new AudioService();
+        var solo = new Track { SourceId = "kugou:solo", Title = "Solo", FilePath = "http://example.com/solo.mp3" };
+        svc.StartPlaybackContext(new[] { solo }, contextName: "搜索结果");
+        var method = typeof(AudioService).GetMethod(
+            "TryAdvancePlaybackContext",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var args = new object[] { true, false };
+
+        var advanced = (bool)method.Invoke(svc, args)!;
+
+        Assert.True(advanced);
+        Assert.True((bool)args[1]);
+        Assert.Single(svc.PlaybackQueue);
+        Assert.Equal("Solo", svc.CurrentTrack?.Title);
+    }
+
+    [Fact]
+    public void MultiTrackContext_WrapAtEnd_StillWraps()
+    {
+        using var svc = new AudioService();
+        svc.LoadTracks(new[] { new Track { SourceId = "local:a", Title = "Local" } });
+        svc.StartPlaybackContext(new[]
+        {
+            new Track { SourceId = "kugou:a", Title = "A", FilePath = "http://example.com/a.mp3" },
+            new Track { SourceId = "kugou:b", Title = "B", FilePath = "http://example.com/b.mp3" }
+        }, startIndex: 1, contextName: "搜索结果");
+        var method = typeof(AudioService).GetMethod(
+            "TryAdvancePlaybackContext",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var args = new object[] { true, false };
+
+        var advanced = (bool)method.Invoke(svc, args)!;
+
+        Assert.True(advanced);
+        Assert.Equal("A", svc.CurrentTrack?.Title);
+    }
+
+    [Fact]
+    public void ContextExhaustionWithoutWrap_StillReportsHadContext()
+    {
+        // 既有语义锚定：非 wrap 耗尽（电台/顺序模式）hadContext=true，手动 Next 不跳资料库
+        using var svc = new AudioService();
+        svc.StartPlaybackContext(new[]
+        {
+            new Track { SourceId = "kugou:solo", Title = "Solo", FilePath = "http://example.com/solo.mp3" }
+        }, contextName: "搜索结果");
+        var method = typeof(AudioService).GetMethod(
+            "TryAdvancePlaybackContext",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var args = new object[] { false, false };
+
+        var advanced = (bool)method.Invoke(svc, args)!;
+
+        Assert.False(advanced);
+        Assert.True((bool)args[1]);
+        Assert.Empty(svc.PlaybackQueue);
+    }
+
+    [Fact]
+    public void AddTracks_PromotesTransientContextTrackInPlace()
+    {
+        // 收藏转正既有机制：瞬态插播曲被同身份曲目 AddTracks（如 ❤️ 收藏把曲目写进主歌单）时
+        // 原地替换瞬态槽并移出瞬态集——清空播放上下文后该曲仍留在主歌单
+        using var svc = new AudioService();
+        svc.LoadTracks(new[] { new Track { SourceId = "local:a", Title = "Local" } });
+        var transient = new Track { SourceId = "kugou:x", Title = "X" };
+        svc.StartPlaybackContext(new[] { transient }, contextName: "搜索结果");
+        Assert.Contains(svc.Playlist, track => ReferenceEquals(track, transient));
+
+        var promoted = new Track { SourceId = "kugou:x", Title = "X", FilePath = "http://example.com/x.mp3" };
+        svc.AddTracks(new[] { promoted });
+
+        Assert.DoesNotContain(svc.Playlist, track => ReferenceEquals(track, transient));
+        Assert.Contains(svc.Playlist, track => ReferenceEquals(track, promoted));
+        // 已转正：清空播放上下文不再把该曲当瞬态移除
+        svc.ClearPlaybackContext();
+        Assert.Contains(svc.Playlist, track => ReferenceEquals(track, promoted));
+    }
+
+    [Fact]
+    public async Task Next_RadioMode_AdvancesContextBeforeRecommendationCallback()
+    {
+        // 电台模式下点搜索结果 = 插播：上下文优先于推荐回调连播，耗尽后才交回电台链
+        using var svc = new AudioService();
+        var callbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackCount = 0;
+        svc.SetRepeatMode("radio");
+        svc.SetNextCallback(_ =>
+        {
+            Interlocked.Increment(ref callbackCount);
+            callbackStarted.TrySetResult();
+            return Task.FromResult<Track?>(new Track
+            {
+                SourceId = "radio:next",
+                Title = "Recommended",
+                FilePath = "http://example.com/recommended.mp3"
+            });
+        });
+        svc.StartPlaybackContext(new[]
+        {
+            new Track { SourceId = "netease:a", Title = "A", FilePath = "http://example.com/a.mp3" },
+            new Track { SourceId = "netease:b", Title = "B", FilePath = "http://example.com/b.mp3" }
+        }, contextName: "搜索结果");
+
+        svc.Next();
+        await Task.Delay(200);
+
+        Assert.Equal(0, callbackCount);
+        Assert.Equal("B", svc.CurrentTrack?.Title);
+
+        svc.Next();
+        await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(200);
+
+        Assert.Equal(1, callbackCount);
+        Assert.Equal("Recommended", svc.CurrentTrack?.Title);
+        svc.Dispose();
+    }
+
+    [Fact]
     public async Task PendingRadioNext_DoesNotOverrideNewPlaybackContext()
     {
         using var svc = new AudioService();

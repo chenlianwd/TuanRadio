@@ -203,9 +203,11 @@ public class ChatViewModelTests
         await vm.SendMessageCommand.Execute().FirstAsync();
 
         djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
-            tracks.Any(t => t.Title == "丑八怪" && t.SourceId == "netease:ugly"))), Times.Once);
-        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+        // 点歌 = 插播单曲：PlayOneShot 直接收到解析后的曲目，不再入主歌单
+        audioMock.Verify(x => x.PlayOneShot(
+            It.Is<Track>(t => t.Title == "丑八怪" && t.SourceId == "netease:ugly"),
+            It.IsAny<string?>()), Times.Once);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
     }
 
     [Fact]
@@ -235,9 +237,10 @@ public class ChatViewModelTests
         djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.SearchAsync("李荣浩", 5), Times.Once);
         searchMock.Verify(x => x.SearchAsync("李荣浩的歌", 5), Times.Never);
-        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
-            tracks.Any(t => t.Title == "模特" && t.Artist == "李荣浩"))), Times.Once);
-        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+        audioMock.Verify(x => x.PlayOneShot(
+            It.Is<Track>(t => t.Title == "模特" && t.Artist == "李荣浩"),
+            It.IsAny<string?>()), Times.Once);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
         Assert.Contains(vm.Messages, message => message.Content == "好，我来找李荣浩的歌。");
     }
 
@@ -270,9 +273,10 @@ public class ChatViewModelTests
         djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.GetPlayUrlAsync("netease:title-match"), Times.Once);
         searchMock.Verify(x => x.GetPlayUrlAsync("netease:artist-match"), Times.Never);
-        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
-            tracks.Any(t => t.Title == "王菲" && t.Artist == "演唱者"))), Times.Once);
-        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+        audioMock.Verify(x => x.PlayOneShot(
+            It.Is<Track>(t => t.Title == "王菲" && t.Artist == "演唱者"),
+            It.IsAny<string?>()), Times.Once);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
     }
 
     [Fact]
@@ -290,6 +294,7 @@ public class ChatViewModelTests
         djMock.Verify(x => x.GenerateChatResponseAsync("好累", It.IsAny<CancellationToken>()), Times.Once);
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
         audioMock.Verify(x => x.PlayAtIndex(It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -313,9 +318,10 @@ public class ChatViewModelTests
         djMock.Verify(x => x.RecommendNextTrackAsync(It.IsAny<Track?>()), Times.Once);
         djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
-        audioMock.Verify(x => x.AddTracks(It.Is<IEnumerable<Track>>(tracks =>
-            tracks.Any(t => t.SourceId == "netease:fresh"))), Times.Once);
-        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
+        audioMock.Verify(x => x.PlayOneShot(
+            It.Is<Track>(t => t.SourceId == "netease:fresh"),
+            It.IsAny<string?>()), Times.Once);
+        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
     }
 
     [Fact]
@@ -374,52 +380,6 @@ public class ChatViewModelTests
         {
             vm.Dispose();
         }
-    }
-
-    [Fact]
-    public async Task SendMessage_WithTrackAddedCallback_DoesNotAddTrackTwice()
-    {
-        var playlist = new List<Track>();
-        var djMock = new Mock<IDJService>();
-        djMock.SetupGet(x => x.TtsEnabled).Returns(false);
-        djMock.SetupGet(x => x.CurrentEmotion).Returns("neutral");
-
-        var audioMock = new Mock<IAudioService>();
-        audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
-        audioMock.Setup(x => x.TtsError).Returns(new Subject<string>());
-        audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
-        audioMock.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
-        audioMock.Setup(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()))
-            .Callback<IEnumerable<Track>>(tracks => playlist.AddRange(tracks));
-
-        var searchMock = new Mock<IMusicSearchService>();
-        var result = new OnlineTrack
-        {
-            Id = "netease:167827",
-            Title = "素颜",
-            Artist = "许嵩"
-        };
-        searchMock.Setup(x => x.SearchAsync("素颜", 3))
-            .ReturnsAsync(new List<OnlineTrack> { result });
-        searchMock.Setup(x => x.SearchAsync("素颜", 5))
-            .ReturnsAsync(new List<OnlineTrack> { result });
-        searchMock.Setup(x => x.GetPlayUrlAsync("netease:167827"))
-            .ReturnsAsync("http://example.com/suyan.mp3");
-
-        var sttMock = new Mock<ISttService>();
-        var vm = new ChatViewModel(
-            djMock.Object,
-            audioMock.Object,
-            searchMock.Object,
-            sttMock.Object,
-            track => audioMock.Object.AddTracks(new[] { track }));
-
-        vm.InputText = "素颜";
-        await vm.SendMessageCommand.Execute().FirstAsync();
-
-        Assert.Single(playlist);
-        audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Once);
-        audioMock.Verify(x => x.PlayAtIndex(0), Times.Once);
     }
 
     [Fact]

@@ -127,7 +127,7 @@ public class FirstPlayResolutionTests
     [Fact]
     public async Task ChatViewModel_SongRequest_FirstPlayTrackCarriesResolutionPayload()
     {
-        var playlist = new List<Track>();
+        Track? played = null;
         var djMock = new Mock<IDJService>();
         djMock.SetupGet(x => x.TtsEnabled).Returns(false);
         djMock.SetupGet(x => x.CurrentEmotion).Returns("neutral");
@@ -135,9 +135,9 @@ public class FirstPlayResolutionTests
         audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
         audioMock.Setup(x => x.TtsError).Returns(new Subject<string>());
         audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
-        audioMock.Setup(x => x.Playlist).Returns(() => playlist.AsReadOnly());
-        audioMock.Setup(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()))
-            .Callback<IEnumerable<Track>>(tracks => playlist.AddRange(tracks));
+        audioMock.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        audioMock.Setup(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()))
+            .Callback<Track, string?>((track, _) => played = track);
         var sttMock = new Mock<ISttService>();
 
         // 真实 Broker + 带声明值/播放头的 Provider；重定向探测注入即时 200 保持测试速度
@@ -151,12 +151,13 @@ public class FirstPlayResolutionTests
         vm.InputText = "模特";
         await vm.SendMessageCommand.Execute().FirstAsync();
 
-        var added = playlist.FirstOrDefault(t => t.SourceId == "stub:model");
-        Assert.NotNull(added);
-        Assert.Equal("FLAC", added.DeclaredCodec);
-        Assert.Equal(900, added.DeclaredBitrateKbps);
-        Assert.Same(headers, added.PlaybackHeaders);
-        Assert.NotNull(added.ResolvedAtUtc);
+        // 点歌 = 插播：首播曲目经 PlayOneShot 直达，声明值/播放头/新鲜度标记随曲携带
+        Assert.NotNull(played);
+        Assert.Equal("stub:model", played!.SourceId);
+        Assert.Equal("FLAC", played.DeclaredCodec);
+        Assert.Equal(900, played.DeclaredBitrateKbps);
+        Assert.Same(headers, played.PlaybackHeaders);
+        Assert.NotNull(played.ResolvedAtUtc);
     }
 
     private sealed class PayloadProvider(PlaybackHeaders headers) : IMusicProvider
