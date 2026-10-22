@@ -24,6 +24,7 @@ public partial class App : Application
     private MusicApiServer? _kugouApiServer;
 #endif
     private MainWindowViewModel? _mainVm;
+    private SmtcService? _smtcService;
     private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
 
@@ -85,6 +86,10 @@ public partial class App : Application
 
                 desktop.MainWindow = mainWindow;
                 desktop.ShutdownRequested += OnShutdownRequested;
+                // SMTC（系统媒体面板 + 耳机媒体键）挂载须待窗口 Show 后：Win32 HWND
+                // 在 Show 时才创建，此处拿不到句柄；失败静默降级（同 KillOnCloseJob 语义）
+                _smtcService = new SmtcService(_serviceProvider.GetRequiredService<IAudioService>());
+                mainWindow.Opened += OnMainWindowOpenedForSmtc;
 #if !TUANRADIO_SLIM_CORE
                 var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
                 // 网易代理收养判定与酷狗同构升级为身份摘要比对：原先仅凭"像搜索响应的
@@ -121,6 +126,15 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private void OnMainWindowOpenedForSmtc(object? sender, EventArgs e)
+    {
+        if (sender is not Views.MainWindow window)
+            return;
+        // 一次性挂载：自解绑防窗口 hide/show 再次触发重复注册 SMTC
+        window.Opened -= OnMainWindowOpenedForSmtc;
+        _smtcService?.TryAttach(window);
     }
 
     private async System.Threading.Tasks.Task StartMusicAndInitializeAsync(CancellationToken cancellationToken)
@@ -326,6 +340,8 @@ public partial class App : Application
         Log.Information("AI Radio shutting down...");
         _lifetimeCts.Cancel();
         _mainVm?.Dispose();
+        // 先于 DI 容器释放（AudioService 随后销毁），移除按钮回调并置 SMTC 关闭态
+        _smtcService?.Dispose();
 #if !TUANRADIO_SLIM_CORE
         _kugouApiServer?.Dispose();
         _musicApiServer?.Dispose();
