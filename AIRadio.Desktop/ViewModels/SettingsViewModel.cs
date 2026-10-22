@@ -38,6 +38,9 @@ public sealed class MusicProviderOption : ReactiveObject
     public void RefreshLanguage() => this.RaisePropertyChanged(nameof(DisplayName));
 }
 
+/// <summary>「不爱听的歌」展示条目（Title/Artist 供移除回传，DisplayText 供列表渲染）。</summary>
+public sealed record ProfileBlacklistItem(string Title, string Artist, string DisplayText);
+
 public partial class SettingsViewModel : ViewModelBase, IDisposable
 {
 #if TUANRADIO_SLIM_CORE
@@ -127,6 +130,19 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string AudiusStatus { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public partial string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
+    // 「DJ 对你的印象」展示卡（数据源 GetSnapshot 现算，四态见 RefreshProfileCard）
+    [Reactive] public partial bool ProfileHasCard { get; set; }
+    [Reactive] public partial string ProfileEmptyHint { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasDigest { get; set; }
+    [Reactive] public partial string ProfileDigestText { get; set; } = string.Empty;
+    [Reactive] public partial string ProfileDigestMeta { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasTopArtists { get; set; }
+    [Reactive] public partial string ProfileTopArtistsText { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasAvoidArtists { get; set; }
+    [Reactive] public partial string ProfileAvoidArtistsText { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasBlacklist { get; set; }
+    // 黑名单条目必须整体换新 List 实例（同 MusicProviders：就地 Clear+AddRange 绑定不刷新）
+    [Reactive] public partial List<ProfileBlacklistItem> ProfileBlacklistItems { get; set; } = new();
     // 音源逐源连接诊断结果（随语言切换重建）
     [Reactive] public partial string SourceDiagnosticsText { get; set; } = string.Empty;
     [Reactive] public partial bool IsDiagnosingSources { get; set; }
@@ -259,6 +275,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     return;
                 if (_listeningProfile != null)
                     _listeningProfile.Enabled = enabled;
+                RefreshProfileCard();
                 _ = SaveUiStateCommand.Execute().Subscribe();
             });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
@@ -267,7 +284,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ShowMusicTabCommand = ReactiveCommand.Create(() => { TabIndex = 1; });
         ShowHostTabCommand = ReactiveCommand.Create(() => { TabIndex = 2; });
         ShowAppearanceTabCommand = ReactiveCommand.Create(() => { TabIndex = 3; });
-        ShowProfileTabCommand = ReactiveCommand.Create(() => { TabIndex = 4; });
+        ShowProfileTabCommand = ReactiveCommand.Create(() => { TabIndex = 4; RefreshProfileCard(); });
         KugouQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunKugouQrLoginAsync());
         KugouLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutKugouAsync());
         KugouVerifyCommand = ReactiveCommand.CreateFromTask(() => RunKugouVerifyAsync());
@@ -333,6 +350,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             ResetProfileButtonText = Volatile.Read(ref _listenerProfileResetArmed) != 0
                 ? AppLanguage.T("再次点击确认清除", "Click again to confirm")
                 : AppLanguage.T("清除收听画像", "Clear listening profile");
+            // 展示卡的「更新于」与四态提示是 VM 拼串，随语言重建
+            RefreshProfileCard();
             CharacterProfile.RefreshLocalizedPresets();
             RelocalizeCharacterPersonality();
             if (_statusMessageFactory != null)
@@ -935,6 +954,75 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// 刷新「DJ 对你的印象」展示卡。四态：服务未注入 → 整卡隐藏；学习暂停（开关关，GetSnapshot
+    /// 此时返回 Empty）→ 暂停提示；快照无可见内容 → 冷启动提示；有任一内容 → 卡片（digest 段空时
+    /// 由占位词条兜底，不给「还不太了解你」的虚假归因）。GetSnapshot 为 ≤1000 事件的现算聚合，
+    /// 同步开销可忽略。
+    /// </summary>
+    public void RefreshProfileCard()
+    {
+        if (_listeningProfile == null || !ListenerProfileEnabled)
+        {
+            ProfileHasCard = false;
+            ProfileEmptyHint = _listeningProfile == null
+                ? string.Empty
+                : AppLanguage.T("学习已暂停，画像保留在本机", "Learning paused; profile kept on this device");
+            ClearProfileCardSections();
+            return;
+        }
+
+        var snapshot = _listeningProfile.GetSnapshot();
+        var hasDigest = !string.IsNullOrWhiteSpace(snapshot.Digest?.Text);
+        var hasTopArtists = snapshot.TopArtists.Count > 0;
+        var hasBlacklist = snapshot.DislikeBlacklist.Count > 0;
+        if (!hasDigest && !hasTopArtists && !hasBlacklist)
+        {
+            ProfileHasCard = false;
+            ProfileEmptyHint = AppLanguage.T(
+                "还不太了解你——多听几首，DJ 慢慢就懂了",
+                "The DJ doesn't know you well yet — keep listening");
+            ClearProfileCardSections();
+            return;
+        }
+
+        ProfileHasCard = true;
+        ProfileEmptyHint = string.Empty;
+        ProfileHasDigest = hasDigest;
+        ProfileDigestText = hasDigest ? snapshot.Digest!.Text : string.Empty;
+        ProfileDigestMeta = hasDigest
+            ? AppLanguage.T(
+                $"更新于 {snapshot.Digest!.GeneratedAt:yyyy/M/d}",
+                $"Updated {snapshot.Digest.GeneratedAt:yyyy/M/d}")
+            : string.Empty;
+        ProfileHasTopArtists = hasTopArtists;
+        ProfileTopArtistsText = string.Join("、", snapshot.TopArtists.Take(5)
+            .Select(a => a.PlayCount > 0 ? $"{a.Artist} ×{a.PlayCount}" : a.Artist));
+        ProfileHasAvoidArtists = snapshot.AvoidArtists.Count > 0;
+        ProfileAvoidArtistsText = string.Join("、", snapshot.AvoidArtists.Select(a => a.Artist));
+        ProfileHasBlacklist = hasBlacklist;
+        // 黑名单条目必有非空歌手（构建条件），空标题（合法黑名单键）显示歌手即可
+        ProfileBlacklistItems = snapshot.DislikeBlacklist
+            .Select(x => new ProfileBlacklistItem(
+                x.Title, x.Artist,
+                string.IsNullOrWhiteSpace(x.Title) ? x.Artist : $"{x.Title} - {x.Artist}"))
+            .ToList();
+    }
+
+    /// <summary>复位卡片分区展示态：早退分支不留陈旧标志（隐藏态也与快照一致）。</summary>
+    private void ClearProfileCardSections()
+    {
+        ProfileHasDigest = false;
+        ProfileDigestText = string.Empty;
+        ProfileDigestMeta = string.Empty;
+        ProfileHasTopArtists = false;
+        ProfileTopArtistsText = string.Empty;
+        ProfileHasAvoidArtists = false;
+        ProfileAvoidArtistsText = string.Empty;
+        ProfileHasBlacklist = false;
+        ProfileBlacklistItems = new();
+    }
+
+    /// <summary>
     /// 清除收听画像：二次确认（首次点击武装、5 秒内再点执行），武装态经按钮文案表达。
     /// 命令体保持同步、延时解除武装走 UI 调度器上的 Timer：CreateFromTask 执行期间的
     /// 再次 Execute 会被 ReactiveCommand 忽略，确认点击将失效。
@@ -955,6 +1043,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             _listeningProfile.Reset();
             ResetProfileButtonText = AppLanguage.T("清除收听画像", "Clear listening profile");
             SetStatusMessage(() => AppLanguage.T("收听画像已清除", "Listening profile cleared"));
+            RefreshProfileCard();
             return;
         }
 

@@ -340,6 +340,56 @@
                         <Button Command="{Binding ResetListenerProfileCommand}"
                                 Content="{Binding ResetProfileButtonText}"
                                 HorizontalAlignment="Left" Padding="14,6" FontSize="12"/>
+
+                        <!-- 四态空提示（服务未注入/暂停/冷启动），卡片可见时置空隐藏 -->
+                        <TextBlock Text="{Binding ProfileEmptyHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"
+                                   TextWrapping="Wrap" IsVisible="{Binding !ProfileHasCard}"/>
+
+                        <!-- DJ 对你的印象：画像只读展示卡（四态见 SettingsViewModel.RefreshProfileCard）。
+                             卡片内辅助文字用 C_FFB3B3B3：卡片底在 Light 重映射为 #FFE2DAEC，
+                             C_FF666666 在页面底 4.82 达标、卡片底只有 3.62 -->
+                        <Border x:Name="ProfileCard" IsVisible="{Binding ProfileHasCard}" Background="{DynamicResource C_FF262632}"
+                                CornerRadius="8" Padding="12" Margin="0,8,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="{DynamicResource S_ProfileCardTitle}" Foreground="{DynamicResource C_FFEDEDF5}"
+                                           FontSize="13" FontWeight="SemiBold"/>
+
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{DynamicResource S_ProfileDigestLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock x:Name="ProfileCardDigest" Text="{Binding ProfileDigestText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                               TextWrapping="Wrap" IsVisible="{Binding ProfileHasDigest}"/>
+                                    <TextBlock Text="{Binding ProfileDigestMeta}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="10"
+                                               IsVisible="{Binding ProfileHasDigest}"/>
+                                    <TextBlock Text="{DynamicResource S_ProfileDigestPending}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"
+                                               TextWrapping="Wrap" IsVisible="{Binding !ProfileHasDigest}"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="2" IsVisible="{Binding ProfileHasTopArtists}">
+                                    <TextBlock Text="{DynamicResource S_ProfileTopArtistsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock Text="{Binding ProfileTopArtistsText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="2" IsVisible="{Binding ProfileHasAvoidArtists}">
+                                    <TextBlock Text="{DynamicResource S_ProfileAvoidArtistsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock Text="{Binding ProfileAvoidArtistsText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{DynamicResource S_ProfileBlacklistLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock Text="{DynamicResource S_ProfileBlacklistEmpty}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"
+                                               IsVisible="{Binding !ProfileHasBlacklist}"/>
+                                    <ItemsControl ItemsSource="{Binding ProfileBlacklistItems}" IsVisible="{Binding ProfileHasBlacklist}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="vm:ProfileBlacklistItem">
+                                                <TextBlock Text="{Binding DisplayText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="{DynamicResource S_ProfileBlacklistExpiryHint}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="10"
+                                               IsVisible="{Binding ProfileHasBlacklist}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Grid>
             </ScrollViewer>
