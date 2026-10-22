@@ -556,6 +556,112 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task StartSessionAsync_AnnouncesPlayableInstanceNotRecommendedInstance()
+    {
+        // 推荐曲与歌单既有条目宽松同曲（feat 署名等场景 AddExternalTrack 合并且不入列）时，
+        // 实际会播的是既有实例——串场词必须按"将播实例"生成，否则 DJ 念的歌手与播出的版本错位
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+
+        var existing = new Track
+        {
+            Id = "existing",
+            SourceId = "test:existing",
+            Title = "来生缘",
+            Artist = "刘德华",
+            FilePath = "http://example.com/a.mp3"
+        };
+        // 归一化后 artist 一边包含另一边（"刘德华流行4" ⊇ "刘德华"）→ 宽松同曲合并
+        var recommended = new Track
+        {
+            Id = "recommended",
+            SourceId = "test:recommended",
+            Title = "来生缘",
+            Artist = "刘德华、流行4℃",
+            FilePath = "http://example.com/b.mp3"
+        };
+        recommendations.Setup(x => x.GetNextTrackAsync(It.IsAny<RecommendationRequest>()))
+            .ReturnsAsync(recommended);
+
+        Track? announced = null;
+        dj.Setup(x => x.GenerateTrackIntroductionAsync(It.IsAny<Track?>(), It.IsAny<Track>()))
+            .Callback<Track?, Track>((_, next) => announced = next)
+            .ReturnsAsync(new DJScript { Text = "intro" });
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            vm.PlaylistVM.AddExternalTrack(existing);
+
+            await vm.StartSessionAsync();
+
+            // 串场词按将播实例念（歌手=既有条目的"刘德华"），播的也是既有实例
+            Assert.NotNull(announced);
+            Assert.Equal("刘德华", announced!.Artist);
+            Assert.Same(existing, announced);
+            audio.Verify(x => x.PlayTrack(It.Is<Track>(t => t.SourceId == "test:existing")), Times.Once);
+            audio.Verify(x => x.PlayTrack(It.Is<Track>(t => t.SourceId == "test:recommended")), Times.Never);
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public void StationContext_PushedToDjOnTrackChangeAndPlayback()
+    {
+        // 接线锚点：换曲（TrackChanged）与进入播放态（StateChanged/Playing，播放历史刚更新）
+        // 都要把"在播 + 最近播放"快照推给 DJ 聊天链——聊天 LLM 的现场感知由此而来
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var trackChanged = (Subject<Track?>)audio.Object.TrackChanged;
+        var stateChanged = (Subject<PlaybackState>)audio.Object.StateChanged;
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            dj.Verify(x => x.UpdateStationContext(It.IsAny<Track?>(), It.IsAny<IReadOnlyList<Track>>()), Times.Never);
+
+            var nowPlaying = new Track { Title = "来生缘", Artist = "刘德华" };
+            playlist.Add(nowPlaying);
+            trackChanged.OnNext(nowPlaying);
+            dj.Verify(
+                x => x.UpdateStationContext(
+                    It.Is<Track?>(t => t!.Title == "来生缘"),
+                    It.IsAny<IReadOnlyList<Track>>()),
+                Times.Once);
+
+            stateChanged.OnNext(PlaybackState.Playing);
+            dj.Verify(
+                x => x.UpdateStationContext(
+                    It.Is<Track?>(t => t!.Title == "来生缘"),
+                    It.IsAny<IReadOnlyList<Track>>()),
+                Times.Exactly(2));
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
     public async Task RadioContinuation_SpeaksEveryNthTransition()
     {
         // 电台节奏集成：开台后静默推进，第 4 次换曲才再次开口——DJ 话密度由应用层调度

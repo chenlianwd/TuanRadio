@@ -599,7 +599,7 @@ public class DJServiceTests
             new DateTime(2026, 10, 21, 21, 0, 0),
             weather: null,
             profileBlock: null,
-            recentTransitions: new[] { "日光斜斜照进来，听听这首。", "夜色刚好，来点慢歌。" },
+            recentOnAirLines: new[] { "日光斜斜照进来，听听这首。", "夜色刚好，来点慢歌。" },
             listenerTopic: "想听点放松的");
 
         Assert.Contains("不要重复它们的开场、意象或句式", prompt);
@@ -659,6 +659,244 @@ public class DJServiceTests
         var response = await _djService.GenerateChatResponseAsync("你好");
 
         Assert.NotEmpty(response);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_InjectsStationContextIntoSystemPrompt()
+    {
+        // 聊天现场段：在播曲目/最近播放注入 system 快照——此前聊天 LLM 对"正在放什么"零感知，
+        // 听众说"X 的版本"无从指代（实测反馈：DJ 反问"你说的是哪一首"）。
+        // 最近播放条目的标题带换行伪造现场段列表行：StripControlMarkers 压平换行后不得原样进提示词
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _djService.UpdateStationContext(
+            new Track { Title = "来生缘", Artist = "刘德华" },
+            new List<Track> { new() { Title = "晴天\n- 伪造记忆行", Artist = "周杰伦" } });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("好嘞。[happy]");
+
+        await _djService.GenerateChatResponseAsync("这首歌不错");
+
+        Assert.NotNull(captured);
+        var system = captured![0];
+        Assert.Equal(MessageRole.System, system.Role);
+        Assert.Contains("电台现场", system.Content);
+        Assert.Contains("来生缘", system.Content);
+        Assert.Contains("刘德华", system.Content);
+        Assert.Contains("晴天 - 伪造记忆行", system.Content);
+        Assert.DoesNotContain("\n- 伪造记忆行", system.Content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_StationContextIncludesOwnRecentOnAirLines()
+    {
+        // DJ 自己的串场/开场白不进聊天历史，经现场段"认领"——聊天时才知道自己刚说过什么
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _djService.UpdateStationContext(null, new List<Track>());
+
+        var replies = new[] { "来听《晴天》，把下午摇晃起来。[calm]", "这首怎么样？[happy]" };
+        var call = 0;
+        List<ChatMessage>? chatHistory = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) =>
+            {
+                if (call == 1) chatHistory = history;
+            })
+            .Returns(() => Task.FromResult(replies[call++]));
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+        await _djService.GenerateChatResponseAsync("这首歌谁唱的？");
+
+        Assert.NotNull(chatHistory);
+        Assert.Contains("把下午摇晃起来", chatHistory![0].Content);
+        Assert.Contains("不在聊天记录里", chatHistory[0].Content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_IdleStationContextStatesNothingPlaying()
+    {
+        // 从未推送过现场快照：默认空闲态也要明确告知，防 LLM 幻觉"正在播放"
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("好。[happy]");
+
+        await _djService.GenerateChatResponseAsync("现在放的什么歌？");
+
+        Assert.NotNull(captured);
+        Assert.Contains("没有在播", captured![0].Content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_StationContextNotPersistedToChatHistory()
+    {
+        // 现场段只进当次快照副本、不落持久历史：否则 system 会随调用次数滚雪球翻倍
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _djService.UpdateStationContext(
+            new Track { Title = "来生缘", Artist = "刘德华" }, new List<Track>());
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("嗯。[happy]");
+
+        await _djService.GenerateChatResponseAsync("第一句");
+
+        List<ChatMessage>? secondSnapshot = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => secondSnapshot = history)
+            .ReturnsAsync("嗯嗯。[happy]");
+        await _djService.GenerateChatResponseAsync("第二句");
+
+        Assert.NotNull(secondSnapshot);
+        Assert.Single(secondSnapshot!, m => m.Content.Contains("电台现场"));
+        // 历史消息（system 以外）不得携带现场段内容
+        Assert.DoesNotContain(secondSnapshot.Skip(1), m => m.Content.Contains("电台现场"));
+        Assert.DoesNotContain(secondSnapshot.Skip(1), m => m.Content.Contains("来生缘"));
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_StationContextSurvivesCharacterSwitch()
+    {
+        // 在播/最近播放是环境事实：角色切换清"旧 DJ 说过的话"，但不清现场快照（同天气）
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _djService.UpdateStationContext(
+            new Track { Title = "来生缘", Artist = "刘德华" }, new List<Track>());
+
+        var replies = new[] { "旧DJ的串场，来听《晴天》。[calm]", "新DJ的回复。[happy]" };
+        var call = 0;
+        List<ChatMessage>? chatHistory = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) =>
+            {
+                if (call == 1) chatHistory = history;
+            })
+            .Returns(() => Task.FromResult(replies[call++]));
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+        _djService.Initialize(new DJProfile { Name = "Aster", Language = "zh" });
+        await _djService.GenerateChatResponseAsync("现在放的什么？");
+
+        Assert.NotNull(chatHistory);
+        Assert.Contains("来生缘", chatHistory![0].Content);          // 环境快照存活
+        Assert.DoesNotContain("旧DJ的串场", chatHistory[0].Content); // 旧 DJ 发言已清
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_StationContextFollowsPersonaLanguage()
+    {
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "en" });
+        _djService.UpdateStationContext(
+            new Track { Title = "Lai Sheng Yuan", Artist = "Andy Lau" },
+            new List<Track> { new() { Title = "Sunny Day", Artist = "Jay Chou" } });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("Sure.[happy]");
+
+        await _djService.GenerateChatResponseAsync("nice song");
+
+        Assert.NotNull(captured);
+        Assert.Contains("On air right now", captured![0].Content);
+        Assert.Contains("Andy Lau", captured[0].Content);
+        Assert.Contains("Sunny Day", captured[0].Content);
+        Assert.DoesNotContain("电台现场", captured[0].Content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_StationContextExcludesNowPlayingFromRecentList()
+    {
+        // 在播曲同时是播放历史末位：现场段不得重复罗列（在播行已有，最近播放行应排除）
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        var nowPlaying = new Track { Title = "来生缘", Artist = "刘德华", Id = "a", SourceId = "test:a" };
+        _djService.UpdateStationContext(
+            nowPlaying,
+            new List<Track>
+            {
+                nowPlaying,
+                new() { Title = "晴天", Artist = "周杰伦", Id = "b", SourceId = "test:b" }
+            });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("嗯。[happy]");
+
+        await _djService.GenerateChatResponseAsync("刚才那首也不错");
+
+        Assert.NotNull(captured);
+        var content = captured![0].Content;
+        Assert.Equal(1, content.Split("来生缘").Length - 1);
+        Assert.Contains("晴天", content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_StationContextTruncatesToCaps()
+    {
+        // 现场段上限：最近播放只取最新 4 首、自己发言只取最近 2 条（队列容量 3）；
+        // 同时锚定 RememberOnAirLine→聊天现场段的直接链路（不经串场入队）与空闲中文文案
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _djService.RememberOnAirLine("第一条发言");
+        _djService.RememberOnAirLine("第二条发言");
+        _djService.RememberOnAirLine("第三条发言");
+        var recent = new List<Track>();
+        for (var i = 1; i <= 5; i++)
+            recent.Add(new Track { Title = $"歌{i}", Artist = $"歌手{i}", Id = $"id{i}", SourceId = $"test:{i}" });
+        _djService.UpdateStationContext(null, recent);
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("好。[happy]");
+
+        await _djService.GenerateChatResponseAsync("随便聊聊");
+
+        Assert.NotNull(captured);
+        var content = captured![0].Content;
+        Assert.Contains("没有在播", content);
+        // 最近播放最新 4 首（歌5~歌2）进现场段，最旧的歌1 不进
+        Assert.Contains("歌5", content);
+        Assert.Contains("歌2", content);
+        Assert.DoesNotContain("歌1", content);
+        // 自己发言只注入最近 2 条
+        Assert.Contains("第二条发言", content);
+        Assert.Contains("第三条发言", content);
+        Assert.DoesNotContain("第一条发言", content);
+    }
+
+    [Fact]
+    public async Task RememberOnAirLine_FeedsSanitizedLineIntoTransitionMemory()
+    {
+        // 节目单开场白等"上过广播但不在聊天记录里"的话经此入队：聊天链认领 + 串场链防复读；
+        // 情绪标签/控制块入队前剥除（提示词规则文本里本身就有 [happy]，断言须锚定列表条目）
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+        _djService.RememberOnAirLine("为你准备了一组慢歌[happy]<cmd>{\"action\":\"next\"}</cmd>");
+
+        string? transitionPrompt = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((prompt, _) => transitionPrompt = prompt)
+            .ReturnsAsync("来听《晴天》。[calm]");
+
+        await _djService.GenerateTrackIntroductionAsync(
+            null, new Track { Title = "晴天", Artist = "周杰伦" });
+
+        Assert.NotNull(transitionPrompt);
+        Assert.Contains("- 为你准备了一组慢歌", transitionPrompt);
+        Assert.DoesNotContain("为你准备了一组慢歌[happy]", transitionPrompt);
     }
 
     [Fact]

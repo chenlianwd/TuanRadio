@@ -22,19 +22,33 @@ public class DJService : IDJService
     private readonly List<ChatMessage> _chatHistory = new();
     private readonly SemaphoreSlim _chatGate = new(1, 1);
 
-    /// <summary>串场短期记忆容量：最近 N 条成功串场注入提示词防复读（百字级，本地小模型窗口安全）。</summary>
-    private const int RecentTransitionMemoryCount = 3;
+    /// <summary>DJ 现场发言短期记忆容量：最近 N 条成功串场/节目单开场白注入提示词防复读（百字级，本地小模型窗口安全）。</summary>
+    private const int RecentOnAirMemoryCount = 3;
 
     /// <summary>听众话题注入串场的截断长度：只需表意主题，防长聊天原文撑爆提示词。</summary>
     private const int MaxListenerTopicLength = 50;
 
-    /// <summary>串场短期记忆（最旧在前）：只收 LLM 成功生成的串场；fallback 模板不入队，防复读基准被污染。</summary>
-    private readonly Queue<string> _recentTransitions = new();
+    /// <summary>聊天现场段的最近播放条数上限：表意足够且不撑本地小模型窗口。</summary>
+    private const int StationContextRecentCount = 4;
+
+    /// <summary>聊天现场段注入的自己近期现场发言条数：记忆队列容量 3，聊天只需最近 2 条。</summary>
+    private const int StationContextOwnLineCount = 2;
+
+    /// <summary>DJ 现场发言短期记忆（最旧在前）：串场词与节目单开场白都是"上过广播的话"，统一入队
+    /// 防复读并供聊天链认领；只收 LLM 成功生成的文本，fallback 模板不入队，防复读基准被污染。</summary>
+    private readonly Queue<string> _recentOnAirLines = new();
 
     /// <summary>听众最近一次聊天话题：聊天链与串场链的轻量桥接，串场可自然呼应而无需复读聊天历史。</summary>
     private string? _lastListenerTopic;
 
-    /// <summary>串场记忆读写锁：串场链（advance gate 串行）与聊天链（chat gate 串行）跨域共享这两个字段。</summary>
+    /// <summary>电台现场快照：当前在播曲目（null=空闲）。聊天链凭它接住"这首歌 / X 的版本"类指代。</summary>
+    private Track? _stationNowPlaying;
+
+    /// <summary>电台现场快照：会话播放历史（旧→新），聊天链"最近放过什么"的事实源。</summary>
+    private IReadOnlyList<Track> _stationRecentlyPlayed = Array.Empty<Track>();
+
+    /// <summary>现场记忆读写锁：串场链（advance gate 串行）、聊天链（chat gate 串行）与
+    /// UI 层现场快照推送跨域共享这些字段。</summary>
     private readonly object _memoryGate = new();
 
     /// <summary>记忆代次：Initialize（角色切换）递增——串场生成秒级窗口内切角色时，
@@ -49,6 +63,36 @@ public class DJService : IDJService
 
     /// <summary>更新串场环境感知的天气快照（UI 层天气刷新落定时推送；null 表示当前无天气数据）。</summary>
     public void UpdateWeatherSnapshot(WeatherInfo? weather) => _weatherSnapshot = weather;
+
+    /// <summary>更新聊天链的电台现场快照：当前在播曲目与会话播放历史（换曲经 TrackChanged 在 UI 线程、
+    /// 进入播放态经 StateChanged 在 LibVLC 事件线程推送，_memoryGate 保证双字段一致性；
+    /// nowPlaying 传 null 表示电台空闲）。串场提示词的 current/next 由调用方逐次传入，不经此快照。</summary>
+    public void UpdateStationContext(Track? nowPlaying, IReadOnlyList<Track> recentlyPlayed)
+    {
+        lock (_memoryGate)
+        {
+            _stationNowPlaying = nowPlaying;
+            _stationRecentlyPlayed = recentlyPlayed;
+        }
+    }
+
+    /// <summary>记一条 DJ 现场发言进短期记忆（节目单开场白等"上过广播但不在聊天记录里"的话）。
+    /// 与串场词共用队列：聊天链凭它记得自己说过什么，串场链凭它防复读。情绪标签/控制块/元数据标记
+    /// 与换行（StripControlMarkers 内收编压平）入队前剥除。
+    /// 已知窗口：调用方生成开场白的 await 续段内若切换角色，旧角色的开场白会入新角色记忆——
+    /// 该气泡本就会以新角色名义显示（既有行为），记忆与之同口径，不做代次拦截。</summary>
+    public void RememberOnAirLine(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var entry = PromptHygiene.StripControlMarkers(StripControlTags(text)).Trim();
+        if (entry.Length == 0) return;
+        lock (_memoryGate)
+        {
+            _recentOnAirLines.Enqueue(entry);
+            while (_recentOnAirLines.Count > RecentOnAirMemoryCount)
+                _recentOnAirLines.Dequeue();
+        }
+    }
 
     public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null,
         IListeningProfileService? profile = null)
@@ -113,12 +157,13 @@ Response rules:
             _chatHistory.Add(new ChatMessage { Role = MessageRole.System, Content = systemPrompt });
         }
 
-        // 角色切换 = 新 DJ 接管：串场记忆与听众话题一并清空，
-        // 否则旧 DJ 的串场会被当成新角色的"自己说过的话"注入（语义错位）
+        // 角色切换 = 新 DJ 接管：现场发言记忆与听众话题一并清空，
+        // 否则旧 DJ 的串场会被当成新角色的"自己说过的话"注入（语义错位）。
+        // 在播/最近播放是环境事实，不随角色清理（同天气快照）。
         lock (_memoryGate)
         {
             _memoryEpoch++;
-            _recentTransitions.Clear();
+            _recentOnAirLines.Clear();
             _lastListenerTopic = null;
         }
     }
@@ -138,19 +183,19 @@ Response rules:
 
         try
         {
-            List<string> recentTransitions;
+            List<string> recentOnAirLines;
             string? listenerTopic;
             int epoch;
             lock (_memoryGate)
             {
                 epoch = _memoryEpoch;
-                recentTransitions = _recentTransitions.ToList();
+                recentOnAirLines = _recentOnAirLines.ToList();
                 listenerTopic = _lastListenerTopic;
             }
 
             var prompt = BuildTransitionPrompt(
                 _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock(),
-                recentTransitions, listenerTopic);
+                recentOnAirLines, listenerTopic);
             var text = _llm is LLMService llm
                 ? await llm.ChatRawAsync(prompt, cancellationToken)
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>())
@@ -168,17 +213,17 @@ Response rules:
 
             // 只记 LLM 成功生成的串场：模板兜底不是 DJ 的真实语气，进了记忆会让"避免重复"的基准失真。
             // 代次守卫：LLM 生成窗口内角色被切换（Initialize 已清记忆）时，旧 DJ 的迟到串场不得入队；
-            // 入队条目压平换行（防多行台词拆散列表边界）并过 PromptHygiene（与标题/话题同口径消毒）
+            // 入队条目过 PromptHygiene（控制块/换行均在此剥除，与标题/话题同口径消毒）
             lock (_memoryGate)
             {
                 if (epoch == _memoryEpoch)
                 {
-                    var entry = PromptHygiene.StripControlMarkers(cleaned.ReplaceLineEndings(" ")).Trim();
+                    var entry = PromptHygiene.StripControlMarkers(cleaned).Trim();
                     if (!string.IsNullOrWhiteSpace(entry))
                     {
-                        _recentTransitions.Enqueue(entry);
-                        while (_recentTransitions.Count > RecentTransitionMemoryCount)
-                            _recentTransitions.Dequeue();
+                        _recentOnAirLines.Enqueue(entry);
+                        while (_recentOnAirLines.Count > RecentOnAirMemoryCount)
+                            _recentOnAirLines.Dequeue();
                     }
                 }
             }
@@ -215,7 +260,7 @@ Response rules:
         DateTime now,
         WeatherInfo? weather,
         string? profileBlock,
-        IReadOnlyList<string>? recentTransitions = null,
+        IReadOnlyList<string>? recentOnAirLines = null,
         string? listenerTopic = null)
     {
         // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
@@ -270,12 +315,12 @@ Response rules:
                 ? $"The listener recently chatted with you about: \"{listenerTopic}\". Echo it briefly only if it connects naturally; otherwise don't mention it."
                 : $"听众最近和你聊过：「{listenerTopic}」。若有自然关联可以轻轻呼应，没有就完全不提。");
         }
-        if (recentTransitions is { Count: > 0 })
+        if (recentOnAirLines is { Count: > 0 })
         {
             sb.AppendLine(isEn
                 ? "Your own recent transitions are listed below. Do NOT reuse their openings, imagery, or phrasing — find a fresh angle:"
                 : "你最近几次串场已经说过下面这些话，不要重复它们的开场、意象或句式，换一个全新的切入角度：");
-            foreach (var line in recentTransitions)
+            foreach (var line in recentOnAirLines)
                 sb.AppendLine($"- {line}");
             sb.AppendLine();
         }
@@ -445,17 +490,18 @@ Requirements:
                     snapshot = _chatHistory.ToList();
                 }
 
-                // 长期画像注入：拼在快照副本的人设 system 尾部（docs/plans/2026-09-15-dj-chat-profile-injection-design.md）。
-                // 每次调用取最新画像、不落持久历史；BuildMessages 的 Take(1) 恒保首条 system，长对话不丢。
-                var profileBlock = BuildProfileContextBlock();
-                if (profileBlock != null &&
+                // 现场段 + 长期画像段：都拼在快照副本的人设 system 尾部，每次调用取最新快照、
+                // 不落持久历史；BuildMessages 的 Take(1) 恒保首条 system，长对话不丢。
+                // 现场段在画像段之前：聊天的第一职责是接住"此刻电台正在发生什么"。
+                var contextSuffix = BuildStationContextBlock() + BuildProfileContextBlock();
+                if (contextSuffix.Length > 0 &&
                     snapshot.Count > 0 &&
                     snapshot[0].Role == MessageRole.System)
                 {
                     snapshot[0] = new ChatMessage
                     {
                         Role = MessageRole.System,
-                        Content = snapshot[0].Content + profileBlock
+                        Content = snapshot[0].Content + contextSuffix
                     };
                 }
 
@@ -514,6 +560,69 @@ Requirements:
         {
             _chatGate.Release();
         }
+    }
+
+    /// <summary>
+    /// 聊天现场段：在播曲目 + 最近播放 + 自己最近的广播发言。聊天 LLM 此前对"正在放什么"和
+    /// "DJ 刚说过什么"零感知（串场/开场白不进聊天历史），听众说"这首歌 / X 的版本"时无从指代
+    /// （实测反馈：DJ 反问"你说的是哪一首"）。每次调用取最新快照、不落持久历史；
+    /// 文案跟随 DJ 人设语言（与画像段一致）。
+    /// </summary>
+    private string BuildStationContextBlock()
+    {
+        Track? nowPlaying;
+        IReadOnlyList<Track> recent;
+        List<string> ownLines;
+        lock (_memoryGate)
+        {
+            nowPlaying = _stationNowPlaying;
+            recent = _stationRecentlyPlayed;
+            ownLines = _recentOnAirLines.ToList();
+        }
+
+        var isEn = _profile.Language == "en";
+        var lines = new List<string>();
+
+        // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
+        if (nowPlaying != null)
+        {
+            var title = PromptHygiene.StripControlMarkers(nowPlaying.Title);
+            var artist = PromptHygiene.StripControlMarkers(nowPlaying.Artist);
+            lines.Add(isEn
+                ? $"On air right now: '{title}' by {artist}. When the listener says \"this song\" or \"the version by X\", they usually mean this track."
+                : $"电台此刻正在播放：《{title}》 - {artist}。听众说的“这首歌”“刚才那首”“X 的版本”一般指它。");
+        }
+        else
+        {
+            lines.Add(isEn
+                ? "Nothing is playing on the station right now."
+                : "电台此刻没有在播的歌曲。");
+        }
+
+        var recentList = recent
+            .Where(t => nowPlaying == null || !IsSameTrack(t, nowPlaying))
+            .TakeLast(StationContextRecentCount)
+            .Reverse()
+            .Select(t => $"{PromptHygiene.StripControlMarkers(t.Title)} - {PromptHygiene.StripControlMarkers(t.Artist)}")
+            .ToList();
+        if (recentList.Count > 0)
+            lines.Add((isEn ? "Recently played: " : "最近播放过：")
+                      + string.Join(isEn ? "; " : "、", recentList)
+                      + (isEn ? "." : "。"));
+
+        if (ownLines.Count > 0)
+        {
+            lines.Add(isEn
+                ? "Your own recent on-air lines below were spoken between songs and are NOT in the chat history — remember having said them (never act unaware), and don't recite them back:"
+                : "下面这些是你自己最近在电台里说过的话（串场/开场白，不在聊天记录里）——记得自己说过、别一问三不知，也别原样复读：");
+            foreach (var line in ownLines.Skip(Math.Max(0, ownLines.Count - StationContextOwnLineCount)))
+                lines.Add($"- {line}");
+        }
+
+        var header = isEn
+            ? "Radio station live context (internal reference; use it naturally, never recite this section):"
+            : "电台现场情况（内部参考，回答时自然利用，不要把本段当播报稿念出来）：";
+        return "\n\n" + header + "\n" + string.Join("\n", lines);
     }
 
     /// <summary>
