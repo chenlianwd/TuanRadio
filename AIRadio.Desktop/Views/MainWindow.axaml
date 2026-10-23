@@ -8,6 +8,7 @@
         x:Class="AIRadio.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="TuanRadio FM"
+        Icon="/Assets/airadio.ico"
         Width="760" Height="760"
         MinWidth="700" MinHeight="700"
         SystemDecorations="None"
