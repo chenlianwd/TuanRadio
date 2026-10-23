@@ -899,6 +899,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _ = WeatherVM.RefreshWeatherAsync(SettingsVM.WeatherCity);
 
         IsDarkMode = SettingsVM.IsDarkMode;
+        // 启动恢复配色主题：与深浅模式同点落位（LoadCoreAsync 赋值被 _loadingAccentPalette
+        // 屏蔽不会自动 Apply，这里统一补一次）
+        AccentPalettes.Apply(Avalonia.Application.Current, SettingsVM.SelectedAccentPalette);
         // 启动时恢复上次的窗口模式（简洁/标准）与歌词模式
         IsCompactMode = SettingsVM.StartInCompactMode;
         IsLyricsMode = SettingsVM.ShowLyricsInStage;

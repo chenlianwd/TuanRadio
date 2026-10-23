@@ -47,7 +47,7 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI 
 - **多音源搜索与播放**：本地曲库、OpenSubsonic、Audius 开箱即用，完整构建另含网易云（免登录可用）、酷狗（登录后可用）与 YouTube；候选经标题/歌手/时长/源优先级四维排重打分，播放 URL 失效或返回试听截断时跨源重匹配自愈。
 - **音质透明**：播放区显示音质品级（标准/高清/无损，如 `高清`），实际编码、码率、采样率与声道悬停可见，以 LibVLC 解析在播媒体为准、音源声明值兜底；试听流有专门徽标。
 - **歌词模式**：双源取词、按播放进度逐行滚动；时钟与歌词点击切换（偏好记忆），频谱样式点击循环，两图层共显互不打扰。
-- **复古电台氛围**：纯程序化合成的 FM 调谐音效与台呼（零外部音频资产）、真实 FFT 频谱（WASAPI 回环采集）驱动频谱与星空、Light/Dark 双主题经 WCAG 对比度审计。
+- **复古电台氛围**：纯程序化合成的 FM 调谐音效与台呼（零外部音频资产）、真实 FFT 频谱（WASAPI 回环采集）驱动频谱与星空、深浅双变体 × 四套配色主题（薄荷绿/暖琥珀/蒸汽波紫/冰蓝，设置页即时切换）经 WCAG 对比度审计。
 - **简洁播放模式**：一键收缩为两行紧凑卡，行 1 单行动态歌词、无词时平滑退回曲目信息；窗口置顶与模式记忆可选。
 - **状态可见**：统一电台状态机、逐源搜索状态与连接诊断、天气环境指示器（Open-Meteo）。
 
@@ -95,7 +95,7 @@ AIRadio.Desktop/            宿主应用
   Models/                   ChatMessage、DJProfile、推荐模型等
   Services/                 播放、AI DJ、LLM、TTS、推荐、歌词、ASR、天气等服务
   Services/Music/Playback/  播放队列预检（依赖 Avalonia/ReactiveUI 调度，留守宿主）
-  Themes/                   Colors.axaml 主题 token（Light/Dark）
+  Themes/                   Colors.axaml 主题 token（Light/Dark）+ Palettes/ 配色主题叠加层
   ViewModels/ Views/        ReactiveUI ViewModel 与 Avalonia 视图
   server/ server-kugou/     网易 / 酷狗 Node.js 代理
 AIRadio.Desktop.Music/      音乐域类库（宿主单向引用，命名空间不变）
@@ -129,4 +129,4 @@ tools/shot/                 README 实机截图脚本（UIA 定位 + 窗口截�
 - 音源声明的 Referer 播放请求头为尽力投递——libvlc 3 核心 HTTP 客户端不支持该选项，属上游限制；UA/Cookie 通道可靠。
 - 长期收听画像纯本地文件（`listener-profile.json`），不跨设备同步（有意不做云端）。
 - 原生音频设备异常属运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试（自动化耐久测试覆盖电台 30 轮续播、真实 LibVLC 四曲连播、画像 30 会话积累等场景）。
-- Light/Dark 双主题经 WCAG 对比度审计（文字对 ≥4.5:1），后续视觉调整需保持该标准。
+- 深浅双变体 × 四套配色主题经 WCAG 对比度审计（文字对 ≥4.5:1、图形 ≥3:1，含每个新主题的程序化门禁测试），后续视觉调整需保持该标准。

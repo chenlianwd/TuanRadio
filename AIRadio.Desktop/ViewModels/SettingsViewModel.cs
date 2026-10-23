@@ -85,6 +85,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private bool _loadingOpenSubsonicQuality;
     private bool _loadingMusicSourcePolicy;
     private readonly IDisposable _musicSourcePolicySub;
+    private bool _loadingAccentPalette;
+    private readonly IDisposable _accentPaletteSub;
     private bool _ytdlpCookieNoticeShown;
     private readonly IDisposable _selectedLanguageSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
@@ -132,6 +134,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string OpenSubsonicStatus { get; set; } = string.Empty;
     [Reactive] public partial string SelectedOpenSubsonicQuality { get; set; } = "auto";
     [Reactive] public partial string SelectedMusicSourcePolicy { get; set; } = "coverage";
+    [Reactive] public partial string SelectedAccentPalette { get; set; } = AccentPalettes.MintId;
     [Reactive] public partial bool IsConnectingOpenSubsonic { get; set; }
     [Reactive] public partial string AudiusApiKeyInput { get; set; } = string.Empty;
     [Reactive] public partial string AudiusStatus { get; set; } = string.Empty;
@@ -203,6 +206,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial List<MusicProviderOption> MusicProviders { get; set; } = new();
     [Reactive] public partial List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
     [Reactive] public partial List<VoiceOption> MusicSourcePolicies { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> AccentPaletteOptions { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -372,6 +376,17 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (!_loadingMusicSourcePolicy)
                     _ = SaveUiStateCommand.Execute().Subscribe();
             });
+        // 配色主题：切换即生效并跟随保存（加载期赋值由 _loadingAccentPalette 屏蔽，
+        // 启动恢复由 MainWindowViewModel.LoadLocalStateAsync 统一 Apply）
+        _accentPaletteSub = this.WhenAnyValue(x => x.SelectedAccentPalette)
+            .Skip(1)
+            .Subscribe(id =>
+            {
+                if (_loadingAccentPalette)
+                    return;
+                AccentPalettes.Apply(Avalonia.Application.Current, id);
+                _ = SaveUiStateCommand.Execute().Subscribe();
+            });
         // 界面显示语言严格跟随本选项：加载读到旧值与用户切换时都经 Apply 生效
         _selectedLanguageSub = this.WhenAnyValue(x => x.SelectedLanguage)
             .Skip(1)
@@ -521,6 +536,17 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             new() { Id = "stability", DisplayName = AppLanguage.T("稳定优先", "Stability first") },
             new() { Id = "quality", DisplayName = AppLanguage.T("音质优先", "Quality first") },
         };
+        AccentPaletteOptions = AccentPalettes.AllIds.Select(id => new VoiceOption
+        {
+            Id = id,
+            DisplayName = id switch
+            {
+                AccentPalettes.AmberId => AppLanguage.T("暖琥珀", "Amber"),
+                AccentPalettes.SynthwaveId => AppLanguage.T("蒸汽波紫", "Synthwave"),
+                AccentPalettes.IceId => AppLanguage.T("冰蓝", "Ice Blue"),
+                _ => AppLanguage.T("薄荷绿", "Mint"),
+            },
+        }).ToList();
         var browserId = SelectedYtdlpBrowser?.Id;
         _loadingYtdlpBrowser = true;
         try
@@ -679,6 +705,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("spectrum_style", out var spectrumStyle))
                     SelectedSpectrumStyle = NormalizeSpectrumStyle(spectrumStyle.GetString());
+
+                if (root.TryGetProperty("accent_palette", out var accentPalette))
+                {
+                    _loadingAccentPalette = true;
+                    SelectedAccentPalette = AccentPalettes.Normalize(accentPalette.GetString());
+                    _loadingAccentPalette = false;
+                }
 
                 if (root.TryGetProperty("compact_mode_topmost", out var compactTopmost))
                     CompactModeTopmost = compactTopmost.GetBoolean();
@@ -1705,6 +1738,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
                 spectrum_style = NormalizeSpectrumStyle(SelectedSpectrumStyle),
+                accent_palette = AccentPalettes.Normalize(SelectedAccentPalette),
                 compact_mode_topmost = CompactModeTopmost,
                 compact_show_lyrics = CompactShowLyrics,
                 radio_sound_fx_enabled = RadioSoundFxEnabled,
@@ -1806,6 +1840,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _selectedYtdlpBrowserSub.Dispose();
         _openSubsonicQualitySub.Dispose();
         _musicSourcePolicySub.Dispose();
+        _accentPaletteSub.Dispose();
         _selectedLanguageSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
