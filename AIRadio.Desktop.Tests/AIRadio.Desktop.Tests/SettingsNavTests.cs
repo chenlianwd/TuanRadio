@@ -109,4 +109,62 @@ public class SettingsNavTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [AvaloniaFact]
+    public void ProfileCard_StyleTagAndImpressionControls_BindToListProperties()
+    {
+        // 印象优先重排的新分区：风格标签/性格印象控件经 ItemsSource/文本绑定直连 VM——
+        // 直赋属性断言绑定末端（隐藏弹层不布局，逻辑树 attach 即激活绑定）
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            var view = window.FindDescendantOfType<SettingsView>()
+                ?? throw new InvalidOperationException("SettingsView not found");
+            var styleTags = view.FindControl<ItemsControl>("ProfileStyleTags")
+                ?? throw new InvalidOperationException("ProfileStyleTags not found");
+            var impression = view.FindControl<TextBlock>("ProfileCardImpression")
+                ?? throw new InvalidOperationException("ProfileCardImpression not found");
+            var personaTraits = view.FindControl<ItemsControl>("ProfilePersonaTraits")
+                ?? throw new InvalidOperationException("ProfilePersonaTraits not found");
+            var impressionTraits = view.FindControl<ItemsControl>("ProfileImpressionTraits")
+                ?? throw new InvalidOperationException("ProfileImpressionTraits not found");
+            var topArtists = view.FindControl<TextBlock>("ProfileTopArtistsText")
+                ?? throw new InvalidOperationException("ProfileTopArtistsText not found");
+
+            vm.SettingsVM.ProfileHasCard = true;
+            vm.SettingsVM.ProfileHasStyleTags = true;
+            vm.SettingsVM.ProfileStyleTagItems = new List<string> { "华语流行", "深夜" };
+            vm.SettingsVM.ProfileHasImpression = true;
+            vm.SettingsVM.ProfileImpressionText = "直接爽快";
+            vm.SettingsVM.ProfileHasPersonaTraits = true;
+            vm.SettingsVM.ProfilePersonaTraitItems = new List<string> { "爱完整听完" };
+            vm.SettingsVM.ProfileHasImpressionTraits = true;
+            vm.SettingsVM.ProfileImpressionTraitItems = new List<string> { "直接" };
+            vm.SettingsVM.ProfileTopArtistsDetail = "周杰伦 ×32";
+
+            Assert.True(styleTags.IsVisible);
+            Assert.Equal(2, styleTags.Items.Count());
+            Assert.True(impression.IsVisible);
+            Assert.Equal("直接爽快", impression.Text);
+            Assert.True(personaTraits.IsVisible);
+            var trait = Assert.Single(personaTraits.Items);
+            Assert.Equal("爱完整听完", trait);
+            // 印象特质芯片与歌手次数 Tooltip（本批唯一 ToolTip.Tip 新用法）同构锚定
+            Assert.True(impressionTraits.IsVisible);
+            Assert.Equal("直接", Assert.Single(impressionTraits.Items));
+            Assert.Equal("周杰伦 ×32", ToolTip.GetTip(topArtists));
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

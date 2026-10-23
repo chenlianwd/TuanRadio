@@ -1040,7 +1040,24 @@ public class SettingsViewModelTests
         },
         AvoidArtists = new[] { new ArtistAffinity { Artist = "张三", Score = -2.1 } },
         DislikeBlacklist = new[] { new ProfileMusicRef("晴天", "周杰伦") },
-        Digest = new TasteDigestData { Text = "偏爱华语流行与抒情摇滚", GeneratedAt = new DateTime(2026, 10, 21) },
+        Digest = new TasteDigestData
+        {
+            Text = "偏爱华语流行与抒情摇滚",
+            StyleTags = new List<string> { "华语流行", "抒情" },
+            GeneratedAt = new DateTime(2026, 10, 21),
+        },
+        CompletionRate = 0.85,
+        HasCompletionSample = true,
+        NewArtistRatio = 0.2,
+        HasExplorationSample = true,
+        DominantTimeBand = "night",
+        PersonaTraits = new[] { ListeningPersona.Completionist, ListeningPersona.NightOwl },
+        Impression = new ListenerImpressionData
+        {
+            Text = "直接爽快，偏好点歌多于闲聊",
+            Traits = new List<string> { "直接", "爱点歌" },
+            GeneratedAt = new DateTime(2026, 10, 22),
+        },
     };
 
     [Fact]
@@ -1060,9 +1077,20 @@ public class SettingsViewModelTests
             Assert.True(vm.ProfileHasDigest);
             Assert.Equal("偏爱华语流行与抒情摇滚", vm.ProfileDigestText);
             Assert.Equal("更新于 2026/10/21", vm.ProfileDigestMeta);
+            Assert.True(vm.ProfileHasStyleTags);
+            Assert.Equal(new List<string> { "华语流行", "抒情" }, vm.ProfileStyleTagItems);
+            // 听歌习惯特质经 TraitText 按界面语言映射（快照存稳定 key）
+            Assert.True(vm.ProfileHasPersonaTraits);
+            Assert.Equal(new List<string> { "爱完整听完", "深夜听歌" }, vm.ProfilePersonaTraitItems);
+            Assert.True(vm.ProfileHasImpression);
+            Assert.Equal("直接爽快，偏好点歌多于闲聊", vm.ProfileImpressionText);
+            Assert.Equal("更新于 2026/10/22", vm.ProfileImpressionMeta);
+            Assert.True(vm.ProfileHasImpressionTraits);
+            Assert.Equal(new List<string> { "直接", "爱点歌" }, vm.ProfileImpressionTraitItems);
             Assert.True(vm.ProfileHasTopArtists);
-            // PlayCount=0 的歌手只显名字（仅 Like 事件撑起正分的歌手没有播放次数）
-            Assert.Equal("周杰伦 ×32、林俊杰", vm.ProfileTopArtistsText);
+            // 行内只列歌手名（印象优先），收听次数收进 Tooltip 详情
+            Assert.Equal("周杰伦、林俊杰", vm.ProfileTopArtistsText);
+            Assert.Equal("周杰伦 ×32、林俊杰", vm.ProfileTopArtistsDetail);
             Assert.True(vm.ProfileHasAvoidArtists);
             Assert.Equal("张三", vm.ProfileAvoidArtistsText);
             Assert.True(vm.ProfileHasBlacklist);
@@ -1318,6 +1346,92 @@ public class SettingsViewModelTests
             await vm.RegenerateDigestCommand.Execute();
             Assert.Contains("归纳未完成", vm.StatusMessage);
             Assert.False(vm.IsRegeneratingDigest);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RegenerateDigest_AlsoForcesImpressionRefresh()
+    {
+        // 「重新归纳」按钮统一管口味与印象两段：impression 也必须带 force 实参
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(new ListenerProfileSnapshot
+        {
+            Digest = new TasteDigestData { Text = "归纳" },
+        });
+        profile.Setup(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        profile.Setup(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            await vm.RegenerateDigestCommand.Execute();
+            profile.Verify(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), true), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RegenerateDigest_ColdStartDigestNoOpImpressionChanged_ReportsSuccess()
+    {
+        // digest 的 force 不跳 30 事件冷启动门槛（服务内静默 no-op）、印象的 force 要求有聊天
+        // 素材——只聊天不收听的用户点「重新归纳」时，印象变化也必须如实报成功，
+        // 防止「归纳未完成」对成功路径说谎
+        var impression = new ListenerImpressionData { Text = "旧印象" };
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(() => new ListenerProfileSnapshot
+        {
+            TotalEventsIngested = 3,
+            Impression = impression,
+        });
+        profile.Setup(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Callback(() => impression = new ListenerImpressionData
+            {
+                Text = "新印象",
+                GeneratedAt = DateTime.Now,
+            })
+            .Returns(Task.CompletedTask);
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            await vm.RegenerateDigestCommand.Execute();
+            Assert.Contains("已重新归纳", vm.StatusMessage);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ProfileCard_OnlyImpression_ShowsCard()
+    {
+        // 只聊天不收听的新用户：性格印象有（16 条消息水位）但口味三态全空（30 事件门槛未到）
+        // ——卡片必须可见，否则印象段恰好在它的目标场景不可达
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(new ListenerProfileSnapshot
+        {
+            Impression = new ListenerImpressionData { Text = "喜欢在深夜点老歌" },
+        });
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.True(vm.ProfileHasCard);
+            Assert.True(vm.ProfileHasImpression);
+            Assert.Equal("喜欢在深夜点老歌", vm.ProfileImpressionText);
+            Assert.False(vm.ProfileHasDigest);
+            Assert.False(vm.ProfileHasTopArtists);
         }
         finally
         {

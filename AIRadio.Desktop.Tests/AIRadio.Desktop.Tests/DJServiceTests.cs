@@ -1122,6 +1122,8 @@ public class DJServiceTests
         public void Reset() { }
         public Task LoadAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task RefreshDigestAsync(CancellationToken cancellationToken, bool force = false) => Task.CompletedTask;
+        public void RecordListenerChat(string userMessage) { }
+        public Task RefreshImpressionAsync(CancellationToken cancellationToken, bool force = false) => Task.CompletedTask;
         public bool RemoveDislikeEvents(string? title, string? artist) => false;
         public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
@@ -1252,6 +1254,127 @@ public class DJServiceTests
         Assert.Contains("不要主动推荐这些歌", content);
         Assert.Contains("不爱听 - 某人", content);
         Assert.DoesNotContain("听众长期口味", content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_ImpressionInjectedWithoutThreshold()
+    {
+        // 性格印象与口味是独立水位（16 条消息 vs 30 事件）：只聊天不收听的新用户
+        // 也必须被接住——印象段不走冷启动门槛
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = new ListenerProfileSnapshot
+            {
+                TotalEventsIngested = 3,
+                TopArtists = new[] { new ArtistAffinity { Artist = "周杰伦", Score = 1 } },
+                Impression = new ListenerImpressionData { Text = "直接爽快，偏好点歌多于闲聊" },
+            },
+        };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        await dj.GenerateChatResponseAsync("来点歌");
+
+        var content = captured[^1][0].Content;
+        Assert.Contains("听众性格印象", content);
+        Assert.Contains("直接爽快，偏好点歌多于闲聊", content);
+        Assert.DoesNotContain("听众长期口味", content); // 口味段仍受门槛约束
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_PersonaTraitsLineFollowsPersonaLanguage()
+    {
+        // 听歌习惯行在口味段内（门槛内）；文案跟随 DJ 人设语言（TraitText 显式 isEn）
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var snapshot = BuildThresholdSnapshot("稳定摘要");
+        var withTraits = new ListenerProfileSnapshot
+        {
+            TotalEventsIngested = snapshot.TotalEventsIngested,
+            TopArtists = snapshot.TopArtists,
+            DislikeBlacklist = snapshot.DislikeBlacklist,
+            Digest = snapshot.Digest,
+            HasCompletionSample = true,
+            CompletionRate = 0.9,
+            DominantTimeBand = "night",
+            PersonaTraits = new[] { ListeningPersona.Completionist, ListeningPersona.NightOwl },
+        };
+        var profile = new FakeListeningProfile { Snapshot = withTraits };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "DJ Alex", SystemPrompt = "Test persona", Language = "en" });
+
+        await dj.GenerateChatResponseAsync("play something");
+
+        var content = captured[^1][0].Content;
+        Assert.Contains("listening style: Plays songs through, Late-night listener", content);
+        Assert.DoesNotContain("听歌习惯", content);
+    }
+
+    [Fact]
+    public async Task ChatProfileInjection_DigestStyleTagsStayOutOfChatSystem()
+    {
+        // 风格标签只进推荐搜索词链路；DJ 聊天注入用 digest 总评已足，防注入段膨胀
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var snapshot = BuildThresholdSnapshot("偏爱华语流行");
+        var withTags = new ListenerProfileSnapshot
+        {
+            TotalEventsIngested = snapshot.TotalEventsIngested,
+            TopArtists = snapshot.TopArtists,
+            DislikeBlacklist = snapshot.DislikeBlacklist,
+            Digest = new TasteDigestData
+            {
+                Text = "偏爱华语流行",
+                StyleTags = new List<string> { "华语流行", "City Pop" },
+                Language = "zh",
+            },
+        };
+        var profile = new FakeListeningProfile { Snapshot = withTags };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        await dj.GenerateChatResponseAsync("来点歌");
+
+        var content = captured[^1][0].Content;
+        Assert.Contains("偏爱华语流行", content);
+        Assert.DoesNotContain("City Pop", content);
+    }
+
+    [Fact]
+    public async Task TransitionProfileBlock_ExcludesImpressionButKeepsTaste()
+    {
+        // 串场是 DJ 单口：人设+听众话题已承担语气，性格印象段不进高频串场链
+        var prompts = new List<string>();
+        var mock = new Mock<ILLMService>();
+        mock.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("欢迎收听《晴天》[calm]")
+            .Callback<string, List<ChatMessage>>((prompt, _) => prompts.Add(prompt));
+        var snapshot = BuildThresholdSnapshot("偏爱华语流行");
+        var profile = new FakeListeningProfile
+        {
+            Snapshot = new ListenerProfileSnapshot
+            {
+                TotalEventsIngested = snapshot.TotalEventsIngested,
+                TopArtists = snapshot.TopArtists,
+                DislikeBlacklist = snapshot.DislikeBlacklist,
+                Digest = snapshot.Digest,
+                PersonaTraits = new[] { ListeningPersona.Completionist },
+                Impression = new ListenerImpressionData { Text = "直接爽快的听众" },
+            },
+        };
+        var dj = new DJService(mock.Object, profile: profile);
+        dj.Initialize(new DJProfile { Name = "小音", SystemPrompt = "测试人设", Language = "zh" });
+
+        var next = new Track { Title = "晴天", Artist = "周杰伦", Duration = TimeSpan.FromMinutes(4) };
+        await dj.GenerateTrackIntroductionAsync(null, next);
+
+        var prompt = Assert.Single(prompts);
+        Assert.Contains("偏爱华语流行", prompt);           // 口味段仍进串场
+        Assert.Contains("听歌习惯：爱完整听完", prompt);   // 听歌习惯行两链共享
+        Assert.DoesNotContain("性格印象", prompt);          // 印象段只进聊天链（header 锚定）
+        Assert.DoesNotContain("直接爽快的听众", prompt);    // 数据级负向：印象文本本体不入串场
     }
 
     [Fact]

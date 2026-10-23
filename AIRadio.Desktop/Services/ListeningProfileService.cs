@@ -34,6 +34,21 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private static readonly TimeSpan DigestBackoff = TimeSpan.FromHours(24);
     private static readonly TimeSpan DigestCallTimeout = TimeSpan.FromSeconds(15);
     private const int DigestMaxLength = 400;
+    // digest 的 JSON 结构化输出：tags 承载风格标签（流派/年代/语言/氛围）
+    private const int DigestMaxStyleTags = 8;
+    private const int DigestTagMaxLength = 10;
+    // 听歌行为指标样本门槛（不足=无值，人格特质对应维度不标注）
+    private const int BehaviorMinCompletionSamples = 10;
+    private const int BehaviorMinPlayedSamples = 10;
+    private const int BehaviorMinArtists = 5;
+    private static readonly TimeSpan BehaviorWindow = TimeSpan.FromDays(30);
+    // 聊天性格印象：素材窗口滚动上限/归纳触发水位/原文截断
+    private const int ChatWindowMaxEntries = 20;
+    private const int ImpressionTriggerMessages = 16;
+    private const int ChatMessageMaxLength = 200;
+    private const int ImpressionMaxLength = 200;
+    private const int ImpressionMaxTraits = 6;
+    private const int ImpressionTraitMaxLength = 8;
     private static readonly TimeSpan SaveDebounce = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FlushTimeout = TimeSpan.FromSeconds(2);
 
@@ -52,11 +67,14 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private readonly Func<string, string, CancellationToken, Task> _writeAllTextAsync;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _digestGate = new(1, 1);
+    private readonly SemaphoreSlim _impressionGate = new(1, 1);
     private readonly SemaphoreSlim _saveGate = new(1, 1);
 
     private List<ListeningEventData> _events = new();
     private long _totalEventsIngested;
     private TasteDigestData? _digest;
+    private List<ChatWindowEntry> _pendingChats = new();
+    private ListenerImpressionData? _impression;
     private bool _enabled = true;
     private bool _loaded;
     private bool _futureFormatSkipped;
@@ -65,6 +83,12 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private bool _digestInProgress;
     private int _digestFailureCount;
     private DateTime? _lastDigestFailureAt;
+
+    // impression 触发与退避（会话级；失败计数从持久化 impression 播种；退避参数与 digest 共享——
+    // 同类 LLM 归纳的限流策略一致即可）
+    private bool _impressionInProgress;
+    private int _impressionFailureCount;
+    private DateTime? _lastImpressionFailureAt;
 
     // 跳过判定瞬时状态（全部在 _gate 内）；"已播 ≥10s"用进度样本衡量（暂停不计时）
     private string? _playingKey;
@@ -263,6 +287,10 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             _digest = null;
             _digestFailureCount = 0;
             _lastDigestFailureAt = null;
+            _pendingChats = new List<ChatWindowEntry>();
+            _impression = null;
+            _impressionFailureCount = 0;
+            _lastImpressionFailureAt = null;
             _futureFormatSkipped = false;
             _epoch++;
             _dirty = false;
@@ -333,6 +361,9 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 _totalEventsIngested = Math.Max(data.TotalEventsIngested, _events.Count);
                 _digest = data.Digest;
                 _digestFailureCount = data.Digest?.ConsecutiveFailures ?? 0;
+                _pendingChats = data.PendingChats ?? new List<ChatWindowEntry>();
+                _impression = data.Impression;
+                _impressionFailureCount = data.Impression?.ConsecutiveFailures ?? 0;
                 _dirty = false;
             }
         }
@@ -349,6 +380,8 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 _events = new List<ListeningEventData>();
                 _totalEventsIngested = 0;
                 _digest = null;
+                _pendingChats = new List<ChatWindowEntry>();
+                _impression = null;
                 _futureFormatSkipped = false;
             }
             Log.Warning(ex, "Failed to load listener profile, starting empty");
@@ -438,12 +471,11 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             var prompt = BuildDigestPrompt(input);
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(DigestCallTimeout);
-            var text = await ChatAsync(prompt, timeoutCts.Token);
-            text = (text ?? string.Empty).Trim();
-            if (text.Length == 0)
+            var reply = await ChatAsync(prompt, timeoutCts.Token);
+            // 宽容双路解析：JSON 优先（summary+tags），失败回退整串纯文本；空输出才算失败
+            var parsed = ParseLlmSummary(reply, DigestMaxLength, DigestMaxStyleTags, DigestTagMaxLength);
+            if (parsed.Summary.Length == 0)
                 throw new InvalidOperationException("LLM returned empty taste digest");
-            if (text.Length > DigestMaxLength)
-                text = text[..DigestMaxLength];
 
             lock (_gate)
             {
@@ -452,7 +484,8 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                     return;
                 _digest = new TasteDigestData
                 {
-                    Text = text,
+                    Text = parsed.Summary,
+                    StyleTags = parsed.Tags,
                     Language = input.Language,
                     GeneratedAt = _clock(),
                     EventWatermark = _totalEventsIngested,
@@ -485,6 +518,164 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             lock (_gate)
                 _digestInProgress = false;
             _digestGate.Release();
+        }
+    }
+
+    public void RecordListenerChat(string userMessage)
+    {
+        if (string.IsNullOrWhiteSpace(userMessage)) return;
+        // 服务端自证入库内容干净：接口是公开面，不能假设调用方已消毒（纵深防御，
+        // 与标题/话题同口径）；先消毒再 Trim（反序会留尾随空格）
+        var text = PromptHygiene.StripControlMarkers(userMessage).Trim();
+        if (text.Length == 0) return;
+        if (text.Length > ChatMessageMaxLength)
+            text = text[..ChatMessageMaxLength];
+
+        lock (_gate)
+        {
+            // 学习开关关闭/未来版本拒读：聊天原文不落盘（比收听事件更敏感，停采契约严格适用）
+            if (!CanIngestLocked())
+                return;
+            _pendingChats.Add(new ChatWindowEntry { Text = text, Time = _clock() });
+            if (_pendingChats.Count > ChatWindowMaxEntries)
+                _pendingChats.RemoveRange(0, _pendingChats.Count - ChatWindowMaxEntries);
+            _dirty = true;
+            ScheduleSave();
+        }
+    }
+
+    public async Task RefreshImpressionAsync(CancellationToken cancellationToken, bool force = false)
+    {
+        try
+        {
+            await RefreshImpressionCoreAsync(cancellationToken, force);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Listener profile impression refresh failed");
+        }
+    }
+
+    private async Task RefreshImpressionCoreAsync(CancellationToken cancellationToken, bool force)
+    {
+        if (!IsLlmUsable())
+            return;
+
+        ImpressionPromptInput input;
+        int inputCount;
+        lock (_gate)
+        {
+            if (!_enabled || !_loaded || _impressionInProgress || _futureFormatSkipped)
+                return;
+            // 无素材的归纳是空转：force（手动重新归纳）也要求有待归纳消息，
+            // 纯翻译旧印象价值低且易幻觉
+            if (_pendingChats.Count == 0)
+                return;
+
+            var now = _clock();
+            if (!force && _impressionFailureCount >= DigestMaxConsecutiveFailures &&
+                _lastImpressionFailureAt is { } lastFailure && now - lastFailure < DigestBackoff)
+                return;
+
+            var language = AppLanguage.Current;
+            if (!force)
+            {
+                // 触发=攒够素材水位；或已有印象但语言不符（配合最前方的素材检查：
+                // 语言重归纳也要有新消息，纯翻译旧印象价值低且易幻觉）
+                var need = _pendingChats.Count >= ImpressionTriggerMessages ||
+                           (_impression != null &&
+                            !string.Equals(_impression.Language, language, StringComparison.OrdinalIgnoreCase));
+                if (!need)
+                    return;
+            }
+
+            _impressionInProgress = true;
+            // 归纳水位：LLM 调用（≤15s）期间新到的喂料必须保留待下轮，成功后清到这里
+            inputCount = _pendingChats.Count;
+            input = new ImpressionPromptInput(
+                language,
+                _pendingChats.Select(c => c.Text).ToList(),
+                _impression?.Text,
+                _impression?.Traits.ToList() ?? new List<string>());
+        }
+
+        try
+        {
+            await _impressionGate.WaitAsync(cancellationToken);
+        }
+        catch
+        {
+            lock (_gate)
+                _impressionInProgress = false;
+            throw;
+        }
+
+        try
+        {
+            int epoch;
+            lock (_gate)
+            {
+                if (!_enabled || _disposed != 0)
+                    return;
+                epoch = _epoch;
+            }
+
+            var prompt = BuildImpressionPrompt(input);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(DigestCallTimeout);
+            var reply = await ChatAsync(prompt, timeoutCts.Token);
+            var parsed = ParseLlmSummary(reply, ImpressionMaxLength, ImpressionMaxTraits, ImpressionTraitMaxLength);
+            if (parsed.Summary.Length == 0)
+                throw new InvalidOperationException("LLM returned empty listener impression");
+
+            lock (_gate)
+            {
+                if (_epoch != epoch || _disposed != 0)
+                    return;
+                _impression = new ListenerImpressionData
+                {
+                    Text = parsed.Summary,
+                    Traits = parsed.Tags,
+                    Language = input.Language,
+                    GeneratedAt = _clock(),
+                    ConsecutiveFailures = 0,
+                };
+                _impressionFailureCount = 0;
+                _lastImpressionFailureAt = null;
+                // 清到归纳水位（digest 的「单调水位、数据不删」在暂存区模型下的投影）：
+                // 整表 Clear 会把归纳在途新到的消息一并丢掉（既没进本次归纳也没留在素材区）
+                if (_pendingChats.Count > inputCount)
+                    _pendingChats.RemoveRange(0, inputCount);
+                else
+                    _pendingChats.Clear();
+                _dirty = true;
+                ScheduleSave();
+                Log.Debug("Listener impression refreshed from {Count} chat messages", inputCount);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            lock (_gate)
+            {
+                _impressionFailureCount++;
+                _lastImpressionFailureAt = _clock();
+                if (_impression != null)
+                    _impression.ConsecutiveFailures = _impressionFailureCount;
+            }
+            Log.Warning(ex, "Listener impression generation failed (count {Count})", _impressionFailureCount);
+        }
+        finally
+        {
+            lock (_gate)
+                _impressionInProgress = false;
+            _impressionGate.Release();
         }
     }
 
@@ -576,6 +767,15 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         var dislikes = new Dictionary<string, DislikeAccumulator>(StringComparer.Ordinal);
         var moods = new Dictionary<string, int>(StringComparer.Ordinal);
 
+        // 听歌行为指标（与上列统计共用同一次事件遍历，GetSnapshot 是聊天/推荐热路径不加第二遍）
+        var completedCount = 0;
+        var skippedCount = 0;
+        var playedCount = 0;
+        var timeBands = new int[4]; // 0=night(22~5) 1=morning(5~11) 2=afternoon(11~17) 3=evening(17~22)
+        var firstSeenArtist = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        var windowArtists = new HashSet<string>(StringComparer.Ordinal);
+        var windowStart = now - BehaviorWindow;
+
         foreach (var e in _events)
         {
             var ageDays = Math.Max(0.0, (now - e.Time).TotalDays);
@@ -627,6 +827,24 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 if (mood != null)
                     moods[mood] = moods.TryGetValue(mood, out var count) ? count + 1 : 1;
             }
+
+            // 行为指标累计（与歌手计分同一次遍历）
+            if (e.Type == ListeningEventType.Completed) completedCount++;
+            else if (e.Type == ListeningEventType.Skipped) skippedCount++;
+            else if (e.Type == ListeningEventType.Played)
+            {
+                playedCount++;
+                timeBands[TimeBandIndex(e.Time)]++;
+            }
+
+            if (artistKey.Length > 0)
+            {
+                // 全部可见事件中该歌手的最早记录（新歌手判定：最早记录也落在 30 天窗口内才算新）
+                if (!firstSeenArtist.TryGetValue(artistKey, out var firstSeen) || e.Time < firstSeen)
+                    firstSeenArtist[artistKey] = e.Time;
+                if (e.Time >= windowStart)
+                    windowArtists.Add(artistKey);
+            }
         }
 
         var blacklistExpiry = TimeSpan.FromDays(BlacklistExpiryDays);
@@ -657,6 +875,29 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             .Take(3)
             .ToList();
 
+        var hasCompletion = completedCount + skippedCount >= BehaviorMinCompletionSamples;
+        var completionRate = hasCompletion ? (double)completedCount / (completedCount + skippedCount) : 0.0;
+        var hasExploration = windowArtists.Count >= BehaviorMinArtists;
+        var newArtistCount = hasExploration
+            ? windowArtists.Count(a => firstSeenArtist[a] >= windowStart)
+            : 0;
+        var newArtistRatio = hasExploration ? (double)newArtistCount / windowArtists.Count : 0.0;
+        string? dominantBand = null;
+        if (playedCount >= BehaviorMinPlayedSamples)
+        {
+            var best = 0;
+            for (var i = 1; i < timeBands.Length; i++)
+                if (timeBands[i] > timeBands[best])
+                    best = i;
+            dominantBand = best switch
+            {
+                0 => "night",
+                1 => "morning",
+                2 => "afternoon",
+                _ => "evening",
+            };
+        }
+
         return new ListenerProfileSnapshot
         {
             TotalEventsIngested = _totalEventsIngested,
@@ -665,8 +906,25 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             DislikeBlacklist = blacklist,
             MoodUsage = moods,
             Digest = _digest,
+            CompletionRate = completionRate,
+            HasCompletionSample = hasCompletion,
+            NewArtistRatio = newArtistRatio,
+            HasExplorationSample = hasExploration,
+            DominantTimeBand = dominantBand,
+            PersonaTraits = ListeningPersona.DerivePersonaTraits(
+                hasCompletion, completionRate, hasExploration, newArtistRatio, dominantBand),
+            Impression = _impression,
         };
     }
+
+    /// <summary>时段分桶：night=22~5 点，morning=5~11，afternoon=11~17，evening=17~22。</summary>
+    private static int TimeBandIndex(DateTime time) => time.Hour switch
+    {
+        >= 22 or < 5 => 0,
+        < 11 => 1,
+        < 17 => 2,
+        _ => 3,
+    };
 
     /// <summary>在 _gate 内递增变更版本并安排防抖保存。</summary>
     private void ScheduleSave()
@@ -731,6 +989,8 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 TotalEventsIngested = _totalEventsIngested,
                 Events = _events.ToList(),
                 Digest = _digest,
+                PendingChats = _pendingChats.ToList(),
+                Impression = _impression,
             };
         }
 
@@ -758,23 +1018,136 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         string Join(string sep, IEnumerable<string> parts)
             => string.Join(sep, parts.Select(PromptHygiene.StripControlMarkers));
 
+        var behaviorBlock = input.BehaviorLine == null ? string.Empty : $"\n{input.BehaviorLine}";
+        // $$"""：单花括号是字面 JSON、{{…}} 才是插值（单 $ 下 JSON 的 {{}} 转义与插值定界冲突报 CS9006）
         return AppLanguage.Current == "en"
-            ? $"""
-            Summarize this listener's music taste in 3-5 short sentences: preferred genres, languages, eras and moods.
-            Output only the summary — no greetings or explanations.
-            Favorite artists (by listening score): {Join(", ", input.TopArtists)}
-            Avoided artists: {Join(", ", input.AvoidArtists)}
-            Recently played: {Join("; ", input.RecentTracks)}
-            Frequent moods: {Join(", ", input.MoodUsage)}
-            """
-            : $"""
-            用 3-5 句话归纳这位听众的音乐口味：偏好的流派、语言、年代和氛围。
-            只输出归纳结果本身：不要问候、开场白或任何解释。
-            常听歌手（按收听分排序）：{Join("、", input.TopArtists)}
-            回避歌手：{Join("、", input.AvoidArtists)}
-            最近在听：{Join("；", input.RecentTracks)}
-            常见氛围：{Join("、", input.MoodUsage)}
-            """;
+            ? $$"""
+              Summarize this listener's music taste: preferred genres, languages, eras and moods.
+              Output only JSON in this exact format: {"summary":"1-2 sentences (under 100 words)","tags":["up to 8 style tags, max 10 characters each"]} — no greetings, no explanations, nothing outside the JSON.{{behaviorBlock}}
+              Favorite artists (by listening score): {{Join(", ", input.TopArtists)}}
+              Avoided artists: {{Join(", ", input.AvoidArtists)}}
+              Recently played: {{Join("; ", input.RecentTracks)}}
+              Frequent moods: {{Join(", ", input.MoodUsage)}}
+              """
+            : $$"""
+              归纳这位听众的音乐口味：偏好的流派、语言、年代和氛围。
+              只输出 JSON，格式：{"summary":"1~2 句话总评（100 字内）","tags":["风格标签，最多 8 个、每个不超过 10 字"]}，不要问候、解释或 JSON 以外的任何内容。{{behaviorBlock}}
+              常听歌手（按收听分排序）：{{Join("、", input.TopArtists)}}
+              回避歌手：{{Join("、", input.AvoidArtists)}}
+              最近在听：{{Join("；", input.RecentTracks)}}
+              常见氛围：{{Join("、", input.MoodUsage)}}
+              """;
+    }
+
+    private static string BuildImpressionPrompt(ImpressionPromptInput input)
+    {
+        var messages = string.Join("\n", input.Messages.Select(m => $"- {m}"));
+        string previous;
+        if (input.PreviousText == null)
+        {
+            previous = string.Empty;
+        }
+        else
+        {
+            // 旧标签一并给模型：增量更新时知道哪些维度已经确立过
+            var traitList = input.PreviousTraits.Count > 0
+                ? string.Join(input.Language == "en" ? ", " : "、", input.PreviousTraits)
+                : null;
+            previous = input.Language == "en"
+                ? $"\nPrevious impression (update it incrementally, keep what still holds): {input.PreviousText}"
+                  + (traitList == null ? string.Empty : $" (established traits: {traitList})")
+                : $"\n旧印象（在此基础上增量更新，仍然成立的部分保留）：{input.PreviousText}"
+                  + (traitList == null ? string.Empty : $"（已确立的特质：{traitList}）");
+        }
+        return input.Language == "en"
+            ? $$"""
+              Summarize this radio listener's personality and communication style from their recent chat messages to the DJ (tone, whether they prefer requesting songs or just chatting, topics they enjoy).
+              Output only JSON in this exact format: {"summary":"2-3 sentences","traits":["up to 6 traits, max 8 characters each"]} — no greetings, no explanations, nothing outside the JSON.{{previous}}
+              The listener recently said:
+              {{messages}}
+              """
+            : $$"""
+              根据这位电台听众最近发给 DJ 的聊天消息，归纳 TA 的性格与交流偏好（语气、偏好点歌还是闲聊、感兴趣的话题）。
+              只输出 JSON，格式：{"summary":"2~3 句话印象","traits":["特质标签，最多 6 个、每个不超过 8 字"]}，不要问候、解释或 JSON 以外的任何内容。{{previous}}
+              听众最近说：
+              {{messages}}
+              """;
+    }
+
+    /// <summary>
+    /// 宽容解析 LLM 归纳输出（digest 与 impression 共用）：优先提取 JSON（{"summary":…,
+    /// "tags"/"traits":[…]}，tags 与 traits 键名都认），失败回退整串纯文本作 summary；
+    /// Summary 恒为消毒后纯文本（绝不存原始 JSON 串——Text 是注入链与测试的既有契约，
+    /// 模型守了 JSON 格式但 summary 缺失/非字符串时按失败返回空串，不把 JSON 原文存进 Text）。
+    /// Summary 为空串表示无效输出（调用方按归纳失败计退避）。
+    /// </summary>
+    internal readonly record struct LlmSummaryParse(string Summary, List<string> Tags);
+
+    internal static LlmSummaryParse ParseLlmSummary(
+        string? reply, int maxSummaryLength, int maxTags, int maxTagLength)
+    {
+        var text = (reply ?? string.Empty).Trim();
+        if (text.Length == 0)
+            return new LlmSummaryParse(string.Empty, new List<string>());
+
+        var summary = string.Empty;
+        List<string>? tags = null;
+        var sawJsonObject = false;
+        var start = text.IndexOf('{');
+        if (start >= 0)
+        {
+            var end = text.LastIndexOf('}');
+            if (end > start)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(text[start..(end + 1)]);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                    {
+                        sawJsonObject = true;
+                        if (doc.RootElement.TryGetProperty("summary", out var summaryEl) &&
+                            summaryEl.ValueKind == JsonValueKind.String)
+                        {
+                            summary = summaryEl.GetString() ?? string.Empty;
+                            foreach (var tagKey in new[] { "tags", "traits" })
+                            {
+                                if (doc.RootElement.TryGetProperty(tagKey, out var tagsEl) &&
+                                    tagsEl.ValueKind == JsonValueKind.Array)
+                                {
+                                    tags = tagsEl.EnumerateArray()
+                                        .Where(t => t.ValueKind == JsonValueKind.String)
+                                        .Select(t => (t.GetString() ?? string.Empty).Trim())
+                                        .Where(s => s.Length > 0)
+                                        .Take(maxTags)
+                                        .Select(s => s.Length > maxTagLength ? s[..maxTagLength] : s)
+                                        .ToList();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                    // 首末花括号切取的子串不是合法 JSON（纯文本含花括号等）：落入整串回退
+                }
+            }
+        }
+
+        if (summary.Length == 0)
+        {
+            // JSON 对象解析成立但 summary 无效（缺失/非字符串/空串）：模型试图守格式但没守住，
+            // 按归纳失败计退避——回退整串会把 JSON 原文存进 Text、注入提示词与展示
+            if (sawJsonObject)
+                return new LlmSummaryParse(string.Empty, new List<string>());
+            // 无可解析 JSON（纯文本回复）：整串回退，剥 Markdown 代码围栏防 ``` 残留
+            summary = text.Replace("```json", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace("```", string.Empty);
+        }
+        summary = PromptHygiene.StripControlMarkers(summary).Trim();
+        if (summary.Length > maxSummaryLength)
+            summary = summary[..maxSummaryLength];
+        return new LlmSummaryParse(summary, tags ?? new List<string>());
     }
 
     private DigestPromptInput BuildPromptInputLocked(ListenerProfileSnapshot snapshot, string language)
@@ -788,13 +1161,39 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             .Reverse()
             .ToList();
 
+        // 听歌习惯行为行（有任一样本才拼，让 LLM 归纳总评时有"怎么听"的立体素材）
+        string? behaviorLine = null;
+        var isEn = language == "en";
+        var parts = new List<string>();
+        if (snapshot.HasCompletionSample)
+            parts.Add(isEn
+                ? $"finishes {(int)Math.Round(snapshot.CompletionRate * 100)}% of played tracks"
+                : $"完整听完 {Math.Round(snapshot.CompletionRate * 100):0}% 的歌");
+        if (snapshot.HasExplorationSample)
+            parts.Add(isEn
+                ? $"{(int)Math.Round(snapshot.NewArtistRatio * 100)}% of recent artists are new to them"
+                : $"最近听的歌手里 {Math.Round(snapshot.NewArtistRatio * 100):0}% 是新面孔");
+        if (snapshot.DominantTimeBand is { } band)
+            parts.Add(isEn ? $"mostly listens in the {band}" : $"主要在{BandTextZh(band)}");
+        if (parts.Count > 0)
+            behaviorLine = (isEn ? "Listening behavior: " : "听歌习惯：") + string.Join(isEn ? "; " : "、", parts) + ".";
+
         return new DigestPromptInput(
             language,
             snapshot.TopArtists.Select(a => a.Artist).ToList(),
             snapshot.AvoidArtists.Select(a => a.Artist).ToList(),
             recentTracks,
-            snapshot.MoodUsage.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).ToList());
+            snapshot.MoodUsage.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).ToList(),
+            behaviorLine);
     }
+
+    private static string BandTextZh(string band) => band switch
+    {
+        "night" => "深夜到凌晨听",
+        "morning" => "清晨到上午听",
+        "afternoon" => "下午听",
+        _ => "晚间听",
+    };
 
     private async Task<string> ChatAsync(string prompt, CancellationToken cancellationToken)
         // 与 RecommendationService.ChatAsync 同构：归纳必须走无人设调用，
@@ -827,7 +1226,21 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         List<string> TopArtists,
         List<string> AvoidArtists,
         List<string> RecentTracks,
-        List<string> MoodUsage);
+        List<string> MoodUsage,
+        string? BehaviorLine = null);
+
+    private sealed record ImpressionPromptInput(
+        string Language,
+        List<string> Messages,
+        string? PreviousText,
+        List<string> PreviousTraits);
+
+    /// <summary>性格印象的归纳素材条目：归纳成功消费后清到水位，原文不长期保留。</summary>
+    public class ChatWindowEntry
+    {
+        public string Text { get; set; } = string.Empty;
+        public DateTime Time { get; set; }
+    }
 
     private class ListenerProfileData
     {
@@ -835,5 +1248,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         public long TotalEventsIngested { get; set; }
         public List<ListeningEventData> Events { get; set; } = new();
         public TasteDigestData? Digest { get; set; }
+        public List<ChatWindowEntry> PendingChats { get; set; } = new();
+        public ListenerImpressionData? Impression { get; set; }
     }
 }

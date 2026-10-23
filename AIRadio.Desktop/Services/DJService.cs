@@ -194,7 +194,7 @@ Response rules:
             }
 
             var prompt = BuildTransitionPrompt(
-                _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock(),
+                _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock(includeImpression: false),
                 recentOnAirLines, listenerTopic);
             var text = _llm is LLMService llm
                 ? await llm.ChatRawAsync(prompt, cancellationToken)
@@ -627,11 +627,13 @@ Requirements:
 
     /// <summary>
     /// 聊天画像段（docs/plans/2026-09-15-dj-chat-profile-injection-design.md）：
-    /// 口味段（digest+歌手+氛围）走冷启动门槛（≥30 事件且 ≥3 歌手），
-    /// 黑名单避雷不走门槛（Dislike 是显式信号）；无内容可注入时返回 null。
+    /// 口味段（digest+歌手+氛围+听歌习惯）走冷启动门槛（≥30 事件且 ≥3 歌手），
+    /// 黑名单避雷不走门槛（Dislike 是显式信号）；性格印象段同样不走门槛（16 条消息与
+    /// 30 事件是独立水位，只聊天不收听的新用户也该被接住）且仅注入聊天链——串场是
+    /// DJ 单口，人设+听众话题已承担语气，印象段对高频路径只是膨胀。
     /// 文案跟随 DJ 人设语言（_profile.Language），黑名单条目取最近 5 首。
     /// </summary>
-    private string? BuildProfileContextBlock()
+    private string? BuildProfileContextBlock(bool includeImpression = true)
     {
         var snapshot = _listeningProfile?.GetSnapshot();
         if (snapshot == null)
@@ -647,11 +649,14 @@ Requirements:
             if (!string.IsNullOrWhiteSpace(snapshot.Digest?.Text))
                 lines.Add(snapshot.Digest.Text.Trim());
 
-            var statsParts = new List<string>
-            {
-                (isEn ? "Favorite artists: " : "常听歌手：") +
-                string.Join(separator, snapshot.TopArtists.Take(5).Select(a => a.Artist)),
-            };
+            var statsParts = new List<string>();
+            var personaTraits = snapshot.PersonaTraits
+                .Select(t => ListeningPersona.TraitText(t, isEn))
+                .ToList();
+            if (personaTraits.Count > 0)
+                statsParts.Add((isEn ? "listening style: " : "听歌习惯：") + string.Join(separator, personaTraits));
+            statsParts.Add((isEn ? "Favorite artists: " : "常听歌手：") +
+                string.Join(separator, snapshot.TopArtists.Take(5).Select(a => a.Artist)));
             var avoidArtists = string.Join(separator, snapshot.AvoidArtists.Take(3).Select(a => a.Artist));
             if (avoidArtists.Length > 0)
                 statsParts.Add((isEn ? "avoided artists: " : "回避歌手：") + avoidArtists);
@@ -667,6 +672,15 @@ Requirements:
             sections.Add((isEn
                 ? "Listener long-term taste (internal reference; don't recite it like a dossier):"
                 : "听众长期口味（内部参考，不要像档案一样罗列）：") + "\n" + string.Join("\n", lines));
+        }
+
+        if (includeImpression && !string.IsNullOrWhiteSpace(snapshot.Impression?.Text))
+        {
+            // 性格印象是听众的事实，不随 DJ 角色切换清理（同环境快照语义）；Traits 只用于
+            // 设置页展示，注入 Text 已够——DJ 需要的是整体印象而非标签清单
+            sections.Add((isEn
+                ? "Your impression of the listener's personality (internal reference; adapt your tone naturally, never recite it as a dossier):"
+                : "听众性格印象（内部参考，交流时自然适配语气，不要当档案播报）：") + "\n" + snapshot.Impression.Text.Trim());
         }
 
         var blacklist = snapshot.DislikeBlacklist

@@ -56,6 +56,22 @@ public interface IListeningProfileService
     Task RefreshDigestAsync(CancellationToken cancellationToken, bool force = false);
 
     /// <summary>
+    /// 记录一条听众聊天消息进性格印象的归纳素材窗口（≤20 条滚动覆盖，每条截断 200 字，
+    /// 入库前消毒控制标记）。入口过与事件采集相同的采集守卫：学习开关关闭即不落盘
+    /// （聊天原文比收听事件敏感，「关闭 = 停止采集」契约同样适用）。
+    /// </summary>
+    void RecordListenerChat(string userMessage);
+
+    /// <summary>
+    /// 后台刷新 LLM 性格印象（从聊天素材窗口归纳）。内部自带水位（≥16 条）/语言触发、
+    /// 并发互斥与失败退避，全异常内吞不抛出；聊天喂料路径可安全 fire-and-forget。
+    /// 归纳成功后素材窗口清到本次归纳时的水位（在途新消息保留待下轮）。
+    /// force=true（设置页手动重新归纳）跳过触发条件与失败退避，仍保留素材要求、
+    /// 在途互斥（撞上直接返回）与代次校验。
+    /// </summary>
+    Task RefreshImpressionAsync(CancellationToken cancellationToken, bool force = false);
+
+    /// <summary>
     /// 黑名单单条移除（设置页「不爱听的歌」）：删除该曲目（归一化 Title|Artist 键）的全部
     /// Dislike 事件，统计随事件派生自然重算；其它类型事件不动、水位不回退、digest 不触发
     /// 再生（旧归纳文本可能残留，由手动重新归纳兜底）。返回是否删到事件；空歌手键
@@ -78,6 +94,24 @@ public sealed class ListenerProfileSnapshot
     public IReadOnlyList<ProfileMusicRef> DislikeBlacklist { get; init; } = Array.Empty<ProfileMusicRef>();
     public IReadOnlyDictionary<string, int> MoodUsage { get; init; } = new Dictionary<string, int>();
     public TasteDigestData? Digest { get; init; }
+
+    /// <summary>听歌行为指标（快照现算）：完成率 = Completed/(Completed+Skipped)，样本 ≥10 条才有值。</summary>
+    public double CompletionRate { get; init; }
+    public bool HasCompletionSample { get; init; }
+
+    /// <summary>新歌手占比：最近 30 天窗口内出现过的歌手中「全部可见事件最早记录也落在窗口内」的比例。
+    /// 样本（窗口歌手 ≥5）不足时无值。已知偏差：事件上限 1000 条裁旧后史前歌手会被误判为新歌手，
+    /// 该指标只增不减——注入文案以相对倾向解读，不当精确统计播报。</summary>
+    public double NewArtistRatio { get; init; }
+    public bool HasExplorationSample { get; init; }
+
+    /// <summary>主要收听时段（night/morning/afternoon/evening）；播放样本 &lt;10 时为 null。</summary>
+    public string? DominantTimeBand { get; init; }
+
+    /// <summary>听歌习惯人格特质 key（ListeningPersona 派生），文案由消费点按语言域映射。</summary>
+    public IReadOnlyList<string> PersonaTraits { get; init; } = Array.Empty<string>();
+
+    public ListenerImpressionData? Impression { get; init; }
 
     /// <summary>推荐注入门槛（冷启动防护）：累计 ≥30 事件且 ≥3 个歌手。</summary>
     public bool MeetsInjectionThreshold
@@ -121,12 +155,26 @@ public enum ListeningEventType
     MoodSet,
 }
 
-/// <summary>LLM 归纳的口味摘要（digest）。EventWatermark 对齐单调计数 TotalEventsIngested。</summary>
+/// <summary>LLM 归纳的口味摘要（digest）。EventWatermark 对齐单调计数 TotalEventsIngested。
+/// Text 恒为解析后的总评纯文本（绝不存 LLM 原始 JSON 串——注入链与测试的既有契约）；
+/// StyleTags 为提炼的风格标签（流派/年代/语言/氛围，旧数据/纯文本回退时为空）。</summary>
 public class TasteDigestData
 {
     public string Text { get; set; } = string.Empty;
+    public List<string> StyleTags { get; set; } = new();
     public string Language { get; set; } = "zh";
     public DateTime GeneratedAt { get; set; }
     public long EventWatermark { get; set; }
+    public int ConsecutiveFailures { get; set; }
+}
+
+/// <summary>LLM 从聊天内容归纳的听众性格印象。归纳素材（PendingChats）成功消费后清到水位，
+/// 聊天原文不在画像文件中长期保留。Text/Traits 语义与 TasteDigestData 同构但水位机制独立。</summary>
+public class ListenerImpressionData
+{
+    public string Text { get; set; } = string.Empty;
+    public List<string> Traits { get; set; } = new();
+    public string Language { get; set; } = "zh";
+    public DateTime GeneratedAt { get; set; }
     public int ConsecutiveFailures { get; set; }
 }
