@@ -1,0 +1,74 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 冰蓝/午夜蓝（冷静系）：叠加层只声明与基座（Themes/Colors.axaml）不同的键，
+         键名沿用薄荷绿时期的字面值命名（C_FF56F5C4 在本主题里是冰蓝，不是薄荷绿）——
+         键只是 ID，值经 Services/AccentPalettes 重映射。对比度由 AccentPaletteTests 程序化门禁。
+         副色族取薄荷绿（与基座强调色互为镜像的青绿）。 -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <!-- 底色 tint：冷黑 -->
+            <Color x:Key="WindowBg">#FF070B10</Color>
+            <Color x:Key="SurfaceRoot">#FF040609</Color>
+            <Color x:Key="SurfaceTitleBar">#FF05080C</Color>
+            <Color x:Key="SurfaceShell">#F0101A26</Color>
+            <Color x:Key="SurfaceHeader">#CC18242F</Color>
+            <Color x:Key="SurfaceFooter">#F0141E29</Color>
+            <Color x:Key="BorderShell">#334B6280</Color>
+            <Color x:Key="C_FF262632">#FF22303F</Color>
+            <Color x:Key="C_11121620">#11141A24</Color>
+            <Color x:Key="C_24212632">#241F2B38</Color>
+            <Color x:Key="C_33262835">#33263544</Color>
+            <Color x:Key="C_E91B1B2A">#E91E2B38</Color>
+            <Color x:Key="C_E9161623">#E91B2733</Color>
+            <Color x:Key="C_CC202126">#CC1B2733</Color>
+            <Color x:Key="C_FC0E0E15">#FC0E1620</Color>
+            <Color x:Key="C_F008080D">#F0080D14</Color>
+            <Color x:Key="C_EE050507">#EE060B11</Color>
+            <!-- 强调色家族：冰蓝 -->
+            <Color x:Key="AccentGreen">#FF6BD0FF</Color>
+            <Color x:Key="C_FF56F5C4">#FF6BD0FF</Color>
+            <Color x:Key="C_3356F5C4">#336BD0FF</Color>
+            <Color x:Key="C_6656F5C4">#666BD0FF</Color>
+            <Color x:Key="C_2221ED76">#226BD0FF</Color>
+            <Color x:Key="C_FFB9FFE8">#FFC9E9FF</Color>
+            <Color x:Key="StatePlayingColor">#FF6BD0FF</Color>
+            <Color x:Key="StateSpeakingColor">#FFC9E9FF</Color>
+            <!-- 副色族：薄荷绿（基座强调色在此充当副色） -->
+            <Color x:Key="C_FFA783FF">#FF6BF5C4</Color>
+            <Color x:Key="C_66A783FF">#666BF5C4</Color>
+            <Color x:Key="C_FFE4D9FF">#FFC8FFE9</Color>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <!-- 底色 tint：冷白 -->
+            <Color x:Key="WindowBg">#FFEDF2F7</Color>
+            <Color x:Key="SurfaceRoot">#FFF4F8FB</Color>
+            <Color x:Key="SurfaceTitleBar">#FFE2EAF1</Color>
+            <Color x:Key="SurfaceShell">#FFFDFEFF</Color>
+            <Color x:Key="SurfaceHeader">#FFEDF3F8</Color>
+            <Color x:Key="SurfaceFooter">#FFECF2F7</Color>
+            <Color x:Key="BorderShell">#FFBCCBD8</Color>
+            <Color x:Key="C_FF262632">#FFDCE6EE</Color>
+            <Color x:Key="C_11121620">#FFEBF1F6</Color>
+            <Color x:Key="C_24212632">#FFE3EBF2</Color>
+            <Color x:Key="C_33262835">#FFE7EFF5</Color>
+            <Color x:Key="C_E91B1B2A">#FFE8F0F6</Color>
+            <Color x:Key="C_E9161623">#FFE6EEF5</Color>
+            <Color x:Key="C_CC202126">#FFE7EFF6</Color>
+            <Color x:Key="C_FC0E0E15">#FFFAFCFE</Color>
+            <Color x:Key="C_F008080D">#FFF1F6FA</Color>
+            <Color x:Key="C_EE050507">#FFF8FBFD</Color>
+            <!-- 强调色家族：深蓝（冷白底上 ≥4.5:1） -->
+            <Color x:Key="AccentGreen">#FF0E5A8A</Color>
+            <Color x:Key="C_FF56F5C4">#FF0E5A8A</Color>
+            <Color x:Key="C_3356F5C4">#4D0E5A8A</Color>
+            <Color x:Key="C_6656F5C4">#660E5A8A</Color>
+            <Color x:Key="C_2221ED76">#240E5A8A</Color>
+            <Color x:Key="C_FFB9FFE8">#FF14537D</Color>
+            <Color x:Key="StatePlayingColor">#FF0E5A8A</Color>
+            <Color x:Key="StateSpeakingColor">#FF14537D</Color>
+            <!-- 副色族：深薄荷绿 -->
+            <Color x:Key="C_FFA783FF">#FF0F6B57</Color>
+            <Color x:Key="C_66A783FF">#660F6B57</Color>
+            <Color x:Key="C_FFE4D9FF">#FF0C624F</Color>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

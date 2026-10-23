@@ -35,7 +35,10 @@ public class RadioStateToBrushConverter : IMultiValueConverter
             [RadioState.Curating] = new(Color.Parse("#FF7546AB")),
             [RadioState.Searching] = new(Color.Parse("#FF936000")),
             [RadioState.Speaking] = new(Color.Parse("#FF23654F")),
-            [RadioState.Playing] = new(Color.Parse("#FF0E7B58")),
+            // Playing 回退值须与 Colors.axaml Light 的 StatePlayingColor #FF0C6E4E 一致
+            // （历史漂移 #FF0E7B58 已对齐；主路径走资源，此表仅设计器/单测兜底，
+            //  且只锚薄荷绿基座——配色主题叠加层不在资源表时可整体回落）
+            [RadioState.Playing] = new(Color.Parse("#FF0C6E4E")),
             [RadioState.Error] = new(Color.Parse("#FFC62828"))
         };
 

@@ -1,0 +1,77 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 蒸汽波紫（夜电台）：叠加层只声明与基座（Themes/Colors.axaml）不同的键，
+         键名沿用薄荷绿时期的字面值命名（C_FF56F5C4 在本主题里是紫，不是薄荷绿）——
+         键只是 ID，值经 Services/AccentPalettes 重映射。对比度由 AccentPaletteTests 程序化门禁。
+         StateCuratingColor 连坐重映射为粉：本主题强调色即紫，保留基座紫会让
+         "策划中"状态与播放态不可区分（状态机单态显示，仅需可学习性区分）。 -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <!-- 底色 tint：紫黑 -->
+            <Color x:Key="WindowBg">#FF0B0712</Color>
+            <Color x:Key="SurfaceRoot">#FF060309</Color>
+            <Color x:Key="SurfaceTitleBar">#FF08050D</Color>
+            <Color x:Key="SurfaceShell">#F01B1129</Color>
+            <Color x:Key="SurfaceHeader">#CC2A1C3D</Color>
+            <Color x:Key="SurfaceFooter">#F0241735</Color>
+            <Color x:Key="BorderShell">#33494B80</Color>
+            <Color x:Key="C_FF262632">#FF2E2242</Color>
+            <Color x:Key="C_11121620">#11131627</Color>
+            <Color x:Key="C_24212632">#24261834</Color>
+            <Color x:Key="C_33262835">#33282138</Color>
+            <Color x:Key="C_E91B1B2A">#E92C2038</Color>
+            <Color x:Key="C_E9161623">#E9261B30</Color>
+            <Color x:Key="C_CC202126">#CC251B2E</Color>
+            <Color x:Key="C_FC0E0E15">#FC130E1D</Color>
+            <Color x:Key="C_F008080D">#F00B0712</Color>
+            <Color x:Key="C_EE050507">#EE080510</Color>
+            <!-- 强调色家族：霓虹紫 -->
+            <Color x:Key="AccentGreen">#FFC9A0FF</Color>
+            <Color x:Key="C_FF56F5C4">#FFC9A0FF</Color>
+            <Color x:Key="C_3356F5C4">#33C9A0FF</Color>
+            <Color x:Key="C_6656F5C4">#66C9A0FF</Color>
+            <Color x:Key="C_2221ED76">#22C9A0FF</Color>
+            <Color x:Key="C_FFB9FFE8">#FFE4CCFF</Color>
+            <Color x:Key="StatePlayingColor">#FFC9A0FF</Color>
+            <Color x:Key="StateSpeakingColor">#FFE4CCFF</Color>
+            <Color x:Key="StateCuratingColor">#FFFF8CC8</Color>
+            <!-- 副色族（频谱 SecondaryBrush/聊天录音指示）：蒸汽波经典青 -->
+            <Color x:Key="C_FFA783FF">#FF6BE8E0</Color>
+            <Color x:Key="C_66A783FF">#666BE8E0</Color>
+            <Color x:Key="C_FFE4D9FF">#FFB8FFF6</Color>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <!-- 底色 tint：紫调白 -->
+            <Color x:Key="WindowBg">#FFF3EEF9</Color>
+            <Color x:Key="SurfaceRoot">#FFF8F4FC</Color>
+            <Color x:Key="SurfaceTitleBar">#FFEBE3F4</Color>
+            <Color x:Key="SurfaceShell">#FFFEFCFF</Color>
+            <Color x:Key="SurfaceHeader">#FFF2ECF8</Color>
+            <Color x:Key="SurfaceFooter">#FFF1EBF7</Color>
+            <Color x:Key="BorderShell">#FFCBBCE0</Color>
+            <Color x:Key="C_FF262632">#FFE7DCF3</Color>
+            <Color x:Key="C_11121620">#FFF3EDF9</Color>
+            <Color x:Key="C_24212632">#FFEDE5F5</Color>
+            <Color x:Key="C_33262835">#FFF0E9F7</Color>
+            <Color x:Key="C_E91B1B2A">#FFF1EAF7</Color>
+            <Color x:Key="C_E9161623">#FFF0E8F6</Color>
+            <Color x:Key="C_CC202126">#FFF1E9F7</Color>
+            <Color x:Key="C_FC0E0E15">#FFFDFAFF</Color>
+            <Color x:Key="C_F008080D">#FFF6F1FB</Color>
+            <Color x:Key="C_EE050507">#FFFBF7FE</Color>
+            <!-- 强调色家族：深紫（紫调白底上 ≥4.5:1） -->
+            <Color x:Key="AccentGreen">#FF6B3FA0</Color>
+            <Color x:Key="C_FF56F5C4">#FF6B3FA0</Color>
+            <Color x:Key="C_3356F5C4">#4D6B3FA0</Color>
+            <Color x:Key="C_6656F5C4">#666B3FA0</Color>
+            <Color x:Key="C_2221ED76">#246B3FA0</Color>
+            <Color x:Key="C_FFB9FFE8">#FF5D3787</Color>
+            <Color x:Key="StatePlayingColor">#FF6B3FA0</Color>
+            <Color x:Key="StateSpeakingColor">#FF5D3787</Color>
+            <Color x:Key="StateCuratingColor">#FFB03A6F</Color>
+            <!-- 副色族：深青 -->
+            <Color x:Key="C_FFA783FF">#FF0E6E68</Color>
+            <Color x:Key="C_66A783FF">#660E6E68</Color>
+            <Color x:Key="C_FFE4D9FF">#FF0C5F5A</Color>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>
