@@ -242,6 +242,9 @@ public static class RecommendationIntentKeys
 public class UserMusicFeedback
 {
     public string TrackId { get; set; } = string.Empty;
+    // 按音乐身份撤销会话 Dislike，覆盖同一歌曲来自不同音源的反馈。
+    public string Title { get; set; } = string.Empty;
+    public string Artist { get; set; } = string.Empty;
     public MusicFeedbackAction Action { get; set; }
     public DateTime Time { get; set; } = DateTime.Now;
 }

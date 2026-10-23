@@ -1212,8 +1212,9 @@ public class SettingsViewModelTests
         profile.Setup(x => x.RemoveDislikeEvents("晴天", "周杰伦"))
             .Returns(true)
             .Callback(() => hasItem = false);
+        var recommendations = new Mock<IRecommendationService>();
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
-            listeningProfile: profile.Object);
+            listeningProfile: profile.Object, recommendationService: recommendations.Object);
         try
         {
             vm.ShowProfileTabCommand.Execute().Subscribe();
@@ -1222,6 +1223,7 @@ public class SettingsViewModelTests
             await vm.RemoveBlacklistItemCommand.Execute(new ProfileBlacklistItem("晴天", "周杰伦", "晴天 - 周杰伦"));
 
             profile.Verify(x => x.RemoveDislikeEvents("晴天", "周杰伦"), Times.Once);
+            recommendations.Verify(x => x.RemoveDislikeFeedback("晴天", "周杰伦"), Times.Once);
             Assert.False(vm.ProfileHasBlacklist);
             Assert.Contains("已移除", vm.StatusMessage);
         }
@@ -1454,5 +1456,181 @@ public class SettingsViewModelTests
         await Task.Delay(3500);
         Assert.Equal(callsAfterFailure, checkCalls);
         Assert.True(callsAfterFailure <= 2, $"unexpected poll count: {callsAfterFailure}");
+    }
+
+    [Fact]
+    public async Task SelectingLocalProvider_EnumeratesModelsIntoDropdown()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { "qwen3.5:9b", "qwen3.5:4b-16k" });
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            vm.SelectedProvider = "local";
+
+            await WaitForStatusAsync(() => vm.LocalModels.Count == 2);
+            // 下拉候选按名称排序，与 ollama list 观感一致
+            Assert.Equal(new[] { "qwen3.5:4b-16k", "qwen3.5:9b" }, vm.LocalModels);
+
+            // 切回云端清空候选：不能拿本地模型名建议云端用户（误选后以 Ollama 模型名调云端 API 必失败）
+            vm.SelectedProvider = "anthropic";
+            await WaitForStatusAsync(() => vm.LocalModels.Count == 0);
+            _mockLlm.Verify(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SelectingCloudProvider_DoesNotEnumerateLocalModels()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            vm.SelectedProvider = "anthropic";
+            // 负向断言需要给 fire-and-forget 链一个窗口（仅此处允许短等待）
+            await Task.Delay(200);
+
+            _mockLlm.Verify(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task EditingLocalBaseUrl_DebouncesAndUsesLatestEndpoint()
+    {
+        var requestedUrls = new List<string?>();
+        _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string?, CancellationToken>((url, _) => requestedUrls.Add(url))
+            .ReturnsAsync((string? url, CancellationToken _) => new List<string> { url! });
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        vm.BaseUrl = "http://localhost:11434/v1";
+        vm.SelectedProvider = "local";
+        await WaitForStatusAsync(() => vm.LocalModels.Contains("http://localhost:11434/v1"));
+
+        vm.BaseUrl = "http://localhost:199";
+        vm.BaseUrl = "http://localhost:19999/v1";
+        Assert.Empty(vm.LocalModels);
+        await WaitForStatusAsync(() => vm.LocalModels.Contains("http://localhost:19999/v1"));
+
+        Assert.Equal(new[] { "http://localhost:11434/v1", "http://localhost:19999/v1" }, requestedUrls);
+        _mockLlm.Verify(x => x.Configure(It.IsAny<LLMConfig>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LocalModels_OldEndpointResponseCannotOverwriteNewEndpoint()
+    {
+        var oldResponse = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLlm.Setup(x => x.ListLocalModelsAsync("http://old/v1", It.IsAny<CancellationToken>()))
+            .Callback(() => oldStarted.TrySetResult())
+            .Returns(oldResponse.Task);
+        _mockLlm.Setup(x => x.ListLocalModelsAsync("http://new/v1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "new-model" });
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        vm.BaseUrl = "http://old/v1";
+        vm.SelectedProvider = "local";
+        await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        vm.BaseUrl = "http://new/v1";
+        await WaitForStatusAsync(() => vm.LocalModels.Contains("new-model"));
+        oldResponse.SetResult(new List<string> { "old-model" });
+        // 让旧请求的 await 续体跑完，再确认迟到结果没有覆盖新端点候选。
+        await Task.Delay(200);
+        Assert.Equal(new[] { "new-model" }, vm.LocalModels);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalModels_LeavingLocalOrDisposingRejectsPendingResult(bool dispose)
+    {
+        var response = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => started.TrySetResult())
+            .Returns(response.Task);
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        vm.SelectedProvider = "local";
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (dispose)
+            vm.Dispose();
+        else
+            vm.SelectedProvider = "openai";
+        response.SetResult(new List<string> { "late-model" });
+        await Task.Delay(200);
+
+        Assert.Empty(vm.LocalModels);
+    }
+
+    [Fact]
+    public async Task LoadingWithLocalProvider_EnumeratesAfterBaseUrlFullyLoaded()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            // llm_provider 在 settings 里排在 llm_base_url 之前：若枚举被加载期赋值触发，
+            // 会拿着尚未读取的自定义 BaseUrl（空）走默认端点——此处锚定补拉发生在加载完成后，
+            // 且经入参拿到已读齐的 BaseUrl
+            File.WriteAllText(settingsFile,
+                """{"llm_provider":"local","llm_base_url":"http://127.0.0.1:19999/v1","llm_model":"m"}""");
+            string? requestedBaseUrl = null;
+            _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .Callback<string?, CancellationToken>((baseUrl, _) => requestedBaseUrl = baseUrl)
+                .ReturnsAsync(new List<string>());
+
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                await WaitForStatusAsync(() => requestedBaseUrl != null);
+
+                Assert.Equal("http://127.0.0.1:19999/v1", requestedBaseUrl);
+                // 恰好一次：加载期被 _isLoading 屏蔽 + 加载完成后补拉一次
+                _mockLlm.Verify(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            }
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SelectingLocalProvider_DoesNotTouchLiveServiceConfig()
+    {
+        // 翻看 provider 下拉（不保存）不能改运行中服务的聊天配置：
+        // 电台在播时改配置会把 DJ 链路打到错误端点，且切回云端不恢复
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { "m" });
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            vm.SelectedProvider = "local";
+            await WaitForStatusAsync(() => vm.LocalModels.Count == 1);
+            vm.SelectedProvider = "anthropic";
+            await Task.Delay(200);
+
+            _mockLlm.Verify(x => x.Configure(It.IsAny<LLMConfig>()), Times.Never);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
     }
 }

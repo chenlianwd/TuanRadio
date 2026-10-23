@@ -228,4 +228,63 @@ public class LLMServiceTests
 
     private static string? GetMessageRole(object message)
         => message.GetType().GetProperty("role")?.GetValue(message) as string;
+
+    [Fact]
+    public async Task ListLocalModelsAsync_ParsesNamesAndStripsV1Prefix()
+    {
+        string? requestedUrl = null;
+        var responseJson = @"{""models"":[{""name"":""qwen3.5:9b""},{""name"":""qwen3.5:4b-16k""}]}";
+        var service = new LLMService(CreateMockHttpClient(responseJson, r => requestedUrl = r.RequestUri?.ToString()));
+
+        var models = await service.ListLocalModelsAsync(baseUrl: null, CancellationToken.None);
+
+        // baseUrl 为空走本地默认端点；/api/tags 是 Ollama 原生 API：
+        // 挂在根上，必须把 OpenAI 兼容层的 /v1 前缀剥掉
+        Assert.Equal("http://localhost:11434/api/tags", requestedUrl);
+        Assert.Equal(new[] { "qwen3.5:9b", "qwen3.5:4b-16k" }, models);
+    }
+
+    [Fact]
+    public async Task ListLocalModelsAsync_CustomBaseUrlWithoutV1_QueriesRootDirectly()
+    {
+        string? requestedUrl = null;
+        var service = new LLMService(CreateMockHttpClient(@"{""models"":[]}", r => requestedUrl = r.RequestUri?.ToString()));
+
+        _ = await service.ListLocalModelsAsync(baseUrl: "http://127.0.0.1:19999", CancellationToken.None);
+
+        Assert.Equal("http://127.0.0.1:19999/api/tags", requestedUrl);
+    }
+
+    [Fact]
+    public async Task ListLocalModelsAsync_FailureOrGarbage_ReturnsEmptyList()
+    {
+        // 服务未起/端点不认识 /api/tags/返回非 JSON：一律空列表静默降级，不打断设置页
+        var service = new LLMService(CreateMockHttpClient("not json"));
+
+        var models = await service.ListLocalModelsAsync(baseUrl: null, CancellationToken.None);
+
+        Assert.Empty(models);
+    }
+
+    [Theory]
+    [InlineData("local", true)]
+    [InlineData("openai", false)]
+    public async Task ChatAsync_ReasoningEffortNone_OnlyInjectedForLocalProvider(string provider, bool expectField)
+    {
+        // local（Ollama）不关思考 DJ 台词 16s；云端 OpenAI 兼容服务不认 none 会 400。
+        // 条件写反或扩散到全部 provider 时此处必红
+        string? body = null;
+        var service = new LLMService(CreateMockHttpClient(
+            """{"choices":[{"message":{"content":"ok"}}]}""",
+            request => body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult()));
+        service.Configure(new LLMConfig { Provider = provider, Model = "m", ApiKey = "k" });
+
+        await service.ChatAsync("hello", new List<ChatMessage>());
+
+        Assert.NotNull(body);
+        if (expectField)
+            Assert.Contains("\"reasoning_effort\":\"none\"", body);
+        else
+            Assert.DoesNotContain("reasoning_effort", body);
+    }
 }

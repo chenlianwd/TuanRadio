@@ -77,6 +77,30 @@ public class PlayerDeckFeedbackButtonTests
         return (vm, rec, audio);
     }
 
+    [AvaloniaFact]
+    public void RemoveBlacklistItem_UsesTheMainWindowRecommendationService()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(ListenerProfileSnapshot.Empty);
+        profile.Setup(x => x.RemoveDislikeEvents("晴天", "周杰伦")).Returns(true);
+        var (vm, recommendations, _) = CreateViewModel(
+            new Track { Title = "晴天", Artist = "周杰伦", SourceId = "netease:1" }, profileMock: profile);
+        try
+        {
+            vm.SettingsVM.RemoveBlacklistItemCommand.Execute(
+                new ProfileBlacklistItem("晴天", "周杰伦", "晴天 - 周杰伦")).Subscribe();
+
+            recommendations.Verify(x => x.RemoveDislikeFeedback("晴天", "周杰伦"), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
     private static Button FindByContent(PlayerDeck view, string content)
         => view.GetVisualDescendants().OfType<Button>()
                .FirstOrDefault(b => string.Equals(b.Content as string, content, StringComparison.Ordinal))
@@ -126,7 +150,7 @@ public class PlayerDeckFeedbackButtonTests
 
             Execute(vm.DislikeCurrentTrackCommand);
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
-                f => f.Action == MusicFeedbackAction.Dislike)), Times.Once);
+                f => f.Action == MusicFeedbackAction.Dislike && f.Title == "晴天" && f.Artist == "周杰伦")), Times.Once);
 
             Execute(vm.SimilarToCurrentTrackCommand);
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(

@@ -10,6 +10,8 @@ public interface IRecommendationService
     Task<RadioProgram> CreateProgramAsync(RecommendationRequest request);
     Task<Track?> GetNextTrackAsync(RecommendationRequest request);
     void RecordFeedback(UserMusicFeedback feedback);
+    /// <summary>撤销指定音乐身份的会话 Dislike，与长期画像黑名单移除同步；其它反馈保留。</summary>
+    bool RemoveDislikeFeedback(string? title, string? artist);
     IReadOnlyCollection<UserMusicFeedback> FeedbackHistory { get; }
     IReadOnlyCollection<Track> RecentlyPlayed { get; }
     void RecordPlayedTrack(Track track);

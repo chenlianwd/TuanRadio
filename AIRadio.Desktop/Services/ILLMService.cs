@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 
@@ -18,6 +19,13 @@ public interface ILLMService
     /// 聊天对话。
     /// </summary>
     Task<string> ChatAsync(string userMessage, List<ChatMessage> history);
+
+    /// <summary>
+    /// 枚举本地模型名称（Ollama /api/tags）；baseUrl 为空走本地默认端点。
+    /// 失败返回空列表。端点只从入参派生，不读服务的聊天配置——
+    /// 设置页翻看 provider 下拉不应触碰运行中服务的配置。
+    /// </summary>
+    Task<List<string>> ListLocalModelsAsync(string? baseUrl, CancellationToken cancellationToken);
 }
 
 /// <summary>
