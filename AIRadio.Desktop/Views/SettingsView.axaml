@@ -368,7 +368,10 @@
 
                         <!-- DJ 对你的印象：画像只读展示卡（四态见 SettingsViewModel.RefreshProfileCard）。
                              卡片内辅助文字用 C_FFB3B3B3：卡片底在 Light 重映射为 #FFE2DAEC，
-                             C_FF666666 在页面底 4.82 达标、卡片底只有 3.62 -->
+                             C_FF666666 在页面底 4.82 达标、卡片底只有 3.62。
+                             标签芯片用描边式 AccentGreen（非实底）：实底芯片的 22% 透明强调色
+                             在 Light 卡底上字色对比不足，描边+同色文字两档主题皆稳
+                             （色对入 AccentPaletteTests 审计表） -->
                         <Border x:Name="ProfileCard" IsVisible="{Binding ProfileHasCard}" Background="{DynamicResource C_FF262632}"
                                 CornerRadius="8" Padding="12" Margin="0,8,0,0">
                             <StackPanel Spacing="8">
@@ -384,6 +387,22 @@
                                                 IsEnabled="{Binding !IsRegeneratingDigest}"
                                                 HorizontalAlignment="Right" Padding="8,2" FontSize="11"/>
                                     </Grid>
+                                    <ItemsControl x:Name="ProfileStyleTags" ItemsSource="{Binding ProfileStyleTagItems}"
+                                                  IsVisible="{Binding ProfileHasStyleTags}" Margin="0,2,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="{DynamicResource AccentGreen}" BorderThickness="1"
+                                                        CornerRadius="3" Padding="6,1" Margin="0,0,4,4">
+                                                    <TextBlock Text="{Binding}" FontSize="10" Foreground="{DynamicResource AccentGreen}"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                     <TextBlock x:Name="ProfileCardDigest" Text="{Binding ProfileDigestText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                                                TextWrapping="Wrap" IsVisible="{Binding ProfileHasDigest}"/>
                                     <TextBlock Text="{Binding ProfileDigestMeta}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="10"
@@ -392,9 +411,56 @@
                                                TextWrapping="Wrap" IsVisible="{Binding !ProfileHasDigest}"/>
                                 </StackPanel>
 
+                                <StackPanel Spacing="2" IsVisible="{Binding ProfileHasPersonaTraits}">
+                                    <TextBlock Text="{DynamicResource S_ProfilePersonaLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <ItemsControl x:Name="ProfilePersonaTraits" ItemsSource="{Binding ProfilePersonaTraitItems}}" Margin="0,2,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="{DynamicResource AccentGreen}" BorderThickness="1"
+                                                        CornerRadius="3" Padding="6,1" Margin="0,0,4,4">
+                                                    <TextBlock Text="{Binding}" FontSize="10" Foreground="{DynamicResource AccentGreen}"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{DynamicResource S_ProfileImpressionLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock x:Name="ProfileCardImpression" Text="{Binding ProfileImpressionText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                               TextWrapping="Wrap" IsVisible="{Binding ProfileHasImpression}"/>
+                                    <TextBlock Text="{Binding ProfileImpressionMeta}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="10"
+                                               IsVisible="{Binding ProfileHasImpression}"/>
+                                    <ItemsControl x:Name="ProfileImpressionTraits" ItemsSource="{Binding ProfileImpressionTraitItems}"
+                                                  IsVisible="{Binding ProfileHasImpressionTraits}" Margin="0,2,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="{DynamicResource AccentGreen}" BorderThickness="1"
+                                                        CornerRadius="3" Padding="6,1" Margin="0,0,4,4">
+                                                    <TextBlock Text="{Binding}" FontSize="10" Foreground="{DynamicResource AccentGreen}"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="{DynamicResource S_ProfileImpressionPending}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"
+                                               TextWrapping="Wrap" IsVisible="{Binding !ProfileHasImpression}"/>
+                                </StackPanel>
+
                                 <StackPanel Spacing="2" IsVisible="{Binding ProfileHasTopArtists}">
                                     <TextBlock Text="{DynamicResource S_ProfileTopArtistsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                                    <TextBlock Text="{Binding ProfileTopArtistsText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                    <!-- 行内只列歌手名（印象优先），收听次数经 Tooltip 查看详情 -->
+                                    <TextBlock x:Name="ProfileTopArtistsText" Text="{Binding ProfileTopArtistsText}" ToolTip.Tip="{Binding ProfileTopArtistsDetail}"
+                                               Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
                                 </StackPanel>
 
                                 <StackPanel Spacing="2" IsVisible="{Binding ProfileHasAvoidArtists}">

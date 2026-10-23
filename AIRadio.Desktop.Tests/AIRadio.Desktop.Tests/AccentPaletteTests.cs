@@ -323,6 +323,9 @@ public class AccentPaletteTests
         ("C_FFB9FFE8", "chat", 4.5, "VOICE 族文本"),
         ("C_FFE4D9FF", "bubble", 4.5, "录音提示文本"),
         ("C_FFEDEDF5", "navChip", 4.5, "导航选中文字"),
+        // 画像展示卡标签芯片（描边+文字同色 AccentGreen）：最薄余量在 Light 档
+        // （薄荷绿 4.75 / 琥珀 4.67），调色板 AccentGreen 或卡底 tint 变更都会破线
+        ("AccentGreen", "profileCard", 4.5, "画像标签芯片文本"),
     };
 
     private static Dictionary<string, Color> BuildBackgrounds(Dictionary<string, Color> table)
@@ -338,6 +341,8 @@ public class AccentPaletteTests
             ["chat"] = Over("C_E9161623"),
             ["bubble"] = Over("C_EE050507"),
             ["navChip"] = CompositeOver(table["C_3356F5C4"], overlayPanel),
+            // 画像展示卡底：不透明色（C_FF262632），各主题 Light 档重映射为浅色
+            ["profileCard"] = table["C_FF262632"],
         };
     }
 

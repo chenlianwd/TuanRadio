@@ -146,8 +146,20 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool ProfileHasDigest { get; set; }
     [Reactive] public partial string ProfileDigestText { get; set; } = string.Empty;
     [Reactive] public partial string ProfileDigestMeta { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasStyleTags { get; set; }
+    // 标签/特质列表必须整体换新 List 实例（同黑名单条目：就地 Clear+AddRange 绑定不刷新）
+    [Reactive] public partial List<string> ProfileStyleTagItems { get; set; } = new();
+    [Reactive] public partial bool ProfileHasPersonaTraits { get; set; }
+    [Reactive] public partial List<string> ProfilePersonaTraitItems { get; set; } = new();
+    [Reactive] public partial bool ProfileHasImpression { get; set; }
+    [Reactive] public partial string ProfileImpressionText { get; set; } = string.Empty;
+    [Reactive] public partial string ProfileImpressionMeta { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasImpressionTraits { get; set; }
+    [Reactive] public partial List<string> ProfileImpressionTraitItems { get; set; } = new();
     [Reactive] public partial bool ProfileHasTopArtists { get; set; }
     [Reactive] public partial string ProfileTopArtistsText { get; set; } = string.Empty;
+    // 行内只列歌手名，收听次数收进 Tooltip（印象优先：卡片不是数据报表）
+    [Reactive] public partial string ProfileTopArtistsDetail { get; set; } = string.Empty;
     [Reactive] public partial bool ProfileHasAvoidArtists { get; set; }
     [Reactive] public partial string ProfileAvoidArtistsText { get; set; } = string.Empty;
     [Reactive] public partial bool ProfileHasBlacklist { get; set; }
@@ -1052,12 +1064,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         var hasDigest = !string.IsNullOrWhiteSpace(snapshot.Digest?.Text);
         var hasTopArtists = snapshot.TopArtists.Count > 0;
         var hasBlacklist = snapshot.DislikeBlacklist.Count > 0;
-        if (!hasDigest && !hasTopArtists && !hasBlacklist)
+        // 性格印象与口味是独立水位（16 条消息 vs 30 事件）：只聊天不收听的新用户
+        // 攒出印象时卡片也必须可见，否则印象段恰好在它的目标场景不可达
+        var hasImpression = !string.IsNullOrWhiteSpace(snapshot.Impression?.Text);
+        if (!hasDigest && !hasTopArtists && !hasBlacklist && !hasImpression)
         {
             ProfileHasCard = false;
             ProfileEmptyHint = AppLanguage.T(
-                "还不太了解你——多听几首，DJ 慢慢就懂了",
-                "The DJ doesn't know you well yet — keep listening");
+                "还不太了解你——多听几首、多聊几句，DJ 慢慢就懂了",
+                "The DJ doesn't know you well yet — keep listening and chatting");
             ClearProfileCardSections();
             return;
         }
@@ -1071,8 +1086,36 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 $"更新于 {snapshot.Digest!.GeneratedAt:yyyy/M/d}",
                 $"Updated {snapshot.Digest.GeneratedAt:yyyy/M/d}")
             : string.Empty;
+        var styleTags = snapshot.Digest?.StyleTags
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList() ?? new List<string>();
+        ProfileHasStyleTags = styleTags.Count > 0;
+        ProfileStyleTagItems = styleTags;
+
+        // 听歌习惯特质文案跟随界面语言（DJ 注入侧走人设语言，两语言域是既有分工）
+        var isUiEn = AppLanguage.Current == "en";
+        var personaTraits = snapshot.PersonaTraits
+            .Select(t => ListeningPersona.TraitText(t, isUiEn))
+            .ToList();
+        ProfileHasPersonaTraits = personaTraits.Count > 0;
+        ProfilePersonaTraitItems = personaTraits;
+
+        ProfileHasImpression = hasImpression;
+        ProfileImpressionText = hasImpression ? snapshot.Impression!.Text : string.Empty;
+        ProfileImpressionMeta = hasImpression
+            ? AppLanguage.T(
+                $"更新于 {snapshot.Impression!.GeneratedAt:yyyy/M/d}",
+                $"Updated {snapshot.Impression.GeneratedAt:yyyy/M/d}")
+            : string.Empty;
+        var impressionTraits = hasImpression
+            ? snapshot.Impression!.Traits.Where(t => !string.IsNullOrWhiteSpace(t)).ToList()
+            : new List<string>();
+        ProfileHasImpressionTraits = impressionTraits.Count > 0;
+        ProfileImpressionTraitItems = impressionTraits;
+
         ProfileHasTopArtists = hasTopArtists;
-        ProfileTopArtistsText = string.Join("、", snapshot.TopArtists.Take(5)
+        ProfileTopArtistsText = string.Join("、", snapshot.TopArtists.Take(5).Select(a => a.Artist));
+        ProfileTopArtistsDetail = string.Join("、", snapshot.TopArtists.Take(5)
             .Select(a => a.PlayCount > 0 ? $"{a.Artist} ×{a.PlayCount}" : a.Artist));
         ProfileHasAvoidArtists = snapshot.AvoidArtists.Count > 0;
         ProfileAvoidArtistsText = string.Join("、", snapshot.AvoidArtists.Select(a => a.Artist));
@@ -1091,8 +1134,18 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ProfileHasDigest = false;
         ProfileDigestText = string.Empty;
         ProfileDigestMeta = string.Empty;
+        ProfileHasStyleTags = false;
+        ProfileStyleTagItems = new();
+        ProfileHasPersonaTraits = false;
+        ProfilePersonaTraitItems = new();
+        ProfileHasImpression = false;
+        ProfileImpressionText = string.Empty;
+        ProfileImpressionMeta = string.Empty;
+        ProfileHasImpressionTraits = false;
+        ProfileImpressionTraitItems = new();
         ProfileHasTopArtists = false;
         ProfileTopArtistsText = string.Empty;
+        ProfileTopArtistsDetail = string.Empty;
         ProfileHasAvoidArtists = false;
         ProfileAvoidArtistsText = string.Empty;
         ProfileHasBlacklist = false;
@@ -1118,18 +1171,26 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         IsRegeneratingDigest = true;
         try
         {
-            var before = _listeningProfile.GetSnapshot().Digest;
-            var beforeText = before?.Text;
-            var beforeAt = before?.GeneratedAt;
+            var before = _listeningProfile.GetSnapshot();
+            var beforeDigestText = before.Digest?.Text;
+            var beforeDigestAt = before.Digest?.GeneratedAt;
+            var beforeImpressionText = before.Impression?.Text;
+            var beforeImpressionAt = before.Impression?.GeneratedAt;
+            // 双归纳（口味 digest + 性格印象）串行 force：按钮统一管两段
             await _listeningProfile.RefreshDigestAsync(_lifetimeCts.Token, force: true);
-            var after = _listeningProfile.GetSnapshot().Digest;
+            await _listeningProfile.RefreshImpressionAsync(_lifetimeCts.Token, force: true);
+            var after = _listeningProfile.GetSnapshot();
             RefreshProfileCard();
-            // 服务全内吞：LLM 未配置/归纳失败/门槛未过/归纳在途四条静默路径；
-            // 成功路径必刷新 GeneratedAt——Text+GeneratedAt 双字段对比，
-            // 消除「归纳成功但 LLM 输出逐字相同」被误报未完成的假阴性
+            // 两段各自独立判定（Text+GeneratedAt 双字段对比，消除「输出逐字相同」的假阴性）：
+            // digest 的 force 不跳 30 事件门槛、印象的 force 要求有聊天素材——冷启动用户
+            // 的 digest 静默 no-op 时，印象变化也算成功，防「归纳未完成」对成功路径说谎
+            var digestChanged = !string.Equals(beforeDigestText, after.Digest?.Text, StringComparison.Ordinal) ||
+                                beforeDigestAt != after.Digest?.GeneratedAt;
+            var impressionChanged = !string.Equals(beforeImpressionText, after.Impression?.Text, StringComparison.Ordinal) ||
+                                    beforeImpressionAt != after.Impression?.GeneratedAt;
             SetStatusMessage(() =>
-                !string.Equals(beforeText, after?.Text, StringComparison.Ordinal) || beforeAt != after?.GeneratedAt
-                    ? AppLanguage.T("已重新归纳口味", "Taste summary regenerated")
+                digestChanged || impressionChanged
+                    ? AppLanguage.T("已重新归纳", "Regenerated")
                     : AppLanguage.T("归纳未完成——稍后再试或检查 AI 服务", "Summary not updated — try again later or check the AI service"));
         }
         finally

@@ -507,6 +507,12 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         AddMessage(userMsg);
         var text = InputText;
         InputText = string.Empty;
+        // 听众性格画像喂料：用户消息是最直接的性格信号（点歌 vs 闲聊、语气、话题），入库由
+        // 服务端统一消毒截断。点歌短路/LLM 失败路径同样喂——与 _lastListenerTopic 只记成功
+        // 路径不同：那怕兜底回声污染 DJ 输出，这是聚合统计；语音路径经纠错后写回输入框，
+        // 天然记录纠错版。归纳触发由服务内部水位/退避把关（微秒级检查，每次调用无害）。
+        _listeningProfile?.RecordListenerChat(text);
+        _ = _listeningProfile?.RefreshImpressionAsync(_lifetimeCts.Token);
         IsProcessing = true;
         RefreshStatus();
         // 上一轮 DJ 已承诺的播放动作不能随新消息静默丢弃：说"播放晴天"后在播报期间

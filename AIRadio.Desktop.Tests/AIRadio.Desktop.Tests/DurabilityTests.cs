@@ -346,6 +346,8 @@ public class DurabilityTests
         public void Reset() { }
         public Task LoadAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task RefreshDigestAsync(CancellationToken cancellationToken, bool force = false) => Task.CompletedTask;
+        public void RecordListenerChat(string userMessage) { }
+        public Task RefreshImpressionAsync(CancellationToken cancellationToken, bool force = false) => Task.CompletedTask;
         public bool RemoveDislikeEvents(string? title, string? artist) => false;
         public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }

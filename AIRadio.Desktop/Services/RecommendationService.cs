@@ -407,11 +407,19 @@ public class RecommendationService : IRecommendationService
         var topArtists = string.Join("、", snapshot.TopArtists.Take(5).Select(a => a.Artist));
         var avoidArtists = string.Join("、", snapshot.AvoidArtists.Take(3).Select(a => a.Artist));
         var digestText = snapshot.Digest?.Text;
+        // 风格标签拼进画像行（搜索词可直接使用标签，比整段总评更好使）
+        var styleTags = snapshot.Digest?.StyleTags
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList() ?? new List<string>();
+        var styleTagText = string.Join("、", styleTags);
         if (AppLanguage.Current == "en")
         {
+            var enTagSuffix = styleTags.Count > 0
+                ? $" (style tags: {styleTagText.Replace("、", ", ")})"
+                : string.Empty;
             var context = string.Empty;
             if (!string.IsNullOrWhiteSpace(digestText))
-                context += $"\nListener taste profile: {digestText}";
+                context += $"\nListener taste profile: {digestText}{enTagSuffix}";
             context += $"\nLong-term favorite artists: {topArtists}";
             if (avoidArtists.Length > 0)
                 context += $"; avoid: {avoidArtists}";
@@ -420,7 +428,10 @@ public class RecommendationService : IRecommendationService
 
         var zhContext = string.Empty;
         if (!string.IsNullOrWhiteSpace(digestText))
-            zhContext += $"\n听众口味画像：{digestText}";
+        {
+            var zhTagSuffix = styleTags.Count > 0 ? $"（风格标签：{styleTagText}）" : string.Empty;
+            zhContext += $"\n听众口味画像：{digestText}{zhTagSuffix}";
+        }
         zhContext += $"\n长期常听歌手：{topArtists}";
         if (avoidArtists.Length > 0)
             zhContext += $"；长期回避歌手：{avoidArtists}";

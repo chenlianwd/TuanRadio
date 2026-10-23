@@ -22,7 +22,7 @@ namespace AIRadio.Desktop.Tests;
 public class ChatViewModelTests
 {
     private static (ChatViewModel vm, Mock<IDJService> djMock, Mock<IAudioService> audioMock, Mock<IMusicSearchService> searchMock)
-        CreateVm()
+        CreateVm(Mock<IListeningProfileService>? profileMock = null)
     {
         var playlist = new List<Track>();
         var djMock = new Mock<IDJService>();
@@ -42,7 +42,8 @@ public class ChatViewModelTests
         sttMock.Setup(x => x.TranscribeAsync(It.IsAny<string>()))
             .ReturnsAsync("测试语音");
 
-        var vm = new ChatViewModel(djMock.Object, audioMock.Object, searchMock.Object, sttMock.Object);
+        var vm = new ChatViewModel(djMock.Object, audioMock.Object, searchMock.Object, sttMock.Object,
+            listeningProfile: profileMock?.Object);
         return (vm, djMock, audioMock, searchMock);
     }
 
@@ -208,6 +209,44 @@ public class ChatViewModelTests
             It.Is<Track>(t => t.Title == "丑八怪" && t.SourceId == "netease:ugly"),
             It.IsAny<string?>()), Times.Once);
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_ChatPath_FeedsListenerChatProfileOnceWithRawText()
+    {
+        // 性格画像喂料：用户消息原文单点入库（消毒截断在服务端），归纳触发由服务内部把关
+        var profileMock = new Mock<IListeningProfileService>();
+        profileMock.Setup(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        var (vm, djMock, _, _) = CreateVm(profileMock);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好的[happy]");
+
+        vm.InputText = "放点轻松的";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        profileMock.Verify(x => x.RecordListenerChat("放点轻松的"), Times.Once);
+        profileMock.Verify(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), false), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_SongRequestShortcut_AlsoFeedsListenerChatProfile()
+    {
+        // 点歌短路路径同样喂料：「来点周杰伦的歌」是最强的口味/性格信号，
+        // 只喂 LLM 聊天分支会让印象系统性偏向非音乐话题
+        var profileMock = new Mock<IListeningProfileService>();
+        profileMock.Setup(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        var (vm, djMock, audioMock, searchMock) = CreateVm(profileMock);
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+        searchMock.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync("http://example.com/s.mp3");
+
+        vm.InputText = "放周杰伦的晴天";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        profileMock.Verify(x => x.RecordListenerChat("放周杰伦的晴天"), Times.Once);
     }
 
     [Fact]
