@@ -97,6 +97,49 @@ public class LLMService : ILLMService
         }
     }
 
+    /// <summary>
+    /// 枚举本地模型（Ollama GET /api/tags）。尽力而为的 UI 增强：
+    /// 服务未启动/端点不支持/任何失败一律返回空列表，由调用方静默降级为手填。
+    /// </summary>
+    public async Task<List<string>> ListLocalModelsAsync(string? baseUrl, CancellationToken cancellationToken)
+    {
+        // 端点只从入参派生（空=本地默认端点），绝不读服务的聊天配置快照：
+        // 本方法由设置页在切换 provider 下拉时触发，不能有"翻看=改运行配置"的副作用。
+        // /v1 是 OpenAI 兼容层前缀，tags 属于 Ollama 原生 API，挂在根路径上
+        var effective = string.IsNullOrWhiteSpace(baseUrl)
+            ? Providers["local"]
+            : baseUrl.Trim().TrimEnd('/');
+        var root = effective.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? effective[..^3]
+            : effective;
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+            var json = await _httpClient.GetStringAsync($"{root}/api/tags", timeoutCts.Token);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("models", out var models))
+                return [];
+            var names = new List<string>();
+            foreach (var entry in models.EnumerateArray())
+            {
+                if (entry.TryGetProperty("name", out var name) && name.GetString() is { Length: > 0 } value)
+                    names.Add(value);
+            }
+            return names;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return [];
+        }
+        catch (Exception ex)
+        {
+            // 枚举失败不影响手填模型名，也不该打断设置页交互
+            Log.Debug(ex, "Local model enumeration failed");
+            return [];
+        }
+    }
+
     internal List<object> BuildRawMessages(string userMessage)
     {
         // 不注入 DJ 人设；Anthropic 首条非 system 消息必须是 user，此处无 system 直接以 user 开头
@@ -186,13 +229,14 @@ public class LLMService : ILLMService
 
         return await RetryPolicy.ExecuteAsync(async cancellationToken =>
         {
-            var requestBody = new
-            {
-                model,
-                messages,
-                max_tokens = MaxOutputTokens,
-                temperature = 0.8
-            };
+            // local（Ollama）跑 Qwen 系思考模型时 DJ 台词会被 16s 隐式推理拖死；
+            // Ollama 兼容层把 reasoning_effort=none 映射为关闭思考（实测 16s→0.7s），
+            // 仅对 local 注入，云端 OpenAI 兼容服务不认这个取值会 400。
+            // 留档：local≠必是 Ollama——严格校验未知字段的本地兼容层（vLLM 类）
+            // 可能因此 400，届时再裁决按端点收窄或加开关，llama.cpp/LM Studio 已知容忍
+            object requestBody = config.Provider == "local"
+                ? new { model, messages, max_tokens = MaxOutputTokens, temperature = 0.8, reasoning_effort = "none" }
+                : new { model, messages, max_tokens = MaxOutputTokens, temperature = 0.8 };
 
             var json = JsonSerializer.Serialize(requestBody);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");

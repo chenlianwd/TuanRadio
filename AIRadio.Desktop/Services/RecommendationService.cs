@@ -213,6 +213,21 @@ public class RecommendationService : IRecommendationService
         }
     }
 
+    public bool RemoveDislikeFeedback(string? title, string? artist)
+    {
+        var normalizedTitle = MusicIdentity.NormalizeMusicText(title ?? string.Empty);
+        var normalizedArtist = MusicIdentity.NormalizeMusicText(artist ?? string.Empty);
+        // 与长期黑名单相同：空歌手不是有效键，空标题可以是有效键。
+        if (normalizedArtist.Length == 0)
+            return false;
+
+        lock (_stateGate)
+            return _feedback.RemoveAll(feedback =>
+                feedback.Action == MusicFeedbackAction.Dislike &&
+                string.Equals(MusicIdentity.NormalizeMusicText(feedback.Title), normalizedTitle, StringComparison.Ordinal) &&
+                string.Equals(MusicIdentity.NormalizeMusicText(feedback.Artist), normalizedArtist, StringComparison.Ordinal)) > 0;
+    }
+
     public void RecordPlayedTrack(Track track)
     {
         lock (_stateGate)

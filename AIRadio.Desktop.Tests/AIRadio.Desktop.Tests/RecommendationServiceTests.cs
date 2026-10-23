@@ -4,6 +4,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.ViewModels;
+using System.Reactive.Linq;
 using Moq;
 
 namespace AIRadio.Desktop.Tests;
@@ -69,6 +71,70 @@ public class RecommendationServiceTests
 
         Assert.DoesNotContain(program.Tracks, item => item.Track.SourceId == "netease:skip");
         Assert.Contains(program.Tracks, item => item.Track.SourceId == "netease:keep");
+    }
+
+    [Fact]
+    public void RemoveDislikeFeedback_RemovesMatchingVersionsAcrossSourcesAndPreservesOtherFeedback()
+    {
+        var service = new RecommendationService(new Mock<ILLMService>().Object, new Mock<IMusicSearchService>().Object);
+        var dislike = new UserMusicFeedback { TrackId = "netease:a", Title = "Song", Artist = "Artist", Action = MusicFeedbackAction.Dislike };
+        var sameSong = new UserMusicFeedback { TrackId = "kugou:a", Title = "Ｓｏｎｇ", Artist = "ARTIST", Action = MusicFeedbackAction.Dislike };
+        var like = new UserMusicFeedback { TrackId = "netease:a", Title = "Song", Artist = "Artist", Action = MusicFeedbackAction.Like };
+        var otherArtist = new UserMusicFeedback { TrackId = "netease:b", Title = "Song", Artist = "Other", Action = MusicFeedbackAction.Dislike };
+        var otherSong = new UserMusicFeedback { TrackId = "netease:c", Title = "Other", Artist = "Artist", Action = MusicFeedbackAction.Dislike };
+        foreach (var feedback in new[] { dislike, sameSong, like, otherArtist, otherSong })
+            service.RecordFeedback(feedback);
+
+        Assert.False(service.RemoveDislikeFeedback("Song", ""));
+        Assert.True(service.RemoveDislikeFeedback("song", "artist"));
+        Assert.Equal(new[] { like, otherArtist, otherSong }, service.FeedbackHistory);
+        Assert.False(service.RemoveDislikeFeedback("song", "artist"));
+    }
+
+    [Fact]
+    public async Task RemoveBlacklistItem_AllowsTrackInNewProgramWithinSameSession()
+    {
+        var llm = new Mock<ILLMService>();
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>())).ReturnsAsync("ambient");
+        var search = new Mock<IMusicSearchService>();
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                new() { Id = "netease:forgiven", Title = "Forgiven", Artist = "Artist", Source = "netease" },
+                new() { Id = "netease:other", Title = "Other", Artist = "Other Artist", Source = "netease" }
+            });
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>())).ReturnsAsync((string id) => $"https://example.com/{id}.mp3");
+        var profileFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"airadio-forgive-{System.Guid.NewGuid():N}.json");
+        try
+        {
+            using var profile = new ListeningProfileService(llm.Object, profileFile);
+            await profile.LoadAsync(CancellationToken.None);
+            var service = new RecommendationService(llm.Object, search.Object, profile);
+            service.RecordFeedback(new UserMusicFeedback
+            {
+                TrackId = "netease:forgiven", Title = "Forgiven", Artist = "Artist", Action = MusicFeedbackAction.Dislike
+            });
+            profile.RecordEvent(new ListeningEventData
+            {
+                SourceId = "netease:forgiven", Title = "Forgiven", Artist = "Artist", Type = ListeningEventType.Dislike
+            });
+            var request = new RecommendationRequest { UserIntent = "ambient" };
+            var before = await service.CreateProgramAsync(request);
+            Assert.DoesNotContain(before.Tracks, x => x.Track.SourceId == "netease:forgiven");
+
+            using var vm = new SettingsViewModel(llm.Object, new Mock<ISecureStorage>().Object, profileFile + ".settings",
+                listeningProfile: profile, recommendationService: service);
+            await vm.RemoveBlacklistItemCommand.Execute(new ProfileBlacklistItem("Forgiven", "Artist", "Forgiven - Artist"));
+            Assert.Empty(profile.GetSnapshot().DislikeBlacklist);
+            var after = await service.CreateProgramAsync(request);
+
+            Assert.Contains(after.Tracks, x => x.Track.SourceId == "netease:forgiven");
+        }
+        finally
+        {
+            System.IO.File.Delete(profileFile);
+            System.IO.File.Delete(profileFile + ".bak");
+        }
     }
 
     [Fact]

@@ -59,17 +59,21 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _selectedYtdlpBrowserSub;
     private readonly IDisposable _openSubsonicQualitySub;
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private bool _isLoading;
     private readonly MusicAccountStore _accounts;
     private readonly NeteaseAccountService _neteaseAccount;
     private readonly KugouAccountService _kugouAccount;
     private readonly KugouVerificationService? _kugouVerification;
     private readonly IListeningProfileService? _listeningProfile;
+    private readonly IRecommendationService? _recommendationService;
     private readonly IMusicSearchService? _musicSearch;
     private readonly OpenSubsonicProvider? _openSubsonic;
     private readonly AudiusProvider? _audius;
     private Func<string>? _audiusStatusFactory;
     private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
+    private readonly IDisposable _localModelSettingsSub;
+    private int _localModelsEpoch;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
     private int _resetArmVersion;
@@ -104,6 +108,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string SelectedProvider { get; set; } = "openai";
     [Reactive] public partial string BaseUrl { get; set; } = string.Empty;
     [Reactive] public partial string Model { get; set; } = string.Empty;
+
+    /// <summary>本地模型候选（Ollama 枚举），供模型输入框下拉选择；云端 provider 恒为空。</summary>
+    [Reactive] public partial List<string> LocalModels { get; set; } = new();
     [Reactive] public partial string StatusMessage { get; set; } = string.Empty;
     [Reactive] public partial bool IsTesting { get; set; }
     [Reactive] public partial string TestConnectionButtonText { get; set; } = AppLanguage.T("测试连接", "Test");
@@ -237,7 +244,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         IListeningProfileService? listeningProfile = null,
         IMusicSearchService? musicSearch = null,
         OpenSubsonicProvider? openSubsonic = null,
-        AudiusProvider? audius = null)
+        AudiusProvider? audius = null,
+        IRecommendationService? recommendationService = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -249,6 +257,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _kugouAccount = new KugouAccountService(http);
         _kugouVerification = kugouVerification;
         _listeningProfile = listeningProfile;
+        _recommendationService = recommendationService;
         _musicSearch = musicSearch;
         _openSubsonic = openSubsonic;
         _audius = audius;
@@ -269,6 +278,24 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         DisconnectOpenSubsonicCommand = ReactiveCommand.Create(DisconnectOpenSubsonic);
         SaveAudiusApiKeyCommand = ReactiveCommand.CreateFromTask(SaveAudiusApiKeyAsync);
         ClearAudiusApiKeyCommand = ReactiveCommand.Create(ClearAudiusApiKey);
+
+        // provider/地址任一变化即清空旧候选并作废在途结果；本地枚举防抖，避免逐字输入地址
+        // 时打出一串 HTTP 请求。加载期赋值被屏蔽，LoadCoreAsync 尾部显式补拉一次。
+        _localModelSettingsSub = this.WhenAnyValue(x => x.SelectedProvider, x => x.BaseUrl)
+            .Skip(1)
+            .Subscribe(settings =>
+            {
+                if (_isLoading)
+                    return;
+                LocalModels = new();
+                if (NormalizeProvider(settings.Item1) == "local")
+                    _ = RefreshLocalModelsAsync(debounce: true);
+                else
+                {
+                    // 清空也要递增代次：否则在途枚举晚到会凭旧代次把候选填回云端视图
+                    _localModelsEpoch++;
+                }
+            });
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
@@ -612,6 +639,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     private async Task LoadCoreAsync(CancellationToken cancellationToken)
     {
+        _isLoading = true;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -782,6 +810,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
             // 加载完成即建立角色签名基线：启动后的第一次无关保存（主题/简洁模式）不会误触发事件
             _lastCharacterSignature = BuildCharacterSignature();
+
+            // 此时 llm_* 全部字段已读取完，补拉本地模型列表（加载期的 provider 赋值被 _isLoading 屏蔽）
+            if (NormalizeProvider(SelectedProvider) == "local")
+                _ = RefreshLocalModelsAsync();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -790,6 +822,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load settings");
+        }
+        finally
+        {
+            _isLoading = false;
         }
     }
 
@@ -1035,9 +1071,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         if (_listeningProfile == null || item is null)
             return;
         var removed = _listeningProfile.RemoveDislikeEvents(item.Title, item.Artist);
+        var sessionRemoved = _recommendationService?.RemoveDislikeFeedback(item.Title, item.Artist) == true;
         RefreshProfileCard();
-        // false（陈旧条目已滑出 180 天窗/无匹配事件）仅刷新列表，不发「已移除」的假确认
-        if (removed)
+        // 两处都无匹配（陈旧条目）时仅刷新，不发「已移除」的假确认。
+        if (removed || sessionRemoved)
             SetStatusMessage(() => AppLanguage.T("已移除，DJ 不再回避它", "Removed — the DJ won't avoid it anymore"));
     }
 
@@ -1145,6 +1182,41 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 .OrderBy(kv => kv.Key)
                 .Select(kv => new { id = kv.Key, kv.Value.VoiceId, kv.Value.Personality })
         });
+
+    /// <summary>
+    /// 枚举本机模型填充下拉候选；失败静默保持空列表，手填模型名兜底。
+    /// </summary>
+    private async Task RefreshLocalModelsAsync(bool debounce = false)
+    {
+        // 代次守卫：快速来回切换 provider 时两次枚举并发，HTTP 完成序不定，
+        // 旧结果晚到不得覆盖新结果（同歌词 generation 卫兵惯例）
+        var epoch = ++_localModelsEpoch;
+        var baseUrl = BaseUrl;
+        try
+        {
+            if (debounce)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(350), _lifetimeCts.Token);
+                if (epoch != _localModelsEpoch)
+                    return;
+            }
+            // 端点从 VM 字段显式传入，不在此 ConfigureLlm——
+            // 翻看 provider 下拉不能改变运行中服务的聊天配置（电台可能正在播）
+            var models = await _llmService.ListLocalModelsAsync(baseUrl, _lifetimeCts.Token);
+            if (epoch != _localModelsEpoch || _lifetimeCts.IsCancellationRequested)
+                return;
+            LocalModels = (models ?? Enumerable.Empty<string>())
+                .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Local model enumeration failed in settings");
+        }
+    }
 
     private async Task TestConnectionAsync()
     {
@@ -1736,6 +1808,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _musicSourcePolicySub.Dispose();
         _selectedLanguageSub.Dispose();
         _listenerProfileToggleSub.Dispose();
+        _localModelSettingsSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更

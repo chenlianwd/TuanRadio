@@ -195,7 +195,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             recommendationService: _recommendationService, listeningProfile: listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
-            listeningProfile, musicSearchService, openSubsonic, audius);
+            listeningProfile, musicSearchService, openSubsonic, audius, recommendationService: _recommendationService);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));
@@ -514,6 +514,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _recommendationService.RecordFeedback(new UserMusicFeedback
             {
                 TrackId = trackId,
+                Title = current.Title,
+                Artist = current.Artist,
                 Action = MusicFeedbackAction.Like
             });
         _listeningProfile?.RecordEvent(new ListeningEventData
@@ -729,6 +731,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _recommendationService.RecordFeedback(new UserMusicFeedback
         {
             TrackId = trackId,
+            Title = current?.Title ?? string.Empty,
+            Artist = current?.Artist ?? string.Empty,
             Action = action
         });
 
