@@ -398,19 +398,326 @@ public class SettingsViewModelTests
     }
 
     [Fact]
-    public void SelectedProvider_KeepsSavedValues()
+    public void SwitchingProvider_SwapsAndRestoresProfile()
     {
+        // 显式声明槽位缺 Key，防 Moq 默认值干扰（llm.local 永不建槽，读 miss 即空）
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.local")).ReturnsAsync((string?)null);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.openai")).ReturnsAsync((string?)null);
         var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
 
         vm.ApiKey = "remote-secret";
         vm.Model = "deepseek-chat";
         vm.BaseUrl = "https://api.deepseek.com/v1";
 
+        // 切走：当前字段存回旧服务档案，载入新服务（无档案即清空，不再显示别家配置）
         vm.SelectedProvider = "local";
+        Assert.Equal(string.Empty, vm.ApiKey);
+        Assert.Equal(string.Empty, vm.Model);
+        Assert.Equal(string.Empty, vm.BaseUrl);
 
+        // 切回：旧服务档案原样还原（逐字段精确值，非仅非空）
+        vm.SelectedProvider = "openai";
         Assert.Equal("remote-secret", vm.ApiKey);
         Assert.Equal("deepseek-chat", vm.Model);
         Assert.Equal("https://api.deepseek.com/v1", vm.BaseUrl);
+    }
+
+    [Fact]
+    public async Task SwitchingToProvider_BackfillsKeyFromDedicatedSlotAndSaveWritesAllSlots()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            _mockStorage.Setup(x => x.GetApiKeyAsync("llm.openai")).ReturnsAsync("slot-key");
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
+            {
+                SelectedProvider = "anthropic",
+                ApiKey = "anth-key",
+                BaseUrl = "https://proxy.example/v1",
+                Model = "claude-test"
+            };
+
+            // 切到 openai：本会话首次切到、缓存为空 → 从专槽回填
+            vm.SelectedProvider = "openai";
+            await WaitForStatusAsync(() => vm.ApiKey == "slot-key");
+
+            await vm.SaveCommand.Execute();
+
+            // 专槽按服务各自写入 + 旧单槽镜像当前服务（回滚兼容/存量契约）
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm.openai", "slot-key"), Times.Once);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm.anthropic", "anth-key"), Times.Once);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm", "slot-key"), Times.Once);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SwitchingToProvider_DoesNotFallBackToLegacySlot()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_base_url": "https://proxy.example/v1",
+              "llm_model": "claude-test"
+            }
+            """);
+        // 旧单槽镜像的是上次保存时 active（anthropic）的 Key；openai 专槽为空
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync("legacy");
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.anthropic")).ReturnsAsync("anth-key");
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.openai")).ReturnsAsync((string?)null);
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await vm.LoadAsync();
+            Assert.Equal("anth-key", vm.ApiKey);
+
+            vm.SelectedProvider = "openai";
+            // fire-and-forget 回填窗口：若错误回退旧槽，字段会出现 anthropic 的 "legacy" Key
+            await Task.Delay(300);
+
+            Assert.Equal(string.Empty, vm.ApiKey);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_ActiveProfileUsesFlatFieldsAndOthersUseLlmProfiles()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_base_url": "https://flat.example/v1",
+              "llm_model": "flat-model",
+              "llm_profiles": {
+                "anthropic": { "base_url": "https://stale.example/v1", "model": "stale-model" },
+                "openai": { "base_url": "https://openai.example/v1", "model": "gpt-test" }
+              }
+            }
+            """);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync((string?)null);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.anthropic")).ReturnsAsync((string?)null);
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await vm.LoadAsync();
+            // active 服务以扁平字段为权威（兼容旧版写盘/手编 json），陈旧的档案条目让位
+            Assert.Equal("https://flat.example/v1", vm.BaseUrl);
+            Assert.Equal("flat-model", vm.Model);
+
+            // 切到 openai：载入 llm_profiles 里的档案（档案消费唯一正锚）
+            vm.SelectedProvider = "openai";
+            Assert.Equal("https://openai.example/v1", vm.BaseUrl);
+            Assert.Equal("gpt-test", vm.Model);
+
+            // 保存：llm_profiles 两服务共存（anthropic=盘上扁平值、openai=档案值），
+            // 扁平镜像随 active 切换
+            await vm.SaveCommand.Execute();
+            var json = await File.ReadAllTextAsync(settingsFile);
+            Assert.Contains("\"llm_base_url\": \"https://openai.example/v1\"", json);
+            Assert.Contains("\"base_url\": \"https://flat.example/v1\"", json);
+            Assert.Contains("\"base_url\": \"https://openai.example/v1\"", json);
+            Assert.DoesNotContain("stale", json);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveUiStateCommand_PassesThroughDiskLlmProfilesVerbatim()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_base_url": "https://proxy.example/v1",
+              "llm_model": "claude-test",
+              "llm_profiles": {
+                "openai": { "base_url": "https://disk.example/v1", "model": "disk-model" }
+              }
+            }
+            """);
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await vm.LoadAsync();
+            // 内存污染态：切到 openai（载入盘上档案）改字段但不保存，UI 状态自动保存
+            // 不得把污染值写进 llm_profiles（盘上原样透传）
+            vm.SelectedProvider = "openai";
+            vm.BaseUrl = "https://polluted.example/v1";
+
+            await vm.SaveUiStateCommand.Execute();
+
+            var json = await File.ReadAllTextAsync(settingsFile);
+            // 原文级断言：键名必须小写下划线（序列化无命名策略，PascalCase 会与加载白名单分裂）
+            Assert.Contains("\"base_url\": \"https://disk.example/v1\"", json);
+            Assert.DoesNotContain("polluted", json);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _mockStorage.Verify(x => x.DeleteApiKey(It.IsAny<string>()), Times.Never);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_MigratesLegacySlotToDedicatedSlotOnce()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_base_url": "https://proxy.example/v1",
+              "llm_model": "claude-test"
+            }
+            """);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync("legacy");
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.anthropic")).ReturnsAsync((string?)null);
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await vm.LoadAsync();
+
+            Assert.Equal("legacy", vm.ApiKey);
+            // 迁移镜像写在 gate 内同步 await：LoadAsync 返回即已完成、恰一次
+            _mockStorage.Verify(x => x.SaveApiKeyAsync("llm.anthropic", "legacy"), Times.Once);
+            _mockStorage.Verify(x => x.GetApiKeyAsync("llm.anthropic"), Times.Once);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_ProfileAttributionSurvivesSwitchDuringLoadWindow()
+    {
+        // 加载 await 窗口内切下拉（切换订阅被 _isLoading 屏蔽）：加载完成后字段归属仍以
+        // 盘上 active 为基准重放换档——A 服务的配置不得写进 B 服务档案并随保存持久化
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "anthropic",
+              "llm_base_url": "https://anthropic.example/v1",
+              "llm_model": "anth-model",
+              "llm_profiles": {
+                "openai": { "base_url": "https://openai.example/v1", "model": "oai-model" }
+              }
+            }
+            """);
+        var gate = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reachedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm")).ReturnsAsync((string?)null);
+        // 挂起点选 active 专槽读取（位于 llm_provider 赋值之后），保证窗口内 llm_provider 已定
+        _mockStorage.Setup(x => x.GetApiKeyAsync("llm.anthropic"))
+            .Callback(() => reachedGate.TrySetResult())
+            .Returns(gate.Task);
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            var loadTask = vm.LoadAsync();
+            await reachedGate.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            vm.SelectedProvider = "openai";
+            gate.SetResult("anth-key");
+            await loadTask;
+
+            // 加载完成后的和解：下拉指着 openai，字段随之换档（所见即所得）
+            Assert.Equal("https://openai.example/v1", vm.BaseUrl);
+            Assert.Equal("oai-model", vm.Model);
+
+            // anthropic 档案未被窗口切换污染：切回仍还原盘上值
+            vm.SelectedProvider = "anthropic";
+            Assert.Equal("https://anthropic.example/v1", vm.BaseUrl);
+            Assert.Equal("anth-model", vm.Model);
+            Assert.Equal("anth-key", vm.ApiKey);
+
+            await vm.SaveCommand.Execute();
+            var json = await File.ReadAllTextAsync(settingsFile);
+            Assert.Contains("https://anthropic.example/v1", json);
+            Assert.Contains("https://openai.example/v1", json);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LlmNeedsApiKey_FollowsProviderAcrossSwitchAndLoad()
+    {
+        using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile()))
+        {
+            Assert.True(vm.LlmNeedsApiKey);
+            vm.SelectedProvider = "local";
+            Assert.False(vm.LlmNeedsApiKey);
+            vm.SelectedProvider = "anthropic";
+            Assert.True(vm.LlmNeedsApiKey);
+        }
+
+        // 加载路径：盘上 llm_provider=local → 加载完成即为 false（双判定源漂移高发点）
+        var settingsFile = CreateTempSettingsFile();
+        await File.WriteAllTextAsync(settingsFile, """
+            {
+              "llm_provider": "local",
+              "llm_base_url": "http://localhost:11434/v1",
+              "llm_model": "qwen-test"
+            }
+            """);
+        try
+        {
+            using var loaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await loaded.LoadAsync();
+            Assert.False(loaded.LlmNeedsApiKey);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveCommand_NonAsciiKeyInInactiveProfile_BlocksAllWrites()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            // anthropic 档案藏坏 Key：切到 anthropic 输入、切回 openai（存回档案）
+            vm.SelectedProvider = "anthropic";
+            vm.ApiKey = "复制混入中文的key";
+            vm.SelectedProvider = "openai";
+            vm.ApiKey = "good-key";
+            vm.Model = "gpt-test";
+
+            await vm.SaveCommand.Execute();
+
+            // 非当前服务的坏 Key 同样拦下：零写槽零写盘（防中途失败半写状态）
+            Assert.Contains("非 ASCII", vm.StatusMessage);
+            _mockStorage.Verify(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            Assert.False(File.Exists(settingsFile));
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
     }
 
     [Fact]
@@ -1629,8 +1936,9 @@ public class SettingsViewModelTests
             .Callback<string?, CancellationToken>((url, _) => requestedUrls.Add(url))
             .ReturnsAsync((string? url, CancellationToken _) => new List<string> { url! });
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
-        vm.BaseUrl = "http://localhost:11434/v1";
+        // 先切 local 再设地址：切换会按档案载入字段（无档案清空），后设值才不被联动冲掉
         vm.SelectedProvider = "local";
+        vm.BaseUrl = "http://localhost:11434/v1";
         await WaitForStatusAsync(() => vm.LocalModels.Contains("http://localhost:11434/v1"));
 
         vm.BaseUrl = "http://localhost:199";
@@ -1653,8 +1961,9 @@ public class SettingsViewModelTests
         _mockLlm.Setup(x => x.ListLocalModelsAsync("http://new/v1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string> { "new-model" });
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
-        vm.BaseUrl = "http://old/v1";
+        // 先切 local 再设地址：切换会按档案载入字段（无档案清空），后设值才不被联动冲掉
         vm.SelectedProvider = "local";
+        vm.BaseUrl = "http://old/v1";
         await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         vm.BaseUrl = "http://new/v1";

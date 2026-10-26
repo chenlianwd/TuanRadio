@@ -73,6 +73,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
     private readonly IDisposable _localModelSettingsSub;
+    private readonly IDisposable _llmProfileSwapSub;
     private int _localModelsEpoch;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
@@ -110,6 +111,27 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string SelectedProvider { get; set; } = "openai";
     [Reactive] public partial string BaseUrl { get; set; } = string.Empty;
     [Reactive] public partial string Model { get; set; } = string.Empty;
+    /// <summary>本地模型不需要 API Key：选中时隐藏 Key 输入框（判定与 RequiresApiKey 同源）。</summary>
+    [Reactive] public partial bool LlmNeedsApiKey { get; set; } = true;
+
+    /// <summary>单个 LLM 服务的独立配置档案；ApiKey 是会话缓存，跨会话权威来源=凭据管理器专槽。</summary>
+    private sealed class LlmProfile
+    {
+        public string BaseUrl { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string ApiKey { get; set; } = string.Empty;
+    }
+
+    // llm_profiles 键白名单（服务 Id 与下拉三选项一致；未知键丢弃防 NormalizeProvider
+    // 兜底把手编/未来版本的键并进 openai 档案）
+    private static readonly string[] LlmProfileKeys = { "openai", "anthropic", "local" };
+    // WindowsSecureStorage blob 上限 2560 字节（Unicode 编码即 2 字节/字符）
+    private const int MaxLlmKeyLength = 1280;
+    // 每服务档案：不可变字典整体换新（COW）——切换处理器在 _saveGate 外修改、保存序列化
+    // 在 Task.Run 内枚举，引用整体替换避免并发枚举异常；ApiKey 不进 json 只进凭据专槽
+    private Dictionary<string, LlmProfile> _llmProfiles = new();
+    // 当前字段内容归属的服务（切换处理器与 LoadCoreAsync 尾部双点维护）
+    private string _lastProvider = "openai";
 
     /// <summary>本地模型候选（Ollama 枚举），供模型输入框下拉选择；云端 provider 恒为空。</summary>
     [Reactive] public partial List<string> LocalModels { get; set; } = new();
@@ -294,6 +316,24 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         DisconnectOpenSubsonicCommand = ReactiveCommand.Create(DisconnectOpenSubsonic);
         SaveAudiusApiKeyCommand = ReactiveCommand.CreateFromTask(SaveAudiusApiKeyAsync);
         ClearAudiusApiKeyCommand = ReactiveCommand.Create(ClearAudiusApiKey);
+
+        // 切换服务=换档案：当前字段存回旧服务、载入新服务自己的 Key/地址/模型。
+        // 只改表单字段不触碰运行中服务配置（ConfigureLlm 仅发生在保存/测试连接，
+        // 电台可能正在播）；加载期赋值被 _isLoading 屏蔽，归属对齐由 LoadCoreAsync
+        // 尾部和解负责。订阅顺序相对 _localModelSettingsSub 无约束：本地模型枚举的
+        // 代次入口预递增（RefreshLocalModelsAsync 首行）会作废切换引发的旧端点枚举。
+        _llmProfileSwapSub = this.WhenAnyValue(x => x.SelectedProvider)
+            .Skip(1)
+            .Subscribe(provider =>
+            {
+                if (_isLoading)
+                    return;
+                var to = NormalizeProvider(provider);
+                if (to == _lastProvider)
+                    return;
+                SwapLlmProfile(_lastProvider, to);
+                _lastProvider = to;
+            });
 
         // provider/地址任一变化即清空旧候选并作废在途结果；本地枚举防抖，避免逐字输入地址
         // 时打出一串 HTTP 请求。加载期赋值被屏蔽，LoadCoreAsync 尾部显式补拉一次。
@@ -681,14 +721,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var key = await _secureStorage.GetApiKeyAsync(LlmCredentialService);
-            if (!string.IsNullOrEmpty(key))
-            {
-                ApiKey = key;
-            }
+            // 旧单槽 Key：仅作为 active 服务专槽为空时的迁移回退来源（见下方档案装配）
+            var legacyKey = await _secureStorage.GetApiKeyAsync(LlmCredentialService);
 
             string[] savedMusicOrder = Array.Empty<string>();
             string[] disabledMusicProviders = Array.Empty<string>();
+            Dictionary<string, LlmProfile>? parsedProfiles = null;
+            var diskActiveProvider = NormalizeProvider(SelectedProvider);
             using var doc = await OpenSettingsDocumentAsync(cancellationToken);
             if (doc != null)
             {
@@ -696,12 +735,18 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("llm_provider", out var provider))
                     SelectedProvider = NormalizeProvider(provider.GetString());
+                // 紧跟赋值捕获盘上 active：后续 await 间隙的用户下拉切换不改变字段内容的归属基准
+                diskActiveProvider = NormalizeProvider(SelectedProvider);
 
                 if (root.TryGetProperty("llm_base_url", out var baseUrl))
                     BaseUrl = baseUrl.GetString() ?? string.Empty;
 
                 if (root.TryGetProperty("llm_model", out var model))
                     Model = model.GetString() ?? string.Empty;
+
+                // 其余服务的档案（active 服务以扁平字段为权威，兼容旧版/手编 json）；
+                // 键白名单+逐项 String 过滤：坏档案只丢自己，不拖垮其余字段加载
+                parsedProfiles = ParseLlmProfiles(root);
 
                 if (root.TryGetProperty("language", out var lang))
                     SelectedLanguage = lang.GetString() ?? "zh";
@@ -811,6 +856,33 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             if (SelectedCharacter != null)
                 LoadCharacterOverrides(SelectedCharacter);
 
+            // active 服务档案装配：扁平字段为权威；Key 专槽优先、旧单槽回退（唯一回退点）。
+            // 回退命中即同步镜像写专槽完成一次性迁移——同步 await 在 _saveGate 内顺序化，
+            // 消除与用户随后保存写同槽的竞态
+            var activeProfile = new LlmProfile { BaseUrl = BaseUrl, Model = Model };
+            var activeKey = await _secureStorage.GetApiKeyAsync(LlmCredentialSlot(diskActiveProvider));
+            if (string.IsNullOrEmpty(activeKey) && !string.IsNullOrEmpty(legacyKey))
+            {
+                activeKey = legacyKey;
+                try
+                {
+                    await _secureStorage.SaveApiKeyAsync(LlmCredentialSlot(diskActiveProvider), activeKey);
+                }
+                catch (Exception migrateEx)
+                {
+                    Log.Debug(migrateEx, "Legacy LLM key slot migration failed");
+                }
+            }
+            if (!string.IsNullOrEmpty(activeKey))
+            {
+                activeProfile.ApiKey = activeKey;
+                ApiKey = activeKey;
+            }
+            var profiles = parsedProfiles ?? new Dictionary<string, LlmProfile>();
+            profiles[diskActiveProvider] = activeProfile;
+            _llmProfiles = profiles;
+            _lastProvider = diskActiveProvider;
+
             ConfigureLlm();
 
             // 账号昵称查询依赖本地音乐代理，就绪后由 RefreshAccountStatusAsync 刷新；
@@ -855,6 +927,16 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
             // 加载完成即建立角色签名基线：启动后的第一次无关保存（主题/简洁模式）不会误触发事件
             _lastCharacterSignature = BuildCharacterSignature();
+
+            // 字段内容归属对齐：加载 await 窗口被用户切过下拉时（切换订阅被 _isLoading
+            // 屏蔽、字段仍是盘上 active 的值），以盘上 active 为存回归属基准重放一次换档，
+            // 治愈"下拉指着新服务、字段还是旧服务配置"的错位——归属基准必须是盘上值而非
+            // SelectedProvider 现值，否则旧服务配置会被写进新服务档案并随保存持久化
+            var tailProvider = NormalizeProvider(SelectedProvider);
+            if (tailProvider != _lastProvider)
+                SwapLlmProfile(_lastProvider, tailProvider);
+            _lastProvider = tailProvider;
+            LlmNeedsApiKey = RequiresApiKey(tailProvider);
 
             // 此时 llm_* 全部字段已读取完，补拉本地模型列表（加载期的 provider 赋值被 _isLoading 屏蔽）
             if (NormalizeProvider(SelectedProvider) == "local")
@@ -1743,26 +1825,54 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             }
 
             string providerToWrite, baseUrlToWrite, modelToWrite;
+            Dictionary<string, object>? profilesToWrite;
             if (persistLlmFields)
             {
                 providerToWrite = SelectedProvider;
                 baseUrlToWrite = BaseUrl;
                 modelToWrite = Model;
+                // active 服务以归一化后的字段值覆盖快照（字典本体不回写——切换处理器是
+                // 唯一写者，档案与扁平的暂时性不一致由"加载扁平权威+切走存回自愈"兜底）
+                profilesToWrite = BuildLlmProfilesSnapshot(
+                    NormalizeProvider(providerToWrite), baseUrlToWrite, modelToWrite);
 
-                if (!string.IsNullOrWhiteSpace(ApiKey))
+                // Key 预检（须在 NormalizeLlmInputs 之后：全角空格尾缀已被 Trim）：
+                // 当前服务的字段值与其余服务的档案缓存统一过 ASCII/长度校验，全部通过
+                // 后才统一写槽——坏 Key 一旦入存，运行期 LLM 调用会以 HttpRequestException
+                //（"Request headers must contain only ASCII characters"）失败且被归类成
+                // 网络问题误导排查；超长 Key 会让 CredWrite 中途抛异常留下半写状态
+                var activeProvider = NormalizeProvider(SelectedProvider);
+                var slotWrites = new List<(string Slot, string Key)>();
+                foreach (var providerId in LlmProfileKeys)
                 {
-                    if (!IsPrintableAscii(ApiKey))
+                    var key = (providerId == activeProvider ? ApiKey : GetProfile(providerId).ApiKey) ?? string.Empty;
+                    key = key.Trim();
+                    if (key.Length == 0)
+                        continue;
+                    if (!IsPrintableAscii(key))
                     {
-                        // 坏 Key 一旦入存，运行期 LLM 调用会以 HttpRequestException
-                        //（"Request headers must contain only ASCII characters"）失败，
-                        // 文案被归类成网络问题误导排查；保存入口直接拦下
                         SetStatusMessage(() => AppLanguage.T(
                             "API Key 含非 ASCII 字符（复制时可能混入中文或全角符号），请重新粘贴",
                             "The API key contains non-ASCII characters (likely pasted Chinese or full-width symbols); please re-paste it"));
                         return;
                     }
-                    await _secureStorage.SaveApiKeyAsync(LlmCredentialService, ApiKey);
+                    if (key.Length > MaxLlmKeyLength)
+                    {
+                        SetStatusMessage(() => AppLanguage.T(
+                            $"API Key 过长（上限 {MaxLlmKeyLength} 字符），请检查是否粘贴了错误内容",
+                            $"The API key is too long (limit {MaxLlmKeyLength} characters); please check the pasted content"));
+                        return;
+                    }
+                    // local 服务不需要 Key，不建专槽（空档案天然跳过）
+                    if (providerId != "local")
+                        slotWrites.Add((LlmCredentialSlot(providerId), key));
                 }
+                // 旧单槽镜像写当前服务的 Key：回滚到旧版仍可用，也是存量测试锚定的契约
+                if (!string.IsNullOrWhiteSpace(ApiKey))
+                    slotWrites.Add((LlmCredentialService, ApiKey.Trim()));
+
+                foreach (var (slot, key) in slotWrites)
+                    await _secureStorage.SaveApiKeyAsync(slot, key);
                 // ApiKey 为空时保留凭据管理器里的旧 key：自动保存路径随时可能触发保存，
                 // 把空值视为"未填写"而不是"要清除"
                 _secureStorage.DeleteApiKey(LegacyMinimaxCredentialService);
@@ -1774,6 +1884,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 providerToWrite = persisted?.Provider ?? SelectedProvider;
                 baseUrlToWrite = persisted?.BaseUrl ?? BaseUrl;
                 modelToWrite = persisted?.Model ?? Model;
+                // 盘上 llm_profiles 原样透传，不从内存档案重建（内存含未保存的切换存回态）
+                profilesToWrite = persisted?.Profiles;
+                if (profilesToWrite == null)
+                    profilesToWrite = BuildLlmProfilesSnapshot(
+                        NormalizeProvider(providerToWrite), baseUrlToWrite, modelToWrite);
             }
 
             Directory.CreateDirectory(_settingsDir);
@@ -1795,6 +1910,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 llm_provider = providerToWrite,
                 llm_base_url = baseUrlToWrite,
                 llm_model = modelToWrite,
+                llm_profiles = profilesToWrite,
                 tts_enabled = TtsEnabled,
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
@@ -1865,7 +1981,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task<(string Provider, string BaseUrl, string Model)?> ReadPersistedLlmFieldsAsync()
+    /// <summary>盘上 LLM 字段的透传载体；Profiles 为 null 表示盘上无 llm_profiles。</summary>
+    private sealed record PersistedLlmState(
+        string Provider, string BaseUrl, string Model, Dictionary<string, object>? Profiles);
+
+    private async Task<PersistedLlmState?> ReadPersistedLlmFieldsAsync()
     {
         try
         {
@@ -1875,10 +1995,31 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             var json = await File.ReadAllTextAsync(_settingsFile, _lifetimeCts.Token);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            return (
+            Dictionary<string, object>? profiles = null;
+            // 与 ParseLlmProfiles 同套白名单/过滤规则；值必须在此作用域内提取成纯
+            // 字符串（JsonElement 不能随 using doc 销毁跨作用域使用）
+            if (root.TryGetProperty("llm_profiles", out var profilesEl) &&
+                profilesEl.ValueKind == JsonValueKind.Object)
+            {
+                profiles = new Dictionary<string, object>();
+                foreach (var entry in profilesEl.EnumerateObject())
+                {
+                    if (!LlmProfileKeys.Contains(entry.Name) || entry.Value.ValueKind != JsonValueKind.Object)
+                        continue;
+                    profiles[entry.Name] = new
+                    {
+                        base_url = entry.Value.TryGetProperty("base_url", out var baseUrl) &&
+                                   baseUrl.ValueKind == JsonValueKind.String ? baseUrl.GetString() ?? "" : "",
+                        model = entry.Value.TryGetProperty("model", out var model) &&
+                                model.ValueKind == JsonValueKind.String ? model.GetString() ?? "" : ""
+                    };
+                }
+            }
+            return new PersistedLlmState(
                 root.TryGetProperty("llm_provider", out var p) ? NormalizeProvider(p.GetString()) : "openai",
                 root.TryGetProperty("llm_base_url", out var b) ? b.GetString() ?? string.Empty : string.Empty,
-                root.TryGetProperty("llm_model", out var m) ? m.GetString() ?? string.Empty : string.Empty);
+                root.TryGetProperty("llm_model", out var m) ? m.GetString() ?? string.Empty : string.Empty,
+                profiles);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -1905,6 +2046,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _selectedLanguageSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
+        _llmProfileSwapSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更
@@ -1915,6 +2057,111 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         }
         catch (ObjectDisposedException)
         {
+        }
+    }
+
+    private static string LlmCredentialSlot(string provider) => $"{LlmCredentialService}.{provider}";
+
+    /// <summary>
+    /// 构建 llm_profiles 的序列化快照（键名小写下划线：序列化无命名策略，
+    /// PascalCase 会与加载白名单键分裂致档案静默清空）。快照是独立新对象，
+    /// 不回写字典本体（切换处理器保持唯一写者）。
+    /// </summary>
+    private Dictionary<string, object> BuildLlmProfilesSnapshot(string activeProvider, string baseUrl, string model)
+    {
+        var snapshot = new Dictionary<string, object>();
+        foreach (var kv in _llmProfiles)
+            snapshot[kv.Key] = new { base_url = kv.Value.BaseUrl ?? string.Empty, model = kv.Value.Model ?? string.Empty };
+        snapshot[activeProvider] = new { base_url = baseUrl ?? string.Empty, model = model ?? string.Empty };
+        return snapshot;
+    }
+
+    /// <summary>解析盘上 llm_profiles：键白名单+逐项 String 过滤，坏档案只丢自己。</summary>
+    private static Dictionary<string, LlmProfile>? ParseLlmProfiles(JsonElement root)
+    {
+        if (!root.TryGetProperty("llm_profiles", out var profilesEl) ||
+            profilesEl.ValueKind != JsonValueKind.Object)
+            return null;
+        var profiles = new Dictionary<string, LlmProfile>();
+        foreach (var entry in profilesEl.EnumerateObject())
+        {
+            if (!LlmProfileKeys.Contains(entry.Name) || entry.Value.ValueKind != JsonValueKind.Object)
+                continue;
+            profiles[entry.Name] = new LlmProfile
+            {
+                BaseUrl = entry.Value.TryGetProperty("base_url", out var baseUrl) &&
+                          baseUrl.ValueKind == JsonValueKind.String ? baseUrl.GetString() ?? "" : "",
+                Model = entry.Value.TryGetProperty("model", out var model) &&
+                        model.ValueKind == JsonValueKind.String ? model.GetString() ?? "" : ""
+            };
+        }
+        return profiles;
+    }
+
+    private LlmProfile GetProfile(string provider) =>
+        _llmProfiles.TryGetValue(provider, out var profile) ? profile : new LlmProfile();
+
+    // 档案字典整体换新（COW）：旧字典实例不被修改，保存序列化线程枚举的快照永不撕裂
+    private void UpdateProfile(string provider, LlmProfile profile) =>
+        _llmProfiles = new Dictionary<string, LlmProfile>(_llmProfiles) { [provider] = profile };
+
+    /// <summary>
+    /// 切换 LLM 服务档案：当前字段存回旧服务、载入新服务自己的 Key/地址/模型。
+    /// 只改表单字段，不触碰运行中服务配置（ConfigureLlm 仅发生在保存/测试连接）。
+    /// </summary>
+    private void SwapLlmProfile(string from, string to)
+    {
+        UpdateProfile(from, new LlmProfile
+        {
+            BaseUrl = BaseUrl ?? string.Empty,
+            Model = Model ?? string.Empty,
+            ApiKey = ApiKey ?? string.Empty
+        });
+        var target = GetProfile(to);
+        BaseUrl = target.BaseUrl;
+        Model = target.Model;
+        if (!string.IsNullOrEmpty(target.ApiKey))
+        {
+            ApiKey = target.ApiKey;
+        }
+        else
+        {
+            // 本会话首次切到该服务且缓存为空：从凭据专槽回填（不回退旧 llm 单槽——
+            // 那里镜像的是上次保存时 active 服务的 Key，回退会把 A 服务的 Key 串进 B 服务）
+            ApiKey = string.Empty;
+            _ = LoadProfileKeyFromSlotAsync(to);
+        }
+        LlmNeedsApiKey = RequiresApiKey(to);
+    }
+
+    /// <summary>
+    /// 从凭据专槽回填表单 Key 字段。双守卫：回填时 SelectedProvider 仍是发起服务
+    /// 且用户尚未手输才应用；ISecureStorage 无取消令牌，Dispose 后靠 _disposed 早退。
+    /// </summary>
+    private async Task LoadProfileKeyFromSlotAsync(string provider)
+    {
+        try
+        {
+            var key = await _secureStorage.GetApiKeyAsync(LlmCredentialSlot(provider));
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+            if (!string.Equals(NormalizeProvider(SelectedProvider), provider, StringComparison.Ordinal))
+                return;
+            if (string.IsNullOrEmpty(key) || !string.IsNullOrEmpty(ApiKey))
+                return;
+            var cached = GetProfile(provider);
+            if (string.IsNullOrEmpty(cached.ApiKey))
+                UpdateProfile(provider, new LlmProfile
+                {
+                    BaseUrl = cached.BaseUrl,
+                    Model = cached.Model,
+                    ApiKey = key
+                });
+            ApiKey = key;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to load per-provider LLM key from credential slot");
         }
     }
 
