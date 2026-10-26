@@ -195,10 +195,14 @@ public class LLMServiceTests
 
         var messages = service.BuildMessages(history, "hello");
 
-        // 兜底 system + 人设 system + 最近 18 条（msg2..msg19，9 个完整对话轮）+ 本轮 user = 21；
-        // 直接 TakeLast(20) 会丢掉人设，长对话后 DJ 角色与指令规则静默失效
-        Assert.Equal(21, messages.Count);
-        Assert.Contains(messages, m => GetMessageContent(m) == "PERSONA-AND-COMMAND-RULES");
+        // 人设 system + 最近 18 条（msg2..msg19，9 个完整对话轮）+ 本轮 user = 20；
+        // 直接 TakeLast(20) 会丢掉人设，长对话后 DJ 角色与指令规则静默失效。
+        // history 自带 system 时不再前置内置兜底"小音"（双人格指令冲突），全请求恰一条 system
+        Assert.Equal(20, messages.Count);
+        Assert.Equal("system", GetMessageRole(messages[0]));
+        Assert.Equal("PERSONA-AND-COMMAND-RULES", GetMessageContent(messages[0]));
+        Assert.Single(messages, m => GetMessageRole(m) == "system");
+        Assert.DoesNotContain(messages, m => GetMessageContent(m)?.Contains("小音") == true);
         Assert.DoesNotContain(messages, m => GetMessageContent(m) == "msg0");
         Assert.DoesNotContain(messages, m => GetMessageContent(m) == "msg1");
         Assert.Contains(messages, m => GetMessageContent(m) == "msg2");
@@ -206,6 +210,21 @@ public class LLMServiceTests
         // Anthropic 硬约束：首条非 system 消息必须是 user，否则整个请求 400
         var firstNonSystem = messages.First(m => GetMessageRole(m) != "system");
         Assert.Equal("user", GetMessageRole(firstNonSystem));
+    }
+
+    [Fact]
+    public void BuildMessages_EmptyHistory_PrependsBuiltinPersona()
+    {
+        var service = new LLMService(CreateMockHttpClient("{}"));
+
+        var messages = service.BuildMessages(new List<ChatMessage>(), "测试连接");
+
+        // 空历史（连接测试、接口 mock 分支）仍前置内置兜底人设，提示词不至完全无人格语境
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("system", GetMessageRole(messages[0]));
+        Assert.Contains("DJ", GetMessageContent(messages[0]));
+        Assert.Equal("user", GetMessageRole(messages[1]));
+        Assert.Equal("测试连接", GetMessageContent(messages[1]));
     }
 
     [Fact]
