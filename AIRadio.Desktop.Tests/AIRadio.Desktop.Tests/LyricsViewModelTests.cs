@@ -344,4 +344,132 @@ public class LyricsViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    // 取词失败（null）后延迟重试一次：启动首播落 Node 代理冷启动窗口的恢复路径。
+    // 确认无词的重试命中服务层缓存零开销，失败的重试是真请求——重试策略由 VM 统一承载
+    [Fact]
+    public async Task FailedFetch_RetriesAfterDelay_AndAppliesRecoveredLyrics()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        try
+        {
+            var track = Track("kugou:H1");
+            var tracks = new Subject<Track?>();
+            var audio = new Mock<IAudioService>();
+            audio.SetupGet(x => x.TrackChanged).Returns(tracks);
+            audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+            audio.SetupGet(x => x.CurrentTrack).Returns(track);
+            audio.SetupGet(x => x.CurrentPosition).Returns(TimeSpan.Zero);
+
+            var lyrics = new Mock<ILyricService>();
+            var calls = 0;
+            lyrics.Setup(x => x.GetLyricsAsync(track, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => ++calls == 1
+                    ? null
+                    : LinesResult((0, "重试拿到的词")));
+
+            using var vm = new LyricsViewModel(audio.Object, lyrics.Object, TimeSpan.FromMilliseconds(60));
+            tracks.OnNext(track);
+            Assert.False(vm.HasLyrics); // 首次失败：暂无歌词
+            Assert.Equal("暂无歌词", vm.LyricStatusText);
+
+            var deadline = Environment.TickCount64 + 5000;
+            while (!vm.HasLyrics && Environment.TickCount64 < deadline)
+                await Task.Delay(50);
+
+            Assert.True(vm.HasLyrics);
+            Assert.Equal("重试拿到的词", vm.CurrentLineText);
+            lyrics.Verify(x => x.GetLyricsAsync(track, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        }
+        finally
+        {
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 确认无词也走一次重试（命中服务层缓存零请求）但绝不超过一次：等待多个重试周期
+    // 后调用数恒为 2，防重试风暴
+    [Fact]
+    public async Task ConfirmedNoLyrics_RetriesExactlyOnce()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        try
+        {
+            var track = Track("kugou:H2");
+            var tracks = new Subject<Track?>();
+            var audio = new Mock<IAudioService>();
+            audio.SetupGet(x => x.TrackChanged).Returns(tracks);
+            audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+            audio.SetupGet(x => x.CurrentTrack).Returns(track);
+            audio.SetupGet(x => x.CurrentPosition).Returns(TimeSpan.Zero);
+
+            var lyrics = new Mock<ILyricService>();
+            var calls = 0;
+            lyrics.Setup(x => x.GetLyricsAsync(track, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((LyricResult?)null)
+                .Callback(() => Interlocked.Increment(ref calls));
+
+            using var vm = new LyricsViewModel(audio.Object, lyrics.Object, TimeSpan.FromMilliseconds(60));
+            tracks.OnNext(track);
+
+            // 轮询等重试发生（正向信号），慢机上不依赖固定睡眠
+            var deadline = Environment.TickCount64 + 5000;
+            while (Volatile.Read(ref calls) < 2 && Environment.TickCount64 < deadline)
+                await Task.Delay(50);
+            Assert.True(Volatile.Read(ref calls) >= 2);
+
+            await Task.Delay(250); // 负向窗口：确认绝无第三次调用
+            Assert.False(vm.HasLyrics);
+            Assert.Equal("暂无歌词", vm.LyricStatusText);
+            Assert.Equal(2, Volatile.Read(ref calls));
+        }
+        finally
+        {
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 重试触发前已切歌：旧曲目的重试作废（generation 卫兵），不再为旧曲烧请求
+    [Fact]
+    public async Task TrackSwitchBeforeRetry_DiscardsOldTrackRetry()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        try
+        {
+            var first = Track("kugou:H1");
+            var second = Track("netease:2");
+            var current = first;
+            var tracks = new Subject<Track?>();
+            var audio = new Mock<IAudioService>();
+            audio.SetupGet(x => x.TrackChanged).Returns(tracks);
+            audio.SetupGet(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+            audio.SetupGet(x => x.CurrentTrack).Returns(() => current);
+            audio.SetupGet(x => x.CurrentPosition).Returns(TimeSpan.Zero);
+
+            var lyrics = new Mock<ILyricService>();
+            lyrics.Setup(x => x.GetLyricsAsync(first, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((LyricResult?)null);
+            lyrics.Setup(x => x.GetLyricsAsync(second, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(LinesResult((0, "第二首的词")));
+
+            using var vm = new LyricsViewModel(audio.Object, lyrics.Object, TimeSpan.FromMilliseconds(60));
+            tracks.OnNext(first);   // 失败：安排 60ms 后重试
+            current = second;
+            tracks.OnNext(second);  // 切歌：generation 推进，第二首取词内联完成
+            Assert.Equal("第二首的词", vm.CurrentLineText);
+
+            await Task.Delay(300); // 第一首的重试到期后必须被 generation 卫兵拦下
+
+            lyrics.Verify(x => x.GetLyricsAsync(first, It.IsAny<CancellationToken>()), Times.Once);
+            lyrics.Verify(x => x.GetLyricsAsync(second, It.IsAny<CancellationToken>()), Times.Once);
+            Assert.Equal("第二首的词", vm.CurrentLineText); // 未被旧曲目的重试扰动
+        }
+        finally
+        {
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

@@ -57,13 +57,56 @@ public class LyricService : ILyricService
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(FetchTimeout);
 
-        LyricResult? result;
-        var fetchFailed = false;
+        LyricResult? result = null;
+        // 酷狗链路故障（上游异常形状/传输失败）与网易兜底故障分别记账：
+        // 任一链路故障且兜底无果 → 整体按失败处理不入缓存；两条链路都给出确认答案
+        // （有词或明确无词）才入缓存
+        var kugouFailed = false;
+        var fallbackFailed = false;
         try
         {
-            result = prefix == "netease"
-                ? await FetchNeteaseAsync(sourceId[(separator + 1)..], timeoutCts.Token)
-                : await FetchKugouAsync(sourceId[(separator + 1)..], track, timeoutCts.Token);
+            if (prefix == "netease")
+            {
+                result = await FetchNeteaseAsync(sourceId[(separator + 1)..], timeoutCts.Token);
+            }
+            else
+            {
+                try
+                {
+                    result = await FetchKugouAsync(sourceId[(separator + 1)..], track, timeoutCts.Token);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // 酷狗 v1 歌词端点 2026-09-23 上游升级后持续返回异常形状（status:1
+                    // 歌曲搜索形状），原生链路按失败处理，降级网易词库兜底
+                    Log.Debug(ex, "Kugou lyrics fetch failed for {SourceId}; trying netease fallback", sourceId);
+                    kugouFailed = true;
+                }
+
+                if (result == null && !string.IsNullOrWhiteSpace(track.Title))
+                {
+                    try
+                    {
+                        result = await FetchNeteaseByTitleAsync(track, timeoutCts.Token);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "Netease lyric fallback failed for {SourceId}", sourceId);
+                        fallbackFailed = true;
+                    }
+                }
+
+                if (result == null && (kugouFailed || fallbackFailed))
+                    return null;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -72,16 +115,11 @@ public class LyricService : ILyricService
         catch (Exception ex)
         {
             Log.Debug(ex, "Lyrics fetch failed for {SourceId}", sourceId);
-            result = null;
-            fetchFailed = true;
+            return null;
         }
 
-        // 失败（内部超时/代理冷启动未就绪/HTTP 错误）与"确认无词"语义不同：负缓存无
-        // TTL，瞬时失败一旦入缓存该曲目整会话恒无词（启动首播落 Node 14s 冷启动
-        // 窗口必踩）。只缓存确认结果，失败留给下次获取重试
-        if (fetchFailed)
-            return null;
-
+        // 失败（内部超时/代理冷启动未就绪/HTTP 错误/任一链路故障）已提前 return，
+        // 走到这里是确认结果：有词，或酷狗与网易兜底双源确认无词
         if (_cache.Count >= CacheCapacity)
             _cache.Clear(); // 电台模式无限续播防泄漏，粗粒度淘汰足够
         _cache[sourceId] = result;
@@ -155,6 +193,66 @@ public class LyricService : ILyricService
             return null;
 
         return new LyricResult { Lines = lines };
+    }
+
+    /// <summary>
+    /// 酷狗曲目的网易词库兜底：按"标题 歌手"搜网易拿歌曲 ID，再走 /lyric 单步取词。
+    /// 候选需标题归一化匹配且时长 ±3s（候选无时长放行），防同名异曲；无可命中候选
+    /// 视为确认无词。播放的是酷狗版本、歌词取自网易版本，时长过滤已缓解时间轴偏差。
+    /// </summary>
+    private async Task<LyricResult?> FetchNeteaseByTitleAsync(Track track, CancellationToken cancellationToken)
+    {
+        var keyword = string.IsNullOrWhiteSpace(track.Artist)
+            ? track.Title.Trim()
+            : $"{track.Title.Trim()} {track.Artist.Trim()}";
+        var url = $"{_neteaseBase}/search?keywords={Uri.EscapeDataString(keyword)}&limit=8";
+        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+
+        if (root.TryGetProperty("code", out var code) &&
+            code.ValueKind == JsonValueKind.Number &&
+            code.GetInt32() != 200)
+            throw new InvalidOperationException($"netease lyric fallback search: unexpected code {code.GetInt32()}");
+        // 业务错误（鉴权失效/敏感词拦截等）是"没有答案"而非"确认无词"：抛出让上层按
+        // 兜底失败处理不入负缓存，否则与酷狗侧确认叠加会把该曲整会话钉死为无词
+
+        if (!root.TryGetProperty("result", out var result) ||
+            result.ValueKind != JsonValueKind.Object ||
+            !result.TryGetProperty("songs", out var songs) ||
+            songs.ValueKind != JsonValueKind.Array)
+            return null; // 合法无结果形状（网易无匹配时只有 songCount:0 无 songs 字段）
+
+        var durationMs = (long)track.Duration.TotalMilliseconds;
+        var targetTitle = MusicIdentity.NormalizeMusicText(track.Title);
+
+        foreach (var song in songs.EnumerateArray())
+        {
+            if (!song.TryGetProperty("id", out var idEl) || idEl.ValueKind != JsonValueKind.Number)
+                continue;
+            if (!song.TryGetProperty("name", out var nameEl) ||
+                nameEl.GetString() is not { } name ||
+                string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var normalized = MusicIdentity.NormalizeMusicText(name);
+            if (normalized != targetTitle)
+                continue;
+
+            if (song.TryGetProperty("duration", out var durEl) &&
+                durEl.ValueKind == JsonValueKind.Number &&
+                durEl.TryGetInt64(out var candidateMs) &&
+                candidateMs > 0 &&
+                durationMs > 0 &&
+                Math.Abs(candidateMs - durationMs) > CandidateDurationToleranceMs)
+                continue;
+
+            return await FetchNeteaseAsync(idEl.GetInt64().ToString(), cancellationToken);
+        }
+
+        return null;
     }
 
     private string BuildSearchUrl(string paramKind, string value, long durationMs)

@@ -8,6 +8,7 @@ using System.Reactive;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Serilog;
 
 namespace AIRadio.Desktop.ViewModels;
@@ -31,6 +32,10 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _trackSub;
     private readonly IDisposable _positionSub;
     private readonly CancellationTokenSource _cts = new();
+    // 取词失败（代理冷启动等瞬时故障）后的延迟重试间隔：启动首播常落在 Node 代理
+    // 8~14s 冷启动窗口内，取词 5s 预算+自愈重试都赶不上，12s 后重试能吃上就绪的代理
+    private static readonly TimeSpan DefaultRetryDelay = TimeSpan.FromSeconds(12);
+    private readonly TimeSpan _retryDelay;
     // 常驻状态文案随语言切换重算；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
     private IReadOnlyList<LyricLine>? _lines;
@@ -49,10 +54,11 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
-    public LyricsViewModel(IAudioService audioService, ILyricService lyricService)
+    public LyricsViewModel(IAudioService audioService, ILyricService lyricService, TimeSpan? retryDelay = null)
     {
         _audioService = audioService;
         _lyricService = lyricService;
+        _retryDelay = retryDelay ?? DefaultRetryDelay;
 
         _trackSub = _audioService.TrackChanged
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -87,7 +93,7 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
         _ = LoadLyricsAsync(track, generation);
     }
 
-    private async System.Threading.Tasks.Task LoadLyricsAsync(Track track, int generation)
+    private async System.Threading.Tasks.Task LoadLyricsAsync(Track track, int generation, bool allowRetry = true)
     {
         LyricResult? result = null;
         try
@@ -105,6 +111,33 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
         }
 
         RxApp.MainThreadScheduler.Schedule(() => ApplyResult(track, generation, result));
+
+        // 结果为 null 才重试一次：失败未入服务层缓存，重试是真请求；确认无词已入
+        // 缓存，重试命中缓存零开销。Task.Delay 不占主线程，到点派发回主线程调度器
+        // （调度器本体的延迟调度在 CurrentThreadScheduler 上会阻塞测试线程）
+        if (result == null && allowRetry && !IsDisposed)
+        {
+            try
+            {
+                _ = Task.Delay(_retryDelay, _cts.Token).ContinueWith(
+                    _ => RxApp.MainThreadScheduler.Schedule(() => RetryFetch(track, generation)),
+                    TaskContinuationOptions.OnlyOnRanToCompletion);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Dispose 竞态窗口：CTS 释放后 _cts.Token 读取即抛 ODE（已取消令牌
+                // 的注册并不抛），无需重试
+            }
+        }
+    }
+
+    private void RetryFetch(Track track, int generation)
+    {
+        if (IsDisposed || Volatile.Read(ref _generation) != generation)
+            return; // 已切歌：旧曲目的重试作废
+        if (!string.Equals(_audioService.CurrentTrack?.SourceId, track.SourceId, StringComparison.Ordinal))
+            return; // 播放已切走：不再为旧曲目烧请求
+        _ = LoadLyricsAsync(track, generation, allowRetry: false);
     }
 
     private void ApplyResult(Track track, int generation, LyricResult? result)
