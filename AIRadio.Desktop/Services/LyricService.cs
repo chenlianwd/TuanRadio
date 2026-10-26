@@ -18,23 +18,26 @@ namespace AIRadio.Desktop.Services;
 public class LyricService : ILyricService
 {
     private const int CacheCapacity = 128;
-    private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultFetchTimeout = TimeSpan.FromSeconds(5);
     // 候选与曲目时长差的容忍窗口（ms）；title-only 关键词兜底可能命中同名异曲
     private const long CandidateDurationToleranceMs = 3000;
 
     private readonly HttpClient _httpClient;
     private readonly string _neteaseBase;
     private readonly string _kugouBase;
+    private readonly TimeSpan _fetchTimeout;
     private readonly ConcurrentDictionary<string, LyricResult?> _cache = new();
 
     public LyricService(
         HttpClient httpClient,
         string neteaseBaseUrl = "http://127.0.0.1:37250",
-        string kugouBaseUrl = "http://127.0.0.1:37251")
+        string kugouBaseUrl = "http://127.0.0.1:37251",
+        TimeSpan? fetchTimeout = null)
     {
         _httpClient = httpClient;
         _neteaseBase = neteaseBaseUrl.TrimEnd('/');
         _kugouBase = kugouBaseUrl.TrimEnd('/');
+        _fetchTimeout = fetchTimeout ?? DefaultFetchTimeout;
     }
 
     public async Task<LyricResult?> GetLyricsAsync(Track track, CancellationToken cancellationToken)
@@ -55,7 +58,7 @@ public class LyricService : ILyricService
             return cached;
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(FetchTimeout);
+        timeoutCts.CancelAfter(_fetchTimeout);
 
         LyricResult? result = null;
         // 酷狗链路故障（上游异常形状/传输失败）与网易兜底故障分别记账：
@@ -91,7 +94,12 @@ public class LyricService : ILyricService
                 {
                     try
                     {
-                        result = await FetchNeteaseByTitleAsync(track, timeoutCts.Token);
+                        // 兜底用独立新鲜预算：酷狗链挂起耗尽共享预算后 timeoutCts 已取消，
+                        // 复用该令牌会让 GetAsync 零请求即抛、兜底形同虚设——只有快挂型
+                        // 酷狗故障（连接拒绝/异常形状）才降级得到，慢挂型永远到不了网易
+                        using var fallbackCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        fallbackCts.CancelAfter(_fetchTimeout);
+                        result = await FetchNeteaseByTitleAsync(track, fallbackCts.Token);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -138,7 +146,10 @@ public class LyricService : ILyricService
         if (root.TryGetProperty("code", out var code) &&
             code.ValueKind == JsonValueKind.Number &&
             code.GetInt32() != 200)
-            return null;
+            // 业务错误（301 需要登录等鉴权抖动/风控拦截）是"没有答案"而非"确认无词"：
+            // 抛出按获取失败处理不入负缓存，口径与 FetchNeteaseByTitleAsync 的搜索步
+            // 一致——确认无词的合法形状是 code:200 + 占位/空 lrc，走下方占位分支入缓存
+            throw new InvalidOperationException($"netease lyric: unexpected code {code.GetInt32()}");
 
         var lrcText = GetString(root, "lrc", "lyric");
         var lines = LrcParser.Parse(lrcText);
@@ -197,8 +208,9 @@ public class LyricService : ILyricService
 
     /// <summary>
     /// 酷狗曲目的网易词库兜底：按"标题 歌手"搜网易拿歌曲 ID，再走 /lyric 单步取词。
-    /// 候选需标题归一化匹配且时长 ±3s（候选无时长放行），防同名异曲；无可命中候选
-    /// 视为确认无词。播放的是酷狗版本、歌词取自网易版本，时长过滤已缓解时间轴偏差。
+    /// 候选需标题归一化相等、双方歌手信息具备时任一歌手归一化相等、时长 ±3s（任一侧
+    /// 无时长放行），防同名异曲（如谭咏麟/周华健《朋友》）；无可命中候选视为确认无词。
+    /// 播放的是酷狗版本、歌词取自网易版本，时长过滤已缓解时间轴偏差。
     /// </summary>
     private async Task<LyricResult?> FetchNeteaseByTitleAsync(Track track, CancellationToken cancellationToken)
     {
@@ -241,6 +253,11 @@ public class LyricService : ILyricService
             if (normalized != targetTitle)
                 continue;
 
+            // 歌手比对先于时长：候选的 artists 此前被整体忽略，同名异曲只靠时长过滤、
+            // 任一侧缺时长元数据即放行，错词会整会话钉死在酷狗 sourceId 的缓存里
+            if (!SharesAnyArtist(track.Artist, ExtractCandidateArtistNames(song)))
+                continue;
+
             if (song.TryGetProperty("duration", out var durEl) &&
                 durEl.ValueKind == JsonValueKind.Number &&
                 durEl.TryGetInt64(out var candidateMs) &&
@@ -253,6 +270,46 @@ public class LyricService : ILyricService
         }
 
         return null;
+    }
+
+    // 网易搜索响应的歌手名（旧形状 songs[].artists / cloudsearch 形状 .ar，两者只会有其一）
+    private static List<string> ExtractCandidateArtistNames(JsonElement song)
+    {
+        var names = new List<string>();
+        foreach (var propertyName in new[] { "artists", "ar" })
+        {
+            if (!song.TryGetProperty(propertyName, out var artists) ||
+                artists.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var artist in artists.EnumerateArray())
+            {
+                var name = GetString(artist, "name");
+                if (!string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// 歌手比对：双方歌手信息都具备时要求任一歌手归一化相等（复用 CandidateRanker 的
+    /// 多歌手拆分）；任一侧缺失则无法比对、退回时长过滤兜底放行（保持既有口径，
+    /// 避免过度拒绝损失词库覆盖）。
+    /// </summary>
+    private static bool SharesAnyArtist(string? trackArtist, IReadOnlyList<string> candidateArtists)
+    {
+        if (candidateArtists.Count == 0)
+            return true;
+
+        var targetArtists = CandidateRanker.SplitArtists(trackArtist)
+            .Select(a => MusicIdentity.NormalizeMusicText(a))
+            .Where(a => a.Length > 0)
+            .ToArray();
+        if (targetArtists.Length == 0)
+            return true;
+
+        return candidateArtists.Any(candidate =>
+            targetArtists.Contains(MusicIdentity.NormalizeMusicText(candidate)));
     }
 
     private string BuildSearchUrl(string paramKind, string value, long durationMs)
