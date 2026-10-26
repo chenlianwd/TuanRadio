@@ -272,7 +272,9 @@ public class RecommendationServiceTests
         Assert.Contains("最近已播放", prompt);
         Assert.Contains("Creep - Radiohead", prompt);
         Assert.Contains("Don't Look Back in Anger - Oasis", prompt);
-        Assert.Contains("共同风格", prompt);
+        // 搜索词必须指向具体歌曲而非风格氛围短语（氛围词会被当歌名匹配到 AIGC 同名曲）
+        Assert.Contains("真实存在的具体歌曲", prompt);
+        Assert.Contains("氛围描述短语", prompt);
     }
 
     [Fact]

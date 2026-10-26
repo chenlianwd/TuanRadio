@@ -363,7 +363,10 @@ public class RecommendationService : IRecommendationService
             var prompt = AppLanguage.Current == "en"
                 ? $"""
                     Generate 3 short music-search queries, one per line.
-                    Infer the shared genre, era, language and mood of recently played tracks instead of repeating one title.{profileSection.ExploreInstruction}
+                    Each query must point to one real, specific song — use "Artist Title" or "Title".
+                    Do NOT output style/era/mood phrases like "urban slow ballad": they are not song
+                    titles and only match coincidentally same-named covers or AI-generated tracks.
+                    Prefer real songs outside recently played that fit the taste.{profileSection.ExploreInstruction}
                     Output only the queries — no greetings, preamble or explanations.
                     User intent: {userIntent}
                     Current track: {currentTitle} - {currentArtist}
@@ -372,7 +375,9 @@ public class RecommendationService : IRecommendationService
                     """
                 : $"""
                     根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
-                    关键词应归纳最近已播放歌曲的共同风格、年代、语言和氛围，不要只复述某一首歌名。{profileSection.ExploreInstruction}
+                    每个关键词必须指向一首真实存在的具体歌曲，用"歌手名 歌名"或"歌名"的格式；
+                    不要输出"都市抒情慢板"这类风格或氛围描述短语——它们不是歌名，
+                    搜索只会命中碰巧同名的翻奏或合成曲目。优先挑最近播放之外、符合当前口味的歌。{profileSection.ExploreInstruction}
                     只输出关键词本身：不要问候、开场白或任何解释。
                     用户意图：{userIntent}
                     当前歌曲：{currentTitle} - {currentArtist}
