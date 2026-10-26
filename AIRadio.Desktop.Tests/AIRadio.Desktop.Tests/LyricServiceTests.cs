@@ -33,6 +33,9 @@ public class LyricServiceTests
         return (new HttpClient(handler), capture);
     }
 
+    private static HttpResponseMessage Ok(string body)
+        => new(HttpStatusCode.OK) { Content = new StringContent(body) };
+
     private static Track NeteaseTrack()
         => new() { SourceId = "netease:123", Title = "歌", Artist = "手" };
 
@@ -99,13 +102,23 @@ public class LyricServiceTests
         Assert.Null(result);
     }
 
+    // 网易主链业务错误（code≠200，如 301 需要登录的鉴权抖动）是"没有答案"而非"确认
+    // 无词"：返回 null 但不入负缓存，下次取词重试——与兜底搜索步的口径一致
     [Fact]
-    public async Task Netease_NonSuccessCode_ReturnsNull()
+    public async Task Netease_BusinessError_ReturnsNull_NotCached_RetriedOnNextFetch()
     {
-        var (client, _) = CreateClient(_ => "{\"code\":404}");
+        var businessError = true;
+        var (client, capture) = CreateClient(_ => businessError
+            ? "{\"code\":301,\"msg\":\"需要登录\"}"
+            : "{\"code\":200,\"lrc\":{\"lyric\":\"[00:05.00]恢复后的词\\n\"}}");
         var service = new LyricService(client);
 
         Assert.Null(await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None));
+
+        businessError = false;
+        var result = await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Equal(2, capture.Requests.Count); // 未入负缓存：第二次是真请求
     }
 
     [Fact]
@@ -319,11 +332,13 @@ public class LyricServiceTests
         Assert.Equal(2, capture.Requests.Count);
     }
 
-    // 与失败相反的另一半语义：服务端明确回答"无词"（code≠200）是确认结果，仍入缓存
+    // 与失败相反的另一半语义：服务端明确回答"无词"（code:200 + 占位 lrc）是确认
+    // 结果，仍入缓存。业务错误（code≠200）不再算确认无词，见 BusinessError 用例
     [Fact]
     public async Task ConfirmedNoLyrics_IsCached_SecondFetchMakesNoRequest()
     {
-        var (client, capture) = CreateClient(_ => "{\"code\":404}");
+        var (client, capture) = CreateClient(_ =>
+            "{\"code\":200,\"lrc\":{\"lyric\":\"[00:00.00]暂无歌词\\n\"}}");
         var service = new LyricService(client);
 
         Assert.Null(await service.GetLyricsAsync(NeteaseTrack(), CancellationToken.None));
@@ -552,6 +567,97 @@ public class LyricServiceTests
         // 网易从未回答"无词"，不入缓存：第二次调用重新发起两链路请求
         Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
         Assert.Equal(8, capture.Requests.Count); // 2 ×（酷狗 3 步 + 网易兜底搜索 1 次）
+    }
+
+    // 酷狗链路挂起（风控拖慢/网关抖动）耗尽共享 5s 预算触发内部超时后，兜底必须拿到
+    // 独立新鲜预算——复用已取消的令牌会让 GetAsync 零请求即抛、兜底形同虚设，慢挂型
+    // 故障永远到不了网易词库（修复前该场景 fallback 请求根本发不出去）
+    [Fact]
+    public async Task Kugou_HangsUntilSharedBudgetExhausted_FallbackFetchesWithFreshBudget()
+    {
+        var capture = new RequestCapture();
+        var handler = new DelegateHandler(async (request, cancellationToken) =>
+        {
+            capture.Record(request);
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search/lyric", StringComparison.Ordinal))
+                await Task.Delay(Timeout.Infinite, cancellationToken); // 挂起至共享预算耗尽
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                return Ok("{\"code\":200,\"result\":{\"songs\":[" +
+                          "{\"id\":777,\"name\":\"晴天\",\"duration\":211000}]}}");
+            return Ok("{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]独立预算兜底的词\\n\"}}");
+        });
+        var service = new LyricService(new HttpClient(handler), fetchTimeout: TimeSpan.FromMilliseconds(400));
+
+        var result = await service.GetLyricsAsync(KugouTrack(durationSec: 210), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("独立预算兜底的词", result!.Lines[0].Text);
+        Assert.Contains("search?keywords=", capture.Requests[1].RequestUri!.AbsoluteUri);
+        Assert.Contains("id=777", capture.Requests[2].RequestUri!.AbsoluteUri);
+    }
+
+    // 兜底候选的歌手此前被整体忽略：同名异曲（谭咏麟/周华健《朋友》）只要时长在容忍
+    // 窗口内即可能被采纳、错词整会话钉死缓存。双方歌手信息具备时须任一歌手归一化相等
+    [Fact]
+    public async Task Kugou_Fallback_SameTitleDifferentArtist_SkippedInFavorOfMatchingArtist()
+    {
+        var (client, capture) = CreateClient(request =>
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search/lyric", StringComparison.Ordinal))
+                return "{\"status\":1,\"error_code\":0,\"data\":{}}";
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                return "{\"code\":200,\"result\":{\"songs\":[" +
+                       "{\"id\":888,\"name\":\"朋友\",\"duration\":270000,\"artists\":[{\"name\":\"周华健\"}]}," +
+                       "{\"id\":999,\"name\":\"朋友\",\"duration\":271000,\"artists\":[{\"name\":\"谭咏麟\"}]}]}}";
+            return "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]谭咏麟版歌词\\n\"}}";
+        });
+        var service = new LyricService(client);
+        var track = new Track
+        {
+            SourceId = "kugou:HASH02",
+            Title = "朋友",
+            Artist = "谭咏麟",
+            Duration = TimeSpan.FromSeconds(270)
+        };
+
+        var result = await service.GetLyricsAsync(track, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("谭咏麟版歌词", result!.Lines[0].Text);
+        // 取词用的是歌手匹配的 999：同名异曲的 888 被跳过（两者时长都在 ±3s 窗口内）
+        Assert.Contains("id=999", capture.Requests[2].RequestUri!.AbsoluteUri);
+    }
+
+    // 全部候选歌手不匹配 = 网易侧未给出可用答案，叠加酷狗故障整体按失败处理不入缓存
+    [Fact]
+    public async Task Kugou_Fallback_AllArtistsMismatch_NotCached()
+    {
+        var (client, capture) = CreateClient(request =>
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search/lyric", StringComparison.Ordinal))
+                return "{\"status\":1,\"error_code\":0,\"data\":{}}";
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                return "{\"code\":200,\"result\":{\"songs\":[" +
+                       "{\"id\":888,\"name\":\"朋友\",\"duration\":270000,\"artists\":[{\"name\":\"周华健\"}]}]}}";
+            return "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]词\\n\"}}";
+        });
+        var service = new LyricService(client);
+        var track = new Track
+        {
+            SourceId = "kugou:HASH02",
+            Title = "朋友",
+            Artist = "谭咏麟",
+            Duration = TimeSpan.FromSeconds(270)
+        };
+
+        Assert.Null(await service.GetLyricsAsync(track, CancellationToken.None));
+
+        // 未入缓存：第二次调用重新发起酷狗搜索 + 网易兜底搜索
+        Assert.Null(await service.GetLyricsAsync(track, CancellationToken.None));
+        Assert.Equal(4, capture.Requests.Count);
     }
 
     private sealed class RequestCapture
