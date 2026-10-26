@@ -212,4 +212,47 @@ public class CandidateRankerTests
     [InlineData("我们的音乐节", false)]
     public void HasLiveTag_RequiresFestivalVersionMarker(string title, bool expected)
         => Assert.Equal(expected, CandidateRanker.HasLiveTag($"{title} 周杰伦"));
+
+    // AIGC 艺人（实机观测"优聚AIGC漫音"等账号批量产同名曲冒充原唱）在搜索与
+    // 回退两路径都降权；查询/目标自身含 AIGC（用户主动点播）不罚
+    [Fact]
+    public void ScoreSearchResult_AigcArtist_RankedBelowCleanCounterpart()
+    {
+        var clean = MakeTrack("港风青春回忆", "陈奕迅");
+        var aigc = MakeTrack("港风青春回忆", "优聚AIGC漫音");
+
+        var cleanScore = CandidateRanker.ScoreSearchResult(clean, "陈奕迅 港风青春回忆");
+        var aigcScore = CandidateRanker.ScoreSearchResult(aigc, "陈奕迅 港风青春回忆");
+
+        Assert.True(cleanScore > aigcScore + 0.5,
+            $"AIGC 候选应被显著降权（{cleanScore} vs {aigcScore}）");
+    }
+
+    [Fact]
+    public void ScoreFallbackCandidate_AigcCandidate_Penalized()
+    {
+        var target = MakeTrack("港风青春回忆", "陈奕迅");
+        var cleanCand = MakeTrack("港风青春回忆", "陈奕迅", 240000, "kugou");
+        var aigcCand = MakeTrack("港风青春回忆", "优聚AIGC漫音", 240000, "kugou");
+
+        var cleanScore = CandidateRanker.ScoreFallbackCandidate(cleanCand, target);
+        var aigcScore = CandidateRanker.ScoreFallbackCandidate(aigcCand, target);
+
+        Assert.True(cleanScore - aigcScore >= 0.5,
+            $"AIGC 候选应被显著降权（{cleanScore} vs {aigcScore}）");
+    }
+
+    [Fact]
+    public void ScoreSearchResult_AigcInQuery_IsNotPenalized()
+    {
+        // 用户主动点名 AIGC 艺人时豁免惩罚：同候选在含艺人名的查询下分数应显著高于
+        // 常规查询（后者吃 -0.60；若豁免失效，分差只剩 artistSim 差异 < 0.35）
+        var aigcCand = MakeTrack("白玫瑰", "优聚AIGC漫音");
+
+        var withAigcQuery = CandidateRanker.ScoreSearchResult(aigcCand, "优聚AIGC漫音 白玫瑰");
+        var plainQuery = CandidateRanker.ScoreSearchResult(aigcCand, "白玫瑰");
+
+        Assert.True(withAigcQuery > plainQuery + 0.4,
+            $"查询主动含 AIGC 艺人时不应惩罚（{withAigcQuery} vs {plainQuery}）");
+    }
 }

@@ -10,7 +10,7 @@ namespace AIRadio.Desktop.Services;
 /// <summary>
 /// 音源搜索与跨源回退候选智能排重与评分器。
 /// 综合评估：标题规范化匹配（35%）、歌手精确匹配（30%）、时长接近度（20%）、音源优先级（15%），
-/// 并对伴奏/翻唱/DJ版/Live等非预期版本施加负向约束惩罚（-0.3 ~ -0.7）。
+/// 并对伴奏/翻唱/DJ版/Live/AIGC 等非预期版本施加负向约束惩罚（-0.3 ~ -0.7）。
 /// </summary>
 public static class CandidateRanker
 {
@@ -30,6 +30,10 @@ public static class CandidateRanker
         @"(?i)(?:现场版?|演唱会版?|音乐节(?:现场|版)|[(\[【]\s*live[^)\]】]*[)\]】]|[\s\-_/]+live$)",
         RegexOptions.Compiled);
 
+    // AI 生成/翻奏艺人（实机观测"优聚AIGC漫音"等账号批量产同名曲冒充原唱）：
+    // 惩罚而非硬过滤——仅当查询/目标自身不含 AIGC 时生效，主动点播不受影响
+    private static readonly Regex AigcRegex = new(@"(?i)aigc", RegexOptions.Compiled);
+
     private static readonly char[] ArtistSeparators = { '/', ',', '&', '、', '，', ';', '|' };
 
     public static bool HasInstrumentalTag(string? text)
@@ -43,6 +47,9 @@ public static class CandidateRanker
 
     public static bool HasLiveTag(string? text)
         => !string.IsNullOrWhiteSpace(text) && LiveRegex.IsMatch(text);
+
+    public static bool HasAigcTag(string? text)
+        => !string.IsNullOrWhiteSpace(text) && AigcRegex.IsMatch(text);
 
     /// <summary>
     /// 判断候选歌曲是否属于非预期的特殊版本（伴奏/翻唱/电音DJ/加速等）。
@@ -100,6 +107,9 @@ public static class CandidateRanker
         if (!HasLiveTag(targetFull) && HasLiveTag(candFull))
             penalty += 0.30;
 
+        if (!HasAigcTag(targetFull) && HasAigcTag(candFull))
+            penalty += 0.60;
+
         return baseScore - penalty;
     }
 
@@ -142,6 +152,8 @@ public static class CandidateRanker
             penalty += 0.50;
         if (!HasLiveTag(query) && HasLiveTag(candFull))
             penalty += 0.30;
+        if (!HasAigcTag(query) && HasAigcTag(candFull))
+            penalty += 0.60;
 
         return baseScore - penalty;
     }
