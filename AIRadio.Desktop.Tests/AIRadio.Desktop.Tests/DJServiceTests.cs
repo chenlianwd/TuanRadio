@@ -1047,6 +1047,48 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task RecommendNextTrackAsync_ConfiguredLlm_SendsPromptWithoutSystemMessage()
+    {
+        // 锚定 dispatch：真实 LLMService 路径必须走 ChatRawAsync（无 system 消息）——
+        // 走 ChatAsync 会注入兜底"小音"DJ 人设，模型回整段台词被当歌名拿去搜索；
+        // 请求体 JSON 会把中文转义成 \uXXXX，须解析后断言
+        string? body = null;
+        var handler = new Mock<HttpMessageHandler>();
+        handler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>(
+                (request, _) => body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = System.Net.HttpStatusCode.OK,
+                Content = new StringContent("""{"choices":[{"message":{"content":"晴天 - 周杰伦"}}]}""")
+            });
+        var llm = new LLMService(new HttpClient(handler.Object));
+        llm.Configure(new LLMConfig { Provider = "openai", ApiKey = "k", Model = "m", BaseUrl = "http://localhost" });
+        var search = new Mock<IMusicSearchService>();
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), 10))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                new() { Id = "netease:x", Title = "晴天", Artist = "周杰伦" }
+            });
+        search.Setup(x => x.GetPlayUrlAsync("netease:x"))
+            .ReturnsAsync("http://example.com/qingtian.mp3");
+        var service = new DJService(llm, null, search.Object);
+        service.Initialize(new DJProfile { Name = "Lumen", Description = "晨间 DJ", Language = "zh" });
+
+        var result = await service.RecommendNextTrackAsync(
+            new Track { Title = "起风了", Artist = "买辣椒也用券" });
+
+        Assert.NotNull(result);
+        Assert.NotNull(body);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var messages = doc.RootElement.GetProperty("messages");
+        Assert.Equal(1, messages.GetArrayLength());
+        Assert.Equal("user", messages[0].GetProperty("role").GetString());
+    }
+
+    [Fact]
     public async Task GenerateSongStoryAsync_UnconfiguredLlm_ReturnsEmptyStory()
     {
         // 未配置的 LLMService.ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，

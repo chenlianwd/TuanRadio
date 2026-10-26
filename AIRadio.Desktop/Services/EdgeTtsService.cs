@@ -33,13 +33,15 @@ public class EdgeTtsService : ITtsService, IDisposable
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
 
     // 旧 MiniMax 音色 ID → Edge 免费端点音色的近似映射。免费池普通话仅 6 条
-    // （女声晓晓/晓伊、男声云希/云夏/云健/云扬），按听感对齐标签：
-    // 云扬沉稳专业配"精英"、云健激情有力配"霸道"；女声池没有第三条声线，
-    // 「成熟女声」与「知性女声」共用晓伊，靠 VoiceBaselineProsody 基线韵律区分
+    // （女声晓晓/晓伊、男声云希/云夏/云健/云扬；2026-10-26 拉实测列表复核：zh-CN 全量
+    // 8 条另含辽宁/陕西方言各 1，晓秋/晓萱等更多女声不在池内），按听感对齐标签：
+    // 云扬沉稳专业配"精英"、云健激情有力配"霸道"；女声池没有成熟声线，
+    // 「知性女声」（深夜温柔人设）从晓伊（官方 Lively/Cartoon 画像偏少女）改为与「少女音」
+    // 共用晓晓，靠 VoiceBaselineProsody 基线韵律区分
     private static readonly Dictionary<string, string> LegacyVoiceMap = new()
     {
         ["female-shaonv"] = "zh-CN-XiaoxiaoNeural",
-        ["female-yujie"] = "zh-CN-XiaoyiNeural",
+        ["female-yujie"] = "zh-CN-XiaoxiaoNeural",
         ["female-chengshu"] = "zh-CN-XiaoyiNeural",
         ["male-qn-qingse"] = "zh-CN-YunxiNeural",
         ["male-qn-jingying"] = "zh-CN-YunyangNeural",
@@ -47,9 +49,11 @@ public class EdgeTtsService : ITtsService, IDisposable
     };
 
     // 音色级基线韵律（与情绪韵律数值叠加）：免费池没有低沉女声，
-    // 「成熟女声」在晓伊上整体压低放缓，与「知性女声」的原生晓伊拉开听感
+    // 「知性女声」在晓晓上整体压低放缓（深夜温柔），与「少女音」的原生晓晓拉开听感；
+    // 「成熟女声」在晓伊上同样压低放缓（冷感克制），与晓伊原生听感拉开距离
     private static readonly Dictionary<string, (int PitchHz, int RatePct)> VoiceBaselineProsody = new()
     {
+        ["female-yujie"] = (-3, -8),
         ["female-chengshu"] = (-3, -5)
     };
 

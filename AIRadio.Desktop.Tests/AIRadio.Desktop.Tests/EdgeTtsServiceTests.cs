@@ -41,7 +41,7 @@ public class EdgeTtsServiceTests
 
     [Theory]
     [InlineData("female-shaonv", "zh-CN-XiaoxiaoNeural")]
-    [InlineData("female-yujie", "zh-CN-XiaoyiNeural")]
+    [InlineData("female-yujie", "zh-CN-XiaoxiaoNeural")]
     [InlineData("female-chengshu", "zh-CN-XiaoyiNeural")]
     [InlineData("male-qn-qingse", "zh-CN-YunxiNeural")]
     [InlineData("male-qn-jingying", "zh-CN-YunyangNeural")]
@@ -93,17 +93,28 @@ public class EdgeTtsServiceTests
     [Fact]
     public void BuildSsml_NoBaselineForNonProfiledVoices()
     {
-        var ssml = EdgeTtsService.BuildSsml("测试", "zh-CN-XiaoyiNeural", null, "female-yujie");
+        var ssml = EdgeTtsService.BuildSsml("测试", "zh-CN-XiaoxiaoNeural", null, "female-shaonv");
 
         Assert.Contains("pitch='+0Hz'", ssml);
         Assert.Contains("rate='+0%'", ssml);
     }
 
     [Fact]
+    public void BuildSsml_YujieBaselineStacksOnEmotion()
+    {
+        // 「知性女声」与「少女音」共用晓晓：基线（-3Hz/-8%）整体压低放缓拉开听感，
+        // 与情绪（+2Hz/+8%）数值叠加；去掉基线映射即与原生晓晓同声即红
+        var ssml = EdgeTtsService.BuildSsml("测试", "zh-CN-XiaoxiaoNeural", "happy", "female-yujie");
+
+        Assert.Contains("pitch='-1Hz'", ssml);
+        Assert.Contains("rate='+0%'", ssml);
+    }
+
+    [Fact]
     public void CharacterDefaults_DistinctVoiceOrBaselinePerHost()
     {
-        // 免费池女声仅两条：晓伊被「知性女声」与「成熟女声」共用，后者靠
-        // 基线韵律区分；断言每位主播默认的（声线, 基线）组合互不相同，
+        // 免费池女声仅两条：晓晓被「少女音」与「知性女声」共用、晓伊归「成熟女声」，
+        // 共用对靠基线韵律区分；断言每位主播默认的（声线, 基线）组合互不相同，
         // 换主播听不出换人的缺陷（如曾经的 Lumen/Noir 同为晓晓）即失败
         var combos = CharacterProfile.Presets
             .Select(p => (Voice: EdgeTtsService.ResolveVoice(p.VoiceId),

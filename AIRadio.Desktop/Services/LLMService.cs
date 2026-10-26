@@ -177,10 +177,16 @@ public class LLMService : ILLMService
 
     internal List<object> BuildMessages(List<ChatMessage> history, string userMessage)
     {
-        var messages = new List<object>
+        var messages = new List<object>();
+
+        // 内置兜底人设只服务空历史调用（连接测试、歌曲故事、接口 mock 分支——提示词全在
+        // user 消息里，无 system 会完全无人格语境）。history 自带 system（DJ 聊天恒以角色
+        // 人设开头）时不再前置：中文版"名叫小音"与所选角色名会形成双人格指令冲突。
+        var hasOwnSystem = history.Count > 0 && history[0].Role == MessageRole.System;
+        if (!hasOwnSystem)
         {
-            new { role = "system", content = AppLanguage.T("你是一个中文电台 DJ，名叫小音。用温暖自然的语气和听众交流。", "You are an English-speaking AI radio DJ. Talk to listeners in a warm, natural tone.") }
-        };
+            messages.Add(new { role = "system", content = AppLanguage.T("你是一个中文电台 DJ，名叫小音。用温暖自然的语气和听众交流。", "You are an English-speaking AI radio DJ. Talk to listeners in a warm, natural tone.") });
+        }
 
         // 历史满 21 条（DJService 裁剪上限 = system + 10 对）时，直接 TakeLast(20) 会丢掉
         // history[0] 的 DJ 人设/指令规则，长对话后角色静默退化为通用小音。
@@ -296,7 +302,8 @@ public class LLMService : ILLMService
         CancellationToken cancellationToken)
     {
         // Extract system message and convert to Claude format.
-        // 多条 system（LLMService 内置"小音"人设 + DJ 角色人设）必须合并而不是相互覆盖
+        // 多条 system 必须合并而不是相互覆盖（当前生产聊天恒单 system=角色人设；
+        // BuildMessages 空历史兜底与角色人设不再并存，合并逻辑保留为防御）
         var systemParts = new List<string>();
         var claudeMessages = new List<object>();
         foreach (var msg in messages)
