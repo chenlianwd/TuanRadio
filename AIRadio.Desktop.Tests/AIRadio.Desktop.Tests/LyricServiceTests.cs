@@ -374,8 +374,12 @@ public class LyricServiceTests
         var service = new LyricService(client);
 
         Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
-        // 异常形状在 hash 搜索一步即失败：不烧预算做关键词兜底
-        Assert.Single(capture.Requests);
+        // 异常形状在 hash 搜索一步即失败：不烧预算做酷狗关键词兜底（仍会降级网易词库搜一次）
+        Assert.Single(capture.Requests, r =>
+            r.RequestUri!.AbsoluteUri.Contains("/search/lyric", StringComparison.Ordinal));
+        Assert.Single(capture.Requests, r =>
+            r.RequestUri!.AbsoluteUri.Contains("/search?keywords=", StringComparison.Ordinal));
+        Assert.Equal(2, capture.Requests.Count);
 
         var result = await service.GetLyricsAsync(KugouTrack(), CancellationToken.None);
         Assert.NotNull(result);
@@ -409,7 +413,7 @@ public class LyricServiceTests
     }
 
     // 与异常形状相反的另一半语义：全链 404 是服务端明确回答"无匹配"的确认结果，
-    // 仍入缓存不重试（hash → title → title+artist 三步走完）
+    // 仍入缓存不重试（hash → title → title+artist 三步走完 + 网易兜底搜一次确认无词）
     [Fact]
     public async Task Kugou_AllSearch404_IsConfirmed_CachedWithoutRetry()
     {
@@ -422,7 +426,132 @@ public class LyricServiceTests
         Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
         Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
 
-        Assert.Equal(3, capture.Requests.Count);
+        Assert.Equal(3, capture.Requests.Count(r =>
+            r.RequestUri!.AbsoluteUri.Contains("/search/lyric", StringComparison.Ordinal)));
+        // 第二次调用零请求 = 缓存命中（首调含一次网易兜底搜索，共 4 个请求）
+        Assert.Equal(4, capture.Requests.Count);
+    }
+
+    // 酷狗上游持续异常形状（2026-09-23 升级后 status:1 歌曲搜索形状）时降级网易词库：
+    // 按标题+歌手搜歌，时长 ±3s 内的同名候选被采纳取词，兜底结果按酷狗 SourceId 入缓存
+    [Fact]
+    public async Task Kugou_UpstreamBroken_NeteaseFallbackFindsLyrics_AndCachesUnderKugouId()
+    {
+        var (client, capture) = CreateClient(request =>
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search/lyric", StringComparison.Ordinal))
+                return "{\"status\":1,\"error_code\":0,\"data\":{\"lists\":[]}}";
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                return "{\"code\":200,\"result\":{\"songs\":[" +
+                       "{\"id\":777,\"name\":\"晴天\",\"duration\":211000}," +
+                       "{\"id\":888,\"name\":\"晴天\",\"duration\":60000}]}}";
+            return "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]网易兜底的词\\n\"}}";
+        });
+        var service = new LyricService(client);
+
+        var result = await service.GetLyricsAsync(KugouTrack(durationSec: 210), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("网易兜底的词", result!.Lines[0].Text);
+        Assert.Contains("keywords=" + Uri.EscapeDataString("晴天 周杰伦"),
+            capture.Requests[1].RequestUri!.Query);
+        // 本曲的时长过滤由首位命中（777 时长 ±3s 内）走通；时长悬殊候选的拒绝
+        // 负向锚定在 FallbackAllCandidatesMismatch（其候选全被时长过滤）
+        Assert.Contains("id=777", capture.Requests[2].RequestUri!.AbsoluteUri);
+
+        var second = await service.GetLyricsAsync(KugouTrack(durationSec: 210), CancellationToken.None);
+        Assert.Same(result, second);
+        Assert.Equal(3, capture.Requests.Count); // 缓存命中：重播零请求
+    }
+
+    // 酷狗异常 + 网易兜底确认无命中候选：酷狗状态未知，整体按失败不入缓存，下次重试
+    [Fact]
+    public async Task Kugou_UpstreamBroken_FallbackAllCandidatesMismatch_NotCached()
+    {
+        var (client, capture) = CreateClient(request =>
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search/lyric", StringComparison.Ordinal))
+                return "{\"status\":1,\"error_code\":0,\"data\":{\"lists\":[]}}";
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                return "{\"code\":200,\"result\":{\"songs\":[" +
+                       "{\"id\":888,\"name\":\"晴天\",\"duration\":60000}]}}"; // 同名但时长差 150s
+            return "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]词\\n\"}}";
+        });
+        var service = new LyricService(client);
+
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(durationSec: 210), CancellationToken.None));
+
+        // 未入缓存：第二次调用重新发起酷狗搜索 + 网易兜底搜索
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(durationSec: 210), CancellationToken.None));
+        Assert.Equal(4, capture.Requests.Count);
+    }
+
+    // 酷狗异常 + 网易兜底传输失败：任一链路故障即不入负缓存，留给下次取词重试
+    [Fact]
+    public async Task Kugou_UpstreamBroken_FallbackTransportFailure_NotCached()
+    {
+        var capture = new RequestCapture();
+        var handler = new DelegateHandler((request, _) =>
+        {
+            capture.Record(request);
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                throw new HttpRequestException("netease proxy down");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(url.Contains("/search/lyric", StringComparison.Ordinal)
+                    ? "{\"status\":1,\"error_code\":0,\"data\":{}}"
+                    : "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]词\\n\"}}")
+            });
+        });
+        var service = new LyricService(new HttpClient(handler));
+
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+
+        Assert.Equal(4, capture.Requests.Count); // 两次调用 ×（酷狗搜索 + 网易兜底搜索）
+    }
+
+    // 无标题的酷狗曲目（标题缺失无法构造搜索词）不走网易兜底，只尝试酷狗原生链
+    [Fact]
+    public async Task Kugou_NoTitle_UpstreamBroken_NoFallbackAttempted()
+    {
+        var (client, capture) = CreateClient(request =>
+            request.RequestUri!.AbsoluteUri.Contains("/search/lyric", StringComparison.Ordinal)
+                ? "{\"status\":1,\"error_code\":0,\"data\":{}}"
+                : "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]词\\n\"}}");
+        var service = new LyricService(client);
+        var track = new Track { SourceId = "kugou:HASH01", Duration = TimeSpan.FromSeconds(210) };
+
+        Assert.Null(await service.GetLyricsAsync(track, CancellationToken.None));
+
+        Assert.Single(capture.Requests);
+        Assert.Contains("/search/lyric", capture.Requests[0].RequestUri!.AbsoluteUri);
+    }
+
+    // 网易兜底搜索的业务错误（code≠200，鉴权失效/敏感词拦截）是"没有答案"而非
+    // "确认无词"：按兜底失败处理不入负缓存——否则与酷狗确认无词叠加会把该曲整会话钉死
+    [Fact]
+    public async Task Kugou_FallbackSearchBusinessError_NotCached()
+    {
+        var (client, capture) = CreateClient(request =>
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            if (url.Contains("/search/lyric", StringComparison.Ordinal))
+                return "{\"status\":404,\"candidates\":[]}"; // 酷狗全链确认无词
+            if (url.Contains("/search?keywords=", StringComparison.Ordinal))
+                return "{\"code\":301,\"msg\":\"需要登录\"}";
+            return "{\"code\":200,\"lrc\":{\"lyric\":\"[00:08.00]词\\n\"}}";
+        });
+        var service = new LyricService(client);
+
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+
+        // 网易从未回答"无词"，不入缓存：第二次调用重新发起两链路请求
+        Assert.Null(await service.GetLyricsAsync(KugouTrack(), CancellationToken.None));
+        Assert.Equal(8, capture.Requests.Count); // 2 ×（酷狗 3 步 + 网易兜底搜索 1 次）
     }
 
     private sealed class RequestCapture
