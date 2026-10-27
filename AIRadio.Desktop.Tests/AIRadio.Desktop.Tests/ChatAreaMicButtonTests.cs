@@ -13,6 +13,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Input.Raw;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Moq;
 using ReactiveUI;
 
@@ -124,6 +125,37 @@ public class ChatAreaMicButtonTests
             window?.Close();
             vm.Dispose();
             RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 回复等待徽标随 IsProcessing 翻转：本地模型生成窗口可达十余秒，没有可见反馈时
+    // 用户会以为消息没发出去而重发（2026-10-27 实测撞死在禁用的发送按钮上）
+    [AvaloniaFact]
+    public void ProcessingBadge_FollowsChatProcessingFlag()
+    {
+        var vm = CreateViewModel();
+        Window? window = null;
+        try
+        {
+            var view = new ChatArea { DataContext = vm };
+            window = new Window { Content = view };
+            window.Show();
+
+            var badge = view.FindNameScope()?.Find<Control>("ProcessingBadge")
+                ?? throw new InvalidOperationException("ProcessingBadge not found in ChatArea");
+
+            Assert.False(badge.IsVisible);
+            vm.ChatVM.IsProcessing = true;
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(badge.IsVisible);
+            vm.ChatVM.IsProcessing = false;
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(badge.IsVisible);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
         }
     }
 }

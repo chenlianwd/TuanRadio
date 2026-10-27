@@ -122,6 +122,7 @@ Append ONE JSON control block after the emotion tag ONLY when the listener expli
 <cmd>{"action":"change_mood","mood":"calmer"}</cmd>
 The spoken text must not mention the control block.
 For questions, small talk, or anything else, reply conversationally WITHOUT any control block.
+When just chatting, answer what the listener actually asked, keep it short and natural (1-3 sentences), and don't steer the topic back to music or push songs unless they ask for music.
 Suggesting or mentioning a song yourself is not a listener request; never attach a command for it.
 """;
 
@@ -137,7 +138,8 @@ Response rules:
 1. Always respond in English only.
 2. Speak naturally like a real late-night radio DJ.
 3. End with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
-4. Use a JSON control block ONLY when the listener explicitly asks to change playback; for questions and small talk, reply with no control block.";
+4. Use a JSON control block ONLY when the listener explicitly asks to change playback; for questions and small talk, reply with no control block.
+5. When just chatting, answer what they asked in 1-3 natural sentences; don't steer the topic back to music or push songs unless they ask.";
         }
         else
         {
@@ -150,7 +152,8 @@ Response rules:
 1. 必须只用中文回复。
 2. 像真实深夜电台 DJ 一样自然说话，可以有铺垫、画面感和情绪。
 3. 末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
-4. 只有听众明确要求改变播放时，才在情绪标签后追加 JSON 控制块；问答与闲聊只聊天，不附控制块。";
+4. 只有听众明确要求改变播放时，才在情绪标签后追加 JSON 控制块；问答与闲聊只聊天，不附控制块。
+5. 闲聊问答直接回应对方问的事，简短自然（一到三句），不要总把话题带回音乐；对方没要歌就不推歌。";
         }
 
         lock (_chatHistory)
@@ -601,6 +604,26 @@ Requirements:
                 : "电台此刻没有在播的歌曲。");
         }
 
+        // 环境天气：聊天链此前只有音乐上下文，问天气只能绕回荐歌；注入真实快照让 DJ 能答
+        // 生活问题。只声明这一处的实时数据，问别处要求坦诚说不知道，防编造
+        if (_weatherSnapshot is { } weather)
+        {
+            var tempText = double.IsNaN(weather.TemperatureC)
+                ? string.Empty
+                : isEn ? $", {weather.TemperatureC:0}°C" : $"，{weather.TemperatureC:0}°C";
+            var location = PromptHygiene.StripControlMarkers(weather.LocationName);
+            lines.Add(isEn
+                ? $"Current weather in {location}: {WeatherKindText(weather.Kind, isEn)}{tempText}. You only know live weather for this location; if asked about elsewhere, say honestly that you don't know."
+                : $"当地天气（{location}）：{WeatherKindText(weather.Kind, isEn)}{tempText}。你只掌握这一处的实时天气，问别处就坦诚说不知道。");
+        }
+        else
+        {
+            // 取数失败/尚未取到时同样要约束：没有数据就直说，不能编造
+            lines.Add(isEn
+                ? "No live weather data right now; if asked about weather, say honestly that you don't know — never make it up."
+                : "当前没有实时天气数据；被问到天气就直说不知道，不要编造。");
+        }
+
         var recentList = recent
             .Where(t => nowPlaying == null || !IsSameTrack(t, nowPlaying))
             .TakeLast(StationContextRecentCount)
@@ -626,6 +649,18 @@ Requirements:
             : "电台现场情况（内部参考，回答时自然利用，不要把本段当播报稿念出来）：";
         return "\n\n" + header + "\n" + string.Join("\n", lines);
     }
+
+    private static string WeatherKindText(WeatherKind kind, bool isEn) => kind switch
+    {
+        WeatherKind.Sunny => isEn ? "Clear" : "晴",
+        WeatherKind.Cloudy => isEn ? "Partly cloudy" : "多云",
+        WeatherKind.Overcast => isEn ? "Overcast" : "阴",
+        WeatherKind.Rain => isEn ? "Rain" : "雨",
+        WeatherKind.Snow => isEn ? "Snow" : "雪",
+        WeatherKind.Thunder => isEn ? "Thunderstorm" : "雷雨",
+        WeatherKind.Fog => isEn ? "Fog" : "雾",
+        _ => isEn ? "Unknown" : "未知",
+    };
 
     /// <summary>
     /// 聊天画像段（docs/plans/2026-09-15-dj-chat-profile-injection-design.md）：

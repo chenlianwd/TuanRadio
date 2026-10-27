@@ -736,6 +736,75 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task GenerateChatResponseAsync_InjectsWeatherIntoStationContext()
+    {
+        // 聊天链注入真实天气：此前 DJ 脑中只有音乐上下文，问天气只能绕回荐歌独白
+        // （2026-10-27 实测 40 秒荐歌独白）。只声明这一处的实时数据，问别处要求坦诚说不知道
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("好。[happy]");
+
+        await _djService.GenerateChatResponseAsync("今天天气怎么样");
+        Assert.NotNull(captured);
+        Assert.DoesNotContain("当地天气", captured![0].Content);
+        // 无快照时的反编造约束：没有数据就直说，不能编（删 else 分支即红）
+        Assert.Contains("没有实时天气数据", captured[0].Content);
+
+        _djService.UpdateWeatherSnapshot(new WeatherInfo(WeatherKind.Rain, 18, "杭州"));
+        await _djService.GenerateChatResponseAsync("那现在呢");
+        Assert.Contains("当地天气（杭州）：雨，18°C", captured![0].Content);
+        Assert.Contains("只掌握这一处", captured[0].Content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_SystemPromptIncludesChatFirstRule()
+    {
+        // 聊天优先规则：闲聊简短回应、不主动把话题带回音乐（用户诉求"聊天的时候只希望聊天"）
+        _djService.Initialize(new DJProfile
+        {
+            Name = "Lumen",
+            SystemPrompt = "你是名叫 Lumen 的中文电台 DJ。",
+            Language = "zh"
+        });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("嗯。[happy]");
+
+        await _djService.GenerateChatResponseAsync("随便聊聊");
+
+        Assert.NotNull(captured);
+        Assert.Contains("1-3 sentences", captured![0].Content);
+        Assert.Contains("don't steer the topic back to music", captured[0].Content);
+    }
+
+    [Fact]
+    public async Task GenerateChatResponseAsync_DefaultTemplateIncludesChatFirstRule()
+    {
+        // 无自定义 SystemPrompt 的默认人设分支（不含 commandRules）也有聊天优先规则——
+        // 三处提示词副本各有一条锚定，删任何一处对应测试变红
+        _djService.Initialize(new DJProfile { Name = "Lumen", Language = "zh" });
+
+        List<ChatMessage>? captured = null;
+        _mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("嗯。[happy]");
+
+        await _djService.GenerateChatResponseAsync("随便聊聊");
+
+        Assert.NotNull(captured);
+        Assert.Contains("一到三句", captured![0].Content);
+        Assert.Contains("不要总把话题带回音乐", captured[0].Content);
+    }
+
+    [Fact]
     public async Task GenerateChatResponseAsync_StationContextNotPersistedToChatHistory()
     {
         // 现场段只进当次快照副本、不落持久历史：否则 system 会随调用次数滚雪球翻倍
