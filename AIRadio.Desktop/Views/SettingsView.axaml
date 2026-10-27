@@ -85,7 +85,7 @@
                                       HorizontalAlignment="Stretch"/>
                             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="{DynamicResource S_ApiKeyWatermark}" PasswordChar="•"
                                      IsVisible="{Binding LlmNeedsApiKey}"/>
-                            <TextBox Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{DynamicResource S_BaseUrlWatermark}"/>
+                            <TextBox x:Name="BaseUrlInput" Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{Binding BaseUrlWatermark}"/>
                             <!-- AutoCompleteBox：本地 provider 时下拉枚举本机模型，云端/手填仍可自由输入。
                                  11.3.9 下拉手势为输入任一字符（MPL=0 即出全表）/Down/F4，纯点击不弹
                                  （issue #8903，程序化 IsDropDownOpen=true 会被内部复位，勿再试）；

@@ -423,6 +423,43 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void BaseUrlWatermark_ShowsDefaultUrlOfSelectedProvider()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+
+        Assert.Contains("https://api.openai.com/v1", vm.BaseUrlWatermark);
+
+        vm.SelectedProvider = "local";
+        Assert.Contains("http://localhost:11434/v1", vm.BaseUrlWatermark);
+
+        vm.SelectedProvider = "anthropic";
+        Assert.Contains("https://api.anthropic.com/v1", vm.BaseUrlWatermark);
+
+        // 水印只描述默认值，不随手填地址变化
+        vm.BaseUrl = "https://my-proxy.example/v1";
+        Assert.Contains("https://api.anthropic.com/v1", vm.BaseUrlWatermark);
+    }
+
+    [Fact]
+    public void BaseUrlWatermark_FollowsLanguageSwitch()
+    {
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+
+        // 先定服务再切语言：纯语言切换不触碰 SelectedProvider，水印重算只由
+        // RebuildLocalizedOptionLists 兜底（语言事件路径的正锚）
+        vm.SelectedProvider = "local";
+        AppLanguage.Apply("en");
+        try
+        {
+            Assert.Contains("leave empty for http://localhost:11434/v1", vm.BaseUrlWatermark);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
     public async Task SwitchingToProvider_BackfillsKeyFromDedicatedSlotAndSaveWritesAllSlots()
     {
         var settingsFile = CreateTempSettingsFile();
