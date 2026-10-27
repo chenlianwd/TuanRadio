@@ -1491,4 +1491,46 @@ public class DJServiceTests
         // Split 出 2 段 = 画像段标题恰好出现一次（重建后无旧段残留）
         Assert.Equal(2, content.Split("听众长期口味").Length);
     }
+
+    [Theory]
+    [InlineData("zh")]
+    [InlineData("en")]
+    public async Task GenerateChatResponseAsync_PersonaPromptContainsCommandBrake(string language)
+    {
+        // 指令协议刹车：闲聊被模型自发附上 <cmd> 控制块即切歌（实测反馈：问天气→DJ 建议
+        // 单曲循环《太极太极》并附 play 指令→播放被执行）。提示词必须同时教"什么时候发指令"
+        // 与"什么时候绝不能发"，去掉刹车句此测试即红。commandRules 为英文、中英人设共用。
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var dj = new DJService(mock.Object);
+        dj.Initialize(new DJProfile { Name = "Lumen", SystemPrompt = "测试人设", Language = language });
+
+        await dj.GenerateChatResponseAsync("今天成都的天气咋样");
+
+        var system = captured[^1][0];
+        Assert.Equal(MessageRole.System, system.Role);
+        Assert.Contains("ONLY when the listener explicitly asks", system.Content);
+        Assert.Contains("WITHOUT any control block", system.Content);
+        Assert.Contains("never attach a command", system.Content);
+    }
+
+    [Theory]
+    [InlineData("zh")]
+    [InlineData("en")]
+    public async Task GenerateChatResponseAsync_DefaultPromptContainsCommandBrake(string language)
+    {
+        // 默认人设分支（无自定义 SystemPrompt）规则 4 同口径：问答与闲聊只聊天不附控制块
+        var mock = new Mock<ILLMService>();
+        var captured = SetupHistoryCapture(mock);
+        var dj = new DJService(mock.Object);
+        dj.Initialize(new DJProfile { Name = "Lumen", Language = language });
+
+        await dj.GenerateChatResponseAsync("今天成都的天气咋样");
+
+        var system = captured[^1][0];
+        Assert.Equal(MessageRole.System, system.Role);
+        Assert.Contains(
+            language == "zh" ? "不附控制块" : "no control block",
+            system.Content);
+    }
 }

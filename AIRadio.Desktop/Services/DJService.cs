@@ -113,7 +113,7 @@ At the END of every response, append exactly ONE emotion tag in square brackets 
 [happy] [sad] [calm] [neutral] [angry] [surprised]
 
 Command rules:
-When the user asks to control music, append one JSON control block after the emotion tag:
+Append ONE JSON control block after the emotion tag ONLY when the listener explicitly asks to change playback (play a song or artist, skip, pause, resume, want a recommendation, or set the mood):
 <cmd>{"action":"play","query":"song name"}</cmd>
 <cmd>{"action":"next"}</cmd>
 <cmd>{"action":"pause"}</cmd>
@@ -121,6 +121,8 @@ When the user asks to control music, append one JSON control block after the emo
 <cmd>{"action":"recommend_more"}</cmd>
 <cmd>{"action":"change_mood","mood":"calmer"}</cmd>
 The spoken text must not mention the control block.
+For questions, small talk, or anything else, reply conversationally WITHOUT any control block.
+Suggesting or mentioning a song yourself is not a listener request; never attach a command for it.
 """;
 
         string systemPrompt;
@@ -135,7 +137,7 @@ Response rules:
 1. Always respond in English only.
 2. Speak naturally like a real late-night radio DJ.
 3. End with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
-4. Use a JSON control block only when music playback should change.";
+4. Use a JSON control block ONLY when the listener explicitly asks to change playback; for questions and small talk, reply with no control block.";
         }
         else
         {
@@ -148,7 +150,7 @@ Response rules:
 1. 必须只用中文回复。
 2. 像真实深夜电台 DJ 一样自然说话，可以有铺垫、画面感和情绪。
 3. 末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
-4. 只有需要控制音乐时，才在情绪标签后追加 JSON 控制块。";
+4. 只有听众明确要求改变播放时，才在情绪标签后追加 JSON 控制块；问答与闲聊只聊天，不附控制块。";
         }
 
         lock (_chatHistory)
