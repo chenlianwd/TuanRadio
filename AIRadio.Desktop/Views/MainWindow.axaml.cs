@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Threading;
@@ -6,6 +7,8 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Platform;
+using Avalonia.Threading;
 using ReactiveUI;
 
 namespace AIRadio.Desktop.Views;
@@ -28,6 +31,18 @@ public partial class MainWindow : Window, IDisposable
     private IDisposable? _compactModeSub;
     private IDisposable? _compactTopmostSub;
     private WindowBoundsSnapshot? _standardBounds;
+    private readonly List<DispatcherTimer> _iconReassertTimers = [];
+
+    // 任务栏按钮图标在窗口可见后才向窗口线程同步拉取；启动期 UI 线程若被卡住
+    // （调试器符号加载、冷启动 IO），拉取超时后任务栏画灰色占位方块且不会重试，
+    // 用户须最小化/还原才能恢复。可见后延时两次重发图标（新 WindowIcon 实例触发
+    // WM_SETICON 与 Avalonia 自带的任务栏重绘提示）即可免点击自愈；图标内容相同，
+    // 正常启动下重发无视觉变化。internal 供测试锚定两档（短档速愈+长档兜慢启动）。
+    internal static readonly TimeSpan[] IconReassertDelays =
+    [
+        TimeSpan.FromSeconds(1.5),
+        TimeSpan.FromSeconds(6)
+    ];
 
     private readonly record struct WindowBoundsSnapshot(double Width, double Height, PixelPoint Position, WindowState State);
 
@@ -36,6 +51,7 @@ public partial class MainWindow : Window, IDisposable
         InitializeComponent();
         InputFocusRelease.Attach(this);
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
+        Opened += OnOpenedScheduleTaskbarIconReassert;
 
         DataContextChanged += (_, _) =>
         {
@@ -119,6 +135,40 @@ public partial class MainWindow : Window, IDisposable
                 if (bounds.State == WindowState.Maximized)
                     WindowState = WindowState.Maximized;
             }
+        }
+    }
+
+    private void OnOpenedScheduleTaskbarIconReassert(object? sender, EventArgs e)
+    {
+        Opened -= OnOpenedScheduleTaskbarIconReassert;
+        foreach (var delay in IconReassertDelays)
+        {
+            var timer = new DispatcherTimer { Interval = delay };
+            var pending = true;
+            timer.Tick += (_, _) =>
+            {
+                if (!pending) return;
+                pending = false;
+                timer.Stop();
+                ReassertTaskbarIcon();
+            };
+            timer.Start();
+            _iconReassertTimers.Add(timer);
+        }
+    }
+
+    // internal 供 headless 测试直驱（同 OnDjVisualCue 手法）；Avalonia 属性值按引用
+    // 比较，新实例必然穿透 styled property 的相等短路、重发到平台层
+    internal void ReassertTaskbarIcon()
+    {
+        try
+        {
+            using var stream = AssetLoader.Open(new Uri("avares://AIRadio/Assets/airadio.ico"));
+            Icon = new WindowIcon(stream);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Taskbar icon reassert failed");
         }
     }
 
@@ -233,6 +283,8 @@ public partial class MainWindow : Window, IDisposable
         _compactModeSub?.Dispose();
         _compactTopmostSub?.Dispose();
         _speakingSub?.Dispose();
+        foreach (var timer in _iconReassertTimers) timer.Stop();
+        _iconReassertTimers.Clear();
         StopGlow();
         if (_activeVm != null)
         {
