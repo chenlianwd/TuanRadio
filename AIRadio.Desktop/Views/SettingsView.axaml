@@ -315,10 +315,13 @@
                             <Grid ColumnDefinitions="*,180" ColumnSpacing="12">
                                 <TextBlock Text="{DynamicResource S_AccentPalette}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                                            VerticalAlignment="Center"/>
+                                <!-- Fluent ControlTheme 对 ComboBox 默认 HorizontalAlignment=Left，
+                                     定宽列内不显式 Stretch 会按内容宽度靠左，右缘与开关行错位（本行与频谱样式行同因） -->
                                 <ComboBox Grid.Column="1" SelectedValue="{Binding SelectedAccentPalette, Mode=TwoWay}"
                                           ItemsSource="{Binding AccentPaletteOptions}"
                                           SelectedValueBinding="{Binding Id}"
-                                          DisplayMemberBinding="{Binding DisplayName}"/>
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
                             </Grid>
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Grid.Column="0" Text="{DynamicResource S_Starfield}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
@@ -332,7 +335,8 @@
                                 <ComboBox Grid.Column="1" SelectedValue="{Binding SelectedSpectrumStyle, Mode=TwoWay}"
                                           ItemsSource="{Binding SpectrumStyles}"
                                           SelectedValueBinding="{Binding Id}"
-                                          DisplayMemberBinding="{Binding DisplayName}"/>
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
                             </Grid>
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Grid.Column="0" Text="{DynamicResource S_TopMostToggle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
