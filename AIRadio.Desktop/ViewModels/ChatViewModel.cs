@@ -968,7 +968,11 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             return !string.IsNullOrWhiteSpace(query) && !IsGenericMusicRequest(query);
         }
 
-        if (!LooksLikeBareSongTitle(normalized))
+        // 书名号/引号整段包裹 = 显式歌名信号：与问候语撞名的歌（《晚安》《在吗》）靠它
+        // 秒播逃生，没人用书名号打招呼；跳过闲聊守卫，仍受下方精确匹配预检把关
+        var isExplicitTitle = Regex.IsMatch(text.Trim(), @"^[《“""](.{1,24})[》”""]$");
+
+        if (!LooksLikeBareSongTitle(normalized, isExplicitTitle))
             return false;
 
         query = normalized;
@@ -1004,16 +1008,28 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         return value.Trim();
     }
 
-    private static bool LooksLikeBareSongTitle(string text)
+    private static bool LooksLikeBareSongTitle(string text, bool isExplicitTitle = false)
     {
         if (text.Length is < 1 or > 24)
             return false;
-        if (Regex.IsMatch(text, @"[?？,，。.!！;；:]"))
-            return false;
-        if (Regex.IsMatch(text, @"^(为什么|怎么|如何|你好|谢谢|再见)"))
-            return false;
-        if (Regex.IsMatch(text, @"^(换|切|跳过|下一首|上一首|换歌|换一首|切歌|暂停|继续|播放|停止|快进|后退)"))
-            return false;
+        // 启发式守卫只对裸打文本生效：书名号显式歌名是强信号，跳过
+        if (!isExplicitTitle)
+        {
+            if (Regex.IsMatch(text, @"[?？,，。.!！;；:]"))
+                return false;
+            // 问候/招呼开头不是歌名；乐库里存在与问候语同名的歌（如《在吗》）时，
+            // 裸歌名路径会抢答成点歌，必须在此拦下（想点这些名字用"放/听/播放"动词句式
+            // 或加书名号）
+            if (Regex.IsMatch(text, @"^(为什么|怎么|如何|你好|您好|谢谢|多谢|再见|拜拜|晚安|在吗|在不在|在么|哈喽|哈啰|嗨|喂|你是谁|你叫什么|辛苦了|早|上午好|中午好|下午好|晚上好)", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(text, @"^(hi|hello|hey)(\s|$)", RegexOptions.IgnoreCase))
+                return false;
+            // 句中带疑问/寒暄用语、或句末带语气助词的是闲聊问句，不是歌名
+            if (Regex.IsMatch(text, @"什么|怎么|怎样|咋样|咋办|如何|多少|几点|有没有|是不是|能不能|会不会|好不好|行不行|哪个|哪些|哪首|天气|气温|温度|下雨")
+                || Regex.IsMatch(text, @"[吗么呢吧啊呀哦喔哈啦呗嘛]$"))
+                return false;
+            if (Regex.IsMatch(text, @"^(换|切|跳过|下一首|上一首|换歌|换一首|切歌|暂停|继续|播放|停止|快进|后退)"))
+                return false;
+        }
 
         return Regex.IsMatch(text, @"^[\p{IsCJKUnifiedIdeographs}A-Za-z0-9\s\-'&.]+$");
     }

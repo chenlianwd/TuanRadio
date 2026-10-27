@@ -102,6 +102,20 @@
                                FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFE4D9FF}"/>
                 </StackPanel>
             </Border>
+
+            <!-- 回复等待窗（LLM 生成 + 语音合成期间本地模型可达十余秒）：不给可见反馈会被当成
+                 没发出去。占顶部状态区（处理期状态通知恒隐藏、无争用），不落消息区右下角——
+                 那里会盖住刚发出的右对齐用户气泡 -->
+            <Border x:Name="ProcessingBadge" Grid.Row="0" IsVisible="{Binding ChatVM.IsProcessing}"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="22,10,22,0"
+                    Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_3356F5C4}" BorderThickness="1"
+                    CornerRadius="4" Padding="12,8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="6" Height="6" Fill="{DynamicResource C_FF56F5C4}" VerticalAlignment="Center"/>
+                    <TextBlock Text="{DynamicResource S_Responding}" FontSize="12"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFB9FFE8}"/>
+                </StackPanel>
+            </Border>
         </Grid>
 
         <!-- Input -->

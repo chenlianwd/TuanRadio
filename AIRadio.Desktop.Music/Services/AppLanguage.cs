@@ -81,6 +81,7 @@ public static class AppLanguage
         ["S_ChatWatermark"] = "和主播说点什么…",
         ["S_ReleaseToTranscribe"] = "松开结束说话…",
         ["S_Transcribing"] = "正在识别语音…",
+        ["S_Responding"] = "正在回复…",
         // 简洁播放器
         ["S_Favorite"] = "收藏（同时记入长期口味）",
         ["S_TopMost"] = "置顶",
@@ -219,6 +220,7 @@ public static class AppLanguage
         ["S_ChatWatermark"] = "Say something to the DJ…",
         ["S_ReleaseToTranscribe"] = "Release to transcribe…",
         ["S_Transcribing"] = "Transcribing speech…",
+        ["S_Responding"] = "Responding…",
         // Compact player
         ["S_Favorite"] = "Favorite (feeds your taste profile)",
         ["S_TopMost"] = "Always on top",

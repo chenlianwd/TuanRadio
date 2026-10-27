@@ -337,6 +337,72 @@ public class ChatViewModelTests
     }
 
     [Fact]
+    public async Task SendMessage_GreetingWithExactSameNamedSong_DoesNotHijackToPlay()
+    {
+        // 2026-10-27 实测回归："在吗"被裸歌名路径当歌名（乐库恰有《在吗》-空匪，精确命中），
+        // 打招呼变成切歌；问候/疑问句式必须落回聊天，且不再吃乐库预检
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        var sameNamed = new OnlineTrack { Id = "netease:zaima", Title = "在吗", Artist = "空匪" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { sameNamed });
+        djMock.Setup(x => x.GenerateChatResponseAsync("在吗", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("在的，我在。[happy]");
+
+        vm.InputText = "在吗";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync("在吗", It.IsAny<CancellationToken>()), Times.Once);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_ExplicitBookTitle_SkipsChitChatGuards()
+    {
+        // 书名号逃生门：《晚安》与问候语撞名，裸打会被闲聊守卫拦下；
+        // 整段书名号包裹是显式歌名信号，跳过守卫直走秒播预检
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        var track = new OnlineTrack { Id = "netease:wanan", Title = "晚安", Artist = "颜人中" };
+        searchMock.Setup(x => x.SearchAsync("晚安", 3))
+            .ReturnsAsync(new List<OnlineTrack> { track });
+        searchMock.Setup(x => x.SearchAsync("晚安", 5))
+            .ReturnsAsync(new List<OnlineTrack> { track });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:wanan"))
+            .ReturnsAsync("http://example.com/wanan.mp3");
+
+        vm.InputText = "《晚安》";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(
+            It.Is<Track>(t => t.Title == "晚安" && t.SourceId == "netease:wanan"),
+            It.IsAny<string?>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("在吗")]
+    [InlineData("早")]
+    [InlineData("今天的天气咋样啊")]
+    [InlineData("今天天气怎么样")]
+    [InlineData("晚上好")]
+    [InlineData("hi there")]
+    [InlineData("晴天吧")]
+    public async Task SendMessage_ChitChatPhrasing_GoesToChatWithoutSongPreflight(string input)
+    {
+        // 问候/疑问/句末语气助词的闲聊句式：不进裸歌名路径（顺带省一次乐库预检请求）；
+        // 真歌名裸打（如"丑八怪"）仍走秒播捷径——由既有用例锚定
+        var (vm, djMock, _, searchMock) = CreateVm();
+        djMock.Setup(x => x.GenerateChatResponseAsync(input, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("嗯。[happy]");
+
+        vm.InputText = input;
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync(input, It.IsAny<CancellationToken>()), Times.Once);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SendMessage_GenericRecommendation_UsesFreshDjRecommendation()
     {
         var (vm, djMock, audioMock, searchMock) = CreateVm();
