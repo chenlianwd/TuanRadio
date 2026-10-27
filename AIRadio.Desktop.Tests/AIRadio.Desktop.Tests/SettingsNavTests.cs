@@ -111,6 +111,42 @@ public class SettingsNavTests
     }
 
     [AvaloniaFact]
+    public void BaseUrlTextBox_WatermarkBindsToViewModelProperty()
+    {
+        // Base URL 水印接线端到端：词条 S_BaseUrlWatermark 已删，绑定若回退成
+        // DynamicResource 旧写法会静默显空水印（资源解析不到不抛异常）——在绑定
+        // 末端锚定 VM 属性传播（隐藏弹层不布局，逻辑树 attach 即激活绑定）
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            var view = window.FindDescendantOfType<SettingsView>()
+                ?? throw new InvalidOperationException("SettingsView not found");
+            var baseUrlBox = view.FindControl<TextBox>("BaseUrlInput")
+                ?? throw new InvalidOperationException("BaseUrlInput not found");
+
+            var initial = baseUrlBox.Watermark as string ?? string.Empty;
+            Assert.Contains("https://api.openai.com/v1", initial);
+
+            // 切服务 → 绑定随 VM 属性重求值（防一次性/静态值伪装成绑定）
+            vm.SettingsVM.SelectedProvider = "local";
+            var switched = baseUrlBox.Watermark as string ?? string.Empty;
+            Assert.Contains("http://localhost:11434/v1", switched);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [AvaloniaFact]
     public void ProfileCard_StyleTagAndImpressionControls_BindToListProperties()
     {
         // 印象优先重排的新分区：风格标签/性格印象控件经 ItemsSource/文本绑定直连 VM——

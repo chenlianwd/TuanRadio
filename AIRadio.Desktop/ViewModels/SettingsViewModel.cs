@@ -74,6 +74,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _listenerProfileToggleSub;
     private readonly IDisposable _localModelSettingsSub;
     private readonly IDisposable _llmProfileSwapSub;
+    private readonly IDisposable _baseUrlWatermarkSub;
     private int _localModelsEpoch;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
@@ -110,6 +111,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string ApiKey { get; set; } = string.Empty;
     [Reactive] public partial string SelectedProvider { get; set; } = "openai";
     [Reactive] public partial string BaseUrl { get; set; } = string.Empty;
+    /// <summary>Base URL 输入框水印：显示当前服务的内置默认地址（留空即用它）。</summary>
+    [Reactive] public partial string BaseUrlWatermark { get; private set; } = string.Empty;
     [Reactive] public partial string Model { get; set; } = string.Empty;
     /// <summary>本地模型不需要 API Key：选中时隐藏 Key 输入框（判定与 RequiresApiKey 同源）。</summary>
     [Reactive] public partial bool LlmNeedsApiKey { get; set; } = true;
@@ -353,6 +356,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 }
             });
 
+        // 水印纯展示、只随服务走：无加载守卫（幂等赋值），语言切换由
+        // RebuildLocalizedOptionLists 内的重算兜底
+        _baseUrlWatermarkSub = this.WhenAnyValue(x => x.SelectedProvider)
+            .Subscribe(_ => UpdateBaseUrlWatermark());
+
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
         SaveUiStateCommand = ReactiveCommand.CreateFromTask(() => SaveAsync(persistLlmFields: false));
@@ -539,9 +547,17 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             _ => OpenSubsonicQuality.Automatic
         };
 
+    /// <summary>按当前服务与语言重算 Base URL 水印（显示该服务的内置默认地址）。</summary>
+    private void UpdateBaseUrlWatermark()
+    {
+        var url = LLMService.GetDefaultBaseUrl(SelectedProvider);
+        BaseUrlWatermark = AppLanguage.T($"Base URL；留空使用 {url}", $"Base URL; leave empty for {url}");
+    }
+
     /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
     private void RebuildLocalizedOptionLists()
     {
+        UpdateBaseUrlWatermark();
         var voiceId = CharacterVoice?.Id;
         Voices = new List<VoiceOption>
         {
@@ -2047,6 +2063,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
         _llmProfileSwapSub.Dispose();
+        _baseUrlWatermarkSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更

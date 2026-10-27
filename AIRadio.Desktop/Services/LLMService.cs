@@ -42,6 +42,10 @@ public class LLMService : ILLMService
         return Providers.TryGetValue(config.Provider, out var fallback) ? fallback : Providers["openai"];
     }
 
+    /// <summary>服务的内置默认 Base URL（设置页水印展示用）；未知服务按 openai 归一兜底。</summary>
+    internal static string GetDefaultBaseUrl(string? provider)
+        => Providers.TryGetValue(NormalizeProvider(provider), out var url) ? url : Providers["openai"];
+
     public LLMService(HttpClient httpClient)
     {
         _httpClient = httpClient;
