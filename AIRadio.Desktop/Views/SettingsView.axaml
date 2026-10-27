@@ -34,11 +34,8 @@
         <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{DynamicResource C_6656F5C4}"/>
         </Style>
-        <!-- AutoCompleteBox 自身无 Watermark 属性（11.3.9），经模板内嵌 TextBox 恢复模型名水印；
-             按 x:Name 收窄作用域，防未来新增 AutoCompleteBox 被误伤 -->
-        <Style Selector="#ModelInputBox /template/ TextBox#PART_TextBox">
-            <Setter Property="Watermark" Value="{DynamicResource S_ModelWatermark}"/>
-        </Style>
+        <!-- AutoCompleteBox 水印：11.3.9 自带 Watermark 属性（Fluent 模板经 TemplateBinding
+             转发到内嵌 TextBox）；早期"/template/ 样式恢复"路径实证不生效，勿再走 -->
     </UserControl.Styles>
 
     <Grid RowDefinitions="*,Auto" RowSpacing="16">
@@ -86,13 +83,15 @@
                             <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="{DynamicResource S_ApiKeyWatermark}" PasswordChar="•"
                                      IsVisible="{Binding LlmNeedsApiKey}"/>
                             <TextBox x:Name="BaseUrlInput" Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{Binding BaseUrlWatermark}"/>
-                            <!-- AutoCompleteBox：本地 provider 时下拉枚举本机模型，云端/手填仍可自由输入。
+                            <!-- AutoCompleteBox：下拉枚举可用模型（本地 Ollama /api/tags、云端 /models 按 Key
+                                 鉴权，Key 未配/拉取失败时空列表手填兜底），自由手填仍可。
                                  11.3.9 下拉手势为输入任一字符（MPL=0 即出全表）/Down/F4，纯点击不弹
                                  （issue #8903，程序化 IsDropDownOpen=true 会被内部复位，勿再试）；
                                  若"点击即开"成为硬需求，正确路线是换 ComboBox 方案（原生点击展开，
-                                 代价是本地端点失去自由手填）。控件无 Watermark → 模板内嵌 TextBox 恢复（下方样式） -->
+                                 代价是失去端点自由手填）。水印走控件自带 Watermark 属性 -->
                             <AutoCompleteBox x:Name="ModelInputBox"
                                              Text="{Binding Model, Mode=TwoWay}"
+                                             Watermark="{Binding ModelWatermark}"
                                              ItemsSource="{Binding LocalModels}"
                                              MinimumPrefixLength="0"/>
                             <Button Command="{Binding TestConnectionCommand}"

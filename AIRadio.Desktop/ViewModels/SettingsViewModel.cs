@@ -74,7 +74,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _listenerProfileToggleSub;
     private readonly IDisposable _localModelSettingsSub;
     private readonly IDisposable _llmProfileSwapSub;
-    private readonly IDisposable _baseUrlWatermarkSub;
+    private readonly IDisposable _llmWatermarkSub;
     private int _localModelsEpoch;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
@@ -113,6 +113,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string BaseUrl { get; set; } = string.Empty;
     /// <summary>Base URL 输入框水印：显示当前服务的内置默认地址（留空即用它）。</summary>
     [Reactive] public partial string BaseUrlWatermark { get; private set; } = string.Empty;
+    /// <summary>模型名输入框水印：按服务给示例；本地模型提示输入任意字符可弹出列表（纯点击不弹）。</summary>
+    [Reactive] public partial string ModelWatermark { get; private set; } = string.Empty;
     [Reactive] public partial string Model { get; set; } = string.Empty;
     /// <summary>本地模型不需要 API Key：选中时隐藏 Key 输入框（判定与 RequiresApiKey 同源）。</summary>
     [Reactive] public partial bool LlmNeedsApiKey { get; set; } = true;
@@ -136,7 +138,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     // 当前字段内容归属的服务（切换处理器与 LoadCoreAsync 尾部双点维护）
     private string _lastProvider = "openai";
 
-    /// <summary>本地模型候选（Ollama 枚举），供模型输入框下拉选择；云端 provider 恒为空。</summary>
+    /// <summary>模型候选（本地 Ollama /api/tags、云端 /models 按 Key 鉴权），供模型输入框下拉选择；拉取失败为空、手填兜底。</summary>
     [Reactive] public partial List<string> LocalModels { get; set; } = new();
     [Reactive] public partial string StatusMessage { get; set; } = string.Empty;
     [Reactive] public partial bool IsTesting { get; set; }
@@ -338,28 +340,27 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 _lastProvider = to;
             });
 
-        // provider/地址任一变化即清空旧候选并作废在途结果；本地枚举防抖，避免逐字输入地址
-        // 时打出一串 HTTP 请求。加载期赋值被屏蔽，LoadCoreAsync 尾部显式补拉一次。
-        _localModelSettingsSub = this.WhenAnyValue(x => x.SelectedProvider, x => x.BaseUrl)
+        // provider/地址/Key 任一变化即清空旧候选并作废在途结果（云端模型列表经
+        // Bearer/x-api-key 鉴权，Key 从档案回填晚到也要重拉）；防抖，避免逐字输入
+        // 地址/Key 时打出一串 HTTP 请求。加载期赋值被屏蔽，LoadCoreAsync 尾部显式补拉一次。
+        _localModelSettingsSub = this.WhenAnyValue(x => x.SelectedProvider, x => x.BaseUrl, x => x.ApiKey)
             .Skip(1)
             .Subscribe(settings =>
             {
                 if (_isLoading)
                     return;
                 LocalModels = new();
-                if (NormalizeProvider(settings.Item1) == "local")
-                    _ = RefreshLocalModelsAsync(debounce: true);
-                else
-                {
-                    // 清空也要递增代次：否则在途枚举晚到会凭旧代次把候选填回云端视图
-                    _localModelsEpoch++;
-                }
+                _ = RefreshLocalModelsAsync(debounce: true);
             });
 
         // 水印纯展示、只随服务走：无加载守卫（幂等赋值），语言切换由
         // RebuildLocalizedOptionLists 内的重算兜底
-        _baseUrlWatermarkSub = this.WhenAnyValue(x => x.SelectedProvider)
-            .Subscribe(_ => UpdateBaseUrlWatermark());
+        _llmWatermarkSub = this.WhenAnyValue(x => x.SelectedProvider)
+            .Subscribe(_ =>
+            {
+                UpdateBaseUrlWatermark();
+                UpdateModelWatermark();
+            });
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
         // 磁盘上已有的 llm_* 字段原样保留
@@ -554,10 +555,22 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         BaseUrlWatermark = AppLanguage.T($"Base URL；留空使用 {url}", $"Base URL; leave empty for {url}");
     }
 
+    /// <summary>按当前服务与语言重算模型名水印（示例文案；本地模型教下拉手势）。</summary>
+    private void UpdateModelWatermark()
+    {
+        ModelWatermark = NormalizeProvider(SelectedProvider) switch
+        {
+            "anthropic" => AppLanguage.T("模型名称，例如 claude-sonnet-4-5", "Model name, e.g. claude-sonnet-4-5"),
+            "local" => AppLanguage.T("模型名称，输入任意字符列出本机模型", "Model name; type any character to list local models"),
+            _ => AppLanguage.T("模型名称，例如 gpt-4o-mini / deepseek-chat", "Model name, e.g. gpt-4o-mini / deepseek-chat"),
+        };
+    }
+
     /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
     private void RebuildLocalizedOptionLists()
     {
         UpdateBaseUrlWatermark();
+        UpdateModelWatermark();
         var voiceId = CharacterVoice?.Id;
         Voices = new List<VoiceOption>
         {
@@ -954,9 +967,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             _lastProvider = tailProvider;
             LlmNeedsApiKey = RequiresApiKey(tailProvider);
 
-            // 此时 llm_* 全部字段已读取完，补拉本地模型列表（加载期的 provider 赋值被 _isLoading 屏蔽）
-            if (NormalizeProvider(SelectedProvider) == "local")
-                _ = RefreshLocalModelsAsync();
+            // 此时 llm_* 全部字段已读取完，补拉模型候选（加载期赋值被 _isLoading 屏蔽；
+            // 云端 Key 从凭据槽回填晚到时由 ApiKey 触发源自动重拉）
+            _ = RefreshLocalModelsAsync();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1376,14 +1389,19 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         });
 
     /// <summary>
-    /// 枚举本机模型填充下拉候选；失败静默保持空列表，手填模型名兜底。
+    /// 枚举模型候选填充下拉（本地 Ollama /api/tags、云端 /models 按 Key 鉴权）；
+    /// 失败静默保持空列表，手填模型名兜底。
     /// </summary>
     private async Task RefreshLocalModelsAsync(bool debounce = false)
     {
         // 代次守卫：快速来回切换 provider 时两次枚举并发，HTTP 完成序不定，
         // 旧结果晚到不得覆盖新结果（同歌词 generation 卫兵惯例）
         var epoch = ++_localModelsEpoch;
+        // 三字段同点快照保证单次请求的字段组合一致；防抖窗口内的新触发不发旧组合
+        // 请求靠的是上面 epoch 预递增 + 延迟后的代次检查
+        var provider = SelectedProvider;
         var baseUrl = BaseUrl;
+        var apiKey = ApiKey;
         try
         {
             if (debounce)
@@ -1394,7 +1412,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             }
             // 端点从 VM 字段显式传入，不在此 ConfigureLlm——
             // 翻看 provider 下拉不能改变运行中服务的聊天配置（电台可能正在播）
-            var models = await _llmService.ListLocalModelsAsync(baseUrl, _lifetimeCts.Token);
+            var models = await _llmService.ListModelsAsync(provider, baseUrl, apiKey, _lifetimeCts.Token);
             if (epoch != _localModelsEpoch || _lifetimeCts.IsCancellationRequested)
                 return;
             LocalModels = (models ?? Enumerable.Empty<string>())
@@ -1406,7 +1424,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Local model enumeration failed in settings");
+            Log.Debug(ex, "Model enumeration failed in settings");
         }
     }
 
@@ -2063,7 +2081,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
         _llmProfileSwapSub.Dispose();
-        _baseUrlWatermarkSub.Dispose();
+        _llmWatermarkSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更
