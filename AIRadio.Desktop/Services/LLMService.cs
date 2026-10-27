@@ -102,32 +102,75 @@ public class LLMService : ILLMService
     }
 
     /// <summary>
-    /// 枚举本地模型（Ollama GET /api/tags）。尽力而为的 UI 增强：
-    /// 服务未启动/端点不支持/任何失败一律返回空列表，由调用方静默降级为手填。
+    /// 枚举可用模型（local=Ollama GET /api/tags；openai 兼容=GET /models Bearer；
+    /// anthropic=GET /models x-api-key）。尽力而为的 UI 增强：
+    /// 云端未配 Key/服务不可达/端点不支持/任何失败一律返回空列表，由调用方静默降级为手填。
     /// </summary>
-    public async Task<List<string>> ListLocalModelsAsync(string? baseUrl, CancellationToken cancellationToken)
+    public async Task<List<string>> ListModelsAsync(string? provider, string? baseUrl, string? apiKey, CancellationToken cancellationToken)
     {
-        // 端点只从入参派生（空=本地默认端点），绝不读服务的聊天配置快照：
-        // 本方法由设置页在切换 provider 下拉时触发，不能有"翻看=改运行配置"的副作用。
-        // /v1 是 OpenAI 兼容层前缀，tags 属于 Ollama 原生 API，挂在根路径上
+        // 端点只从入参派生（空=该服务默认端点），绝不读服务的聊天配置快照：
+        // 本方法由设置页在切换 provider 下拉时触发，不能有"翻看=改运行配置"的副作用
+        var normalized = NormalizeProvider(provider);
         var effective = string.IsNullOrWhiteSpace(baseUrl)
-            ? Providers["local"]
+            ? Providers[normalized]
             : baseUrl.Trim().TrimEnd('/');
-        var root = effective.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
-            ? effective[..^3]
-            : effective;
+        // 与聊天路径（Configure 后 Trim）一致：粘贴带首尾空白的 Key 不应让枚举先 401
+        apiKey = apiKey?.Trim();
+        // 云端模型接口需要 Key，缺失直接空列表（不发必 401 的请求）
+        if (normalized != "local" && string.IsNullOrWhiteSpace(apiKey))
+            return [];
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-            var json = await _httpClient.GetStringAsync($"{root}/api/tags", timeoutCts.Token);
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("models", out var models))
-                return [];
-            var names = new List<string>();
-            foreach (var entry in models.EnumerateArray())
+            timeoutCts.CancelAfter(normalized == "local" ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(8));
+            string url;
+            if (normalized == "local")
             {
-                if (entry.TryGetProperty("name", out var name) && name.GetString() is { Length: > 0 } value)
+                // /v1 是 OpenAI 兼容层前缀，tags 属于 Ollama 原生 API，挂在根路径上
+                var root = effective.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+                    ? effective[..^3]
+                    : effective;
+                url = $"{root}/api/tags";
+            }
+            else if (normalized == "anthropic")
+            {
+                // 与 BuildAnthropicMessagesEndpoint 同规则：标准地址已含 /v1，
+                // 兼容代理可能只给上一级 Base。
+                // limit=1000：官方 List Models 默认分页 20 条会静默截断候选（上限即 1000）
+                url = (effective.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+                        ? $"{effective}/models"
+                        : $"{effective}/v1/models")
+                    + "?limit=1000";
+            }
+            else
+            {
+                url = $"{effective}/models";
+            }
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (normalized == "anthropic")
+            {
+                request.Headers.Add("x-api-key", apiKey);
+                request.Headers.Add("anthropic-version", "2023-06-01");
+            }
+            else if (normalized != "local")
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            }
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+            var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+            using var doc = JsonDocument.Parse(json);
+            // local：models[].name；云端 OpenAI/Anthropic 同构：data[].id
+            JsonElement list;
+            var found = normalized == "local"
+                ? doc.RootElement.TryGetProperty("models", out list)
+                : doc.RootElement.TryGetProperty("data", out list);
+            if (!found || list.ValueKind != JsonValueKind.Array)
+                return [];
+            var nameKey = normalized == "local" ? "name" : "id";
+            var names = new List<string>();
+            foreach (var entry in list.EnumerateArray())
+            {
+                if (entry.TryGetProperty(nameKey, out var name) && name.GetString() is { Length: > 0 } value)
                     names.Add(value);
             }
             return names;
@@ -139,7 +182,7 @@ public class LLMService : ILLMService
         catch (Exception ex)
         {
             // 枚举失败不影响手填模型名，也不该打断设置页交互
-            Log.Debug(ex, "Local model enumeration failed");
+            Log.Debug(ex, "Model enumeration failed");
             return [];
         }
     }

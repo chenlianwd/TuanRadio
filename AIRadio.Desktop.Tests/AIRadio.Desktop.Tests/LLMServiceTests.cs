@@ -249,13 +249,13 @@ public class LLMServiceTests
         => message.GetType().GetProperty("role")?.GetValue(message) as string;
 
     [Fact]
-    public async Task ListLocalModelsAsync_ParsesNamesAndStripsV1Prefix()
+    public async Task ListModelsAsync_Local_ParsesNamesAndStripsV1Prefix()
     {
         string? requestedUrl = null;
         var responseJson = @"{""models"":[{""name"":""qwen3.5:9b""},{""name"":""qwen3.5:4b-16k""}]}";
         var service = new LLMService(CreateMockHttpClient(responseJson, r => requestedUrl = r.RequestUri?.ToString()));
 
-        var models = await service.ListLocalModelsAsync(baseUrl: null, CancellationToken.None);
+        var models = await service.ListModelsAsync("local", baseUrl: null, apiKey: null, CancellationToken.None);
 
         // baseUrl 为空走本地默认端点；/api/tags 是 Ollama 原生 API：
         // 挂在根上，必须把 OpenAI 兼容层的 /v1 前缀剥掉
@@ -264,25 +264,81 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public async Task ListLocalModelsAsync_CustomBaseUrlWithoutV1_QueriesRootDirectly()
+    public async Task ListModelsAsync_LocalCustomBaseUrlWithoutV1_QueriesRootDirectly()
     {
         string? requestedUrl = null;
         var service = new LLMService(CreateMockHttpClient(@"{""models"":[]}", r => requestedUrl = r.RequestUri?.ToString()));
 
-        _ = await service.ListLocalModelsAsync(baseUrl: "http://127.0.0.1:19999", CancellationToken.None);
+        _ = await service.ListModelsAsync("local", baseUrl: "http://127.0.0.1:19999", apiKey: null, CancellationToken.None);
 
         Assert.Equal("http://127.0.0.1:19999/api/tags", requestedUrl);
     }
 
     [Fact]
-    public async Task ListLocalModelsAsync_FailureOrGarbage_ReturnsEmptyList()
+    public async Task ListModelsAsync_OpenAI_QueriesModelsEndpointWithBearerAndParsesIds()
     {
-        // 服务未起/端点不认识 /api/tags/返回非 JSON：一律空列表静默降级，不打断设置页
-        var service = new LLMService(CreateMockHttpClient("not json"));
+        string? requestedUrl = null;
+        string? authParameter = null;
+        var service = new LLMService(CreateMockHttpClient(
+            @"{""data"":[{""id"":""gpt-4o-mini""},{""id"":""deepseek-chat""}]}",
+            r =>
+            {
+                requestedUrl = r.RequestUri?.ToString();
+                authParameter = r.Headers.Authorization?.Parameter;
+            }));
 
-        var models = await service.ListLocalModelsAsync(baseUrl: null, CancellationToken.None);
+        var models = await service.ListModelsAsync("openai", baseUrl: null, apiKey: "sk-test", CancellationToken.None);
+
+        Assert.Equal("https://api.openai.com/v1/models", requestedUrl);
+        Assert.Equal("sk-test", authParameter);
+        Assert.Equal(new[] { "gpt-4o-mini", "deepseek-chat" }, models);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_Anthropic_UsesAnthropicHeadersAndBuildsV1Endpoint()
+    {
+        string? requestedUrl = null;
+        string? apiKeyHeader = null;
+        string? versionHeader = null;
+        var service = new LLMService(CreateMockHttpClient(
+            @"{""data"":[{""id"":""claude-sonnet-4-5""}]}",
+            r =>
+            {
+                requestedUrl = r.RequestUri?.ToString();
+                apiKeyHeader = r.Headers.TryGetValues("x-api-key", out var key) ? key.FirstOrDefault() : null;
+                versionHeader = r.Headers.TryGetValues("anthropic-version", out var version) ? version.FirstOrDefault() : null;
+            }));
+
+        // 自定义 base 不含 /v1：与聊天端点同规则补全；limit=1000 防 20 条默认分页截断
+        var models = await service.ListModelsAsync("anthropic", baseUrl: "https://proxy.example", apiKey: "ak-1", CancellationToken.None);
+
+        Assert.Equal("https://proxy.example/v1/models?limit=1000", requestedUrl);
+        Assert.Equal("ak-1", apiKeyHeader);
+        Assert.Equal("2023-06-01", versionHeader);
+        Assert.Equal(new[] { "claude-sonnet-4-5" }, models);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_CloudWithoutKey_ReturnsEmptyWithoutRequest()
+    {
+        // 未配 Key 不发必 401 的请求，也不把 Key 缺失当错误打断设置页
+        HttpRequestMessage? seen = null;
+        var service = new LLMService(CreateMockHttpClient(@"{""data"":[{""id"":""x""}]}", r => seen = r));
+
+        var models = await service.ListModelsAsync("openai", baseUrl: null, apiKey: "  ", CancellationToken.None);
 
         Assert.Empty(models);
+        Assert.Null(seen);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_FailureOrGarbage_ReturnsEmptyList()
+    {
+        // 服务未起/端点不认识/返回非 JSON：一律空列表静默降级，不打断设置页
+        var service = new LLMService(CreateMockHttpClient("not json"));
+
+        Assert.Empty(await service.ListModelsAsync("local", baseUrl: null, apiKey: null, CancellationToken.None));
+        Assert.Empty(await service.ListModelsAsync("openai", baseUrl: null, apiKey: "sk-x", CancellationToken.None));
     }
 
     [Theory]

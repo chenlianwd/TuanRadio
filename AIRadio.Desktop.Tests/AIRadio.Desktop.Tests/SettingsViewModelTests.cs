@@ -460,6 +460,32 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void ModelWatermark_ShowsPerProviderHintAndFollowsLanguage()
+    {
+        // VM 订阅静态 AppLanguage.Changed，不释放会泄漏订阅族（同任务栏图标测试教训）
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+
+        Assert.Contains("gpt-4o-mini", vm.ModelWatermark);
+
+        vm.SelectedProvider = "local";
+        Assert.Contains("本机模型", vm.ModelWatermark);
+
+        vm.SelectedProvider = "anthropic";
+        Assert.Contains("claude-sonnet-4-5", vm.ModelWatermark);
+
+        // 纯语言切换路径：不触碰 SelectedProvider，重算只由 RebuildLocalizedOptionLists 兜底
+        AppLanguage.Apply("en");
+        try
+        {
+            Assert.Contains("Model name, e.g. claude-sonnet-4-5", vm.ModelWatermark);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
     public async Task SwitchingToProvider_BackfillsKeyFromDedicatedSlotAndSaveWritesAllSlots()
     {
         var settingsFile = CreateTempSettingsFile();
@@ -1922,7 +1948,10 @@ public class SettingsViewModelTests
         var settingsFile = CreateTempSettingsFile();
         try
         {
-            _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            // 云端（anthropic 无 Key）返回空列表：切走后不能拿本地模型名建议云端用户
+            _mockLlm.Setup(x => x.ListModelsAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string>());
+            _mockLlm.Setup(x => x.ListModelsAsync("local", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<string> { "qwen3.5:9b", "qwen3.5:4b-16k" });
             using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
 
@@ -1932,10 +1961,10 @@ public class SettingsViewModelTests
             // 下拉候选按名称排序，与 ollama list 观感一致
             Assert.Equal(new[] { "qwen3.5:4b-16k", "qwen3.5:9b" }, vm.LocalModels);
 
-            // 切回云端清空候选：不能拿本地模型名建议云端用户（误选后以 Ollama 模型名调云端 API 必失败）
+            // 切回云端清空候选（误选本地模型名调云端 API 必失败）
             vm.SelectedProvider = "anthropic";
             await WaitForStatusAsync(() => vm.LocalModels.Count == 0);
-            _mockLlm.Verify(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            _mockLlm.Verify(x => x.ListModelsAsync("local", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         }
         finally
         {
@@ -1945,18 +1974,51 @@ public class SettingsViewModelTests
     }
 
     [Fact]
-    public async Task SelectingCloudProvider_DoesNotEnumerateLocalModels()
+    public async Task SelectingCloudProviderWithKey_EnumeratesRemoteModels()
     {
+        // 云端下拉枚举：Key 就位（输入或档案回填）即拉 /models 候选，免手打模型名
         var settingsFile = CreateTempSettingsFile();
         try
         {
+            _mockLlm.Setup(x => x.ListModelsAsync("openai", It.IsAny<string?>(), "sk-test", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { "gpt-4o-mini", "deepseek-chat" });
             using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
 
-            vm.SelectedProvider = "anthropic";
-            // 负向断言需要给 fire-and-forget 链一个窗口（仅此处允许短等待）
-            await Task.Delay(200);
+            // 默认 openai；Key 后到（粘贴/回填）也要触发枚举
+            vm.ApiKey = "sk-test";
 
-            _mockLlm.Verify(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+            await WaitForStatusAsync(() => vm.LocalModels.Count == 2);
+            Assert.Equal(new[] { "deepseek-chat", "gpt-4o-mini" }, vm.LocalModels);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task LoadingWithCloudProvider_EnumeratesFromCredentialSlotKey()
+    {
+        // 云端用户重开应用即有下拉候选：凭据槽回填的 Key 在尾部补拉前就位，
+        // 枚举请求携带真实 Key（尾部补拉无条件化——恢复 local 限定此测试即红）
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            File.WriteAllText(settingsFile, """{"llm_provider":"openai","llm_model":"m"}""");
+            _mockLlm.Setup(x => x.ListModelsAsync("openai", It.IsAny<string?>(), "slot-key", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<string> { "deepseek-chat" });
+            _mockStorage.Setup(x => x.GetApiKeyAsync("llm.openai")).ReturnsAsync("slot-key");
+
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+
+                await WaitForStatusAsync(() => vm.LocalModels.Count == 1);
+                Assert.Equal(new[] { "deepseek-chat" }, vm.LocalModels);
+                // 加载期赋值被 _isLoading 屏蔽，只应发出尾部补拉这一次请求
+                _mockLlm.Verify(x => x.ListModelsAsync("openai", It.IsAny<string?>(), "slot-key", It.IsAny<CancellationToken>()), Times.Once);
+            }
         }
         finally
         {
@@ -1969,9 +2031,9 @@ public class SettingsViewModelTests
     public async Task EditingLocalBaseUrl_DebouncesAndUsesLatestEndpoint()
     {
         var requestedUrls = new List<string?>();
-        _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback<string?, CancellationToken>((url, _) => requestedUrls.Add(url))
-            .ReturnsAsync((string? url, CancellationToken _) => new List<string> { url! });
+        _mockLlm.Setup(x => x.ListModelsAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string?, string?, string?, CancellationToken>((_, url, _, _) => requestedUrls.Add(url))
+            .ReturnsAsync((string? provider, string? url, string? key, CancellationToken _) => new List<string> { url! });
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         // 先切 local 再设地址：切换会按档案载入字段（无档案清空），后设值才不被联动冲掉
         vm.SelectedProvider = "local";
@@ -1992,10 +2054,10 @@ public class SettingsViewModelTests
     {
         var oldResponse = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var oldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLlm.Setup(x => x.ListLocalModelsAsync("http://old/v1", It.IsAny<CancellationToken>()))
+        _mockLlm.Setup(x => x.ListModelsAsync("local", "http://old/v1", It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => oldStarted.TrySetResult())
             .Returns(oldResponse.Task);
-        _mockLlm.Setup(x => x.ListLocalModelsAsync("http://new/v1", It.IsAny<CancellationToken>()))
+        _mockLlm.Setup(x => x.ListModelsAsync("local", "http://new/v1", It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string> { "new-model" });
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         // 先切 local 再设地址：切换会按档案载入字段（无档案清空），后设值才不被联动冲掉
@@ -2018,7 +2080,7 @@ public class SettingsViewModelTests
     {
         var response = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        _mockLlm.Setup(x => x.ListModelsAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => started.TrySetResult())
             .Returns(response.Task);
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
@@ -2047,8 +2109,8 @@ public class SettingsViewModelTests
             File.WriteAllText(settingsFile,
                 """{"llm_provider":"local","llm_base_url":"http://127.0.0.1:19999/v1","llm_model":"m"}""");
             string? requestedBaseUrl = null;
-            _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-                .Callback<string?, CancellationToken>((baseUrl, _) => requestedBaseUrl = baseUrl)
+            _mockLlm.Setup(x => x.ListModelsAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .Callback<string?, string?, string?, CancellationToken>((_, baseUrl, _, _) => requestedBaseUrl = baseUrl)
                 .ReturnsAsync(new List<string>());
 
             using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
@@ -2058,7 +2120,7 @@ public class SettingsViewModelTests
 
                 Assert.Equal("http://127.0.0.1:19999/v1", requestedBaseUrl);
                 // 恰好一次：加载期被 _isLoading 屏蔽 + 加载完成后补拉一次
-                _mockLlm.Verify(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+                _mockLlm.Verify(x => x.ListModelsAsync("local", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
             }
         }
         finally
@@ -2076,7 +2138,7 @@ public class SettingsViewModelTests
         var settingsFile = CreateTempSettingsFile();
         try
         {
-            _mockLlm.Setup(x => x.ListLocalModelsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            _mockLlm.Setup(x => x.ListModelsAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<string> { "m" });
             using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
 

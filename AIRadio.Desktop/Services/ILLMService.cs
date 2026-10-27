@@ -21,11 +21,13 @@ public interface ILLMService
     Task<string> ChatAsync(string userMessage, List<ChatMessage> history);
 
     /// <summary>
-    /// 枚举本地模型名称（Ollama /api/tags）；baseUrl 为空走本地默认端点。
-    /// 失败返回空列表。端点只从入参派生，不读服务的聊天配置——
+    /// 枚举可用模型名称（local=Ollama /api/tags；openai 兼容=GET /models Bearer；
+    /// anthropic=GET /models x-api-key）。baseUrl 为空走该服务默认端点；
+    /// 云端未配 Key/任何失败返回空列表，调用方静默降级为手填。
+    /// 端点只从入参派生，不读服务的聊天配置——
     /// 设置页翻看 provider 下拉不应触碰运行中服务的配置。
     /// </summary>
-    Task<List<string>> ListLocalModelsAsync(string? baseUrl, CancellationToken cancellationToken);
+    Task<List<string>> ListModelsAsync(string? provider, string? baseUrl, string? apiKey, CancellationToken cancellationToken);
 }
 
 /// <summary>
