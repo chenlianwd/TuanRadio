@@ -1,9 +1,12 @@
 using System;
 using System.Reactive.Concurrency;
+using System.Threading;
+using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Views;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
+using Moq;
 using ReactiveUI;
 using Xunit;
 
@@ -195,6 +198,64 @@ public class SettingsNavTests
             Assert.True(impressionTraits.IsVisible);
             Assert.Equal("直接", Assert.Single(impressionTraits.Items));
             Assert.Equal("周杰伦 ×32", ToolTip.GetTip(topArtists));
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 天气城市交互接线端到端：输入框双向、候选列表 ItemsSource、定位按钮命令、
+    // 回显行经 $parent[Window] 跨绑到 WeatherVM.WeatherSummary（隐藏弹层不布局，
+    // 逻辑树 attach 即激活绑定；fake 服务全部返回已完成 Task，链路同步走完）
+    [AvaloniaFact]
+    public void WeatherCityControls_BindEndToEnd()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var weather = new Mock<IWeatherService>();
+        weather.Setup(x => x.GetWeatherAsync("成都", 30.67, 104.07, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherInfo(WeatherKind.Sunny, 25, "成都"));
+        weather.Setup(x => x.SearchPlacesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GeoPlace[] { new("成都", "四川", "中国", 30.67, 104.07) });
+        var vm = ChatAreaMicButtonTests.CreateViewModel(out _, weather.Object);
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            var view = window.FindDescendantOfType<SettingsView>()
+                ?? throw new InvalidOperationException("SettingsView not found");
+            var input = view.FindControl<TextBox>("WeatherCityInput")
+                ?? throw new InvalidOperationException("WeatherCityInput not found");
+            var locateButton = view.FindControl<Button>("WeatherLocateButton")
+                ?? throw new InvalidOperationException("WeatherLocateButton not found");
+            var suggestions = view.FindControl<ItemsControl>("WeatherCitySuggestionList")
+                ?? throw new InvalidOperationException("WeatherCitySuggestionList not found");
+            var summary = view.FindControl<TextBlock>("WeatherSummaryText")
+                ?? throw new InvalidOperationException("WeatherSummaryText not found");
+
+            // 输入框 TwoWay 双向：VM → 控件
+            vm.SettingsVM.WeatherCity = "成都";
+            Assert.Equal("成都", input.Text);
+            // 控件 → VM（程序改 TextBox.Text 经 TwoWay 绑定写回，锚定方向完整性）
+            input.Text = "重庆";
+            Assert.Equal("重庆", vm.SettingsVM.WeatherCity);
+
+            // 定位按钮命令直连 SettingsVM
+            Assert.Same(vm.SettingsVM.LocateWeatherCityCommand, locateButton.Command);
+
+            // 手输搜索（fake 已完成 Task，同步走完）→ 候选项落到 ItemsControl
+            _ = vm.SettingsVM.HandleWeatherCityTypedAsync("成都");
+            Assert.Single(suggestions.Items);
+
+            // 回显行：坐标直取 → WeatherSummary → $parent[Window] 绑定末端
+            _ = vm.WeatherVM.RefreshWeatherAsync("成都", 30.67, 104.07);
+            Assert.Contains("成都", summary.Text);
+            Assert.Contains("晴", summary.Text);
         }
         finally
         {

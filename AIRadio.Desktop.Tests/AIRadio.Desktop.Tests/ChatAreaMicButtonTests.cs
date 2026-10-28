@@ -25,6 +25,10 @@ public class ChatAreaMicButtonTests
 
     /// <summary>带 audio mock 的重载：供需要 Raise 服务事件的端到端测试使用（如辉光事件链）。</summary>
     internal static MainWindowViewModel CreateViewModel(out Mock<IAudioService> audio)
+        => CreateViewModel(out audio, null);
+
+    /// <summary>带天气服务注入的重载：供设置页天气回显等需要驱动 WeatherVM 的端到端测试使用。</summary>
+    internal static MainWindowViewModel CreateViewModel(out Mock<IAudioService> audio, IWeatherService? weather)
     {
         audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
@@ -50,7 +54,8 @@ public class ChatAreaMicButtonTests
             new Mock<IMusicSearchService>().Object,
             new Mock<ISttService>().Object,
             Path.Combine(dir, "playlist.json"),
-            settingsFile: Path.Combine(dir, "settings.json"));
+            settingsFile: Path.Combine(dir, "settings.json"),
+            weatherService: weather);
         // 按住说话回归走假录音设备：真实 WaveInEvent 会打开系统麦克风（会话级开到测试进程退出）
         vm.ChatVM.RecordingDeviceFactory = () => new FakeWaveIn();
         return vm;

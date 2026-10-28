@@ -195,7 +195,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
             recommendationService: _recommendationService, listeningProfile: listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
-            listeningProfile, musicSearchService, openSubsonic, audius, recommendationService: _recommendationService);
+            listeningProfile, musicSearchService, openSubsonic, audius, recommendationService: _recommendationService,
+            weatherService: weatherService);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));
@@ -203,13 +204,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _audioService,
             lyricService ?? new LyricService(httpClient ?? new System.Net.Http.HttpClient()));
 
-        // 设置页城市变更即重新取天气（含清空回到 IP 定位）。
-        // TextBox 逐键更新源：直接订阅会每个按键发一次 geocoding，先节流
-        _weatherCitySub = SettingsVM.WhenAnyValue(x => x.WeatherCity)
+        // 设置页城市/坐标变更即重新取天气（含清空回到 IP 定位）。
+        // TextBox 逐键更新源：直接订阅会每个按键发一次请求，先节流；
+        // 点选候选会连发 城市名+坐标 三次赋值，节流自动合并为一次
+        _weatherCitySub = SettingsVM.WhenAnyValue(x => x.WeatherCity, x => x.WeatherLatitude, x => x.WeatherLongitude)
             .Skip(1)
             .Throttle(TimeSpan.FromMilliseconds(600), RxApp.TaskpoolScheduler)
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(city => _ = WeatherVM.RefreshWeatherAsync(city));
+            .Subscribe(loc => _ = WeatherVM.RefreshWeatherAsync(loc.Item1, loc.Item2, loc.Item3));
 
         // 弹层打开即刷新画像展示卡：设置页 TabIndex 会话内不重置，重开可直落收听画像页
         // 而不走切页命令（那条路径上也挂了刷新，双保险不冲突）

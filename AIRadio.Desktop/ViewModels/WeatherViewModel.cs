@@ -25,11 +25,17 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
     private int _generation;
     private int _disposed;
     private string? _lastCity;
+    private double? _lastLatitude;
+    private double? _lastLongitude;
     private WeatherInfo? _lastWeather;
 
     [Reactive] public partial bool IsWeatherVisible { get; private set; }
     [Reactive] public partial string WeatherGlyph { get; private set; } = string.Empty;
     [Reactive] public partial string WeatherTooltip { get; private set; } = string.Empty;
+
+    /// <summary>设置页"当前生效"回显（与 Tooltip 同源，无数据时给出占位文案）。</summary>
+    [Reactive] public partial string WeatherSummary { get; private set; }
+        = AppLanguage.T("暂未获取", "Not fetched yet");
 
     /// <summary>天气快照落定时触发（取数失败为 null 清空），供串场环境感知等消费方推送；UI 线程。</summary>
     internal event Action<WeatherInfo?>? WeatherSnapshotChanged;
@@ -44,21 +50,23 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
         // 30 分钟周期刷新（服务层有同周期缓存，命中时零网络）；异常全内吞
         _refreshTimer = Observable.Interval(TimeSpan.FromMinutes(30))
             .ObserveOn(_uiScheduler)
-            .Subscribe(tick => _ = RefreshWeatherAsync(_lastCity));
+            .Subscribe(tick => _ = RefreshWeatherAsync(_lastCity, _lastLatitude, _lastLongitude));
     }
 
     /// <summary>启动与设置页城市变更时触发；城市为空走 IP 定位。</summary>
-    public async Task RefreshWeatherAsync(string? city)
+    public async Task RefreshWeatherAsync(string? city, double? latitude = null, double? longitude = null)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
         var generation = Interlocked.Increment(ref _generation);
         _lastCity = city;
+        _lastLatitude = latitude;
+        _lastLongitude = longitude;
         WeatherInfo? result = null;
         try
         {
-            result = await _weather.GetWeatherAsync(city, _lifetimeToken).ConfigureAwait(false);
+            result = await _weather.GetWeatherAsync(city, latitude, longitude, _lifetimeToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -93,6 +101,7 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
         {
             IsWeatherVisible = false;
             WeatherTooltip = string.Empty;
+            WeatherSummary = AppLanguage.T("暂未获取", "Not fetched yet");
             return;
         }
 
@@ -123,6 +132,7 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
             ? string.Empty
             : $" {_lastWeather.TemperatureC:0}°C";
         WeatherTooltip = $"{_lastWeather.LocationName} · {description}{temperature}";
+        WeatherSummary = WeatherTooltip;
     }
 
     /// <summary>停止刷新并作废全部在途结果，允许重复释放。</summary>

@@ -16,8 +16,8 @@ public sealed class WeatherViewModelConcurrencyTests
     {
         var oldResult = new TaskCompletionSource<WeatherInfo?>();
         var weather = new Mock<IWeatherService>();
-        weather.Setup(x => x.GetWeatherAsync("旧城市", It.IsAny<CancellationToken>())).Returns(oldResult.Task);
-        weather.Setup(x => x.GetWeatherAsync("新城市", It.IsAny<CancellationToken>()))
+        weather.Setup(x => x.GetWeatherAsync("旧城市", It.IsAny<double?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>())).Returns(oldResult.Task);
+        weather.Setup(x => x.GetWeatherAsync("新城市", It.IsAny<double?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WeatherInfo(WeatherKind.Sunny, 25, "新城市"));
         using var vm = new WeatherViewModel(weather.Object, ImmediateScheduler.Instance);
         var first = vm.RefreshWeatherAsync("旧城市");
@@ -37,7 +37,7 @@ public sealed class WeatherViewModelConcurrencyTests
     {
         var result = new TaskCompletionSource<WeatherInfo?>();
         var weather = new Mock<IWeatherService>();
-        weather.Setup(x => x.GetWeatherAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>())).Returns(result.Task);
+        weather.Setup(x => x.GetWeatherAsync(It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>())).Returns(result.Task);
         using var vm = new WeatherViewModel(weather.Object, ImmediateScheduler.Instance);
         var request = vm.RefreshWeatherAsync(null);
         vm.Dispose();
@@ -46,7 +46,7 @@ public sealed class WeatherViewModelConcurrencyTests
         Assert.False(vm.IsWeatherVisible);
         Assert.Empty(vm.WeatherTooltip);
         await vm.RefreshWeatherAsync("关闭后不再请求");
-        weather.Verify(x => x.GetWeatherAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        weather.Verify(x => x.GetWeatherAsync(It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>结果必须经指定的界面调度器执行，不能在请求完成线程直接赋值。</summary>
@@ -55,7 +55,7 @@ public sealed class WeatherViewModelConcurrencyTests
     {
         var scheduler = new HistoricalScheduler();
         var weather = new Mock<IWeatherService>();
-        weather.Setup(x => x.GetWeatherAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        weather.Setup(x => x.GetWeatherAsync(It.IsAny<string?>(), It.IsAny<double?>(), It.IsAny<double?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WeatherInfo(WeatherKind.Sunny, 25, "界面城市"));
         using var vm = new WeatherViewModel(weather.Object, scheduler);
         var request = vm.RefreshWeatherAsync(null);
