@@ -46,9 +46,12 @@ public class SettingsAppearanceAlignmentTests
             var page = view.FindControl<StackPanel>("PageAppearance")
                 ?? throw new InvalidOperationException("PageAppearance not found");
 
-            // 五个控件行：Grid 直挂 PageAppearance 或挂其子 StackPanel（外观页两组布局）
+            // 五个控件行：Grid 直挂 PageAppearance 或挂其子 StackPanel（外观页两组布局）；
+            // 天气城市的输入行（TextBox+定位按钮，*,Auto）不是对齐审计对象——按钮右缘
+            // 由 Auto 列天然贴内容列右缘，无审计意义，按含 TextBox 排除
             var rows = page.GetVisualDescendants().OfType<Grid>()
                 .Where(g => ReferenceEquals(g.Parent, page) || (g.Parent is StackPanel sp && ReferenceEquals(sp.Parent, page)))
+                .Where(g => !g.Children.OfType<TextBox>().Any())
                 .ToList();
             Assert.Equal(5, rows.Count);
 

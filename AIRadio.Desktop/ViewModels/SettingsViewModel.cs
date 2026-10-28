@@ -69,6 +69,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService? _musicSearch;
     private readonly OpenSubsonicProvider? _openSubsonic;
     private readonly AudiusProvider? _audius;
+    private readonly IWeatherService _weather;
+    private readonly IDisposable _weatherCitySearchSub;
+    // 已落定地点的标准名（加载/点选/定位写入）：手输文本与它一致视为确认态，
+    // 不弹联想不清坐标；改写为不同文本才触发搜索（节流回调晚于程序赋值，
+    // 标志位拦不住，只能按内容判断）
+    private string? _selectedWeatherPlaceName;
+    // 联想请求代次：迟到的旧结果不覆盖新一轮输入
+    private int _weatherSearchEpoch;
     private Func<string>? _audiusStatusFactory;
     private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
@@ -155,6 +163,19 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool ListenerProfileEnabled { get; set; } = true;
     // 天气城市：留空时按 IP 自动定位（见 WeatherService）
     [Reactive] public partial string WeatherCity { get; set; } = string.Empty;
+    /// <summary>已选地点纬度：点选候选/定位写入，手输城市名清空（回退 geocoding）。</summary>
+    [Reactive] public partial double? WeatherLatitude { get; private set; }
+    /// <summary>已选地点经度：与 WeatherLatitude 成对。</summary>
+    [Reactive] public partial double? WeatherLongitude { get; private set; }
+    /// <summary>城市搜索联想候选（手输触发，点选后清空）。</summary>
+    [Reactive] public partial IReadOnlyList<GeoPlace> WeatherCitySuggestions { get; private set; }
+        = Array.Empty<GeoPlace>();
+    /// <summary>手输搜索完成且零匹配（文本非空、未落定）。</summary>
+    [Reactive] public partial bool WeatherCityNoMatch { get; private set; }
+    /// <summary>城市搜索网络失败（可重试）。</summary>
+    [Reactive] public partial bool WeatherCitySearchFailed { get; private set; }
+    /// <summary>定位按钮运行态（防重入）。</summary>
+    [Reactive] public partial bool IsWeatherLocating { get; private set; }
     [Reactive] public partial string OpenSubsonicServerUrl { get; set; } = string.Empty;
     [Reactive] public partial string OpenSubsonicUsername { get; set; } = string.Empty;
     [Reactive] public partial string OpenSubsonicPassword { get; set; } = string.Empty;
@@ -257,6 +278,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> DisconnectOpenSubsonicCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveAudiusApiKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearAudiusApiKeyCommand { get; }
+    public ReactiveCommand<GeoPlace, Unit> SelectWeatherCityCommand { get; }
+    public ReactiveCommand<Unit, Unit> LocateWeatherCityCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseLogoutCommand { get; }
     public ReactiveCommand<Unit, Unit> KugouQrLoginCommand { get; }
@@ -288,7 +311,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         IMusicSearchService? musicSearch = null,
         OpenSubsonicProvider? openSubsonic = null,
         AudiusProvider? audius = null,
-        IRecommendationService? recommendationService = null)
+        IRecommendationService? recommendationService = null,
+        IWeatherService? weatherService = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -296,6 +320,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _settingsDir = Path.GetDirectoryName(_settingsFile) ?? SettingsDir;
         _accounts = accountStore ?? new MusicAccountStore(secureStorage);
         var http = httpClient ?? new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _weather = weatherService ?? new WeatherService(http);
         _neteaseAccount = new NeteaseAccountService(http);
         _kugouAccount = new KugouAccountService(http);
         _kugouVerification = kugouVerification;
@@ -321,6 +346,18 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         DisconnectOpenSubsonicCommand = ReactiveCommand.Create(DisconnectOpenSubsonic);
         SaveAudiusApiKeyCommand = ReactiveCommand.CreateFromTask(SaveAudiusApiKeyAsync);
         ClearAudiusApiKeyCommand = ReactiveCommand.Create(ClearAudiusApiKey);
+        SelectWeatherCityCommand = ReactiveCommand.Create<GeoPlace>(SelectWeatherCity);
+        LocateWeatherCityCommand = ReactiveCommand.CreateFromTask(
+            LocateWeatherCityAsync,
+            this.WhenAnyValue(x => x.IsWeatherLocating).Select(running => !running));
+
+        // 天气城市联想：手输节流后搜 geocoding 候选；程序赋值（点选/定位/加载）靠
+        // _selectedWeatherPlaceName 内容守卫兜住（节流回调晚于程序赋值，标志位拦不住）
+        _weatherCitySearchSub = this.WhenAnyValue(x => x.WeatherCity)
+            .Skip(1)
+            .Throttle(TimeSpan.FromMilliseconds(300), RxApp.TaskpoolScheduler)
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(text => _ = HandleWeatherCityTypedAsync(text));
 
         // 切换服务=换档案：当前字段存回旧服务、载入新服务自己的 Key/地址/模型。
         // 只改表单字段不触碰运行中服务配置（ConfigureLlm 仅发生在保存/测试连接，
@@ -823,7 +860,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 }
 
                 if (root.TryGetProperty("weather_city", out var weatherCity))
+                {
                     WeatherCity = weatherCity.GetString() ?? string.Empty;
+                    // 城市名即落定态：手输同名文本不弹联想；坐标键存在则取数时直用（旧配置缺坐标回退 geocoding）
+                    _selectedWeatherPlaceName = WeatherCity;
+                }
+                if (root.TryGetProperty("weather_latitude", out var weatherLat) && weatherLat.ValueKind == JsonValueKind.Number)
+                    WeatherLatitude = weatherLat.GetDouble();
+                if (root.TryGetProperty("weather_longitude", out var weatherLon) && weatherLon.ValueKind == JsonValueKind.Number)
+                    WeatherLongitude = weatherLon.GetDouble();
 
                 if (root.TryGetProperty("music_provider_order", out var musicOrder) &&
                     musicOrder.ValueKind == JsonValueKind.Array)
@@ -1068,6 +1113,110 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             Log.Warning("Audius API Key clear failed: {Type}", ex.GetType().Name);
             SetAudiusStatus(() => AppLanguage.T("清除失败，请重试", "Could not clear the API Key; try again"));
         }
+    }
+
+    /// <summary>手输城市文本（节流后）：弃坐标回到自由文本路径并弹联想候选；空文本回 IP 定位。直测入口。</summary>
+    internal async Task HandleWeatherCityTypedAsync(string? text)
+    {
+        var query = text?.Trim() ?? string.Empty;
+        WeatherCitySuggestions = Array.Empty<GeoPlace>();
+        WeatherCityNoMatch = false;
+        WeatherCitySearchFailed = false;
+
+        if (query.Length == 0)
+        {
+            // 清空回到 IP 自动定位；bump 代次作废在途搜索，防迟到结果在清空后弹候选
+            _ = Interlocked.Increment(ref _weatherSearchEpoch);
+            _selectedWeatherPlaceName = null;
+            WeatherLatitude = null;
+            WeatherLongitude = null;
+            return;
+        }
+        // 加载/点选/定位落定的标准名原样保留：确认态不弹联想；同样作废在途搜索
+        if (string.Equals(query, _selectedWeatherPlaceName, StringComparison.Ordinal))
+        {
+            _ = Interlocked.Increment(ref _weatherSearchEpoch);
+            return;
+        }
+
+        // 改写为不同文本：坐标作废（自由文本经 geocoding 解析），由用户点选候选升级回坐标直取
+        WeatherLatitude = null;
+        WeatherLongitude = null;
+
+        var epoch = ++_weatherSearchEpoch;
+        IReadOnlyList<GeoPlace>? places;
+        try
+        {
+            places = await _weather.SearchPlacesAsync(query, _lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            return;
+        }
+        if (_disposed != 0 || epoch != Volatile.Read(ref _weatherSearchEpoch))
+            return;
+        if (places == null)
+        {
+            WeatherCitySearchFailed = true;
+            return;
+        }
+        if (places.Count == 0)
+        {
+            WeatherCityNoMatch = true;
+            return;
+        }
+        WeatherCitySuggestions = places;
+    }
+
+    /// <summary>点选联想候选：落定标准名 + 坐标并跟随保存（同主题切换即存语义）。</summary>
+    private void SelectWeatherCity(GeoPlace place) => ApplyWeatherPlace(place);
+
+    private async Task LocateWeatherCityAsync()
+    {
+        if (IsWeatherLocating)
+            return;
+        IsWeatherLocating = true;
+        try
+        {
+            GeoPlace? place = null;
+            try
+            {
+                place = await _weather.LocateByIpAsync(_lifetimeCts.Token);
+            }
+            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            {
+                return;
+            }
+            if (place == null)
+            {
+                SetStatusMessage(() => AppLanguage.T("定位失败，请直接搜索城市名", "Could not locate; search for a city instead"));
+                return;
+            }
+            var located = place;
+            ApplyWeatherPlace(located);
+            SetStatusMessage(() => AppLanguage.T($"已定位：{located.Name}", $"Located: {located.Name}"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Weather IP locate failed: {Type}", ex.GetType().Name);
+            SetStatusMessage(() => AppLanguage.T("定位失败，请直接搜索城市名", "Could not locate; search for a city instead"));
+        }
+        finally
+        {
+            IsWeatherLocating = false;
+        }
+    }
+
+    private void ApplyWeatherPlace(GeoPlace place)
+    {
+        WeatherCity = place.Name;
+        _selectedWeatherPlaceName = place.Name;
+        WeatherLatitude = place.Latitude;
+        WeatherLongitude = place.Longitude;
+        WeatherCitySuggestions = Array.Empty<GeoPlace>();
+        WeatherCityNoMatch = false;
+        WeatherCitySearchFailed = false;
+        _ = SaveUiStateCommand.Execute().Subscribe();
     }
 
     private void SetAudiusStatus(Func<string> factory)
@@ -1957,6 +2106,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 show_lyrics_in_stage = ShowLyricsInStage,
                 listener_profile_enabled = ListenerProfileEnabled,
                 weather_city = WeatherCity,
+                weather_latitude = WeatherLatitude,
+                weather_longitude = WeatherLongitude,
                 speech_mix_mode = SpeechMixMode,
                 language = SelectedLanguage,
                 ytdlp_cookie_browser = _accounts.YtdlpCookieBrowser ?? "",
@@ -2077,6 +2228,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _openSubsonicQualitySub.Dispose();
         _musicSourcePolicySub.Dispose();
         _accentPaletteSub.Dispose();
+        _weatherCitySearchSub.Dispose();
         _selectedLanguageSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();

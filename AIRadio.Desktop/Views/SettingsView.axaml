@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:services="using:AIRadio.Desktop.Services"
              xmlns:conv="using:AIRadio.Desktop.Converters"
              x:Class="AIRadio.Desktop.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
@@ -33,6 +34,18 @@
         </Style>
         <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{DynamicResource C_6656F5C4}"/>
+        </Style>
+
+        <!-- 天气城市联想候选：满行左对齐按钮，hover 经模板 ContentPresenter 落背景（同 nav 手法） -->
+        <Style Selector="Button.citySuggestion">
+            <Setter Property="Background" Value="{DynamicResource C_11121620}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+        <Style Selector="Button.citySuggestion:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
         </Style>
         <!-- AutoCompleteBox 水印：11.3.9 自带 Watermark 属性（Fluent 模板经 TemplateBinding
              转发到内嵌 TextBox）；早期"/template/ 样式恢复"路径实证不生效，勿再走 -->
@@ -307,8 +320,46 @@
                                       DisplayMemberBinding="{Binding DisplayName}"
                                       HorizontalAlignment="Stretch"/>
                             <TextBlock Text="{DynamicResource S_LanguageHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
-                            <TextBox Text="{Binding WeatherCity, Mode=TwoWay}" Watermark="{DynamicResource S_WeatherCityWatermark}" Margin="0,4,0,0"/>
+                        </StackPanel>
+
+                        <!-- 天气城市：搜索联想点选（落定标准名+坐标直取）+ IP 定位按钮 + 当前生效回显 -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_WeatherCityTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBox x:Name="WeatherCityInput" Grid.Column="0" Text="{Binding WeatherCity, Mode=TwoWay}"
+                                         Watermark="{DynamicResource S_WeatherCityWatermark}"/>
+                                <Button x:Name="WeatherLocateButton" Grid.Column="1" MinWidth="72" VerticalAlignment="Stretch"
+                                        Command="{Binding LocateWeatherCityCommand}">
+                                    <Panel>
+                                        <TextBlock Text="{DynamicResource S_WeatherLocate}" IsVisible="{Binding !IsWeatherLocating}"/>
+                                        <TextBlock Text="{DynamicResource S_WeatherLocating}" IsVisible="{Binding IsWeatherLocating}"/>
+                                    </Panel>
+                                </Button>
+                            </Grid>
+                            <ItemsControl x:Name="WeatherCitySuggestionList" ItemsSource="{Binding WeatherCitySuggestions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="services:GeoPlace">
+                                        <Button Classes="citySuggestion" Margin="0,0,0,4" HorizontalAlignment="Stretch"
+                                                Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).SelectWeatherCityCommand}"
+                                                CommandParameter="{Binding}">
+                                            <StackPanel Spacing="0">
+                                                <TextBlock Text="{Binding Name}" FontSize="13" Foreground="{DynamicResource C_FFEDEDF5}"/>
+                                                <TextBlock Text="{Binding AdminLine}" FontSize="11" Foreground="{DynamicResource C_FF666666}"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="{DynamicResource S_WeatherCityNoMatch}" IsVisible="{Binding WeatherCityNoMatch}"
+                                       Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+                            <TextBlock Text="{DynamicResource S_WeatherCitySearchFailed}" IsVisible="{Binding WeatherCitySearchFailed}"
+                                       Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
                             <TextBlock Text="{DynamicResource S_WeatherCityHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"/>
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="{DynamicResource S_WeatherCurrent}" FontSize="12" Foreground="{DynamicResource C_FFB3B3B3}"/>
+                                <TextBlock x:Name="WeatherSummaryText" FontSize="12" Foreground="{DynamicResource C_FFB3B3B3}" TextWrapping="Wrap"
+                                           Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).WeatherVM.WeatherSummary}"/>
+                            </StackPanel>
                         </StackPanel>
 
                         <StackPanel Spacing="6">
