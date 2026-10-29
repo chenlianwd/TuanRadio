@@ -633,6 +633,252 @@ public class RecommendationServiceTests
         Assert.NotEqual("netease:1", next?.SourceId);
     }
 
+    private static List<OnlineTrack> MakeTracksForQuery(string query, int count) =>
+        Enumerable.Range(1, count)
+            .Select(i => new OnlineTrack
+            {
+                Id = $"netease:{query}:{i}",
+                Title = $"{query} song {i}",
+                Artist = $"Artist {query}",
+                Source = "netease"
+            })
+            .ToList();
+
+    [Fact]
+    public async Task CreateProgramAsync_LimitsSlotsPerQuery_NoSingleQueryMonopolizes()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("qone\nqtwo\nqthree");
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), 8))
+            .ReturnsAsync((string query, int _) => MakeTracksForQuery(query, 4));
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => $"http://example.com/{id}.mp3");
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest());
+
+        Assert.Equal(5, program.Tracks.Count);
+        Assert.All(program.Tracks, item => Assert.True(item.IsPlayable));
+        // 单查询限量：首个搜索词（往往锚当前在播歌手）最多占 2 席，其余席位流向后续查询
+        Assert.Equal(2, program.Tracks.Count(item => item.Track.SourceId!.StartsWith("netease:qone:")));
+        Assert.Equal(2, program.Tracks.Count(item => item.Track.SourceId!.StartsWith("netease:qtwo:")));
+        // 第三词恰 1 席由全局 5 席上限保证，非限量证据
+        Assert.Equal(1, program.Tracks.Count(item => item.Track.SourceId!.StartsWith("netease:qthree:")));
+    }
+
+    [Fact]
+    public async Task CreateProgramAsync_BackfillsDeferredCandidates_DeduplicatesAndDefersResolution()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("qone\nqtwo");
+        search.Setup(x => x.SearchAsync("qone", 8))
+            .ReturnsAsync(Enumerable.Range(1, 5)
+                .Select(i => new OnlineTrack
+                {
+                    Id = $"netease:qone:{i}",
+                    Title = $"Song {i}",
+                    Artist = "Artist One",
+                    Source = "netease"
+                })
+                .ToList());
+        // 与 qone:4 同 Id：Pass 1 抢先入单，回填阶段的 t4 被查重挡掉且不再解析
+        search.Setup(x => x.SearchAsync("qtwo", 8))
+            .ReturnsAsync(new List<OnlineTrack>
+            {
+                new() { Id = "netease:qone:4", Title = "R Track", Artist = "Artist Two", Source = "netease" }
+            });
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => $"http://example.com/{id}.mp3");
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest());
+
+        Assert.Equal(5, program.Tracks.Count);
+        Assert.All(program.Tracks, item => Assert.True(item.IsPlayable));
+        Assert.Equal(5, program.Tracks.Select(item => item.Track.SourceId).Distinct().Count());
+        // qone 限量 2 + 回填 2，qtwo 的同曲占第 5 席
+        Assert.Equal(
+            new HashSet<string> { "Song 1", "Song 2", "Song 3", "Song 5", "R Track" },
+            program.Tracks.Select(item => item.Track.Title).ToHashSet());
+        // 惰性解析 + 回填查重在解析之前：同曲全程只解析一次（qtwo 抢先入单那次）
+        search.Verify(x => x.GetPlayUrlAsync("netease:qone:4"), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateProgramAsync_BackfillResolutionFailure_KeepsPlaceholderEntry()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("qone");
+        search.Setup(x => x.SearchAsync("qone", 8))
+            .ReturnsAsync(Enumerable.Range(1, 5)
+                .Select(i => new OnlineTrack
+                {
+                    Id = $"netease:qone:{i}",
+                    Title = $"Song {i}",
+                    Artist = "Artist One",
+                    Source = "netease"
+                })
+                .ToList());
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => id == "netease:qone:5" ? null : $"http://example.com/{id}.mp3");
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest());
+
+        // 延迟候选在回填阶段解析失败：按既有占位契约保留展示条目
+        Assert.Equal(4, program.Tracks.Count(item => item.IsPlayable));
+        var placeholder = Assert.Single(program.Tracks, item => !item.IsPlayable);
+        Assert.Equal("Song 5", placeholder.Track.Title);
+        Assert.False(string.IsNullOrWhiteSpace(placeholder.Reason));
+    }
+
+    [Fact]
+    public async Task CreateProgramAsync_BackfillStopsAtProgramSize_NoExtraResolutions()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var service = new RecommendationService(llm.Object, search.Object);
+
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("qone\nqtwo");
+        search.Setup(x => x.SearchAsync("qone", 8))
+            .ReturnsAsync((string query, int _) => MakeTracksForQuery(query, 7));
+        search.Setup(x => x.SearchAsync("qtwo", 8))
+            .ReturnsAsync((string query, int _) => MakeTracksForQuery(query, 1));
+        search.Setup(x => x.GetPlayUrlAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => $"http://example.com/{id}.mp3");
+
+        var program = await service.CreateProgramAsync(new RecommendationRequest());
+
+        Assert.Equal(5, program.Tracks.Count);
+        Assert.All(program.Tracks, item => Assert.True(item.IsPlayable));
+        Assert.Equal(4, program.Tracks.Count(item => item.Track.SourceId!.StartsWith("netease:qone:")));
+        // 凑满即停：多余延迟候选不再解析
+        search.Verify(x => x.GetPlayUrlAsync(It.IsAny<string>()), Times.Exactly(5));
+    }
+
+    [Fact]
+    public async Task GenerateQueries_DiversityInstruction_ForksByIntentKey()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        search.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+        var prompts = new List<string>();
+        llm.Setup(x => x.ChatAsync(Capture.In(prompts), It.IsAny<List<ChatMessage>>()))
+            .ReturnsAsync("anyquery");
+        var service = new RecommendationService(llm.Object, search.Object);
+
+        // UserIntentKey 必须显式设置：分叉刻意 key-only（生产构造点恒设 key），无 key 不命中
+        await service.CreateProgramAsync(new RecommendationRequest
+        {
+            UserIntentKey = RecommendationIntentKeys.ContinueStation
+        });
+        Assert.Contains("不同方向", Assert.Single(prompts));
+        Assert.Contains("风格参照", prompts[0]);
+
+        prompts.Clear();
+        await service.CreateProgramAsync(new RecommendationRequest
+        {
+            UserIntentKey = RecommendationIntentKeys.SimilarToCurrent
+        });
+        Assert.DoesNotContain("不同方向", Assert.Single(prompts));
+
+        try
+        {
+            AppLanguage.Apply("en");
+            prompts.Clear();
+            await service.CreateProgramAsync(new RecommendationRequest
+            {
+                UserIntentKey = RecommendationIntentKeys.ContinueStation
+            });
+            Assert.Contains("style reference", Assert.Single(prompts));
+
+            prompts.Clear();
+            await service.CreateProgramAsync(new RecommendationRequest
+            {
+                UserIntentKey = RecommendationIntentKeys.SimilarToCurrent
+            });
+            Assert.DoesNotContain("style reference", Assert.Single(prompts));
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    private static RecommendationService CreateServiceWithFallbackPath(
+        Mock<ILLMService> llm,
+        Mock<IMusicSearchService> search,
+        List<string> capturedQueries)
+    {
+        llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ThrowsAsync(new InvalidOperationException("llm down"));
+        // 空结果：全部 fallback 词都会被搜索且无解析调用，捕获完整、顺序稳定
+        search.Setup(x => x.SearchAsync(Capture.In(capturedQueries), 8))
+            .ReturnsAsync(new List<OnlineTrack>());
+        var service = new RecommendationService(llm.Object, search.Object);
+        service.RecordPlayedTrack(new Track { Title = "歌一", Artist = "ArtistA" });
+        service.RecordPlayedTrack(new Track { Title = "歌二", Artist = "ArtistB" });
+        service.RecordPlayedTrack(new Track { Title = "歌三", Artist = "ArtistC" });
+        return service;
+    }
+
+    [Fact]
+    public async Task BuildFallbackQueries_ContinueStation_LeadsWithRecentArtistsInsteadOfIntentText()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var queries = new List<string>();
+        var service = CreateServiceWithFallbackPath(llm, search, queries);
+
+        await service.CreateProgramAsync(new RecommendationRequest
+        {
+            UserIntentKey = RecommendationIntentKeys.ContinueStation,
+            CurrentTrack = new Track { Title = "不可一世", Artist = "Beyond" }
+        });
+
+        // 意图文案是 UI 文案不是歌名，不得再当搜索词
+        Assert.DoesNotContain(queries, query => query.Contains("继续当前电台"));
+        var recentIdx = queries.FindIndex(query => query.EndsWith("相似风格"));
+        var currentIdx = queries.FindIndex(query => query.EndsWith("相似歌曲"));
+        Assert.True(recentIdx >= 0, "应包含最近歌手方向词");
+        Assert.True(currentIdx >= 0, "应包含当前歌手词");
+        Assert.True(recentIdx < currentIdx, "继续电台意图下最近歌手词应打头");
+    }
+
+    [Fact]
+    public async Task BuildFallbackQueries_SimilarToCurrent_KeepsCurrentArtistFirst()
+    {
+        var llm = new Mock<ILLMService>();
+        var search = new Mock<IMusicSearchService>();
+        var queries = new List<string>();
+        var service = CreateServiceWithFallbackPath(llm, search, queries);
+
+        await service.CreateProgramAsync(new RecommendationRequest
+        {
+            UserIntentKey = RecommendationIntentKeys.SimilarToCurrent,
+            CurrentTrack = new Track { Title = "不可一世", Artist = "Beyond" }
+        });
+
+        // SIM 语义=以当前歌为锚：当前歌手词仍打头。
+        // 全词匹配防谓词漂移（画像词同以"相似歌曲"结尾；recentArtists>1 时画像词缺席）
+        var currentIdx = queries.FindIndex(query => query == "Beyond 相似歌曲");
+        var recentIdx = queries.FindIndex(query => query.EndsWith("相似风格"));
+        Assert.True(currentIdx >= 0, "应包含当前歌手词");
+        Assert.True(recentIdx >= 0, "应包含最近歌手方向词");
+        Assert.True(currentIdx < recentIdx, "SIM 意图下当前歌手词应打头");
+    }
+
     private static void SetupSearchWithPlayableTracks(Mock<IMusicSearchService> search)
     {
         search.Setup(x => x.SearchAsync(It.IsAny<string>(), 8))
