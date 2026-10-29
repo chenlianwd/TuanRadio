@@ -12,6 +12,7 @@ using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using ReactiveCommand = ReactiveUI.ReactiveCommand;
@@ -103,6 +104,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly Action _onLanguageChanged;
     private string? _lastCharacterSignature;
     private bool _lastSaveSucceeded;
+    // 本会话是否完整跑完过一次设置加载（LoadCoreAsync try 尾部置位，异常中断会跳过）：
+    // SaveAsync 据此拒绝在"从未加载/加载异常"状态下把 VM 默认值整体覆盖到盘上已有配置
+    private bool _settingsStateLoaded;
     private Func<string>? _statusMessageFactory;
     private Func<string>? _neteaseAccountStatusFactory;
     private Func<string>? _kugouAccountStatusFactory;
@@ -1015,6 +1019,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             // 此时 llm_* 全部字段已读取完，补拉模型候选（加载期赋值被 _isLoading 屏蔽；
             // 云端 Key 从凭据槽回填晚到时由 ApiKey 触发源自动重拉）
             _ = RefreshLocalModelsAsync();
+
+            // 必须是 try 的最后一条语句：加载流程完整跑完才放行保存；中途任何异常都会
+            // 跳过本语句，让 SaveAsync 的加载守卫把停留在半加载/全默认态的 VM 挡在写盘
+            // 之外。盘上文件缺失/损坏读到 null 也算跑完（损坏时无数据可保）；已知缺口：
+            // 文件被杀软/同步工具瞬时锁住读不出时同样算跑完，守卫不会拦下随后的保存
+            _settingsStateLoaded = true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1998,6 +2008,20 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
+            // 加载守卫：本会话从未完整加载过设置（从未调用/加载异常中断）而盘上已有
+            // 配置时，VM 里是默认值——全量覆盖会把用户配置整体抹掉。自动保存静默
+            // 跳过保住盘上文件；显式保存额外给出状态提示。全新安装（盘上无文件）
+            // 与加载完成不受影响（盘上损坏读到 null 亦放行——无数据可保）。
+            if (!_settingsStateLoaded && File.Exists(_settingsFile))
+            {
+                Log.Warning("Settings save skipped: settings were never loaded this session; keeping on-disk copy");
+                if (persistLlmFields)
+                    SetStatusMessage(() => AppLanguage.T(
+                        "设置尚未从磁盘加载，已阻止保存以防覆盖现有配置，请重启应用",
+                        "Settings were never loaded from disk; save blocked to protect existing config. Please restart the app"));
+                return;
+            }
+
             if (persistLlmFields)
                 NormalizeLlmInputs();
 
@@ -2123,7 +2147,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             var settingsFile = _settingsFile;
             await Task.Run(() =>
             {
-                var json = JsonSerializer.Serialize(settingsData, new JsonSerializerOptions { WriteIndented = true });
+                var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+                var json = JsonSerializer.Serialize(settingsData, jsonOptions);
+                json = MergeWithUnknownDiskKeys(settingsFile, json, jsonOptions);
                 var tempPath = settingsFile + ".tmp";
                 File.WriteAllText(tempPath, json);
                 // 旧配置轮转为 .bak：settings.json 被外部进程覆盖或写坏时留有恢复途径；
@@ -2163,6 +2189,36 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         {
             if (gateHeld)
                 _saveGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 把本次保存负载与盘上配置合并：盘上存在而负载缺失的键原样带回。
+    /// 保存是全量覆盖写，构建只写它认识的键——运行过更新的构建后回退时，本构建
+    /// 的全量保存会把新版本写入的键整个删除，回新版本后即以默认值固化。合并让
+    /// 携带本逻辑的构建在作为旧方降级运行时保住未知键；更旧构建（无合并逻辑）
+    /// 已造成的删键不在盘上，无从回填、不在此列。盘上内容不可解析时按整体覆盖
+    /// 处理（加载侧 OpenSettingsDocumentAsync 已就损坏告警）。
+    /// </summary>
+    private static string MergeWithUnknownDiskKeys(string settingsFile, string payloadJson, JsonSerializerOptions options)
+    {
+        try
+        {
+            if (!File.Exists(settingsFile))
+                return payloadJson;
+            if (JsonNode.Parse(File.ReadAllText(settingsFile)) is not JsonObject existing ||
+                JsonNode.Parse(payloadJson) is not JsonObject fresh)
+                return payloadJson;
+            foreach (var key in existing.Select(kv => kv.Key).ToArray())
+            {
+                if (!fresh.ContainsKey(key))
+                    fresh[key] = existing[key]?.DeepClone();
+            }
+            return fresh.ToJsonString(options);
+        }
+        catch (JsonException)
+        {
+            return payloadJson;
         }
     }
 

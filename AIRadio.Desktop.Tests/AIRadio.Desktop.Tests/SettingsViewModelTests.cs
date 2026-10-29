@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reactive.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -46,6 +47,7 @@ public class SettingsViewModelTests
             using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object,
                        settingsFile, musicSearch: broker))
             {
+                await vm.LoadAsync();
                 await vm.MoveMusicProviderAsync("opensubsonic", -1);
                 Assert.Equal("opensubsonic", vm.MusicProviders[0].Id);
                 vm.MusicProviders[0].Enabled = false;
@@ -1016,13 +1018,12 @@ public class SettingsViewModelTests
         try
         {
             // 模拟内存里的 LLM 字段已被清空：无关自动保存也不得覆盖磁盘上的配置
-            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile)
-            {
-                SelectedProvider = "openai",
-                BaseUrl = string.Empty,
-                Model = string.Empty,
-                IsDarkMode = true
-            };
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await vm.LoadAsync();
+            vm.SelectedProvider = "openai";
+            vm.BaseUrl = string.Empty;
+            vm.Model = string.Empty;
+            vm.IsDarkMode = true;
 
             await vm.SaveUiStateCommand.Execute();
 
@@ -1096,6 +1097,7 @@ public class SettingsViewModelTests
             {
                 Model = "new-model"
             };
+            await vm.LoadAsync();
 
             await vm.SaveCommand.Execute();
 
@@ -1181,6 +1183,7 @@ public class SettingsViewModelTests
             {
                 Model = "new-model"
             };
+            await vm.LoadAsync();
 
             await vm.SaveCommand.Execute();
 
@@ -1225,6 +1228,7 @@ public class SettingsViewModelTests
         try
         {
             var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await vm.LoadAsync();
             vm.Model = "model-v1";
             await vm.SaveCommand.Execute();
 
@@ -2148,6 +2152,151 @@ public class SettingsViewModelTests
             await Task.Delay(200);
 
             _mockLlm.Verify(x => x.Configure(It.IsAny<LLMConfig>()), Times.Never);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    // ===== 设置持久化防覆盖回归（2026-10-29 诊断：旧版本构建保存会把新版键从
+    // settings.json 整个删除，且加载侧缺键静默回默认值后被自动保存固化）=====
+
+    private static string WriteSeedSettings(string settingsFile, string accentPalette)
+    {
+        var json = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["llm_provider"] = "local",
+            ["accent_palette"] = accentPalette,
+            ["future_probe_key"] = new Dictionary<string, object?> { ["v"] = 7 },
+        });
+        File.WriteAllText(settingsFile, json);
+        return json;
+    }
+
+    [Fact]
+    public async Task SaveUiState_AfterLoad_PreservesUnknownDiskKeys()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            WriteSeedSettings(settingsFile, "amber");
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                Assert.Equal("amber", vm.SelectedAccentPalette);
+
+                vm.SelectedAccentPalette = "synthwave";
+                await vm.SaveUiStateCommand.Execute();
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(settingsFile));
+            var root = doc.RootElement;
+            Assert.Equal("synthwave", root.GetProperty("accent_palette").GetString());
+            // 盘上存在而本次负载不含的键必须原样带回：降级窗口跑旧构建不再永久丢新键
+            Assert.True(root.TryGetProperty("future_probe_key", out var probe), "unknown disk key must survive saves");
+            Assert.Equal(7, probe.GetProperty("v").GetInt32());
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveUiState_BeforeLoad_KeepsExistingFileIntact()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var original = WriteSeedSettings(settingsFile, "amber");
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            // 从未 LoadAsync：VM 全默认，自动保存必须拒绝覆盖盘上配置
+            vm.SelectedAccentPalette = "ice";
+            await vm.SaveUiStateCommand.Execute();
+
+            Assert.Equal(original, File.ReadAllText(settingsFile));
+            Assert.False(File.Exists(settingsFile + ".bak"));
+            // 自动保存路径是"静默"拦截：不出状态消息打扰用户（仅日志告警），
+            // 提示只留给显式保存（保存按钮）路径
+            Assert.DoesNotContain("阻止", vm.StatusMessage);
+            Assert.DoesNotContain("blocked", vm.StatusMessage);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveCommand_BeforeLoad_BlocksAndReportsStatus()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var original = WriteSeedSettings(settingsFile, "amber");
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            await vm.SaveCommand.Execute();
+
+            Assert.Equal(original, File.ReadAllText(settingsFile));
+            // 显式保存（保存按钮）须给出可见反馈，静默吞掉会让用户以为已保存
+            Assert.True(
+                vm.StatusMessage.Contains("阻止") || vm.StatusMessage.Contains("blocked"),
+                $"unexpected status: {vm.StatusMessage}");
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveUiState_AfterFailedLoad_KeepsExistingFileIntact()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var original = WriteSeedSettings(settingsFile, "amber");
+            // 加载第一步（凭据槽读取）即抛：LoadCoreAsync 吞异常返回，VM 停在全默认
+            var failingStorage = new Mock<ISecureStorage>();
+            failingStorage.Setup(x => x.GetApiKeyAsync(It.IsAny<string>()))
+                .Throws(new IOException("boom"));
+            using var vm = new SettingsViewModel(_mockLlm.Object, failingStorage.Object, settingsFile);
+
+            await vm.LoadAsync();
+            await vm.SaveUiStateCommand.Execute();
+
+            Assert.Equal(original, File.ReadAllText(settingsFile));
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
+        }
+    }
+
+    [Fact]
+    public async Task SaveUiState_AfterLoadOfCorruptFile_RepairsFile()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            File.WriteAllText(settingsFile, "{ not valid json");
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+
+            await vm.LoadAsync();
+            // 加载流程完整跑完（盘上损坏读到 null）不属"未加载"：保存放行，坏文件得以修复，
+            // 守卫不得把损坏文件锁死成永远无法通过 UI 修复
+            await vm.SaveUiStateCommand.Execute();
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(settingsFile));
+            Assert.Equal("mint", doc.RootElement.GetProperty("accent_palette").GetString());
         }
         finally
         {
