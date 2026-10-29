@@ -282,6 +282,7 @@ public class KugouPlaylistViewModelTests
         var playlistFile = CreateTempPlaylistFile();
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new System.Reactive.Subjects.Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new System.Reactive.Subjects.Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var search = new Mock<IMusicSearchService>();
@@ -351,6 +352,7 @@ public class KugouPlaylistViewModelTests
         var playlistFile = CreateTempPlaylistFile();
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new System.Reactive.Subjects.Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new System.Reactive.Subjects.Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var search = new Mock<IMusicSearchService>();
@@ -411,6 +413,7 @@ public class KugouPlaylistViewModelTests
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new System.Reactive.Subjects.Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new System.Reactive.Subjects.Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var search = new Mock<IMusicSearchService>();
@@ -434,6 +437,7 @@ public class KugouPlaylistViewModelTests
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new System.Reactive.Subjects.Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new System.Reactive.Subjects.Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var search = new Mock<IMusicSearchService>();

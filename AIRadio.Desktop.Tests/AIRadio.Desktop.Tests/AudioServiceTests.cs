@@ -159,6 +159,81 @@ public class AudioServiceTests
     }
 
     [Fact]
+    public void MoveTrack_ReordersCanonicalEntries()
+    {
+        using var svc = new AudioService();
+        svc.LoadTracks(new[]
+        {
+            new Track { SourceId = "kugou:a", Title = "A" },
+            new Track { SourceId = "kugou:b", Title = "B" },
+            new Track { SourceId = "kugou:c", Title = "C" }
+        });
+
+        svc.MoveTrack(0, 2);
+
+        Assert.Equal(new[] { "B", "C", "A" }, svc.Playlist.Select(track => track.Title));
+    }
+
+    [Fact]
+    public void MoveTrack_MovingCurrentTrackKeepsPlaybackAndIndex()
+    {
+        using var svc = new AudioService();
+        var a = new Track { SourceId = "kugou:a", Title = "A" };
+        var b = new Track { SourceId = "kugou:b", Title = "B" };
+        var c = new Track { SourceId = "kugou:c", Title = "C" };
+        svc.LoadTracks(new[] { a, b, c });
+        svc.PlayTrack(b);
+        var currentIndexField = typeof(AudioService).GetField(
+            "_currentIndex", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        svc.MoveTrack(1, 2);
+
+        Assert.Equal(new[] { "A", "C", "B" }, svc.Playlist.Select(track => track.Title));
+        Assert.Same(b, svc.CurrentTrack);
+        Assert.Equal(2, (int)currentIndexField!.GetValue(svc)!);
+    }
+
+    [Fact]
+    public void MoveTrack_WithTransientContextTracksUsesCanonicalIndexes()
+    {
+        // 上下文播放的瞬态曲寄居主列表但不占 canonical 索引：
+        // canonical 重排不得错碰瞬态槽，当前曲（瞬态）保持不变
+        using var svc = new AudioService();
+        var a = new Track { SourceId = "kugou:a", Title = "A" };
+        var b = new Track { SourceId = "kugou:b", Title = "B" };
+        var c = new Track { SourceId = "kugou:c", Title = "C" };
+        svc.LoadTracks(new[] { a, b, c });
+        var transient = new Track { SourceId = "kugou:x", Title = "X" };
+        svc.StartPlaybackContext(new[] { transient }, startIndex: 0);
+        var currentIndexField = typeof(AudioService).GetField(
+            "_currentIndex", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        svc.MoveTrack(0, 2);
+
+        // 真实主列表 = canonical [B,C,A] + 瞬态 X 仍挂末尾
+        Assert.Equal(new[] { "B", "C", "A", "X" }, svc.Playlist.Select(track => track.Title));
+        Assert.Same(transient, svc.CurrentTrack);
+        Assert.Equal(3, (int)currentIndexField!.GetValue(svc)!);
+    }
+
+    [Fact]
+    public void MoveTrack_InvalidIndexes_NoOp()
+    {
+        using var svc = new AudioService();
+        svc.LoadTracks(new[]
+        {
+            new Track { SourceId = "kugou:a", Title = "A" },
+            new Track { SourceId = "kugou:b", Title = "B" }
+        });
+
+        svc.MoveTrack(-1, 0);
+        svc.MoveTrack(0, 5);
+        svc.MoveTrack(1, 1);
+
+        Assert.Equal(new[] { "A", "B" }, svc.Playlist.Select(track => track.Title));
+    }
+
+    [Fact]
     public void Shuffle_TogglesShuffleState()
     {
         var svc = new AudioService();

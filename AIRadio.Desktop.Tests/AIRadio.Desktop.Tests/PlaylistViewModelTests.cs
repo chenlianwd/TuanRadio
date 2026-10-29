@@ -24,6 +24,7 @@ public class PlaylistViewModelTests
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var broker = new Mock<IMusicSourceBroker>();
@@ -58,6 +59,7 @@ public class PlaylistViewModelTests
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var broker = new Mock<IMusicSourceBroker>();
@@ -87,6 +89,7 @@ public class PlaylistViewModelTests
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new Subject<Track?>());
         audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
         audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
         var broker = new Mock<IMusicSourceBroker>();
@@ -113,6 +116,7 @@ public class PlaylistViewModelTests
     {
         var audioMock = new Mock<IAudioService>();
         audioMock.Setup(x => x.TrackEnded).Returns(new System.Reactive.Subjects.Subject<Track?>());
+        audioMock.Setup(x => x.TrackChanged).Returns(new System.Reactive.Subjects.Subject<Track?>());
         audioMock.Setup(x => x.StateChanged).Returns(new System.Reactive.Subjects.Subject<PlaybackState>());
         audioMock.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
 
@@ -949,5 +953,375 @@ public class PlaylistViewModelTests
         {
             AppLanguage.Apply(originalLanguage);
         }
+    }
+
+    // ==== 歌单列表操作增强（多选/队列命令/在播标记/过滤/清空确认/重排）====
+
+    private static (PlaylistViewModel vm, Mock<IAudioService> audioMock, System.Reactive.Subjects.Subject<Track?> trackChanged)
+        CreateVmWithTrackChannel(string? playlistFile = null)
+    {
+        var audioMock = new Mock<IAudioService>();
+        var trackChanged = new System.Reactive.Subjects.Subject<Track?>();
+        audioMock.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audioMock.Setup(x => x.TrackChanged).Returns(trackChanged);
+        audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audioMock.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        var searchMock = new Mock<IMusicSearchService>();
+        var vm = new PlaylistViewModel(audioMock.Object, searchMock.Object,
+            playlistFile ?? CreateTempPlaylistFile());
+        return (vm, audioMock, trackChanged);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (!condition() && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(condition());
+    }
+
+    [Fact]
+    public void PlayFromLibraryCommand_PlaysOnlyWhenTrackInLibrary()
+    {
+        var (vm, audio, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var inLibrary = new Track { Title = "在库" };
+            var foreign = new Track { Title = "不在库" };
+            vm.Tracks.Add(inLibrary);
+
+            vm.PlayFromLibraryCommand.Execute(inLibrary).Subscribe();
+            vm.PlayFromLibraryCommand.Execute(foreign).Subscribe();
+
+            audio.Verify(x => x.PlayTrack(inLibrary), Times.Once);
+            audio.Verify(x => x.PlayTrack(foreign), Times.Never);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void QueueCommands_PlayNextAndEnqueueLibraryTracks()
+    {
+        var (vm, audio, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var track = new Track { Title = "A" };
+
+            vm.PlayTrackNextCommand.Execute(track).Subscribe();
+            audio.Verify(x => x.PlayNextInQueue(track), Times.Once);
+
+            vm.EnqueueTrackCommand.Execute(track).Subscribe();
+            audio.Verify(x => x.AddToQueue(track), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void SearchQueueCommands_PassLazyResolvedOnlineTracks()
+    {
+        var (vm, audio, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var online = new OnlineTrack { Id = "kugou:x", Title = "甲", Artist = "歌手", DurationMs = 1000 };
+
+            vm.PlaySearchNextCommand.Execute(online).Subscribe();
+            vm.AddSearchToQueueCommand.Execute(online).Subscribe();
+
+            audio.Verify(x => x.PlayNextInQueue(It.Is<Track>(t =>
+                t.SourceId == "kugou:x" && string.IsNullOrEmpty(t.FilePath))), Times.Once);
+            audio.Verify(x => x.AddToQueue(It.Is<Track>(t =>
+                t.SourceId == "kugou:x" && string.IsNullOrEmpty(t.FilePath))), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task NowPlayingMarker_LooseMatchMarksLibraryInstanceAndClearsOnNull()
+    {
+        var (vm, audio, trackChanged) = CreateVmWithTrackChannel();
+        try
+        {
+            var canonical = new Track { SourceId = "kugou:a", Title = "A", Artist = "X" };
+            vm.Tracks.Add(canonical);
+            // 在播实例是瞬态副本（不同引用、同 SourceId）：宽松匹配应标到列表本体
+            var transientCopy = new Track { SourceId = "kugou:a", Title = "A", Artist = "X" };
+
+            trackChanged.OnNext(transientCopy);
+            await WaitUntilAsync(() => canonical.IsNowPlaying);
+            Assert.Same(canonical, vm.NowPlayingListTrack);
+            audio.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
+
+            trackChanged.OnNext(null);
+            await WaitUntilAsync(() => !canonical.IsNowPlaying && vm.NowPlayingListTrack == null);
+
+            // 不在列表中的曲：无标记可落
+            trackChanged.OnNext(new Track { SourceId = "kugou:zzz", Title = "ZZZ" });
+            await Task.Delay(50);
+            Assert.Null(vm.NowPlayingListTrack);
+
+            vm.Dispose();
+            // Dispose 后推送不再触碰标记（NowPlayingListTrack 保持 null）
+            trackChanged.OnNext(transientCopy);
+            await Task.Delay(50);
+            Assert.Null(vm.NowPlayingListTrack);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task LibraryFilterText_FiltersVisibleTracks_AndCombinesWithSyncedPlaylist()
+    {
+        var (vm, _, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var a = new Track { SourceId = "kugou:a", Title = "晴天", Artist = "周杰伦" };
+            var b = new Track { SourceId = "kugou:b", Title = "稻香", Artist = "周杰伦" };
+            var c = new Track { SourceId = "kugou:moon", Title = "月亮", Artist = "张三" };
+            foreach (var track in new[] { a, b, c })
+                vm.Tracks.Add(track);
+
+            vm.LibraryFilterText = "周杰伦";
+            await WaitUntilAsync(() => vm.VisibleLibraryTracks.Count == 2);
+            Assert.DoesNotContain(vm.VisibleLibraryTracks, t => ReferenceEquals(t, c));
+
+            // 同步歌单视图与关键词 AND 组合
+            var synced = new AIRadio.Desktop.ViewModels.SyncedPlaylistInfo { Id = "kugou-playlist:1", ProviderId = "kugou", RemoteId = "1" };
+            synced.TrackSourceIds.Add("kugou:moon");
+            vm.SyncedPlaylists.Add(synced);
+            vm.SelectedSyncedPlaylist = synced;
+            Assert.Empty(vm.VisibleLibraryTracks); // c 不含"周杰伦"
+
+            vm.LibraryFilterText = "";
+            await WaitUntilAsync(() => vm.VisibleLibraryTracks.Count == 1);
+            Assert.Same(c, vm.VisibleLibraryTracks.Single());
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ClearPlaylist_RequiresSecondClickWithinWindow()
+    {
+        var (vm, audio, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var track = new Track { Title = "A" };
+            vm.Tracks.Add(track);
+            var originalText = vm.ClearPlaylistButtonText;
+
+            // 首次点击：武装确认态，不执行清空
+            vm.ClearPlaylistCommand.Execute().Subscribe();
+            audio.Verify(x => x.ClearPlaylist(), Times.Never);
+            Assert.Single(vm.Tracks);
+            Assert.NotEqual(originalText, vm.ClearPlaylistButtonText);
+
+            // 5 秒窗口内第二次点击：执行清空并回到初始文案
+            vm.ClearPlaylistCommand.Execute().Subscribe();
+            audio.Verify(x => x.ClearPlaylist(), Times.Once);
+            Assert.Empty(vm.Tracks);
+            Assert.Empty(vm.Favorites);
+            Assert.Empty(vm.SyncedPlaylists);
+            Assert.Equal(originalText, vm.ClearPlaylistButtonText);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task MoveVisibleTrack_ReordersTracksMirrorsAudioAndPersists()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var (vm, audio, _) = CreateVmWithTrackChannel(playlistFile);
+        try
+        {
+            var a = new Track { SourceId = "kugou:a", Title = "A" };
+            var b = new Track { SourceId = "kugou:b", Title = "B" };
+            var c = new Track { SourceId = "kugou:c", Title = "C" };
+            foreach (var track in new[] { a, b, c })
+                vm.Tracks.Add(track);
+            await Task.Delay(50); // 等自动保存落盘
+
+            vm.MoveVisibleTrack(0, 2);
+
+            Assert.Equal(new[] { "B", "C", "A" }, vm.Tracks.Select(t => t.Title));
+            Assert.Equal(new[] { "B", "C", "A" }, vm.VisibleLibraryTracks.Select(t => t.Title));
+            audio.Verify(x => x.MoveTrack(0, 2), Times.Once);
+
+            await WaitUntilAsync(() =>
+            {
+                try
+                {
+                    var json = File.ReadAllText(playlistFile);
+                    using var doc = JsonDocument.Parse(json);
+                    var titles = doc.RootElement.GetProperty("Tracks").EnumerateArray()
+                        .Select(item => item.GetProperty("Title").GetString());
+                    return titles.SequenceEqual(new[] { "B", "C", "A" });
+                }
+                catch (IOException)
+                {
+                    // VM 的异步保存（写临时文件+替换）与轮询读盘的短暂互斥窗口：视为未就绪继续轮询
+                    return false;
+                }
+            });
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task MoveVisibleTrack_RejectedWhileFilteredOrSyncedViewActive()
+    {
+        var (vm, audio, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var a = new Track { SourceId = "kugou:a", Title = "A" };
+            var b = new Track { SourceId = "kugou:b", Title = "B" };
+            foreach (var track in new[] { a, b })
+                vm.Tracks.Add(track);
+
+            vm.LibraryFilterText = "A";
+            await WaitUntilAsync(() => vm.VisibleLibraryTracks.Count == 1);
+            Assert.False(vm.CanReorderLibrary);
+
+            vm.MoveVisibleTrack(0, 1);
+            audio.Verify(x => x.MoveTrack(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+            Assert.Equal(new[] { "A", "B" }, vm.Tracks.Select(t => t.Title));
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void RemoveSelectedTracks_RemovesAllSelectedAndClearsSelection()
+    {
+        var (vm, audio, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var a = new Track { SourceId = "kugou:a", Title = "A" };
+            var b = new Track { SourceId = "kugou:b", Title = "B" };
+            var keeper = new Track { SourceId = "kugou:k", Title = "K" };
+            foreach (var track in new[] { a, b, keeper })
+                vm.Tracks.Add(track);
+            vm.SelectedLibraryTracks.Add(a);
+            vm.SelectedLibraryTracks.Add(b);
+
+            vm.RemoveSelectedTracksCommand.Execute().Subscribe();
+
+            audio.Verify(x => x.RemoveTrack(a), Times.Once);
+            audio.Verify(x => x.RemoveTrack(b), Times.Once);
+            audio.Verify(x => x.RemoveTrack(keeper), Times.Never);
+            Assert.Equal(new[] { "K" }, vm.Tracks.Select(t => t.Title));
+            Assert.Empty(vm.SelectedLibraryTracks);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FavoriteSelectedTracks_FavoritesOnlyUnfavorited()
+    {
+        var (vm, _, _) = CreateVmWithTrackChannel();
+        try
+        {
+            var a = new Track { SourceId = "kugou:a", Title = "A" };
+            var b = new Track { SourceId = "kugou:b", Title = "B" };
+            foreach (var track in new[] { a, b })
+                vm.Tracks.Add(track);
+            vm.Favorites.Add(b);
+            vm.SelectedLibraryTracks.Add(a);
+            vm.SelectedLibraryTracks.Add(b);
+
+            vm.FavoriteSelectedTracksCommand.Execute().Subscribe();
+
+            Assert.True(a.IsFavorite);
+            Assert.True(b.IsFavorite);
+            Assert.Equal(2, vm.Favorites.Count);
+            Assert.Contains(AppLanguage.T("已收藏", "Favorited"), vm.LocalLibraryStatus);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task NowPlayingMarker_PrefersExactInstanceWhenDuplicatesShareSourceId()
+    {
+        var (vm, _, trackChanged) = CreateVmWithTrackChannel();
+        try
+        {
+            // 同曲多份（同 SourceId 不同实例）：在播的恰是第二份本体时高亮必须落在第二份
+            var first = new Track { SourceId = "kugou:a", Title = "晴天", Artist = "周杰伦" };
+            var second = new Track { SourceId = "kugou:a", Title = "晴天", Artist = "周杰伦" };
+            vm.Tracks.Add(first);
+            vm.Tracks.Add(second);
+
+            trackChanged.OnNext(second);
+            await WaitUntilAsync(() => second.IsNowPlaying);
+
+            Assert.True(second.IsNowPlaying);
+            Assert.False(first.IsNowPlaying);
+            Assert.Same(second, vm.NowPlayingListTrack);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task AddExternalTrack_PromotesPlayingTransient_MarkerLandsOnLibraryInstance()
+    {
+        var (vm, audio, trackChanged) = CreateVmWithTrackChannel();
+        try
+        {
+            // DJ 点歌以瞬态身份在播（不在库中）→ 无标记可落
+            var transientPlaying = new Track { SourceId = "kugou:x", Title = "甲", Artist = "歌手" };
+            audio.Setup(x => x.CurrentTrack).Returns(transientPlaying);
+            trackChanged.OnNext(transientPlaying);
+            await Task.Delay(50);
+            Assert.Null(vm.NowPlayingListTrack);
+
+            // 「+」转正：新解析实例入库（AddTracks 合并不发 TrackChanged），补发标记须落到库内本体
+            var promoted = new Track { SourceId = "kugou:x", Title = "甲", Artist = "歌手" };
+            vm.AddExternalTrack(promoted);
+
+            Assert.True(promoted.IsNowPlaying);
+            Assert.Same(promoted, vm.NowPlayingListTrack);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FormatTrackInfo_JoinsTitleAndArtist()
+    {
+        Assert.Equal("晴天 - 周杰伦", PlaylistViewModel.FormatTrackInfo("晴天", "周杰伦"));
+        Assert.Equal("晴天", PlaylistViewModel.FormatTrackInfo("晴天", ""));
+        Assert.Equal("晴天", PlaylistViewModel.FormatTrackInfo("晴天", null));
     }
 }
