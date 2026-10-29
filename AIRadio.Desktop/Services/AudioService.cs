@@ -758,6 +758,45 @@ public class AudioService : IAudioService, IDisposable
         NotifyTrackChanged();
     }
 
+    public void MoveTrack(int oldIndex, int newIndex)
+    {
+        if (IsDisposed)
+            return;
+
+        lock (_playlistGate)
+        {
+            // canonical 投影：主列表里非瞬态槽位的原始位置序列。上下文/队列播放的瞬态曲
+            // 寄居在主列表但不在 PlaylistViewModel.Tracks 里，索引语义必须以投影坐标为准
+            var canonicalSlots = new List<int>(_playlist.Count);
+            for (var i = 0; i < _playlist.Count; i++)
+            {
+                if (!_transientContextTracks.Contains(_playlist[i]))
+                    canonicalSlots.Add(i);
+            }
+
+            if (oldIndex < 0 || oldIndex >= canonicalSlots.Count ||
+                newIndex < 0 || newIndex >= canonicalSlots.Count ||
+                oldIndex == newIndex)
+                return;
+
+            var current = _currentIndex >= 0 && _currentIndex < _playlist.Count
+                ? _playlist[_currentIndex]
+                : null;
+
+            var realOld = canonicalSlots[oldIndex];
+            var track = _playlist[realOld];
+            _playlist.RemoveAt(realOld);
+            // 插入位 = 原目标 canonical 元素的原始终点：newIndex < oldIndex 时插在它之前、
+            // newIndex > oldIndex 时（移除已使其前移一位）恰好插在它之后——两种方向统一
+            // 落点均为 canonical newIndex，且瞬态曲不参与计数
+            _playlist.Insert(canonicalSlots[newIndex], track);
+
+            // 引用恢复当前索引：槽位数学在瞬态曲交错时易错，IndexOf 按引用精确回写
+            if (current != null)
+                _currentIndex = _playlist.IndexOf(current);
+        }
+    }
+
     public void Play()
     {
         if (IsDisposed)

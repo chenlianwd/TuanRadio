@@ -27,6 +27,7 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     private bool _isFavorite;
+    private bool _isNowPlaying;
     private TrackPlayability _playability;
     private PlaybackFailureKind _playbackFailure;
     public string Id { get; set; } = Guid.NewGuid().ToString();
@@ -133,6 +134,22 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
             if (value == _isFavorite) return;
             _isFavorite = value;
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsFavorite)));
+        }
+    }
+
+    /// <summary>
+    /// 是否为当前在播曲（纯 UI 态，不落盘）。由 PlaylistViewModel 经宽松匹配维护：
+    /// 在播实例可能是瞬态副本/换源实例，标记落在主列表内的本体上。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsNowPlaying
+    {
+        get => _isNowPlaying;
+        set
+        {
+            if (value == _isNowPlaying) return;
+            _isNowPlaying = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsNowPlaying)));
         }
     }
 

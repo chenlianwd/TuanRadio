@@ -32,6 +32,11 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     // 常驻按钮文案随语言切换重置；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
     private readonly IDisposable _searchTextSub;
+    private readonly IDisposable _libraryFilterSub;
+    private readonly IDisposable _nowPlayingSub;
+    private Track? _nowPlayingListTrack;
+    private int _clearPlaylistArmed;
+    private int _clearPlaylistArmVersion;
     private int _disposed;
     private bool _isLoading;
     private bool _isSearching;
@@ -40,7 +45,6 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private Func<string>? _searchStatusFactory;
     private Func<string>? _kugouStatusFactory;
     private int? _localLibraryCount;
-    private readonly IDisposable _selectedTrackSub;
     private readonly IDisposable _selectedKugouPlaylistSub;
     private readonly IDisposable _kugouFilterSub;
     private readonly IDisposable _selectedSyncedPlaylistSub;
@@ -65,9 +69,17 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<OnlineTrack> FilteredKugouPlaylistTracks { get; } = new();
     public ObservableCollection<SyncedPlaylistInfo> SyncedPlaylists { get; } = new();
     public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
+    /// <summary>主歌单多选结果（OneWayToSource 绑定 ListBox.SelectedItems，控件侧写入）。</summary>
+    public ObservableCollection<Track> SelectedLibraryTracks { get; } = new();
+    /// <summary>主列表内当前在播曲本体（宽松匹配落标）；列表无在播曲时为 null。定位按钮消费。</summary>
+    public Track? NowPlayingListTrack => _nowPlayingListTrack;
+    /// <summary>可见序与主序一致（未启用同步歌单视图且无过滤词）时才允许拖拽排序。</summary>
+    public bool CanReorderLibrary
+        => SelectedSyncedPlaylist == null && string.IsNullOrWhiteSpace(LibraryFilterText);
 
-    [Reactive] public partial Track? SelectedTrack { get; set; }
     [Reactive] public partial string SearchText { get; set; } = string.Empty;
+    [Reactive] public partial string LibraryFilterText { get; set; } = string.Empty;
+    [Reactive] public partial string ClearPlaylistButtonText { get; set; } = AppLanguage.T("清空歌单", "Clear playlist");
     [Reactive] public partial bool IsSearching { get; set; }
     [Reactive] public partial bool HasSearchStatus { get; set; }
     [Reactive] public partial string SearchStatusMessage { get; set; } = string.Empty;
@@ -88,6 +100,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
+    public ReactiveCommand<Unit, Unit> RemoveSelectedTracksCommand { get; }
+    public ReactiveCommand<Unit, Unit> FavoriteSelectedTracksCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> SearchCommand { get; }
     public ReactiveCommand<Unit, Unit> ShowPlaylistCommand { get; }
@@ -95,8 +109,13 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ShowSearchCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> PlayOnlineCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> AddOnlineCommand { get; }
+    public ReactiveCommand<OnlineTrack, Unit> PlaySearchNextCommand { get; }
+    public ReactiveCommand<OnlineTrack, Unit> AddSearchToQueueCommand { get; }
     public ReactiveCommand<Track, Unit> ToggleFavoriteCommand { get; }
     public ReactiveCommand<Track, Unit> PlayFavoriteCommand { get; }
+    public ReactiveCommand<Track, Unit> PlayFromLibraryCommand { get; }
+    public ReactiveCommand<Track, Unit> PlayTrackNextCommand { get; }
+    public ReactiveCommand<Track, Unit> EnqueueTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshKugouPlaylistsCommand { get; }
     public ReactiveCommand<Unit, Unit> ImportKugouPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> PlayKugouPlaylistCommand { get; }
@@ -125,34 +144,72 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         RemoveTrackCommand = ReactiveCommand.Create<Track>(track =>
         {
-            _audioService.RemoveTrack(track);
-            // 抑制 Tracks.Remove 触发的自动保存：此刻 _favoriteIds/SyncedPlaylists 尚未清理，
-            // 中间快照若恰逢崩溃/第二次保存失败会残留孤儿数据；清理完成后统一保存一次
-            MutateWithoutAutosave(() =>
-            {
-                Tracks.Remove(track);
-                // 同步收藏视图：删除的曲目留在 Favorites 里会成为不可播的幽灵条目
-                if (Favorites.Contains(track))
-                    Favorites.Remove(track);
-            });
-            _favoriteIds.Remove(track.Id);
-            RemoveTrackFromSyncedPlaylists(track);
-            ApplyLibraryPlaylistFilter();
+            RemoveTrackCore(track);
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
+        RemoveSelectedTracksCommand = ReactiveCommand.Create(() =>
+        {
+            var selected = SelectedLibraryTracks.Where(Tracks.Contains).ToList();
+            if (selected.Count == 0) return;
+            foreach (var track in selected)
+                RemoveTrackCore(track, refreshView: false);
+            ApplyLibraryPlaylistFilter();
+            SelectedLibraryTracks.Clear();
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+            LocalLibraryStatus = AppLanguage.T($"已移除 {selected.Count} 首。", $"Removed {selected.Count} track(s).");
+        });
+
+        FavoriteSelectedTracksCommand = ReactiveCommand.Create(() =>
+        {
+            var selected = SelectedLibraryTracks.Where(Tracks.Contains).ToList();
+            var added = 0;
+            foreach (var track in selected)
+            {
+                if (_favoriteIds.Contains(track.Id)) continue;
+                _favoriteIds.Add(track.Id);
+                track.IsFavorite = true;
+                if (!Favorites.Contains(track))
+                    Favorites.Add(track);
+                added++;
+            }
+            if (added > 0)
+                _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+            LocalLibraryStatus = added > 0
+                ? AppLanguage.T($"已收藏 {added} 首。", $"Favorited {added} track(s).")
+                : AppLanguage.T("所选歌曲都已在收藏中。", "All selected tracks are already favorites.");
+        });
+
+        // 清空为破坏性操作（连带清收藏与同步歌单映射）：5 秒内再点一次确认，
+        // 逐字复用 SettingsViewModel.ResetListenerProfile 的武装模式——命令体必须同步
+        // （CreateFromTask 执行期间的再次 Execute 会被忽略，确认点击会失效）
         ClearPlaylistCommand = ReactiveCommand.Create(() =>
         {
-            _audioService.ClearPlaylist();
-            MutateWithoutAutosave(Tracks.Clear);
-            // 收藏从属于播放列表：清空后重载时收藏本来就会随之消失，这里同步清理避免幽灵条目和脏持久化
-            Favorites.Clear();
-            _favoriteIds.Clear();
-            SyncedPlaylists.Clear();
-            SelectedSyncedPlaylist = null;
-            HasSyncedPlaylists = false;
-            ApplyLibraryPlaylistFilter();
-            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+            if (Interlocked.CompareExchange(ref _clearPlaylistArmed, 1, 0) != 0)
+            {
+                Interlocked.Increment(ref _clearPlaylistArmVersion);
+                Interlocked.Exchange(ref _clearPlaylistArmed, 0);
+                ClearPlaylistButtonText = AppLanguage.T("清空歌单", "Clear playlist");
+                ClearPlaylistCore();
+                return;
+            }
+
+            ClearPlaylistButtonText = AppLanguage.T("再次点击确认", "Click again to confirm");
+            LocalLibraryStatus = AppLanguage.T(
+                "将清空歌单、收藏与同步歌单，5 秒内再次点击确认。",
+                "This clears the playlist, favorites and synced playlists. Click again within 5 seconds to confirm.");
+            var version = Interlocked.Increment(ref _clearPlaylistArmVersion);
+            // Timer 用默认调度器（测试环境 MainThreadScheduler 可能是 Immediate，dueTime 会被忽略），
+            // 回调再切回 UI 线程；版本号防 stale 解除
+            Observable.Timer(TimeSpan.FromSeconds(5))
+                .ObserveOn(RxApp.MainThreadScheduler)
+                .Subscribe(_ =>
+                {
+                    if (Volatile.Read(ref _disposed) != 0) return;
+                    if (version != Volatile.Read(ref _clearPlaylistArmVersion)) return;
+                    if (Interlocked.CompareExchange(ref _clearPlaylistArmed, 0, 1) == 1)
+                        ClearPlaylistButtonText = AppLanguage.T("清空歌单", "Clear playlist");
+                });
         });
 
         ShowPlaylistCommand = ReactiveCommand.Create(() =>
@@ -196,6 +253,17 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         // 同步命令：上下文化点播没有 await 窗口，无需异步重入守卫
         PlayOnlineCommand = ReactiveCommand.Create<OnlineTrack>(PlayOnline);
 
+        PlaySearchNextCommand = ReactiveCommand.Create<OnlineTrack>(track =>
+        {
+            _audioService.PlayNextInQueue(track.ToTrack(string.Empty));
+            SetSearchStatus(() => AppLanguage.T($"《{track.Title}》将在下一首播放。", $"\"{track.Title}\" will play next."));
+        });
+        AddSearchToQueueCommand = ReactiveCommand.Create<OnlineTrack>(track =>
+        {
+            _audioService.AddToQueue(track.ToTrack(string.Empty));
+            SetSearchStatus(() => AppLanguage.T($"已将《{track.Title}》加入队列末尾。", $"Added \"{track.Title}\" to the end of the queue."));
+        });
+
         AddOnlineCommand = ReactiveCommand.CreateFromTask<OnlineTrack>(async track =>
         {
             CancelSlowSearch();
@@ -219,6 +287,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
                 Tracks.Add(t);
                 _audioService.AddTracks(new[] { t });
+                // 在播曲经此入库时 AddTracks 的合并不发 TrackChanged（仅歌单从空填充的
+                // 首次通知例外，与订阅重算幂等），补发一次标记确保落标（同 AddExternalTrack）
+                UpdateNowPlayingMarker(_audioService.CurrentTrack);
                 TabIndex = 0;
                 // 保存失败必须可见：与 ImportKugouPlaylistAsync 同口径，否则磁盘满/文件
                 // 被占用时用户看到"已添加"，重启后静默丢失
@@ -274,13 +345,33 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 AppLanguage.T("收藏", "Favorites"));
         });
 
-        _selectedTrackSub = this.WhenAnyValue(x => x.SelectedTrack)
-            .WhereNotNull()
-            .Subscribe(track =>
-            {
-                if (Tracks.Contains(track))
-                    _audioService.PlayTrack(track);
-            });
+        // 主歌单行内 ▶ 承接原"点行即播"（多选模式下点行=选中，不再触发播放）
+        PlayFromLibraryCommand = ReactiveCommand.Create<Track>(track =>
+        {
+            if (Tracks.Contains(track))
+                _audioService.PlayTrack(track);
+        });
+
+        // 下一首播/加队列：主歌单与收藏行共用（收藏曲必在主歌单内）
+        PlayTrackNextCommand = ReactiveCommand.Create<Track>(track =>
+        {
+            _audioService.PlayNextInQueue(track);
+            LocalLibraryStatus = AppLanguage.T($"《{track.Title}》将在下一首播放。", $"\"{track.Title}\" will play next.");
+        });
+        EnqueueTrackCommand = ReactiveCommand.Create<Track>(track =>
+        {
+            _audioService.AddToQueue(track);
+            LocalLibraryStatus = AppLanguage.T($"已将《{track.Title}》加入队列末尾。", $"Added \"{track.Title}\" to the end of the queue.");
+        });
+
+        // 在播标记：TrackChanged 可能从 LibVLC 事件线程触发，必须编组回 UI 线程再改 UI 态
+        _nowPlayingSub = _audioService.TrackChanged
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(UpdateNowPlayingMarker);
+
+        _libraryFilterSub = this.WhenAnyValue(x => x.LibraryFilterText)
+            .Throttle(TimeSpan.FromMilliseconds(120), RxApp.MainThreadScheduler)
+            .Subscribe(_ => ApplyLibraryPlaylistFilter());
 
         // 选择云端歌单后按需读取曲目；Switch 会取消仍在进行的上一个选择，避免旧响应覆盖新选择。
         _selectedKugouPlaylistSub = this.WhenAnyValue(x => x.SelectedKugouPlaylist)
@@ -313,6 +404,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 SearchStatusMessage = _searchStatusFactory();
             if (_kugouStatusFactory != null)
                 KugouStatusMessage = _kugouStatusFactory();
+            ClearPlaylistButtonText = Volatile.Read(ref _clearPlaylistArmed) == 1
+                ? AppLanguage.T("再次点击确认", "Click again to confirm")
+                : AppLanguage.T("清空歌单", "Clear playlist");
             if (_localLibraryCount is { } count)
                 LocalLibraryStatus = FormatLocalLibraryCount(count);
         };
@@ -436,6 +530,12 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             Tracks.Clear();
             Favorites.Clear();
             SyncedPlaylists.Clear();
+            // 旧实例全部换血：在播标记指向的实例即将失效，清除防幽灵高亮
+            if (_nowPlayingListTrack != null)
+            {
+                _nowPlayingListTrack.IsNowPlaying = false;
+                _nowPlayingListTrack = null;
+            }
 
             foreach (var playlist in data.SyncedPlaylists ?? new List<SyncedPlaylistData>())
             {
@@ -1108,14 +1208,109 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         var sourceIds = SelectedSyncedPlaylist == null
             ? null
             : new HashSet<string>(SelectedSyncedPlaylist.TrackSourceIds, StringComparer.OrdinalIgnoreCase);
+        var keyword = LibraryFilterText.Trim();
         VisibleLibraryTracks.Clear();
         foreach (var track in Tracks)
         {
-            if (sourceIds == null ||
-                (!string.IsNullOrWhiteSpace(track.SourceId) && sourceIds.Contains(track.SourceId)))
-                VisibleLibraryTracks.Add(track);
+            if (sourceIds != null &&
+                (string.IsNullOrWhiteSpace(track.SourceId) || !sourceIds.Contains(track.SourceId)))
+                continue;
+            if (keyword.Length > 0 &&
+                !track.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) &&
+                !track.Artist.Contains(keyword, StringComparison.OrdinalIgnoreCase) &&
+                !track.Album.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                continue;
+            VisibleLibraryTracks.Add(track);
         }
     }
+
+    /// <summary>移除单曲的完整清理（列表/收藏/同步歌单/收藏 id 与可见视图），不含落盘；单删/批删共用。</summary>
+    private void RemoveTrackCore(Track track, bool refreshView = true)
+    {
+        _audioService.RemoveTrack(track);
+        // 抑制 Tracks.Remove 触发的自动保存：此刻 _favoriteIds/SyncedPlaylists 尚未清理，
+        // 中间快照若恰逢崩溃/第二次保存失败会残留孤儿数据；由调用方统一保存
+        MutateWithoutAutosave(() =>
+        {
+            Tracks.Remove(track);
+            // 同步收藏视图：删除的曲目留在 Favorites 里会成为不可播的幽灵条目
+            if (Favorites.Contains(track))
+                Favorites.Remove(track);
+        });
+        if (track.IsNowPlaying)
+        {
+            track.IsNowPlaying = false;
+            if (ReferenceEquals(_nowPlayingListTrack, track))
+                _nowPlayingListTrack = null;
+        }
+        _favoriteIds.Remove(track.Id);
+        RemoveTrackFromSyncedPlaylists(track);
+        // 批量路径逐曲重建可见列表是 O(n²)：由调用方收尾统一重建一次
+        if (refreshView)
+            ApplyLibraryPlaylistFilter();
+    }
+
+    private void ClearPlaylistCore()
+    {
+        _audioService.ClearPlaylist();
+        MutateWithoutAutosave(Tracks.Clear);
+        // 收藏从属于播放列表：清空后重载时收藏本来就会随之消失，这里同步清理避免幽灵条目和脏持久化
+        Favorites.Clear();
+        _favoriteIds.Clear();
+        SyncedPlaylists.Clear();
+        SelectedSyncedPlaylist = null;
+        HasSyncedPlaylists = false;
+        SelectedLibraryTracks.Clear();
+        ApplyLibraryPlaylistFilter();
+        LocalLibraryStatus = AppLanguage.T("已清空歌单。", "Playlist cleared.");
+        _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    /// <summary>
+    /// 在播标记维护：在播实例可能是瞬态副本/换源实例，经 FindMatchingTrack 宽松匹配
+    /// 落到主歌单内的本体（与 MainWindowViewModel 心形推送同款手法）。
+    /// </summary>
+    private void UpdateNowPlayingMarker(Track? track)
+    {
+        if (_nowPlayingListTrack != null)
+            _nowPlayingListTrack.IsNowPlaying = false;
+        _nowPlayingListTrack = null;
+        if (track == null) return;
+
+        var match = FindMatchingTrack(track);
+        if (match != null)
+        {
+            match.IsNowPlaying = true;
+            _nowPlayingListTrack = match;
+        }
+    }
+
+    /// <summary>
+    /// 拖拽排序入口：索引为可见序坐标（仅在 CanReorderLibrary 时可见序=主序），
+    /// newIndex 为移除拖拽项后的插入位（与 AudioService.MoveTrack 的最终位语义一致）。
+    /// </summary>
+    public void MoveVisibleTrack(int oldIndex, int newIndex)
+    {
+        if (!CanReorderLibrary) return;
+        if (oldIndex < 0 || oldIndex >= Tracks.Count ||
+            newIndex < 0 || newIndex >= Tracks.Count ||
+            oldIndex == newIndex)
+            return;
+
+        MutateWithoutAutosave(() =>
+        {
+            var track = Tracks[oldIndex];
+            Tracks.RemoveAt(oldIndex);
+            Tracks.Insert(newIndex, track);
+        });
+        _audioService.MoveTrack(oldIndex, newIndex);
+        ApplyLibraryPlaylistFilter();
+        _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    /// <summary>复制到剪贴板的曲目信息文本（歌名 - 歌手；歌手缺省时仅歌名）。</summary>
+    internal static string FormatTrackInfo(string title, string? artist)
+        => string.IsNullOrWhiteSpace(artist) ? title : $"{title} - {artist}";
 
     private void ApplyKugouFilter()
     {
@@ -1287,7 +1482,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         };
     }
 
-    private void SetSearchStatus(Func<string> messageFactory)
+    /// <summary>写搜索状态行并登记工厂委托（语言切换时按新语言重算，code-behind 复制反馈共用）。</summary>
+    internal void SetSearchStatus(Func<string> messageFactory)
     {
         _searchStatusFactory = messageFactory;
         SearchStatusMessage = messageFactory();
@@ -1319,6 +1515,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         Tracks.Add(track);
         _audioService.AddTracks(new[] { track });
+        // 瞬态在播曲经此转正：AddTracks 合并替换不发 TrackChanged，补发一次标记防整首播着却不高亮
+        UpdateNowPlayingMarker(_audioService.CurrentTrack);
         if (_favoriteIds.Contains(track.Id) && !Favorites.Contains(track))
             Favorites.Add(track);
         TabIndex = 0;
@@ -1327,6 +1525,12 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
     internal Track? FindMatchingTrack(Track track)
     {
+        // 引用优先（同 AudioService.FindTrackIndex 语义）：库内存在同曲多份时定位到
+        // 用户实际点/在播的那一份，而非按 SourceId/宽松匹配撞上的第一份
+        var byReference = Tracks.FirstOrDefault(t => ReferenceEquals(t, track));
+        if (byReference != null)
+            return byReference;
+
         return Tracks.FirstOrDefault(t =>
             MusicIdentity.IsSameSource(t.SourceId, track.SourceId) ||
             (!string.IsNullOrWhiteSpace(track.FilePath) && t.FilePath == track.FilePath) ||
@@ -1432,7 +1636,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         _lifetimeCts.Cancel();
         CancelSlowSearch();
-        _selectedTrackSub.Dispose();
+        _libraryFilterSub.Dispose();
+        _nowPlayingSub.Dispose();
         _selectedKugouPlaylistSub.Dispose();
         _kugouFilterSub.Dispose();
         _selectedSyncedPlaylistSub.Dispose();

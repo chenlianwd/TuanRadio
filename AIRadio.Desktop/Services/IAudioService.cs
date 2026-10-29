@@ -51,6 +51,11 @@ public interface IAudioService
 
     void AddTracks(IEnumerable<Track> tracks);
     void RemoveTrack(Track track);
+    /// <summary>
+    /// 重排主列表中两首非瞬态曲的顺序。索引语义为 canonical 投影（主列表去掉瞬态上下文曲），
+    /// 与 PlaylistViewModel.Tracks 顺序一致。当前曲被移动时仅修正内部索引，播放不中断。
+    /// </summary>
+    void MoveTrack(int oldIndex, int newIndex);
     void ClearPlaylist();
     void PlayTtsAudio(byte[] audioData);
     void StopTts();
