@@ -8,7 +8,56 @@
         <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
     </UserControl.Resources>
 
-    <Border Background="{DynamicResource C_E91B1B2A}" BorderBrush="{DynamicResource C_223D3D4F}" BorderThickness="0,1" Padding="22,10" ClipToBounds="True">
+    <!-- 进度条同位显影：静止态收敛为发丝线——滑条整体降不透明度 0.8（经 4 主题×2 变体
+         与 deck 底色合成对比度预检，图形 3:1 门槛最低 3.41 Amber/Light——Light 档 deck
+         不透明直算、Dark 档按 0xE9 合成到窗口底；0.75 已贴 3.36，调低前须复算）、
+         拇指与两侧时间文本隐去；悬停播放区或滑条获焦时 150ms 淡入完整形态。纯样式层
+         变换、布局零位移，轨道在静止态照常可点按拖动（Opacity 不影响命中） -->
+    <UserControl.Styles>
+        <Style Selector="Slider#ProgressSlider">
+            <Setter Property="Opacity" Value="0.8"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Slider#ProgressSlider /template/ Thumb">
+            <Setter Property="Opacity" Value="0"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="TextBlock.progressTimeText">
+            <Setter Property="Opacity" Value="0"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <!-- 显影态声明在静止态之后（同优先级后声明者胜出） -->
+        <Style Selector="Border#DeckRoot:pointerover Slider#ProgressSlider">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Border#DeckRoot:pointerover Slider#ProgressSlider /template/ Thumb">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Border#DeckRoot:pointerover TextBlock.progressTimeText">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <!-- 键盘焦点同样显影滑条与拇指（时间文本为滑条兄弟节点，:focus 不上溯，不跟焦显示） -->
+        <Style Selector="Slider#ProgressSlider:focus">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Slider#ProgressSlider:focus /template/ Thumb">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Border x:Name="DeckRoot" Background="{DynamicResource C_E91B1B2A}" BorderBrush="{DynamicResource C_223D3D4F}" BorderThickness="0,1" Padding="22,8" ClipToBounds="True">
         <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="165,*,Auto">
             <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
@@ -97,7 +146,7 @@
             </StackPanel>
 
             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
-                        HorizontalAlignment="Center" Margin="0,9,0,0">
+                        HorizontalAlignment="Center" Margin="0,6,0,0">
                 <Button Width="42" Height="24" Padding="0" Content="NOPE"
                         FontSize="9" Command="{Binding DislikeCurrentTrackCommand}"
                         ToolTip.Tip="{DynamicResource S_Dislike}" AutomationProperties.Name="{DynamicResource S_Dislike}"/>
@@ -119,18 +168,18 @@
                  以此撑到 50）。进度行若只靠 Height 压制，模板像素行不缩放、拇指顶锚下坠
                  9px 贴底；行内覆写清零预留边距使模板自然高收敛到拇指 20px，与时间文本对齐。
                  作用域在本 Grid 子树，行 0 音量滑条不受影响 -->
-            <Grid Grid.Row="2" Grid.ColumnSpan="3" ColumnDefinitions="42,*,42" Height="20" Margin="0,10,0,0">
+            <Grid Grid.Row="2" Grid.ColumnSpan="3" ColumnDefinitions="42,*,42" Height="20" Margin="0,4,0,0">
                 <Grid.Resources>
                     <GridLength x:Key="SliderPreContentMargin">0</GridLength>
                     <GridLength x:Key="SliderPostContentMargin">0</GridLength>
                     <x:Double x:Key="SliderHorizontalHeight">20</x:Double>
                 </Grid.Resources>
-                <TextBlock Grid.Column="0" Text="{Binding PlayerVM.PositionText}" FontSize="11"
+                <TextBlock Grid.Column="0" Classes="progressTimeText" Text="{Binding PlayerVM.PositionText}" FontSize="11"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FF9A9AA6}" VerticalAlignment="Center"/>
                 <Slider x:Name="ProgressSlider" Grid.Column="1" Minimum="0" Maximum="{Binding PlayerVM.TotalSeconds}"
                         Foreground="{DynamicResource AccentGreen}"
                         Value="{Binding PlayerVM.CurrentSeconds}"/>
-                <TextBlock Grid.Column="2" Text="{Binding PlayerVM.DurationText}" FontSize="11"
+                <TextBlock Grid.Column="2" Classes="progressTimeText" Text="{Binding PlayerVM.DurationText}" FontSize="11"
                            FontFamily="Consolas" Foreground="{DynamicResource C_FF9A9AA6}" HorizontalAlignment="Right"/>
             </Grid>
         </Grid>

@@ -87,7 +87,7 @@
                 CornerRadius="18"
                 ClipToBounds="True">
             <Grid>
-            <Grid RowDefinitions="64,168,136,*,66,28">
+            <Grid RowDefinitions="64,168,124,*,66,28">
                 <!-- Brand header -->
                 <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
