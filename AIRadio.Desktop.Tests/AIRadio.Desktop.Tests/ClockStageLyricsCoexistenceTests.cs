@@ -267,9 +267,12 @@ public class ClockStageLyricsCoexistenceTests
     }
 
     [AvaloniaFact]
-    public void CycleSpectrumStyleCommand_CyclesThroughAllStyles_Persists()
+    public async Task CycleSpectrumStyleCommand_CyclesThroughAllStyles_Persists()
     {
         var vm = CreateViewModel(null, out var settingsFile);
+        // 保存守卫契约：对已存在文件的自动保存要求本会话完成过一次加载
+        //（首次保存会创建文件，后续保存都在"文件已存在"状态下进行）
+        await vm.SettingsVM.LoadAsync();
         Assert.Equal("bars", vm.SettingsVM.SelectedSpectrumStyle);
 
         foreach (var expected in new[] { "mirror", "wave", "particles", "bars" })
