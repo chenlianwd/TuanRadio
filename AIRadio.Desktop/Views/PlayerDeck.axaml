@@ -12,8 +12,26 @@
          与 deck 底色合成对比度预检，图形 3:1 门槛最低 3.41 Amber/Light——Light 档 deck
          不透明直算、Dark 档按 0xE9 合成到窗口底；0.75 已贴 3.36，调低前须复算）、
          拇指与两侧时间文本隐去；悬停播放区或滑条获焦时 150ms 淡入完整形态。纯样式层
-         变换、布局零位移，轨道在静止态照常可点按拖动（Opacity 不影响命中） -->
+         变换、布局零位移，轨道在静止态照常可点按拖动（Opacity 不影响命中）。
+         音量滑条同款语汇：静止态发丝线+拇指隐，悬停右上音量区（VolumeArea）或获焦
+         显影；音量数值由旁边百分比文本常显兜底。
+         拇指为竖条调谐针（2026-10-29 用户反馈 Fluent 默认实心圆点突兀）：Fluent 默认
+         拇指是 20×20 控件整体当圆（SliderThumbCornerRadius=10 实心 Border），命中区
+         即控件尺寸、由 Slider 模板的 SliderHorizontalThumbWidth/Height 决定——整替
+         Template 时根必须保持铺满（透明底）才不缩命中区；竖条 4×14 与左上三连竖条
+         徽标同构，AccentGreen 与填充同 token（Light 档同 0F6B57，无双色错配）。 -->
     <UserControl.Styles>
+        <Style Selector="Slider /template/ Thumb">
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="Transparent">
+                        <Border Width="4" Height="14" CornerRadius="2"
+                                Background="{DynamicResource AccentGreen}"
+                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
         <Style Selector="Slider#ProgressSlider">
             <Setter Property="Opacity" Value="0.8"/>
             <Setter Property="Transitions">
@@ -53,6 +71,37 @@
             <Setter Property="Opacity" Value="1"/>
         </Style>
         <Style Selector="Slider#ProgressSlider:focus /template/ Thumb">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <!-- 音量滑条静止态：同款发丝线收敛（显影态声明在静止态之后，同优先级后声明者胜出） -->
+        <Style Selector="Slider#VolumeSlider">
+            <Setter Property="Opacity" Value="0.8"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Slider#VolumeSlider /template/ Thumb">
+            <Setter Property="Opacity" Value="0"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <!-- 悬停右上音量区才显影（局部化触发，不随整 deck 点亮）；拖动中指针捕获丢
+             :pointerover，靠滑条获焦兜底显影（同进度条机制） -->
+        <Style Selector="StackPanel#VolumeArea:pointerover Slider#VolumeSlider">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="StackPanel#VolumeArea:pointerover Slider#VolumeSlider /template/ Thumb">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Slider#VolumeSlider:focus">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Slider#VolumeSlider:focus /template/ Thumb">
             <Setter Property="Opacity" Value="1"/>
         </Style>
     </UserControl.Styles>
@@ -132,17 +181,26 @@
 
             <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6" MinWidth="0"
                         HorizontalAlignment="Right" VerticalAlignment="Center">
-                <Button Width="32" Height="30" Padding="0" Command="{Binding ToggleLibraryCommand}"
+                <Button x:Name="LibraryButton" Width="32" Height="30" Padding="0" Command="{Binding ToggleLibraryCommand}"
                         ToolTip.Tip="{DynamicResource S_Library}" AutomationProperties.Name="{DynamicResource S_Library}">
                     <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L20,18"/>
                 </Button>
-                <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
-                           Foreground="{DynamicResource C_FF8A8A96}" VerticalAlignment="Center"/>
-                <Slider Width="90" MinWidth="0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
-                        PointerReleased="OnVolumeSliderReleased"/>
-                <TextBlock Width="34" Text="{Binding PlayerVM.Volume, StringFormat={}{0:P0}}"
-                           FontSize="10" FontFamily="Consolas" TextAlignment="Right"
-                           Foreground="{DynamicResource AccentGreen}" VerticalAlignment="Center"/>
+                <!-- 音量区（VolumeArea）只含 VOL/滑条/百分比——资料库按钮在显影触发簇外
+                     （悬停开资料库不该点亮音量条）；透明底让文本与间隙也可命中（悬停划过
+                     不回落闪烁，同频谱命中层手法） -->
+                <StackPanel x:Name="VolumeArea" Orientation="Horizontal" Spacing="6" Background="Transparent">
+                    <TextBlock Text="VOL" FontSize="10" FontFamily="Consolas"
+                               Foreground="{DynamicResource C_FF8A8A96}" VerticalAlignment="Center"/>
+                    <!-- Foreground 与进度条同用 AccentGreen：填充与拇指/百分比同 token，
+                         Light 档不再与 Fluent Accent(178A65) 双绿错配（左上徽标是
+                         C_FF56F5C4，薄荷绿 Light 档与 AccentGreen 微差、调色板下同值） -->
+                    <Slider x:Name="VolumeSlider" Width="90" MinWidth="0" Minimum="0" Maximum="1" Value="{Binding PlayerVM.Volume}"
+                            Foreground="{DynamicResource AccentGreen}"
+                            PointerReleased="OnVolumeSliderReleased"/>
+                    <TextBlock x:Name="VolumePercentText" Width="34" Text="{Binding PlayerVM.Volume, StringFormat={}{0:P0}}"
+                               FontSize="10" FontFamily="Consolas" TextAlignment="Right"
+                               Foreground="{DynamicResource AccentGreen}" VerticalAlignment="Center"/>
+                </StackPanel>
             </StackPanel>
 
             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
