@@ -21,6 +21,11 @@ public class RecommendationService : IRecommendationService
     private readonly object _stateGate = new();
     private string? _moodBias;
 
+    // 节目单容量与单搜索词入单上限：单个搜索词（往往锚当前在播歌手）最多占 2 席，
+    // 其余候选顺延；全部词消费完仍不满时再全局回填
+    private const int ProgramSize = 5;
+    private const int PerQueryLimit = 2;
+
     public RecommendationService(ILLMService llm, IMusicSearchService musicSearch)
         : this(llm, musicSearch, profile: null)
     {
@@ -92,58 +97,55 @@ public class RecommendationService : IRecommendationService
 
         var tracks = new List<RecommendedTrack>();
         var playableCount = 0;
+        var deferred = new List<(OnlineTrack Result, string Query)>();
         foreach (var query in queries)
         {
-            if (playableCount >= 5) break;
+            if (playableCount >= ProgramSize) break;
 
             cancellationToken.ThrowIfCancellationRequested();
             var results = await SearchMusicAsync(query, 8, cancellationToken);
+            var addedForQuery = 0;
             foreach (var result in results)
             {
-                if (playableCount >= 5) break;
-                if (IsExcluded(result, excluded) || tracks.Any(x => IsSameOnlineTrack(x.Track, result)))
+                if (playableCount >= ProgramSize) break;
+                if (!IsEligibleCandidate(result, query, tracks, excluded))
                     continue;
 
-                // 过滤伴奏/翻唱/电音DJ/加速版等非预期特殊版本
-                if (CandidateRanker.IsUnwantedVersion(result, query))
-                    continue;
-
-                var track = await ResolvePlayableTrackAsync(result, cancellationToken);
-                if (track == null)
+                if (addedForQuery >= PerQueryLimit)
                 {
-                    if (tracks.Count(x => !x.IsPlayable) >= 5)
-                        continue;
-
-                    tracks.Add(new RecommendedTrack
-                    {
-                        Track = result.ToTrack(string.Empty),
-                        Source = GetSourceDisplayName(result),
-                        IsPlayable = false,
-                        Score = 0.1,
-                        Tags = BuildTags(context, result),
-                        Reason = BuildUnavailableReason()
-                    });
+                    deferred.Add((result, query));
                     continue;
                 }
 
-                playableCount++;
-                tracks.Add(new RecommendedTrack
+                if (await TryAddCandidateAsync(result, context, tracks, playableCount, cancellationToken))
                 {
-                    Track = track,
-                    Source = GetSourceDisplayName(result),
-                    PlayUrl = track.FilePath,
-                    IsPlayable = true,
-                    Score = 1.0 - playableCount * 0.05,
-                    Tags = BuildTags(context, result),
-                    Reason = BuildReason(context)
-                });
+                    playableCount++;
+                    addedForQuery++;
+                }
+            }
+        }
+
+        // 回填：各搜索词限量后仍不足满单，消费顺延候选（全局入单，不再受单查询限量约束）。
+        // 逐条消费：后一条的查重必须看到前一条已入单——deferred 内部可能互重复，
+        // 也可能与后续查询已抢先入单的同曲重复
+        if (playableCount < ProgramSize && deferred.Count > 0)
+        {
+            foreach (var (result, query) in deferred)
+            {
+                if (playableCount >= ProgramSize) break;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsEligibleCandidate(result, query, tracks, excluded))
+                    continue;
+
+                if (await TryAddCandidateAsync(result, context, tracks, playableCount, cancellationToken))
+                    playableCount++;
             }
         }
 
         tracks = tracks
             .OrderByDescending(x => x.IsPlayable)
             .ThenByDescending(x => x.Score)
-            .Take(5)
+            .Take(ProgramSize)
             .ToList();
 
         var program = new RadioProgram
@@ -159,6 +161,60 @@ public class RecommendationService : IRecommendationService
         _returnedTrackIds.Clear();
         CurrentProgram = program;
         return program;
+    }
+
+    private static bool IsEligibleCandidate(
+        OnlineTrack result,
+        string query,
+        IReadOnlyList<RecommendedTrack> tracks,
+        IEnumerable<Track> excluded)
+        => !IsExcluded(result, excluded) &&
+           !tracks.Any(x => IsSameOnlineTrack(x.Track, result)) &&
+           // 过滤伴奏/翻唱/电音DJ/加速版等非预期特殊版本
+           !CandidateRanker.IsUnwantedVersion(result, query);
+
+    /// <summary>
+    /// 解析并入单：可播入正式条目返回 true；不可播按既有契约登记占位展示条目返回 false。
+    /// Score 衰减按传入的当前可播计数 + 1 计算，调用方 true 返回后必须立即递增计数，
+    /// 保证回填曲目接续衰减、不反超先入单曲。
+    /// </summary>
+    private async Task<bool> TryAddCandidateAsync(
+        OnlineTrack result,
+        ListeningContext context,
+        List<RecommendedTrack> tracks,
+        int playableCount,
+        CancellationToken cancellationToken)
+    {
+        var track = await ResolvePlayableTrackAsync(result, cancellationToken);
+        if (track == null)
+        {
+            // 占位展示上限（与 ProgramSize 恰同值但是独立约束，勿合并）
+            if (tracks.Count(x => !x.IsPlayable) >= 5)
+                return false;
+
+            tracks.Add(new RecommendedTrack
+            {
+                Track = result.ToTrack(string.Empty),
+                Source = GetSourceDisplayName(result),
+                IsPlayable = false,
+                Score = 0.1,
+                Tags = BuildTags(context, result),
+                Reason = BuildUnavailableReason()
+            });
+            return false;
+        }
+
+        tracks.Add(new RecommendedTrack
+        {
+            Track = track,
+            Source = GetSourceDisplayName(result),
+            PlayUrl = track.FilePath,
+            IsPlayable = true,
+            Score = 1.0 - (playableCount + 1) * 0.05,
+            Tags = BuildTags(context, result),
+            Reason = BuildReason(context)
+        });
+        return true;
     }
 
     public Task<Track?> GetNextTrackAsync(RecommendationRequest request)
@@ -360,13 +416,20 @@ public class RecommendationService : IRecommendationService
             var currentArtist = PromptHygiene.StripControlMarkers(request.CurrentTrack?.Artist);
             var favoritesText = string.Join(", ", request.Favorites.Take(5)
                 .Select(x => $"{PromptHygiene.StripControlMarkers(x.Title)} {PromptHygiene.StripControlMarkers(x.Artist)}"));
+            // ContinueStation（继续当前电台）意图下防止搜索词全锚当前歌：显式要求以最近播放歌手的多方向选词。
+            // 刻意仅按 UserIntentKey 判定（与 GetLocalizedUserIntent 的 key/字面量双匹配不同）：生产构造点恒设 key
+            var diversityInstruction = request.UserIntentKey == RecommendationIntentKeys.ContinueStation
+                ? AppLanguage.T(
+                    "\n3 个关键词要覆盖不同方向：以最近已播放歌手的风格为方向挑没播过的新歌，不要都围着当前这一首歌或同一个歌手；当前歌曲只当作风格参照。",
+                    "\nSpread the 3 queries across different directions: use the styles of recently played artists as directions to pick fresh songs not played yet; don't cluster around the current track or a single artist — treat the current track only as a style reference.")
+                : string.Empty;
             var prompt = AppLanguage.Current == "en"
                 ? $"""
                     Generate 3 short music-search queries, one per line.
                     Each query must point to one real, specific song — use "Artist Title" or "Title".
                     Do NOT output style/era/mood phrases like "urban slow ballad": they are not song
                     titles and only match coincidentally same-named covers or AI-generated tracks.
-                    Prefer real songs outside recently played that fit the taste.{profileSection.ExploreInstruction}
+                    Prefer real songs outside recently played that fit the taste.{profileSection.ExploreInstruction}{diversityInstruction}
                     Output only the queries — no greetings, preamble or explanations.
                     User intent: {userIntent}
                     Current track: {currentTitle} - {currentArtist}
@@ -377,7 +440,7 @@ public class RecommendationService : IRecommendationService
                     根据用户意图生成 3 个适合音乐搜索的短关键词，每行一个。
                     每个关键词必须指向一首真实存在的具体歌曲，用"歌手名 歌名"或"歌名"的格式；
                     不要输出"都市抒情慢板"这类风格或氛围描述短语——它们不是歌名，
-                    搜索只会命中碰巧同名的翻奏或合成曲目。优先挑最近播放之外、符合当前口味的歌。{profileSection.ExploreInstruction}
+                    搜索只会命中碰巧同名的翻奏或合成曲目。优先挑最近播放之外、符合当前口味的歌。{profileSection.ExploreInstruction}{diversityInstruction}
                     只输出关键词本身：不要问候、开场白或任何解释。
                     用户意图：{userIntent}
                     当前歌曲：{currentTitle} - {currentArtist}
@@ -486,13 +549,6 @@ public class RecommendationService : IRecommendationService
         ListenerProfileSnapshot? profileSnapshot)
     {
         var queries = new List<string>();
-        var userIntent = GetLocalizedUserIntent(request.UserIntentKey, request.UserIntent);
-        if (!string.IsNullOrWhiteSpace(userIntent))
-            queries.Add(userIntent);
-        if (request.CurrentTrack != null)
-            queries.Add(AppLanguage.T(
-                $"{request.CurrentTrack.Artist} 相似歌曲",
-                $"songs similar to {request.CurrentTrack.Artist}"));
         var recentArtists = recentHistory
             .Reverse()
             .Select(track => track.Artist)
@@ -500,17 +556,36 @@ public class RecommendationService : IRecommendationService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(3)
             .ToList();
-        if (recentArtists.Count > 1)
-            queries.Add(AppLanguage.T(
+        // 意图文案（"继续当前电台"等）是给人看的 UI 文案不是歌名，不再当搜索词
+        var currentArtistQuery = request.CurrentTrack != null
+            ? AppLanguage.T(
+                $"{request.CurrentTrack.Artist} 相似歌曲",
+                $"songs similar to {request.CurrentTrack.Artist}")
+            : null;
+        var recentArtistsQuery = recentArtists.Count > 1
+            ? AppLanguage.T(
                 $"{string.Join(" ", recentArtists)} 相似风格",
-                $"music similar to {string.Join(" ", recentArtists)}"));
-        else if (profileSnapshot?.TopArtists.FirstOrDefault()?.Artist is { Length: > 0 } profileArtist)
-        {
-            // 无近期历史但画像达标：用长期最常听歌手兜底，避免只有意图+氛围两类词
-            queries.Add(AppLanguage.T(
+                $"music similar to {string.Join(" ", recentArtists)}")
+            : null;
+        // 无近期多歌手历史但画像达标：用长期最常听歌手兜底，避免只有氛围一类词
+        var profileArtistQuery = recentArtists.Count <= 1 &&
+                profileSnapshot?.TopArtists.FirstOrDefault()?.Artist is { Length: > 0 } profileArtist
+            ? AppLanguage.T(
                 $"{profileArtist} 相似歌曲",
-                $"songs similar to {profileArtist}"));
+                $"songs similar to {profileArtist}")
+            : null;
+
+        // 词序按意图分叉：继续电台=最近听歌的多歌手方向打头（对应"按当前收听风格编排"的承诺）、
+        // 当前歌手降位为第二信号；SIM 等以当前歌为锚的意图维持当前歌手优先
+        var orderedQueries = request.UserIntentKey == RecommendationIntentKeys.ContinueStation
+            ? new[] { recentArtistsQuery, profileArtistQuery, currentArtistQuery }
+            : new[] { currentArtistQuery, recentArtistsQuery, profileArtistQuery };
+        foreach (var query in orderedQueries)
+        {
+            if (!string.IsNullOrWhiteSpace(query))
+                queries.Add(query);
         }
+
         queries.Add(context.Mood switch
         {
             "calm" => AppLanguage.T("安静 氛围", "calm ambient"),
