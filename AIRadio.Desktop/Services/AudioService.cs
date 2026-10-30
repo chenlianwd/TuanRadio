@@ -2369,9 +2369,14 @@ public class AudioService : IAudioService, IDisposable
 
     private void DisposePlayerResources()
     {
+        Log.Information("Shutdown trace: audio player dispose entered, waiting for locks");
+        var lockSw = System.Diagnostics.Stopwatch.StartNew();
         lock (LibVlcLifecycleGate)
         lock (_playerOperationGate)
         {
+            lockSw.Stop();
+            Log.Information("Shutdown trace: audio player locks acquired in {Ms}ms", lockSw.ElapsedMilliseconds);
+            var stopSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 _player.Stop();
@@ -2379,6 +2384,11 @@ public class AudioService : IAudioService, IDisposable
             catch (Exception ex)
             {
                 Log.Debug(ex, "LibVLC player stop failed during shutdown");
+            }
+            finally
+            {
+                stopSw.Stop();
+                Log.Information("Shutdown trace: libvlc player stopped in {Ms}ms (audio ends here)", stopSw.ElapsedMilliseconds);
             }
 
             try

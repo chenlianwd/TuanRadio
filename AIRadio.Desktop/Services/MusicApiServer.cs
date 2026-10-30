@@ -265,26 +265,63 @@ public class MusicApiServer : IDisposable
 
     public void Stop()
     {
-        Process? process;
-        lock (_processGate)
-        {
-            process = _process;
-            _process = null;
-        }
-
+        var process = DetachProcess();
         if (process == null)
             return;
 
+        TerminateProcess(process);
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        // 关闭线程绝不同步 Kill(entireProcessTree)：在调试器附加的进程树上该调用
+        // 实测阻塞 8~12 秒（.NET 的整树终止确认要等调试器拆卸调试对象），两个
+        // 代理串行会把后续清理（含音频停止）推迟约 20 秒。先关 job 句柄——内核
+        // kill-on-close 立即终止全部绑定进程，不经过 .NET 的整树轮询路径；Kill
+        // 与 Process 句柄回收降级为后台任务，兜底 job 创建失败的降级场景。后台
+        // 线程不拖进程退出（线程池线程随 CLR 退出终止，进程必死由 job 保证）。
+        _childJob?.Dispose();
+        var process = DetachProcess();
+        if (process != null)
+        {
+            _ = Task.Factory.StartNew(
+                () => TerminateProcess(process),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
+    }
+
+    private Process? DetachProcess()
+    {
+        lock (_processGate)
+        {
+            var process = _process;
+            _process = null;
+            return process;
+        }
+    }
+
+    private void TerminateProcess(Process process)
+    {
         try
         {
             if (!process.HasExited)
             {
-                // Kill(entireProcessTree) 后进程退出是既定事实，短等待只为收敛句柄；
-                // 两个实例在关机路径串行 Stop，长等待会累计成可感知的关窗卡顿
+                // Kill(entireProcessTree) 后进程退出是既定事实，短等待只为收敛句柄
+                var killSw = System.Diagnostics.Stopwatch.StartNew();
                 process.Kill(entireProcessTree: true);
-                if (!process.WaitForExit(1000))
+                killSw.Stop();
+                var waitSw = System.Diagnostics.Stopwatch.StartNew();
+                bool exitedInTime = process.WaitForExit(1000);
+                waitSw.Stop();
+                if (!exitedInTime)
                     Log.Debug("{Tag} server process has not exited within 1s after kill", _logTag);
-                Log.Information("{Tag} server stopped", _logTag);
+                Log.Information("{Tag} server stopped (kill={KillMs}ms, waitExit={WaitMs}ms, inTime={InTime})",
+                    _logTag, killSw.ElapsedMilliseconds, waitSw.ElapsedMilliseconds, exitedInTime);
             }
         }
         catch (Exception ex)
@@ -296,16 +333,6 @@ public class MusicApiServer : IDisposable
         {
             process.Dispose();
         }
-    }
-
-    public void Dispose()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-
-        Stop();
-        // 作业句柄随 Dispose 关闭即终止仍存活的绑定进程；Stop 已先行回收自有进程，这里是兜底
-        _childJob?.Dispose();
     }
 
     private async Task<bool> IsServerReadyAsync(CancellationToken cancellationToken)
