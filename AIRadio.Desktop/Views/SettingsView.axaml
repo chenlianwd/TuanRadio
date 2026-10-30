@@ -274,10 +274,20 @@
 
                             <StackPanel Spacing="4" Margin="0,4,0,0">
                                 <TextBlock Text="{DynamicResource S_Voice}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11"/>
-                                <ComboBox SelectedItem="{Binding CharacterVoice}"
-                                          ItemsSource="{Binding Voices}"
-                                          DisplayMemberBinding="{Binding DisplayName}"
-                                          HorizontalAlignment="Stretch"/>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <ComboBox Grid.Column="0" SelectedItem="{Binding CharacterVoice}"
+                                              ItemsSource="{Binding Voices}"
+                                              DisplayMemberBinding="{Binding DisplayName}"
+                                              HorizontalAlignment="Stretch"/>
+                                    <Button Grid.Column="1" x:Name="VoicePreviewButton"
+                                            Command="{Binding PreviewVoiceCommand}"
+                                            Content="{DynamicResource S_VoicePreview}"
+                                            VerticalAlignment="Center" Margin="8,0,0,0"
+                                            Padding="14,6" FontSize="12"/>
+                                </Grid>
+                                <TextBlock x:Name="VoicePreviewStatusText" Text="{Binding VoicePreviewStatus}"
+                                           Foreground="{DynamicResource C_FFFFC86B}"
+                                           FontSize="11" TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <StackPanel Spacing="4">

@@ -332,7 +332,8 @@ public partial class App : Application
             weatherService: sp.GetRequiredService<IWeatherService>(),
             localLibrary: sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
             openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
-            audius: sp.GetRequiredService<Services.Music.AudiusProvider>()));
+            audius: sp.GetRequiredService<Services.Music.AudiusProvider>(),
+            ttsService: sp.GetRequiredService<ITtsService>()));
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
