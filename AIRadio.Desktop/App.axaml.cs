@@ -339,15 +339,35 @@ public partial class App : Application
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
     {
         Log.Information("AI Radio shutting down...");
+        // 声音是"应用还活着"最直接的信号：关窗第一步先停播，不让窗口消失后
+        // 音乐继续放。AudioService.Dispose 幂等且原生清理在后台线程进行（UI
+        // 最多等 2s 上限），DI 容器稍后的再次释放是无害空转；VM 层随后的解
+        // 订阅对已释放实例安全（事件解绑无状态依赖）。
+        try
+        {
+            if (_serviceProvider?.GetRequiredService<IAudioService>() is IDisposable audioDisposable)
+                audioDisposable.Dispose();
+            Log.Information("Shutdown trace: audio service disposed first");
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Early audio dispose failed during shutdown");
+        }
         _lifetimeCts.Cancel();
+        Log.Information("Shutdown trace: lifetime cancelled");
         _mainVm?.Dispose();
+        Log.Information("Shutdown trace: main view model disposed");
         // 先于 DI 容器释放（AudioService 随后销毁），移除按钮回调并置 SMTC 关闭态
         _smtcService?.Dispose();
+        Log.Information("Shutdown trace: smtc disposed");
 #if !TUANRADIO_SLIM_CORE
         _kugouApiServer?.Dispose();
+        Log.Information("Shutdown trace: kugou proxy disposed");
         _musicApiServer?.Dispose();
+        Log.Information("Shutdown trace: netease proxy disposed");
 #endif
         (_serviceProvider as IDisposable)?.Dispose();
+        Log.Information("Shutdown trace: DI container disposed");
         Log.CloseAndFlush();
     }
 

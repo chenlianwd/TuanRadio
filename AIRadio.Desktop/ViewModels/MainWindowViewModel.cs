@@ -1605,8 +1605,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _lifetimeCts.Cancel();
         if (_kugouVerification != null)
             _kugouVerification.ChallengeDetected -= OnKugouChallengeDetected;
-        // AudioService 由 DI 容器持有并在随后统一释放。这里不能在 Avalonia
-        // 关闭线程同步 Stop NAudio，否则设备线程异常时会再次把窗口关闭卡住。
+        // AudioService 已在 App.OnShutdownRequested 第一步先行释放（DI 容器
+        // 随后的再次释放是幂等空转）。这里不能在 Avalonia 关闭线程同步 Stop
+        // NAudio，否则设备线程异常时会再次把窗口关闭卡住。
         _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
         _playbackPreflight?.Dispose();
