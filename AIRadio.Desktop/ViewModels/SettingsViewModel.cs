@@ -71,6 +71,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly OpenSubsonicProvider? _openSubsonic;
     private readonly AudiusProvider? _audius;
     private readonly IWeatherService _weather;
+    // 音色试听：合成与播放都复用生产链（null 时试听按钮静默无动作）
+    private readonly ITtsService? _tts;
+    private readonly IAudioService? _audio;
     private readonly IDisposable _weatherCitySearchSub;
     // 已落定地点的标准名（加载/点选/定位写入）：手输文本与它一致视为确认态，
     // 不弹联想不清坐标；改写为不同文本才触发搜索（节流回调晚于程序赋值，
@@ -253,6 +256,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     // ItemsSource 不会重新赋值，下拉项将停留旧语言。
     [Reactive] public partial List<VoiceOption> Voices { get; set; } = new();
 
+    /// <summary>音色试听运行态（防重入，canExecute 联动禁用按钮）。</summary>
+    [Reactive] public partial bool IsPreviewingVoice { get; private set; }
+    /// <summary>音色试听失败提示；成功或未试听为空。空文本的 TextBlock 仍占一行字高
+    /// （Avalonia 空串建空文本行），与同页音源诊断状态行先例一致。</summary>
+    [Reactive] public partial string VoicePreviewStatus { get; private set; } = string.Empty;
+
     // 语言名按 i18n 惯例保留母语写法，不随界面语言重建
     public List<VoiceOption> Languages { get; } = new()
     {
@@ -273,6 +282,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial List<VoiceOption> AccentPaletteOptions { get; set; } = new();
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
+    // 音色试听：合成走与 DJ 开口同链的风格 Id 映射，播放走真实 TTS 通道（听到即所得）
+    public ReactiveCommand<Unit, Unit> PreviewVoiceCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
     public ReactiveCommand<Unit, Unit> ResetListenerProfileCommand { get; }
     public ReactiveCommand<ProfileBlacklistItem, Unit> RemoveBlacklistItemCommand { get; }
@@ -316,7 +327,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         OpenSubsonicProvider? openSubsonic = null,
         AudiusProvider? audius = null,
         IRecommendationService? recommendationService = null,
-        IWeatherService? weatherService = null)
+        IWeatherService? weatherService = null,
+        ITtsService? ttsService = null,
+        IAudioService? audioService = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -333,10 +346,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _musicSearch = musicSearch;
         _openSubsonic = openSubsonic;
         _audius = audius;
+        _tts = ttsService;
+        _audio = audioService;
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
+        PreviewVoiceCommand = ReactiveCommand.CreateFromTask(
+            PreviewVoiceAsync,
+            this.WhenAnyValue(x => x.IsPreviewingVoice).Select(running => !running));
         SaveCommand = ReactiveCommand.CreateFromTask(() => SaveAsync());
         ResetListenerProfileCommand = ReactiveCommand.Create(ResetListenerProfile);
         RemoveBlacklistItemCommand = ReactiveCommand.Create<ProfileBlacklistItem>(RemoveBlacklistItem);
@@ -1638,6 +1656,96 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
         }
     }
+
+    /// <summary>
+    /// 试听当前选中音色：风格 Id 直接进 SynthesizeAsync，与 DJ 开口同链
+    /// （内部映射真实 Edge 音色并叠加基线韵律）；播放走真实 TTS 通道，
+    /// 音乐压低/说话辉光/调频音效全部联动——听到即所得。
+    /// </summary>
+    private async Task PreviewVoiceAsync()
+    {
+        var voice = CharacterVoice;
+        if (voice == null || _tts == null || _audio == null)
+            return;
+
+        VoicePreviewStatus = string.Empty;
+        try
+        {
+            IsPreviewingVoice = true;
+            // 短预算取消透传进 SynthesizeAsync（内部链接令牌），最坏不占 Edge WS 锁长挂
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+            cts.CancelAfter(TimeSpan.FromSeconds(20));
+            var audio = await _tts.SynthesizeAsync(GetVoicePreviewText(voice.Id), voice.Id, "neutral", cts.Token);
+            if (audio.Length <= 0)
+            {
+                VoicePreviewStatus = AppLanguage.T(
+                    "试听失败：语音服务没有返回音频。",
+                    "Preview failed: the voice service returned no audio.");
+            }
+            else
+            {
+                // 播放启动失败不外抛（PlayTtsAudio 内部消化、只经 TtsError 通道广播，
+                // 常规展示 UI 在设置弹层之下被遮住）：PlayTtsAudio 全同步，失败即已
+                // 同步 OnNext——播放窗口内订阅一次捕获，落回试听状态行
+                string? playbackError = null;
+                var errorSub = _audio.TtsError.Take(1).Subscribe(message => playbackError = message);
+                try
+                {
+                    _audio.PlayTtsAudio(audio);
+                }
+                finally
+                {
+                    errorSub.Dispose();
+                }
+                if (playbackError != null)
+                    VoicePreviewStatus = playbackError;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            VoicePreviewStatus = AppLanguage.T(
+                "试听超时或已取消，请稍后重试。",
+                "Preview timed out or was canceled; try again later.");
+        }
+        catch (Exception ex)
+        {
+            var failure = ApiFailureLocalization.ForCurrentLanguage(ApiFailureInfo.FromException(ex));
+            VoicePreviewStatus = AppLanguage.T($"试听失败：{failure.Title}", $"Preview failed: {failure.Title}");
+        }
+        finally
+        {
+            IsPreviewingVoice = false;
+        }
+    }
+
+    /// <summary>
+    /// 每档音色一句专属介绍语：展示各自声线气质、时间中立不预设时段，
+    /// 经 AppLanguage.T 双语；未知 Id 回落通用句。
+    /// </summary>
+    internal static string GetVoicePreviewText(string voiceId) => voiceId switch
+    {
+        "female-shaonv" => AppLanguage.T(
+            "哇，欢迎回来！我就是你的电台 DJ，准备好把心情调到最亮了吗？",
+            "Welcome back! I'm your radio DJ — ready to turn the mood all the way up?"),
+        "female-yujie" => AppLanguage.T(
+            "欢迎回来，我是你的电台 DJ。世界有点吵，我们把音量调到刚刚好。",
+            "Welcome back, I'm your radio DJ. The world is a bit loud — let's set the volume just right."),
+        "female-chengshu" => AppLanguage.T(
+            "好久不见，我是你的电台 DJ。这一首歌，送给认真生活的你。",
+            "Good to have you back. I'm your radio DJ, and this one goes out to you."),
+        "male-qn-qingse" => AppLanguage.T(
+            "嗨，你好呀！我是新来的实习 DJ，第一期节目，请多多关照。",
+            "Hi there! I'm the new intern DJ — go easy on me, it's my first show!"),
+        "male-qn-jingying" => AppLanguage.T(
+            "欢迎收听，我是你的电台 DJ。节奏由我掌控，你只管交给耳朵。",
+            "Welcome. I'm your radio DJ — I set the pace, you just lend me your ears."),
+        "male-qn-badao" => AppLanguage.T(
+            "别换台，这个频道我说了算。我是你的电台 DJ，现在，听我的。",
+            "Don't touch that dial — this channel plays by my rules. I'm your radio DJ. Now, listen."),
+        _ => AppLanguage.T(
+            "你好，我是你的电台 DJ，很高兴在这里遇见你。",
+            "Hi, I'm your radio DJ — great to have you here."),
+    };
 
     /// <summary>刷新音源账号昵称状态；依赖本地音乐代理已就绪，代理启动完成后调用。</summary>
     public async Task RefreshAccountStatusAsync()

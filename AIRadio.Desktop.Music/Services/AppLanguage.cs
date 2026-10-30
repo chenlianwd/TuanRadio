@@ -214,6 +214,7 @@ public static class AppLanguage
         ["S_ProfileRegenerateDigest"] = "重新归纳",
         ["S_CharSettings"] = "主播设置",
         ["S_Voice"] = "音色",
+        ["S_VoicePreview"] = "试听",
         ["S_Personality"] = "人格提示词",
         ["S_Save"] = "保存设置",
     };
@@ -362,6 +363,7 @@ public static class AppLanguage
         ["S_ProfileRegenerateDigest"] = "Regenerate",
         ["S_CharSettings"] = "Host settings",
         ["S_Voice"] = "Voice",
+        ["S_VoicePreview"] = "Preview",
         ["S_Personality"] = "Personality prompt",
         ["S_Save"] = "Save settings",
     };
