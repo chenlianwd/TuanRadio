@@ -11,37 +11,53 @@
     <!-- 进度条同位显影：静止态收敛为发丝线——滑条整体降不透明度 0.8（经 4 主题×2 变体
          与 deck 底色合成对比度预检，图形 3:1 门槛最低 3.41 Amber/Light——Light 档 deck
          不透明直算、Dark 档按 0xE9 合成到窗口底；0.75 已贴 3.36，调低前须复算）、
-         拇指与两侧时间文本隐去；悬停播放区或滑条获焦时 150ms 淡入完整形态。纯样式层
+         两侧时间文本隐去；悬停播放区或滑条获焦时 150ms 淡入完整形态。纯样式层
          变换、布局零位移，轨道在静止态照常可点按拖动（Opacity 不影响命中）。
-         音量滑条同款语汇：静止态发丝线+拇指隐，悬停右上音量区（VolumeArea）或获焦
+         音量滑条同款语汇：静止态发丝线，悬停右上音量区（VolumeArea）或获焦
          显影；音量数值由旁边百分比文本常显兜底。
-         拇指为竖条调谐针（2026-10-29 用户反馈 Fluent 默认实心圆点突兀）：Fluent 默认
-         拇指是 20×20 控件整体当圆（SliderThumbCornerRadius=10 实心 Border），命中区
-         即控件尺寸、由 Slider 模板的 SliderHorizontalThumbWidth/Height 决定——整替
-         Template 时根必须保持铺满（透明底）才不缩命中区；竖条 4×14 与左上三连竖条
-         徽标同构，AccentGreen 与填充同 token（Light 档同 0F6B57，无双色错配）。 -->
+         拇指为常显竖条调谐针+轨道补线（2026-10-29 圆点突兀改竖条；2026-11-02 用户
+         反馈静止态发丝线中段像"缺口"且太大）：Fluent Slider 轨道是「已播|拇指|未播」
+         三段拼的，拇指占位 20px 下没有轨道——前版静止态隐藏拇指后断口裸露。治法=
+         拇指模板内加与轨道同高（SliderTrackThemeHeight）的补线填平断口，调谐针随之
+         常显（复古收音机刻度指针语义，显影不再控制针的显隐）；补线颜色经
+         TemplateBinding 走 Thumb.Foreground，由下方 pointerover/pressed 样式接管为
+         轨道色系（TrackFill 系），与两侧未播段逐交互态同步（转发通道详见样式内注释）。
+         命中区仍由 20×20 透明根保障（Fluent 命中区=Thumb 控件尺寸、由 Slider 模板的
+         SliderHorizontalThumbWidth/Height 决定）；竖条 4×14 与左上三连竖条徽标同构，
+         AccentGreen 与填充同 token（Light 档同 0F6B57，无双色错配）。 -->
     <UserControl.Styles>
         <Style Selector="Slider /template/ Thumb">
+            <Setter Property="Foreground" Value="{DynamicResource SliderTrackFill}"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="Transparent">
-                        <Border Width="4" Height="14" CornerRadius="2"
-                                Background="{DynamicResource AccentGreen}"
-                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Grid>
+                            <Border Height="{DynamicResource SliderTrackThemeHeight}"
+                                    Background="{TemplateBinding Foreground}"
+                                    VerticalAlignment="Center"/>
+                            <Border Width="4" Height="14" CornerRadius="2"
+                                    Background="{DynamicResource AccentGreen}"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
                     </Border>
                 </ControlTemplate>
             </Setter>
         </Style>
+        <!-- 补线随交互态与两侧未播段同步换色（Fluent 按同名状态切 TrackFill 系资源）；
+             须声明在基础拇指样式之后（同优先级后声明者胜出）。disabled 无场景不设。
+             颜色转发走 Thumb.Foreground 而非 Thumb.Background——后者被 Slider 模板内
+             显式 {DynamicResource SliderThumbBackground}（Fluent 出厂 accent 蓝
+             #FF0078D7，生产环境经 AccentPalettes 同步为当前主题强调色）占用且该
+             模板内特性赋值压不过 UserControl 样式 Setter（2026-11-02 实测）；Foreground
+             无模板占用者，样式压过 Slider.Foreground 的继承值。 -->
+        <Style Selector="Slider:pointerover /template/ Thumb">
+            <Setter Property="Foreground" Value="{DynamicResource SliderTrackFillPointerOver}"/>
+        </Style>
+        <Style Selector="Slider:pressed /template/ Thumb">
+            <Setter Property="Foreground" Value="{DynamicResource SliderTrackFillPressed}"/>
+        </Style>
         <Style Selector="Slider#ProgressSlider">
             <Setter Property="Opacity" Value="0.8"/>
-            <Setter Property="Transitions">
-                <Transitions>
-                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
-                </Transitions>
-            </Setter>
-        </Style>
-        <Style Selector="Slider#ProgressSlider /template/ Thumb">
-            <Setter Property="Opacity" Value="0"/>
             <Setter Property="Transitions">
                 <Transitions>
                     <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
@@ -56,21 +72,16 @@
                 </Transitions>
             </Setter>
         </Style>
-        <!-- 显影态声明在静止态之后（同优先级后声明者胜出） -->
+        <!-- 显影态声明在静止态之后（同优先级后声明者胜出）；调谐针常显不参与显隐，
+             仅滑条与时间文本淡入 -->
         <Style Selector="Border#DeckRoot:pointerover Slider#ProgressSlider">
-            <Setter Property="Opacity" Value="1"/>
-        </Style>
-        <Style Selector="Border#DeckRoot:pointerover Slider#ProgressSlider /template/ Thumb">
             <Setter Property="Opacity" Value="1"/>
         </Style>
         <Style Selector="Border#DeckRoot:pointerover TextBlock.progressTimeText">
             <Setter Property="Opacity" Value="1"/>
         </Style>
-        <!-- 键盘焦点同样显影滑条与拇指（时间文本为滑条兄弟节点，:focus 不上溯，不跟焦显示） -->
+        <!-- 键盘焦点同样显影滑条（时间文本为滑条兄弟节点，:focus 不上溯，不跟焦显示） -->
         <Style Selector="Slider#ProgressSlider:focus">
-            <Setter Property="Opacity" Value="1"/>
-        </Style>
-        <Style Selector="Slider#ProgressSlider:focus /template/ Thumb">
             <Setter Property="Opacity" Value="1"/>
         </Style>
         <!-- 音量滑条静止态：同款发丝线收敛（显影态声明在静止态之后，同优先级后声明者胜出） -->
@@ -82,26 +93,12 @@
                 </Transitions>
             </Setter>
         </Style>
-        <Style Selector="Slider#VolumeSlider /template/ Thumb">
-            <Setter Property="Opacity" Value="0"/>
-            <Setter Property="Transitions">
-                <Transitions>
-                    <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
-                </Transitions>
-            </Setter>
-        </Style>
         <!-- 悬停右上音量区才显影（局部化触发，不随整 deck 点亮）；拖动中指针捕获丢
              :pointerover，靠滑条获焦兜底显影（同进度条机制） -->
         <Style Selector="StackPanel#VolumeArea:pointerover Slider#VolumeSlider">
             <Setter Property="Opacity" Value="1"/>
         </Style>
-        <Style Selector="StackPanel#VolumeArea:pointerover Slider#VolumeSlider /template/ Thumb">
-            <Setter Property="Opacity" Value="1"/>
-        </Style>
         <Style Selector="Slider#VolumeSlider:focus">
-            <Setter Property="Opacity" Value="1"/>
-        </Style>
-        <Style Selector="Slider#VolumeSlider:focus /template/ Thumb">
             <Setter Property="Opacity" Value="1"/>
         </Style>
     </UserControl.Styles>
