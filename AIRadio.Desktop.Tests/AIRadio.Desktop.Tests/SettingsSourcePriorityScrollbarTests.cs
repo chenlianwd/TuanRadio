@@ -46,9 +46,11 @@ public class SettingsSourcePriorityScrollbarTests
         app.Styles.Add(theme);
         try
         {
-            // 窗口压到 MinHeight 下限（700）迫使音乐页溢出视口；竖向滚动条必须可见，
-            // 否则锚空转——下方可见性断言大声失败而非静默通过
-            window = new MainWindow { DataContext = vm, Width = 700, Height = 700 };
+            // 压到 600（覆写 XAML 的 MinHeight=700 本地值）迫使音乐页大幅溢出视口：
+            // 原先 700 下限下两源内容恰好塞满（实测余量个位数 px），字体度量/DPI 漂移
+            // 即翻转为不溢出（2026-11-03 实机踩坑，干净 HEAD 稳定红）；600 余量 ≈75px 抗漂移。
+            // 竖向滚动条必须可见，否则锚空转——下方可见性断言大声失败而非静默通过
+            window = new MainWindow { DataContext = vm, Width = 700, MinHeight = 600, Height = 600 };
             window.Show();
             vm.IsSettingsOpen = true;
             vm.SettingsVM.TabIndex = 1;
