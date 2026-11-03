@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:AIRadio.Desktop.ViewModels"
              xmlns:models="using:AIRadio.Desktop.Models"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
              x:Class="AIRadio.Desktop.Views.CharacterPicker"
              x:DataType="vm:MainWindowViewModel">
 
@@ -23,7 +24,9 @@
                             Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).SelectCharacterCommand}"
                             CommandParameter="{Binding}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="{Binding DisplayName[0]}" FontWeight="700"/>
+                            <!-- 首字母用主播专属识别色（与黑胶唱片头像标签同色，颜色↔主播映射贯穿） -->
+                            <TextBlock Text="{Binding DisplayName[0]}" FontWeight="700"
+                                       Foreground="{Binding Converter={x:Static conv:CharacterAccentConverter.Instance}}"/>
                             <TextBlock Text="{Binding DisplayName}"/>
                         </StackPanel>
                     </Button>

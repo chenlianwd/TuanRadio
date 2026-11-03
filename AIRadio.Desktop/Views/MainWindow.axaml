@@ -91,36 +91,51 @@
                 <!-- Brand header -->
                 <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                            <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}"
-                                    Classes.speaking="{Binding ChatVM.IsSpeaking}">
-                                <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}"
-                                           FontSize="15" FontWeight="700"
-                                           Foreground="{DynamicResource C_FFFFFFFF}"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                            <TextBlock x:Name="HostNameText" Text="{Binding SelectedCharacter.DisplayName}" FontSize="14" FontWeight="600"
-                                       Foreground="{DynamicResource TitleText}" VerticalAlignment="Center"
-                                       Classes.speaking="{Binding ChatVM.IsSpeaking}"/>
-                        </StackPanel>
+                        <!-- 点徽章即切换主播（2026-11-03 用户裁决：省去右侧独立按钮，
+                             「要切换谁就点谁」语义直觉）；hover 由 Window 按钮 pointerover 样式提供 -->
+                        <Button x:Name="AvatarButton" HorizontalAlignment="Left"
+                                Background="Transparent" BorderThickness="0" Padding="6,3" CornerRadius="8"
+                                Command="{Binding ToggleCharacterPickerCommand}"
+                                ToolTip.Tip="{DynamicResource S_HostPicker}" AutomationProperties.Name="{DynamicResource S_HostPicker}">
+                            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <!-- 黑胶唱片头像：外层 Border 承担说话辉光/描圈/弹跳（RenderTransform
+                                     被 TranslateTransform 占用），内层 AvatarDisc 挂旋转互不干扰；
+                                     沟纹用低透明浅色（Light 档盘面变浅时近乎隐形，属可接受弱化） -->
+                                <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}"
+                                        Classes.speaking="{Binding ChatVM.IsSpeaking}">
+                                    <Grid x:Name="AvatarDisc" Width="34" Height="34" RenderTransformOrigin="0.5,0.5">
+                                        <Grid.RenderTransform>
+                                            <RotateTransform/>
+                                        </Grid.RenderTransform>
+                                        <Ellipse Width="26" Height="26" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
+                                                 Fill="Transparent" Opacity="0.14"/>
+                                        <Ellipse Width="21" Height="21" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
+                                                 Fill="Transparent" Opacity="0.09"/>
+                                        <Ellipse x:Name="AvatarLabel" Width="16" Height="16"
+                                                 Fill="{Binding SelectedCharacter, Converter={x:Static conv:CharacterAccentConverter.Instance}}"/>
+                                        <!-- 墨色随主题：Dark 深墨（亮标签）/ Light 白墨（加深标签），同转换器供给 -->
+                                        <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}"
+                                                   FontSize="10" FontWeight="700"
+                                                   Foreground="{Binding SelectedCharacter, Converter={x:Static conv:CharacterAccentConverter.Instance}, ConverterParameter=ink}"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="HostNameText" Text="{Binding SelectedCharacter.DisplayName}" FontSize="14" FontWeight="600"
+                                           Foreground="{DynamicResource TitleText}" VerticalAlignment="Center"
+                                           Classes.speaking="{Binding ChatVM.IsSpeaking}"/>
+                            </StackPanel>
+                        </Button>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
-                                    Command="{Binding ToggleCharacterPickerCommand}" ToolTip.Tip="{DynamicResource S_HostPicker}" AutomationProperties.Name="{DynamicResource S_HostPicker}">
-                                <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M20,21 C20,17.7 16.4,15 12,15 C7.6,15 4,17.7 4,21 M12,12 C14.2,12 16,10.2 16,8 C16,5.8 14.2,4 12,4 C9.8,4 8,5.8 8,8 C8,10.2 9.8,12 12,12"/>
-                            </Button>
                             <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding OpenSearchCommand}" ToolTip.Tip="{DynamicResource S_SearchTab}" AutomationProperties.Name="{DynamicResource S_SearchTab}">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
                             </Button>
                             <Button x:Name="SettingsButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="{DynamicResource S_Settings}" AutomationProperties.Name="{DynamicResource S_Settings}">
-                                <!-- 齿轮：8 齿块坐标由脚本按 45° 步进绕中心旋转生成（细线齿轮 15px 下齿隙会被
-                                     2px 描边糊死，独立齿块+描边圆环的构造在小尺寸仍可辨） -->
-                                <Panel Width="15" Height="15">
-                                    <Path Fill="{DynamicResource C_FFEDEDF5}" Data="M6.40,0.50 L8.60,0.50 L8.60,3.40 L6.40,3.40 Z M11.67,1.77 L13.23,3.33 L11.18,5.38 L9.62,3.82 Z M14.50,6.40 L14.50,8.60 L11.60,8.60 L11.60,6.40 Z M13.23,11.67 L11.67,13.23 L9.62,11.18 L11.18,9.62 Z M8.60,14.50 L6.40,14.50 L6.40,11.60 L8.60,11.60 Z M3.33,13.23 L1.77,11.67 L3.82,9.62 L5.38,11.18 Z M0.50,8.60 L0.50,6.40 L3.40,6.40 L3.40,8.60 Z M1.77,3.33 L3.33,1.77 L5.38,3.82 L3.82,5.38 Z"/>
-                                    <Ellipse Width="8" Height="8" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                             Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2"/>
-                                </Panel>
+                                <!-- 齿轮：实心剪影单 Path（齿块与轮缘连体、中心孔反向绕行镂空），
+                                     坐标由脚本生成。两代前车之鉴：细线齿轮 15px 下齿隙被描边糊死；
+                                     描边圆环+独立齿块则齿窄于隙、放射状被读成太阳 -->
+                                <Path Width="15" Height="15" Stretch="None" Fill="{DynamicResource C_FFEDEDF5}" Data="M12.43,6.18 L14.41,6.40 L14.41,8.60 L12.43,8.82 L11.92,10.05 L13.16,11.61 L11.61,13.16 L10.05,11.92 L8.82,12.43 L8.60,14.41 L6.40,14.41 L6.18,12.43 L4.95,11.92 L3.39,13.16 L1.84,11.61 L3.08,10.05 L2.57,8.82 L0.59,8.60 L0.59,6.40 L2.57,6.18 L3.08,4.95 L1.84,3.39 L3.39,1.84 L4.95,3.08 L6.18,2.57 L6.40,0.59 L8.60,0.59 L8.82,2.57 L10.05,3.08 L11.61,1.84 L13.16,3.39 L11.92,4.95 Z M9.90,7.50 L9.58,6.30 L8.70,5.42 L7.50,5.10 L6.30,5.42 L5.42,6.30 L5.10,7.50 L5.42,8.70 L6.30,9.58 L7.50,9.90 L8.70,9.58 L9.58,8.70 L9.90,7.50 Z"/>
                             </Button>
                             <Button x:Name="ThemeButton" Padding="10,5"
                                     Background="{DynamicResource C_10000000}"

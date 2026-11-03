@@ -1,14 +1,16 @@
 using System;
+using System.Linq;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Views;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Headless.XUnit;
-
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Moq;
 using ReactiveUI;
 
@@ -121,8 +123,186 @@ public class BrandHeaderHostNameTests
         }
     }
 
-    // 锚定设置按钮的构造式齿轮（齿块 Path + 描边圆环 Ellipse 的组合内容）——
-    // 旧「调音台滑杆」单体 Path 复活（用户看不出是设置）会在此暴露。
+    // 点徽章即切换主播（2026-11-03 用户裁决，右侧独立切主播按钮已删）：
+    // 真实指针点徽章开弹层、再点关（第二次经全屏 dismiss 层关闭，殊途同归）；
+    // 全窗口唯一绑定 ToggleCharacterPickerCommand 的按钮是徽章——旧按钮回潮即红
+    // 点徽章即切换主播（2026-11-03 用户裁决，右侧独立切主播按钮已删）。
+    // 不用真实指针：探针实证 headless 下 MainWindow（SystemDecorations=None）阻断指针
+    // 路由、补回装饰后 click 仍不触发（普通 Window 同手法正常）——按钮→命令的触发是
+    // 框架行为（实机日常验证），此锚聚焦三段各自可验的接缝：徽章绑定/唯一绑定者/命令切换语义
+    [AvaloniaFact]
+    public async Task AvatarButton_BoundToPickerToggle_AndReplacesOldHeaderButton()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var badgeButton = window.FindControl<Button>("AvatarButton")
+                ?? throw new InvalidOperationException("AvatarButton not found");
+            Assert.Same(vm.ToggleCharacterPickerCommand, badgeButton.Command);
+
+            // 独立切主播按钮已删——若回潮则出现第二个绑定者
+            var toggles = window.GetVisualDescendants().OfType<Button>()
+                .Where(b => ReferenceEquals(b.Command, vm.ToggleCharacterPickerCommand)).ToList();
+            Assert.Same(badgeButton, Assert.Single(toggles));
+
+            // 先让 VM 启动链沉淀（初始角色应用会复位弹层标志），再直驱验证切换语义
+            Dispatcher.UIThread.RunJobs();
+            Dispatcher.UIThread.RunJobs();
+            await vm.ToggleCharacterPickerCommand.Execute().FirstAsync();
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.IsCharacterPickerOpen);
+            await vm.ToggleCharacterPickerCommand.Execute().FirstAsync();
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.IsCharacterPickerOpen);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 黑胶唱片头像：中心标签用主播专属识别色、字母随主播切换——颜色↔主播映射的头部锚。
+    // 钉死 Dark 档（转换器双档色表按 ActualThemeVariant 分流，主题感知断言需确定性）
+    [AvaloniaFact]
+    public async Task VinylBadge_LabelColorAndLetterFollowCharacter()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var originalTheme = Application.Current!.RequestedThemeVariant;
+        Application.Current.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var label = window.FindControl<Ellipse>("AvatarLabel")
+                ?? throw new InvalidOperationException("AvatarLabel not found");
+            var letter = window.FindControl<TextBlock>("AvatarLetter")
+                ?? throw new InvalidOperationException("AvatarLetter not found");
+
+            Assert.Equal(Color.FromUInt32(0xFFE8A33D), Assert.IsAssignableFrom<ISolidColorBrush>(label.Fill).Color);
+            // Dark 档标签是亮色，字母配深墨
+            Assert.Equal(Color.FromUInt32(0xFF14141C), Assert.IsAssignableFrom<ISolidColorBrush>(letter.Foreground).Color);
+            Assert.Equal("L", letter.Text);
+
+            await vm.SelectCharacterCommand.Execute(vm.Characters[1]).FirstAsync(); // Aster
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(Color.FromUInt32(0xFF9D7BE8), Assert.IsAssignableFrom<ISolidColorBrush>(label.Fill).Color);
+            Assert.Equal("A", letter.Text);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            Application.Current.RequestedThemeVariant = originalTheme;
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 选主播弹层首字母用主播专属识别色（盲审低危补锚）：删 Foreground 绑定即红。
+    // 需 FluentTheme：headless 裸跑时 ItemsControl 无模板不物化条目（滚动条测试同坑）
+    [AvaloniaFact]
+    public void CharacterPicker_FirstLetterUsesHostAccent()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var originalTheme = Application.Current!.RequestedThemeVariant;
+        Application.Current.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
+        var fluent = new Avalonia.Themes.Fluent.FluentTheme();
+        Application.Current.Styles.Add(fluent);
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            // 先让 VM 启动链沉淀：初始角色应用（SwitchCharacter）会顺手关弹层标志，
+            // 设标志跑赢启动续体会被复位（探针实证）
+            Dispatcher.UIThread.RunJobs();
+            Dispatcher.UIThread.RunJobs();
+            vm.IsCharacterPickerOpen = true;
+            Dispatcher.UIThread.RunJobs();
+
+            var picker = window.GetVisualDescendants().OfType<CharacterPicker>().Single();
+            // 弹层条目 = 加粗首字母 + 常规名（共 6 个条目，取第一个 = Lumen）；首字母必须是专属色而非继承前景
+            var boldLetter = picker.GetVisualDescendants().OfType<TextBlock>()
+                .First(t => t.FontWeight == FontWeight.Bold && t.Text?.Length == 1);
+            var expected = AIRadio.Desktop.Converters.CharacterAccentConverter.GetAccent(vm.Characters[0]);
+            Assert.Equal(expected, Assert.IsAssignableFrom<ISolidColorBrush>(boldLetter.Foreground).Color);
+            Assert.Equal("L", boldLetter.Text);
+        }
+        finally
+        {
+            window?.Close();
+            Application.Current.Styles.Remove(fluent);
+            vm.Dispose();
+            Application.Current.RequestedThemeVariant = originalTheme;
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 说话期黑胶唱片旋转（电唱机隐喻）、停止后回正——闲置态字母停在任意角度会歪着像缺陷
+    [AvaloniaFact]
+    public async Task DiscSpinsWhileSpeaking_ResetsUprightWhenDone()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var disc = window.FindControl<Grid>("AvatarDisc")
+                ?? throw new InvalidOperationException("AvatarDisc not found");
+            var spin = Assert.IsType<RotateTransform>(disc.RenderTransform);
+            Assert.Equal(0, spin.Angle);
+
+            vm.ChatVM.IsSpeaking = true;
+            Dispatcher.UIThread.RunJobs();
+            var deadline = DateTimeOffset.Now.AddSeconds(2);
+            var sawSpin = false;
+            while (DateTimeOffset.Now < deadline)
+            {
+                if (spin.Angle > 0)
+                {
+                    sawSpin = true;
+                    break;
+                }
+                await Task.Delay(8);
+            }
+            Assert.True(sawSpin, $"disc never spun, angle={spin.Angle}");
+
+            vm.ChatVM.IsSpeaking = false;
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(80); // 让已取消循环的收尾 continuation 跑完
+            Assert.Equal(0, spin.Angle);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 锚定设置按钮的实心齿轮剪影（单 Path、Fill 填充、无 Stroke）——两代旧图标在此暴露：
+    // 调音台滑杆（单体 Stroke 线稿）与描边圆环+独立齿块（Panel 组合，被用户读成太阳）。
     [AvaloniaFact]
     public void BrandHeader_SettingsButton_ShowsCompositeGearGlyph()
     {
@@ -133,7 +313,7 @@ public class BrandHeaderHostNameTests
         try
         {
             window = new MainWindow { DataContext = vm };
-            // headless 无主题字典：注入齿轮两件套消费的颜色键，DynamicResource 才可解析
+            // headless 无主题字典：注入齿轮消费的颜色键，DynamicResource 才可解析
             window.Resources.MergedDictionaries.Add(new ResourceDictionary
             {
                 ["C_FFEDEDF5"] = Avalonia.Media.Color.FromUInt32(0xFFEDEDF5)
@@ -144,15 +324,10 @@ public class BrandHeaderHostNameTests
             var button = window.FindControl<Button>("SettingsButton")
                 ?? throw new InvalidOperationException("SettingsButton not found");
 
-            var panel = Assert.IsType<Panel>(button.Content);
-            var teeth = panel.Children.OfType<Avalonia.Controls.Shapes.Path>().Single();
-            var ring = panel.Children.OfType<Ellipse>().Single();
-
-            // 齿块填充、圆环描边中空：齿轮的两件套构造（圆环被填实会糊成饼）
-            Assert.NotNull(teeth.Fill);
-            Assert.Null(teeth.Stroke);
-            Assert.NotNull(ring.Stroke);
-            Assert.Null(ring.Fill);
+            // 实心剪影：填充成体、无描边（线稿 Stroke 齿轮 15px 下糊、分离齿块像太阳）
+            var gear = Assert.IsType<Avalonia.Controls.Shapes.Path>(button.Content);
+            Assert.NotNull(gear.Fill);
+            Assert.Null(gear.Stroke);
         }
         finally
         {

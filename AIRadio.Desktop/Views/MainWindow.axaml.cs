@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using ReactiveUI;
@@ -22,10 +23,12 @@ public partial class MainWindow : Window, IDisposable
 
     private ViewModels.MainWindowViewModel? _activeVm;
     private Border? _avatarBorder;
+    private Grid? _avatarDisc;
     private Action<string, string>? _djVisualCueHandler;
     private Action<float>? _ttsLevelHandler;
     private IDisposable? _speakingSub;
     private CancellationTokenSource? _glowCts;
+    private CancellationTokenSource? _spinCts;
     private volatile float _ttsTargetLevel;
     private float _glowCurrent;
     private IDisposable? _compactModeSub;
@@ -51,6 +54,7 @@ public partial class MainWindow : Window, IDisposable
         InitializeComponent();
         InputFocusRelease.Attach(this);
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
+        _avatarDisc = this.FindControl<Grid>("AvatarDisc");
         Opened += OnOpenedScheduleTaskbarIconReassert;
 
         DataContextChanged += (_, _) =>
@@ -66,6 +70,7 @@ public partial class MainWindow : Window, IDisposable
                     _speakingSub?.Dispose();
                     _speakingSub = null;
                     StopGlow();
+                    StopSpin();
                     if (_djVisualCueHandler != null)
                     {
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
@@ -230,9 +235,15 @@ public partial class MainWindow : Window, IDisposable
     private void OnSpeakingChanged(bool speaking)
     {
         if (speaking)
+        {
             StartGlow();
+            StartSpin();
+        }
         else
+        {
             StopGlow();
+            StopSpin();
+        }
     }
 
     private void StartGlow()
@@ -249,6 +260,48 @@ public partial class MainWindow : Window, IDisposable
         _glowCts?.Cancel();
         if (_avatarBorder is Border badge)
             badge.Opacity = 1;
+    }
+
+    // 说话期黑胶唱片旋转（电唱机隐喻，2026-11-03 用户裁决的头像方案 A）：
+    // 旋转挂在内层 AvatarDisc 的 RotateTransform 上，与外层徽章的辉光（Opacity）、
+    // 弹跳（TranslateTransform）各占各的通道互不干扰；45°/s 慢转与辉光同 33ms 节拍
+    private void StartSpin()
+    {
+        if (_avatarDisc is not Grid disc || disc.RenderTransform is not RotateTransform spin)
+            return;
+        _spinCts?.Cancel();
+        _spinCts = new CancellationTokenSource();
+        _ = RunSpinAsync(spin, _spinCts.Token);
+    }
+
+    private void StopSpin()
+    {
+        _spinCts?.Cancel();
+        // 停转回正：闲置态标签字母若停在任意角度会歪着，观感像缺陷
+        if (_avatarDisc is Grid { RenderTransform: RotateTransform spinAfter })
+            spinAfter.Angle = 0;
+    }
+
+    private static async Task RunSpinAsync(RotateTransform spin, CancellationToken token)
+    {
+        const double degreesPerSecond = 45;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                spin.Angle = (spin.Angle + degreesPerSecond * 0.033) % 360;
+                await Task.Delay(33, token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 停止后的角度回正由 StopSpin 负责
+        }
+        catch (Exception ex)
+        {
+            // 循环任务被丢弃（_ =）：非取消异常不捕获会成为 unobserved task exception
+            Serilog.Log.Debug(ex, "TTS disc spin loop failed");
+        }
     }
 
     // 说话期徽章辉光：目标取播放链实时峰值（γ=0.5 抬高弱信号的可感对比），30fps
@@ -286,6 +339,7 @@ public partial class MainWindow : Window, IDisposable
         foreach (var timer in _iconReassertTimers) timer.Stop();
         _iconReassertTimers.Clear();
         StopGlow();
+        StopSpin();
         if (_activeVm != null)
         {
             if (_djVisualCueHandler != null)
