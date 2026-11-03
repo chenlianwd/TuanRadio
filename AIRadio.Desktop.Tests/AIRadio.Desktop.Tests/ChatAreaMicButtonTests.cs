@@ -29,6 +29,10 @@ public class ChatAreaMicButtonTests
 
     /// <summary>带天气服务注入的重载：供设置页天气回显等需要驱动 WeatherVM 的端到端测试使用。</summary>
     internal static MainWindowViewModel CreateViewModel(out Mock<IAudioService> audio, IWeatherService? weather)
+        => CreateViewModel(out audio, weather, null);
+
+    /// <summary>带音源注入的重载：供需要真实 Broker 物化音源列表的端到端测试使用（如设置页优先级按钮）。</summary>
+    internal static MainWindowViewModel CreateViewModel(out Mock<IAudioService> audio, IWeatherService? weather, IMusicSearchService? musicSearch)
     {
         audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
@@ -51,7 +55,7 @@ public class ChatAreaMicButtonTests
             dj.Object,
             new Mock<ILLMService>().Object,
             new Mock<ISecureStorage>().Object,
-            new Mock<IMusicSearchService>().Object,
+            musicSearch ?? new Mock<IMusicSearchService>().Object,
             new Mock<ISttService>().Object,
             Path.Combine(dir, "playlist.json"),
             settingsFile: Path.Combine(dir, "settings.json"),

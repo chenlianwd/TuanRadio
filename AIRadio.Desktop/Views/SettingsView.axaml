@@ -82,9 +82,12 @@
                 </Button>
             </StackPanel>
 
-            <!-- 内容页：五页同格叠放，仅当前页可见（同 PlaylistDrawer.axaml 页签手法） -->
+            <!-- 内容页：五页同格叠放，仅当前页可见（同 PlaylistDrawer.axaml 页签手法）。
+                 Avalonia 11 Fluent 滚动条是 overlay：宽 16px 悬浮于内容之上、不占布局空间，
+                 贴右缘的可点控件（音源优先级 ↑/↓、音色试听）会落进滚动条命中区点不到
+                 （2026-11-03 用户实测）。内层 Grid 统一右让 16px 出 gutter 避开。 -->
             <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
-                <Grid>
+                <Grid Margin="0,0,16,0">
                     <!-- 页 0：AI 服务 -->
                     <StackPanel x:Name="PageAi" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
                         <StackPanel Spacing="6">
