@@ -158,30 +158,37 @@
                                 <TextBlock Text="{DynamicResource S_KugouHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
                             </StackPanel>
 
-                            <StackPanel Spacing="4" Margin="0,6,0,0">
-                                <TextBlock Text="{DynamicResource S_OpenSubsonicTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                                <TextBox Text="{Binding OpenSubsonicServerUrl, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUrl}"/>
-                                <TextBox Text="{Binding OpenSubsonicUsername, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUser}"/>
-                                <TextBox Text="{Binding OpenSubsonicPassword, Mode=TwoWay}" PasswordChar="●"
-                                         Watermark="{DynamicResource S_OpenSubsonicPassword}"/>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Command="{Binding ConnectOpenSubsonicCommand}"
-                                            Content="{DynamicResource S_OpenSubsonicConnect}"
-                                            IsEnabled="{Binding !IsConnectingOpenSubsonic}" Padding="14,6" FontSize="12"/>
-                                    <Button Command="{Binding DisconnectOpenSubsonicCommand}"
-                                            Content="{DynamicResource S_OpenSubsonicDisconnect}" Padding="14,6" FontSize="12"/>
+                            <!-- 私有曲库收纳：永远默认折叠（自建 Navidrome/Subsonic 服务器才用得上），
+                                 设置弹层每次打开时重置折叠；标题挪进 Expander.Header -->
+                            <Expander x:Name="OpenSubsonicExpander" Margin="0,6,0,0"
+                                      IsExpanded="{Binding IsOpenSubsonicExpanded, Mode=TwoWay}">
+                                <Expander.Header>
+                                    <TextBlock Text="{DynamicResource S_OpenSubsonicTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                </Expander.Header>
+                                <StackPanel Spacing="4">
+                                    <TextBox Text="{Binding OpenSubsonicServerUrl, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUrl}"/>
+                                    <TextBox Text="{Binding OpenSubsonicUsername, Mode=TwoWay}" Watermark="{DynamicResource S_OpenSubsonicUser}"/>
+                                    <TextBox Text="{Binding OpenSubsonicPassword, Mode=TwoWay}" PasswordChar="●"
+                                             Watermark="{DynamicResource S_OpenSubsonicPassword}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Command="{Binding ConnectOpenSubsonicCommand}"
+                                                Content="{DynamicResource S_OpenSubsonicConnect}"
+                                                IsEnabled="{Binding !IsConnectingOpenSubsonic}" Padding="14,6" FontSize="12"/>
+                                        <Button Command="{Binding DisconnectOpenSubsonicCommand}"
+                                                Content="{DynamicResource S_OpenSubsonicDisconnect}" Padding="14,6" FontSize="12"/>
+                                    </StackPanel>
+                                    <TextBlock Text="{DynamicResource S_OpenSubsonicQuality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <ComboBox SelectedValue="{Binding SelectedOpenSubsonicQuality, Mode=TwoWay}"
+                                              ItemsSource="{Binding OpenSubsonicQualities}"
+                                              SelectedValueBinding="{Binding Id}"
+                                              DisplayMemberBinding="{Binding DisplayName}"
+                                              HorizontalAlignment="Stretch"/>
+                                    <TextBlock Text="{DynamicResource S_OpenSubsonicQualityHint}" Foreground="{DynamicResource C_FF666666}"
+                                               FontSize="11" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding OpenSubsonicStatus}" Foreground="{DynamicResource C_FFFFC86B}"
+                                               FontSize="11" TextWrapping="Wrap"/>
                                 </StackPanel>
-                                <TextBlock Text="{DynamicResource S_OpenSubsonicQuality}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                                <ComboBox SelectedValue="{Binding SelectedOpenSubsonicQuality, Mode=TwoWay}"
-                                          ItemsSource="{Binding OpenSubsonicQualities}"
-                                          SelectedValueBinding="{Binding Id}"
-                                          DisplayMemberBinding="{Binding DisplayName}"
-                                          HorizontalAlignment="Stretch"/>
-                                <TextBlock Text="{DynamicResource S_OpenSubsonicQualityHint}" Foreground="{DynamicResource C_FF666666}"
-                                           FontSize="11" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding OpenSubsonicStatus}" Foreground="{DynamicResource C_FFFFC86B}"
-                                           FontSize="11" TextWrapping="Wrap"/>
-                            </StackPanel>
+                            </Expander>
 
                             <StackPanel Spacing="4" Margin="0,6,0,0">
                                 <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>

@@ -264,4 +264,78 @@ public class SettingsNavTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    // 私有曲库收纳（永远默认折叠）的行为锚：默认态折叠、设置弹层每次"打开沿"重置折叠、
+    // 会话内属性自由（重置只发生在打开瞬间，不在弹层开着时持续压制）。
+    // 纯 VM 级（重置挂 MainWindowViewModel._settingsOpenSub，与画像卡刷新同点）。
+    [Fact]
+    public void OpenSubsonicCollapse_AlwaysResetsWhenSettingsOpens()
+    {
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        try
+        {
+            // 永远默认折叠（无论是否配置过；已配置与否不由本属性承载）
+            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+
+            // 模拟用户点开（Expander TwoWay 回写）→ 开弹层 → 回到折叠
+            vm.SettingsVM.IsOpenSubsonicExpanded = true;
+            vm.IsSettingsOpen = true;
+            Assert.True(vm.IsSettingsOpen);
+            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+
+            // 弹层开着时属性自由：重置只在打开沿触发一次
+            vm.SettingsVM.IsOpenSubsonicExpanded = true;
+            Assert.True(vm.SettingsVM.IsOpenSubsonicExpanded);
+
+            // 关闭 → 再开 → 又回折叠
+            vm.IsSettingsOpen = false;
+            vm.SettingsVM.IsOpenSubsonicExpanded = true;
+            vm.IsSettingsOpen = true;
+            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    // Expander 接线端到端：IsOpenSubsonicExpanded（VM）→ IsExpanded（View）绑定链锚定。
+    // 绑定若被删/路径写错，纯 VM 测试抓不到（属性仍存在），控件将恒停默认折叠。
+    [AvaloniaFact]
+    public void OpenSubsonicExpander_IsExpandedFollowsViewModel()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            var view = window.FindDescendantOfType<SettingsView>()
+                ?? throw new InvalidOperationException("SettingsView not found");
+            var expander = view.FindControl<Expander>("OpenSubsonicExpander")
+                ?? throw new InvalidOperationException("OpenSubsonicExpander not found");
+
+            Assert.False(expander.IsExpanded);
+            vm.SettingsVM.IsOpenSubsonicExpanded = true;
+            Assert.True(expander.IsExpanded);
+            vm.SettingsVM.IsOpenSubsonicExpanded = false;
+            Assert.False(expander.IsExpanded);
+
+            // View→VM 回写腿：TwoWay 是重置机制的功能前提（回写丢失时重置写 false 值未变化
+            // 不发 INPC，View 不被推回折叠，展开态跨弹层会话泄漏——盲审变异 A 实证漏网点）
+            expander.IsExpanded = true;
+            Assert.True(vm.SettingsVM.IsOpenSubsonicExpanded);
+            expander.IsExpanded = false;
+            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }
