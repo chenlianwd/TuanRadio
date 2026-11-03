@@ -30,7 +30,8 @@ public class ConverterEquivalenceTests
     }
 
     [Theory]
-    [InlineData(RadioState.Idle, "TUANRADIO FM")]
+    // Idle 也显示 ON AIR：灯箱字母常驻、背光熄灭（熄灯态），不再与左侧品牌字重复
+    [InlineData(RadioState.Idle, "ON AIR")]
     [InlineData(RadioState.Curating, "CURATING")]
     [InlineData(RadioState.Searching, "SEARCHING")]
     [InlineData(RadioState.Speaking, "SPEAKING")]

@@ -54,7 +54,6 @@
             <Color x:Key="C_FF44465C">#FF44465C</Color>
             <Color x:Key="C_FF56F5C4">#FF56F5C4</Color>
             <Color x:Key="C_FF666666">#FF666666</Color>
-            <Color x:Key="C_FF7F7896">#FF7F7896</Color>
             <Color x:Key="C_FF858594">#FF858594</Color>
             <Color x:Key="C_FF8A8A96">#FF8A8A96</Color>
             <Color x:Key="C_FF8DFFC8">#FF8DFFC8</Color>
@@ -129,7 +128,6 @@
             <Color x:Key="C_FF44465C">#FF6A6478</Color>
             <Color x:Key="C_FF56F5C4">#FF178A65</Color>
             <Color x:Key="C_FF666666">#FF756E7C</Color>
-            <Color x:Key="C_FF7F7896">#FFDCD5E8</Color>
             <Color x:Key="C_FF858594">#FF746D7C</Color>
             <Color x:Key="C_FF8A8A96">#FF6D6675</Color>
             <Color x:Key="C_FF8DFFC8">#FF146C4F</Color>
