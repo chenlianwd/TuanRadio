@@ -193,6 +193,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool IsConnectingOpenSubsonic { get; set; }
     /// <summary>私有曲库区块折叠态：永远默认折叠（不随配置变化），设置弹层每次打开时重置。</summary>
     [Reactive] public partial bool IsOpenSubsonicExpanded { get; set; }
+    /// <summary>Audius 区块折叠态：同私有曲库（零配置即用，Key 是可选增强），永远默认折叠。</summary>
+    [Reactive] public partial bool IsAudiusExpanded { get; set; }
+    /// <summary>YouTube(yt-dlp) 区块折叠态：同私有曲库（国内默认不可达，登录态是高级配置），永远默认折叠。</summary>
+    [Reactive] public partial bool IsYtdlpExpanded { get; set; }
     [Reactive] public partial string AudiusApiKeyInput { get; set; } = string.Empty;
     [Reactive] public partial string AudiusStatus { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
