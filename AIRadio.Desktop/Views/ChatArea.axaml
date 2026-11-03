@@ -120,27 +120,28 @@
 
         <!-- Input -->
         <Border Grid.Row="1" Background="{DynamicResource C_E91B1B2A}" Padding="22,10">
-            <!-- 发送列 56 与麦克风同宽：SEND 文字（Consolas 11 bold ≈27px）在 50px 列的
-                 28px 内容区只剩 1px 余量，字体回退/度量漂移即裁剪 -->
-            <Grid ColumnDefinitions="*,56,56" ColumnSpacing="9">
+            <!-- 麦克风+SEND 同簇按键组（簇内 4px、与输入框 9px）：等宽 Grid 列下两按钮
+                 中心距被列距+按钮内边距放大，观感间隔过开（用户反馈）；收窄为贴内容宽度的紧凑簇 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="9">
                 <TextBox Grid.Column="0" Text="{Binding ChatVM.InputText, Mode=TwoWay}"
                          Watermark="{DynamicResource S_ChatWatermark}" KeyDown="OnChatInputKeyDown" TabIndex="10"/>
-                <Button x:Name="MicButton" Grid.Column="1" FontSize="10"
-                        Background="{DynamicResource C_33262835}"
-                        PointerCaptureLost="OnMicPointerCaptureLost"
-                        ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="{DynamicResource S_HoldToTalk}">
-                    <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
-                </Button>
-                <!-- SEND 实体按键：与 VOICE/NOPE 同族复古芯片词汇（同套主题感知 token），
-                     替换原紫灰圆钮（C_FF7F7896 为游离于配色主题外的硬编码遗留）；
-                     英文全大写与 VOL/ON AIR 同为有意保留的设计元素，S_Send 只承担无障碍名 -->
-                <Button x:Name="SendButton" Grid.Column="2"
-                        Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_3356F5C4}"
-                        Command="{Binding ChatVM.SendMessageCommand}"
-                        ToolTip.Tip="{DynamicResource S_Send}" AutomationProperties.Name="{DynamicResource S_Send}">
-                    <TextBlock Text="SEND" FontSize="11" FontWeight="700" FontFamily="Consolas"
-                               Foreground="{DynamicResource C_FFB9FFE8}"/>
-                </Button>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="MicButton" FontSize="10"
+                            Background="{DynamicResource C_33262835}"
+                            PointerCaptureLost="OnMicPointerCaptureLost"
+                            ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="{DynamicResource S_HoldToTalk}">
+                        <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
+                    </Button>
+                    <!-- 发送按键：芯片壳与 VOICE/NOPE 同族（主题感知 token，替换原紫灰圆钮的
+                         硬编码 C_FF7F7896），图标用箭头——语言无关（须考虑不识英文的用户，
+                         2026-11-03 用户裁决）；与麦克风同内边距、同自然宽，成对紧凑 -->
+                    <Button x:Name="SendButton"
+                            Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_3356F5C4}"
+                            Command="{Binding ChatVM.SendMessageCommand}"
+                            ToolTip.Tip="{DynamicResource S_Send}" AutomationProperties.Name="{DynamicResource S_Send}">
+                        <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFB9FFE8}" StrokeThickness="2" Data="M12,19 L12,5 M5,12 L12,5 L19,12"/>
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
     </Grid>
