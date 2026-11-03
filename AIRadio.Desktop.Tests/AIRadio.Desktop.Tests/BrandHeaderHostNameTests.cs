@@ -4,7 +4,9 @@ using System.Reactive.Linq;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Views;
 using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
 using Avalonia.Headless.XUnit;
+
 using Avalonia.Media;
 using Avalonia.Threading;
 using Moq;
@@ -110,6 +112,47 @@ public class BrandHeaderHostNameTests
             Dispatcher.UIThread.RunJobs();
             Assert.DoesNotContain("speaking", badge.Classes);
             Assert.DoesNotContain("speaking", hostName.Classes);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    // 锚定设置按钮的构造式齿轮（齿块 Path + 描边圆环 Ellipse 的组合内容）——
+    // 旧「调音台滑杆」单体 Path 复活（用户看不出是设置）会在此暴露。
+    [AvaloniaFact]
+    public void BrandHeader_SettingsButton_ShowsCompositeGearGlyph()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            // headless 无主题字典：注入齿轮两件套消费的颜色键，DynamicResource 才可解析
+            window.Resources.MergedDictionaries.Add(new ResourceDictionary
+            {
+                ["C_FFEDEDF5"] = Avalonia.Media.Color.FromUInt32(0xFFEDEDF5)
+            });
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var button = window.FindControl<Button>("SettingsButton")
+                ?? throw new InvalidOperationException("SettingsButton not found");
+
+            var panel = Assert.IsType<Panel>(button.Content);
+            var teeth = panel.Children.OfType<Avalonia.Controls.Shapes.Path>().Single();
+            var ring = panel.Children.OfType<Ellipse>().Single();
+
+            // 齿块填充、圆环描边中空：齿轮的两件套构造（圆环被填实会糊成饼）
+            Assert.NotNull(teeth.Fill);
+            Assert.Null(teeth.Stroke);
+            Assert.NotNull(ring.Stroke);
+            Assert.Null(ring.Fill);
         }
         finally
         {
