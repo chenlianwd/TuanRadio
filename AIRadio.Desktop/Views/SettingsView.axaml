@@ -190,33 +190,45 @@
                                 </StackPanel>
                             </Expander>
 
-                            <StackPanel Spacing="4" Margin="0,6,0,0">
-                                <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                                <TextBox Text="{Binding AudiusApiKeyInput, Mode=TwoWay}" PasswordChar="●"
-                                         Watermark="{DynamicResource S_AudiusApiKey}"/>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Command="{Binding SaveAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusSave}"
-                                            Padding="14,6" FontSize="12"/>
-                                    <Button Command="{Binding ClearAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusClear}"
-                                            Padding="14,6" FontSize="12"/>
+                            <!-- Audius 收纳：零配置即用（公开无 Key 模式），Key 是可选增强 -->
+                            <Expander x:Name="AudiusExpander" Margin="0,6,0,0"
+                                      IsExpanded="{Binding IsAudiusExpanded, Mode=TwoWay}">
+                                <Expander.Header>
+                                    <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                </Expander.Header>
+                                <StackPanel Spacing="4">
+                                    <TextBox Text="{Binding AudiusApiKeyInput, Mode=TwoWay}" PasswordChar="●"
+                                             Watermark="{DynamicResource S_AudiusApiKey}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Command="{Binding SaveAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusSave}"
+                                                Padding="14,6" FontSize="12"/>
+                                        <Button Command="{Binding ClearAudiusApiKeyCommand}" Content="{DynamicResource S_AudiusClear}"
+                                                Padding="14,6" FontSize="12"/>
+                                    </StackPanel>
+                                    <TextBlock Text="{DynamicResource S_AudiusHint}" Foreground="{DynamicResource C_FF666666}"
+                                               FontSize="11" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding AudiusStatus}" Foreground="{DynamicResource C_FFFFC86B}"
+                                               FontSize="11" TextWrapping="Wrap"/>
                                 </StackPanel>
-                                <TextBlock Text="{DynamicResource S_AudiusHint}" Foreground="{DynamicResource C_FF666666}"
-                                           FontSize="11" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding AudiusStatus}" Foreground="{DynamicResource C_FFFFC86B}"
-                                           FontSize="11" TextWrapping="Wrap"/>
-                            </StackPanel>
+                            </Expander>
 
-                            <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}">
-                                <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
-                                <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
-                                          ItemsSource="{Binding YtdlpBrowsers}"
-                                          SelectedValueBinding="{Binding Id}"
-                                          DisplayMemberBinding="{Binding DisplayName}"
-                                          HorizontalAlignment="Stretch"/>
-                                <TextBlock Text="{DynamicResource S_YtdlpHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
-                                           Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
-                            </StackPanel>
+                            <!-- YouTube 收纳：国内默认不可达（yt-dlp 子进程只认环境变量代理），登录态是高级配置 -->
+                            <Expander x:Name="YtdlpExpander" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}"
+                                      IsExpanded="{Binding IsYtdlpExpanded, Mode=TwoWay}">
+                                <Expander.Header>
+                                    <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                </Expander.Header>
+                                <StackPanel Spacing="4">
+                                    <ComboBox SelectedValue="{Binding SelectedYtdlpBrowser}"
+                                              ItemsSource="{Binding YtdlpBrowsers}"
+                                              SelectedValueBinding="{Binding Id}"
+                                              DisplayMemberBinding="{Binding DisplayName}"
+                                              HorizontalAlignment="Stretch"/>
+                                    <TextBlock Text="{DynamicResource S_YtdlpHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding YtdlpCookieNotice}" IsVisible="{Binding IsYtdlpCookieNoticeVisible}"
+                                               Foreground="{DynamicResource C_FFFFC86B}" FontSize="11" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Expander>
                         </StackPanel>
 
                         <StackPanel Spacing="6">

@@ -2,6 +2,7 @@ using System;
 using System.Reactive.Concurrency;
 using System.Threading;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.ViewModels;
 using AIRadio.Desktop.Views;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -265,33 +266,48 @@ public class SettingsNavTests
         }
     }
 
-    // 私有曲库收纳（永远默认折叠）的行为锚：默认态折叠、设置弹层每次"打开沿"重置折叠、
-    // 会话内属性自由（重置只发生在打开瞬间，不在弹层开着时持续压制）。
-    // 纯 VM 级（重置挂 MainWindowViewModel._settingsOpenSub，与画像卡刷新同点）。
+    // 可选音源配置区块（私有曲库/Audius/YouTube）收纳（永远默认折叠）的行为锚：默认态折叠、
+    // 设置弹层每次"打开沿"重置折叠、会话内属性自由（重置只发生在打开瞬间，不在弹层开着时持续压制）。
+    // 三块折叠件行为同构，循环断言——任一属性/重置行缺失即红。纯 VM 级
+    // （重置挂 MainWindowViewModel._settingsOpenSub，与画像卡刷新同点）。
     [Fact]
-    public void OpenSubsonicCollapse_AlwaysResetsWhenSettingsOpens()
+    public void OptionalSourceExpanders_AlwaysResetWhenSettingsOpens()
     {
         var vm = ChatAreaMicButtonTests.CreateViewModel();
         try
         {
-            // 永远默认折叠（无论是否配置过；已配置与否不由本属性承载）
-            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+            var specs = new (Func<MainWindowViewModel, bool> Get, Action<MainWindowViewModel, bool> Set)[]
+            {
+                (v => v.SettingsVM.IsOpenSubsonicExpanded, (v, x) => v.SettingsVM.IsOpenSubsonicExpanded = x),
+                (v => v.SettingsVM.IsAudiusExpanded, (v, x) => v.SettingsVM.IsAudiusExpanded = x),
+                (v => v.SettingsVM.IsYtdlpExpanded, (v, x) => v.SettingsVM.IsYtdlpExpanded = x),
+            };
 
-            // 模拟用户点开（Expander TwoWay 回写）→ 开弹层 → 回到折叠
-            vm.SettingsVM.IsOpenSubsonicExpanded = true;
+            // 永远默认折叠（无论是否配置过）
+            foreach (var (get, _) in specs)
+                Assert.False(get(vm));
+
+            // 模拟用户点开（Expander TwoWay 回写）→ 开弹层 → 全部回到折叠
+            foreach (var (_, set) in specs)
+                set(vm, true);
             vm.IsSettingsOpen = true;
             Assert.True(vm.IsSettingsOpen);
-            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+            foreach (var (get, _) in specs)
+                Assert.False(get(vm));
 
             // 弹层开着时属性自由：重置只在打开沿触发一次
-            vm.SettingsVM.IsOpenSubsonicExpanded = true;
-            Assert.True(vm.SettingsVM.IsOpenSubsonicExpanded);
+            foreach (var (_, set) in specs)
+                set(vm, true);
+            foreach (var (get, _) in specs)
+                Assert.True(get(vm));
 
             // 关闭 → 再开 → 又回折叠
             vm.IsSettingsOpen = false;
-            vm.SettingsVM.IsOpenSubsonicExpanded = true;
+            foreach (var (_, set) in specs)
+                set(vm, true);
             vm.IsSettingsOpen = true;
-            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+            foreach (var (get, _) in specs)
+                Assert.False(get(vm));
         }
         finally
         {
@@ -299,10 +315,11 @@ public class SettingsNavTests
         }
     }
 
-    // Expander 接线端到端：IsOpenSubsonicExpanded（VM）→ IsExpanded（View）绑定链锚定。
-    // 绑定若被删/路径写错，纯 VM 测试抓不到（属性仍存在），控件将恒停默认折叠。
+    // Expander 接线端到端：三个可选源区块 VM→View IsExpanded 绑定链 + View→VM 回写腿。
+    // 绑定若被删/路径写错，纯 VM 测试抓不到（属性仍存在）；回写腿是重置机制的功能前提
+    // （回写丢失时重置写 false 值未变化不发 INPC，View 不被推回折叠——盲审变异实证漏网点）。
     [AvaloniaFact]
-    public void OpenSubsonicExpander_IsExpandedFollowsViewModel()
+    public void OptionalSourceExpanders_IsExpandedFollowsViewModelTwoWay()
     {
         var originalScheduler = RxApp.MainThreadScheduler;
         RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
@@ -315,21 +332,35 @@ public class SettingsNavTests
 
             var view = window.FindDescendantOfType<SettingsView>()
                 ?? throw new InvalidOperationException("SettingsView not found");
-            var expander = view.FindControl<Expander>("OpenSubsonicExpander")
-                ?? throw new InvalidOperationException("OpenSubsonicExpander not found");
+            var specs = new (Func<MainWindowViewModel, bool> Get, Action<MainWindowViewModel, bool> Set, Expander Expander)[]
+            {
+                (v => v.SettingsVM.IsOpenSubsonicExpanded, (v, x) => v.SettingsVM.IsOpenSubsonicExpanded = x,
+                    view.FindControl<Expander>("OpenSubsonicExpander") ?? throw new InvalidOperationException("OpenSubsonicExpander not found")),
+                (v => v.SettingsVM.IsAudiusExpanded, (v, x) => v.SettingsVM.IsAudiusExpanded = x,
+                    view.FindControl<Expander>("AudiusExpander") ?? throw new InvalidOperationException("AudiusExpander not found")),
+                (v => v.SettingsVM.IsYtdlpExpanded, (v, x) => v.SettingsVM.IsYtdlpExpanded = x,
+                    view.FindControl<Expander>("YtdlpExpander") ?? throw new InvalidOperationException("YtdlpExpander not found")),
+            };
 
-            Assert.False(expander.IsExpanded);
-            vm.SettingsVM.IsOpenSubsonicExpanded = true;
-            Assert.True(expander.IsExpanded);
-            vm.SettingsVM.IsOpenSubsonicExpanded = false;
-            Assert.False(expander.IsExpanded);
+            // 可见性锚：YouTube 区块的实验源可见性（HasExperimentalProviders）随收纳挪到 Expander 上，搬移不丢
+            Assert.Equal(vm.SettingsVM.HasExperimentalProviders, specs[2].Expander.IsVisible);
 
-            // View→VM 回写腿：TwoWay 是重置机制的功能前提（回写丢失时重置写 false 值未变化
-            // 不发 INPC，View 不被推回折叠，展开态跨弹层会话泄漏——盲审变异 A 实证漏网点）
-            expander.IsExpanded = true;
-            Assert.True(vm.SettingsVM.IsOpenSubsonicExpanded);
-            expander.IsExpanded = false;
-            Assert.False(vm.SettingsVM.IsOpenSubsonicExpanded);
+            foreach (var (get, set, expander) in specs)
+            {
+                Assert.False(expander.IsExpanded);
+
+                // VM → View
+                set(vm, true);
+                Assert.True(expander.IsExpanded);
+                set(vm, false);
+                Assert.False(expander.IsExpanded);
+
+                // View → VM（TwoWay 回写腿）
+                expander.IsExpanded = true;
+                Assert.True(get(vm));
+                expander.IsExpanded = false;
+                Assert.False(get(vm));
+            }
         }
         finally
         {

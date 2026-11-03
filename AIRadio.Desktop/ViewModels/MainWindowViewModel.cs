@@ -216,13 +216,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // 弹层打开即刷新画像展示卡：设置页 TabIndex 会话内不重置，重开可直落收听画像页
         // 而不走切页命令（那条路径上也挂了刷新，双保险不冲突）。
-        // 私有曲库区块同点重置折叠：默认态永远是折叠，不随是否配置过变化
+        // 可选音源配置区块（私有曲库/Audius/YouTube）同点重置折叠：默认态永远是折叠
         _settingsOpenSub = this.WhenAnyValue(x => x.IsSettingsOpen)
             .Where(open => open)
             .Subscribe(_ =>
             {
                 SettingsVM.RefreshProfileCard();
                 SettingsVM.IsOpenSubsonicExpanded = false;
+                SettingsVM.IsAudiusExpanded = false;
+                SettingsVM.IsYtdlpExpanded = false;
             });
 
         // 天气快照推给 DJ 串场的环境感知（时间/天气上下文，见 DJService.BuildTransitionPrompt）
