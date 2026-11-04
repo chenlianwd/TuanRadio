@@ -127,9 +127,9 @@ tools/shot/                 README 实机截图脚本（UIA 定位 + 窗口截�
 
 ### 相关文档
 
-- [ai-radio-plan.md](ai-radio-plan.md) — 当前实施计划与产品定位
+- [docs/plans/ai-radio-plan.md](docs/plans/ai-radio-plan.md) — 实施计划与产品定位（历史快照）
 - [docs/plans/](docs/plans/) — 各阶段设计实录（音源架构演进、收听画像、歌词模式、Broker 拆分等）
-- [DESIGN.md](DESIGN.md) / [ARCHITECTURE_REDESIGN.md](ARCHITECTURE_REDESIGN.md) — 历史文档（早期视觉参考与架构迁移方案）
+- [docs/history/DESIGN.md](docs/history/DESIGN.md) / [docs/history/ARCHITECTURE_REDESIGN.md](docs/history/ARCHITECTURE_REDESIGN.md) — 历史文档（早期视觉参考与架构迁移方案）
 
 ## 已知限制
 

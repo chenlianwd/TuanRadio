@@ -42,3 +42,11 @@ Desktop.ini
 
 # Test results (trx)
 TestResults/
+
+# 内部开发文档（本地保留，不随仓库分发）
+AGENTS.md
+CODE_REVIEW_REPORT.md
+AI电台竞品差距与迭代建议.md
+
+# 发布产物（tools/publish.ps1 输出）
+release/
