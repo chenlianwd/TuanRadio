@@ -98,21 +98,33 @@
                                 Command="{Binding ToggleCharacterPickerCommand}"
                                 ToolTip.Tip="{DynamicResource S_HostPicker}" AutomationProperties.Name="{DynamicResource S_HostPicker}">
                             <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                                <!-- 黑胶唱片头像：外层 Border 承担说话辉光/描圈/弹跳（RenderTransform
-                                     被 TranslateTransform 占用），内层 AvatarDisc 挂旋转互不干扰；
-                                     沟纹用低透明浅色（Light 档盘面变浅时近乎隐形，属可接受弱化） -->
+                                <!-- 黑胶唱片头像（网易云播放页黑胶的 34px 简化）：外缘高光 + 三圈沟纹 +
+                                     中心专属色标签 + 对置反光点；外层 Border 承担说话辉光/描圈/弹跳
+                                     （RenderTransform 被 TranslateTransform 占用），内层 AvatarDisc 挂旋转。
+                                     旋转中心必须写 RotateTransform CenterX/Y——RenderTransformOrigin="0.5,0.5"
+                                     是绝对 0.5px≈左上角（探针实证：整盘扫出徽章外），比例要写 50%,50% -->
                                 <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}"
                                         Classes.speaking="{Binding ChatVM.IsSpeaking}">
-                                    <Grid x:Name="AvatarDisc" Width="34" Height="34" RenderTransformOrigin="0.5,0.5">
+                                    <Grid x:Name="AvatarDisc" Width="34" Height="34">
                                         <Grid.RenderTransform>
-                                            <RotateTransform/>
+                                            <RotateTransform CenterX="17" CenterY="17"/>
                                         </Grid.RenderTransform>
+                                        <!-- 外缘高光（黑胶边缘反光） -->
+                                        <Ellipse Width="33" Height="33" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
+                                                 Fill="Transparent" Opacity="0.22"/>
+                                        <!-- 沟纹带：三圈同心细环（径向纹路在 34px 的简化；明暗交替更接近实物） -->
+                                        <Ellipse Width="29" Height="29" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
+                                                 Fill="Transparent" Opacity="0.10"/>
                                         <Ellipse Width="26" Height="26" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
-                                                 Fill="Transparent" Opacity="0.14"/>
-                                        <Ellipse Width="21" Height="21" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
-                                                 Fill="Transparent" Opacity="0.09"/>
+                                                 Fill="Transparent" Opacity="0.17"/>
+                                        <Ellipse Width="22" Height="22" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"
+                                                 Fill="Transparent" Opacity="0.10"/>
                                         <Ellipse x:Name="AvatarLabel" Width="16" Height="16"
                                                  Fill="{Binding SelectedCharacter, Converter={x:Static conv:CharacterAccentConverter.Instance}}"/>
+                                        <!-- 对置双反光点（轨道半径 12）：对称沟纹旋转不可见，靠非对称点让
+                                             慢转肉眼可辨（网易云以专辑封面非对称承担此职），静态时近乎隐形 -->
+                                        <Path Fill="{DynamicResource C_FFEDEDF5}" Opacity="0.4"
+                                              Data="M16.2,4.2 L17.8,4.2 L17.8,5.8 L16.2,5.8 Z M16.2,28.2 L17.8,28.2 L17.8,29.8 L16.2,29.8 Z"/>
                                         <!-- 墨色随主题：Dark 深墨（亮标签）/ Light 白墨（加深标签），同转换器供给 -->
                                         <TextBlock x:Name="AvatarLetter" Text="{Binding SelectedCharacter.DisplayName[0]}"
                                                    FontSize="10" FontWeight="700"

@@ -284,7 +284,8 @@ public partial class MainWindow : Window, IDisposable
 
     private static async Task RunSpinAsync(RotateTransform spin, CancellationToken token)
     {
-        const double degreesPerSecond = 45;
+        // 30°/s（12s/圈）：网易云黑胶约 18°/s 的慢转观感，34px 小盘稍快以保旋转可辨
+        const double degreesPerSecond = 30;
         try
         {
             while (!token.IsCancellationRequested)

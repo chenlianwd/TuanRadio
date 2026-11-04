@@ -184,6 +184,11 @@ public class BrandHeaderHostNameTests
         try
         {
             window = new MainWindow { DataContext = vm };
+            // headless 无主题字典：注入沟纹/反光点消费的颜色键，DynamicResource 才可解析
+            window.Resources.MergedDictionaries.Add(new ResourceDictionary
+            {
+                ["C_FFEDEDF5"] = Color.FromUInt32(0xFFEDEDF5)
+            });
             window.Show();
             Dispatcher.UIThread.RunJobs();
 
@@ -191,6 +196,12 @@ public class BrandHeaderHostNameTests
                 ?? throw new InvalidOperationException("AvatarLabel not found");
             var letter = window.FindControl<TextBlock>("AvatarLetter")
                 ?? throw new InvalidOperationException("AvatarLetter not found");
+            // 黑胶质感锚（2026-11-03 用户反馈"看不出是黑胶唱片"）：外缘高光+三圈沟纹
+            // = 盘面上 ≥4 个描边环（标签 Fill 无描边不计入）；退化回素圈在此大声失败
+            var disc = window.FindControl<Grid>("AvatarDisc")
+                ?? throw new InvalidOperationException("AvatarDisc not found");
+            Assert.True(disc.Children.OfType<Ellipse>().Count(e => e.Stroke != null) >= 4,
+                $"黑胶沟纹退化：描边环仅 {disc.Children.OfType<Ellipse>().Count(e => e.Stroke != null)} 个");
 
             Assert.Equal(Color.FromUInt32(0xFFE8A33D), Assert.IsAssignableFrom<ISolidColorBrush>(label.Fill).Color);
             // Dark 档标签是亮色，字母配深墨
@@ -271,6 +282,10 @@ public class BrandHeaderHostNameTests
             var disc = window.FindControl<Grid>("AvatarDisc")
                 ?? throw new InvalidOperationException("AvatarDisc not found");
             var spin = Assert.IsType<RotateTransform>(disc.RenderTransform);
+            // 旋转中心必须为盘心（17,17）：CenterX/Y 丢失会退化为绕 (0,0) 左上角旋转，
+            // 整盘扫出徽章外（2026-11-03 用户实测"转到外面去了"，探针定谳）
+            Assert.Equal(17, spin.CenterX);
+            Assert.Equal(17, spin.CenterY);
             Assert.Equal(0, spin.Angle);
 
             vm.ChatVM.IsSpeaking = true;
