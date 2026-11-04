@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # Slim core variant (no npm / no Node providers) keeps daily CI independent
+      # of npm registry reachability; the full variant is exercised on every
+      # release by release.yml.
+      - name: Build (slim core)
+        run: dotnet build -c Release -p:TuanRadioEnableNodeProviders=false
+
+      - name: Test (slim core)
+        run: dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.csproj -c Release -p:TuanRadioEnableNodeProviders=false

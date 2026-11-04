@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      # Test gate before packaging: a tag must never ship an untested build.
+      - name: Test gate (slim core)
+        run: dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.csproj -c Release -p:TuanRadioEnableNodeProviders=false
+
+      # Full variant (npm ci for both Node proxies runs via csproj targets).
+      - name: Package (full providers, win-x64, self-contained)
+        shell: pwsh
+        run: ./tools/publish.ps1 -Version ${{ steps.ver.outputs.version }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $notes = @"
+          TuanRadio v$v — 复古 AI 电台播放器（Windows 桌面）
+
+          ## 下载安装
+          - 下载 TuanRadio-v$v-win-x64.zip，解压到任意目录，运行 TuanRadio-v$v-win-x64\AIRadio.exe 即可：免安装、无需管理员。
+          - 最低系统要求：Windows 10 2004（内部版本 19041）及以上，x64。
+          - 文件校验（可选）：`certutil -hashfile TuanRadio-v$v-win-x64.zip SHA256`，与随包的 .sha256 文件比对。
+          - 应用未签名，首次运行 SmartScreen 可能提示「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」。
+
+          ## 首次运行自动下载（需联网，已随需可选）
+          - Node.js 运行时（约 30MB，来自 nodejs.org，带 SHA256 校验）：网易/酷狗在线音源需要；不用这两个音源可忽略其失败。
+          - Whisper 语音识别模型（约 140MB，来自 huggingface.co）：仅「按住说话」首次使用时下载；该域名在部分网络不可达，失败只影响语音点歌、不影响其他功能。也可手动获取 ggml-base.bin 放到 `%LOCALAPPDATA%\AIRadio\models\ggml-base.bin`。
+          - Edge TTS 人声与天气服务需联网。
+          - AI DJ 对话与智能推荐需在「设置 → AI 服务」配置任意 OpenAI/Anthropic 兼容 API（可选）：不配置时应用照常可用，DJ 串场回退固定模板、推荐走本地规则。
+
+          ## 主要功能
+          复古收音机界面 · AI DJ 串场与聊天 · 多音源（本地曲库/网易云/酷狗/Audius/OpenSubsonic/YouTube）· 歌词模式 · 语音点歌 · 长期收听画像 · 深浅主题×四套配色 · 耳机媒体键/系统媒体面板（SMTC）· 简洁播放模式
+
+          ## 许可证
+          GPL-3.0-only，随包附 LICENSE 与 THIRD-PARTY-NOTICES.md（含第三方组件许可声明与 LGPL-2.1 全文）。
+          "@
+          gh release create "${{ github.ref_name }}" `
+            "release/TuanRadio-v$v-win-x64.zip" `
+            "release/TuanRadio-v$v-win-x64.zip.sha256" `
+            --title "TuanRadio v$v" --notes $notes
