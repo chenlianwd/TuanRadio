@@ -264,7 +264,7 @@ public partial class MainWindow : Window, IDisposable
 
     // 说话期黑胶唱片旋转（电唱机隐喻，2026-11-03 用户裁决的头像方案 A）：
     // 旋转挂在内层 AvatarDisc 的 RotateTransform 上，与外层徽章的辉光（Opacity）、
-    // 弹跳（TranslateTransform）各占各的通道互不干扰；45°/s 慢转与辉光同 33ms 节拍
+    // 弹跳（TranslateTransform）各占各的通道互不干扰；30°/s 慢转与辉光同 33ms 节拍
     private void StartSpin()
     {
         if (_avatarDisc is not Grid disc || disc.RenderTransform is not RotateTransform spin)

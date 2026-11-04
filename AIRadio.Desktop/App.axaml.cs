@@ -26,6 +26,7 @@ public partial class App : Application
     private MainWindowViewModel? _mainVm;
     private SmtcService? _smtcService;
     private ThumbnailToolbarService? _thumbnailToolbar;
+    private IDisposable? _thumbnailFavoriteSub;
     private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
 
@@ -96,7 +97,7 @@ public partial class App : Application
                 // 心形点击转发主界面同款收藏命令；IsCurrentFavorite 变化驱动实/空心
                 _thumbnailToolbar = new ThumbnailToolbarService(_serviceProvider.GetRequiredService<IAudioService>());
                 _thumbnailToolbar.FavoritePressed += OnThumbnailFavoritePressed;
-                _ = _mainVm.WhenAnyValue(vm => vm.IsCurrentFavorite)
+                _thumbnailFavoriteSub = _mainVm.WhenAnyValue(vm => vm.IsCurrentFavorite)
                     .Subscribe(liked => _thumbnailToolbar?.SetFavoriteState(liked));
                 mainWindow.Opened += OnMainWindowOpenedForThumbnailToolbar;
 #if !TUANRADIO_SLIM_CORE
@@ -383,7 +384,12 @@ public partial class App : Application
         _smtcService?.Dispose();
         Log.Information("Shutdown trace: smtc disposed");
         // 还原 wndproc 子类化并销毁按钮图标（窗口仍在，安全拆除）
-        _thumbnailToolbar?.Dispose();
+        _thumbnailFavoriteSub?.Dispose();
+        if (_thumbnailToolbar != null)
+        {
+            _thumbnailToolbar.FavoritePressed -= OnThumbnailFavoritePressed;
+            _thumbnailToolbar.Dispose();
+        }
         Log.Information("Shutdown trace: thumbnail toolbar disposed");
 #if !TUANRADIO_SLIM_CORE
         _kugouApiServer?.Dispose();

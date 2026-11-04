@@ -29,8 +29,9 @@ if (-not $Version) {
 if (-not $Version) { throw "Version not resolved; pass -Version explicitly." }
 $stageName = "TuanRadio-v$Version-$rid"
 
-Write-Host "==> dotnet publish ($configuration, $rid, self-contained, full providers)"
-dotnet publish $project -c $configuration -r $rid --self-contained -o $publishDir
+Write-Host "==> dotnet publish ($configuration, $rid, self-contained, full providers, v$Version)"
+if (Test-Path -LiteralPath $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
+dotnet publish $project -c $configuration -r $rid --self-contained -p:Version=$Version -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
 # PDBs are not needed to run the app.
@@ -45,7 +46,7 @@ if (-not (Test-Path -LiteralPath $manifestInPublish)) {
     if (Test-Path -LiteralPath $binManifest) {
         Copy-Item -LiteralPath $binManifest -Destination $manifestInPublish -Force
     } else {
-        Write-Warning 'providers-manifest.json not found in bin RID folder (slim build? full providers build required).'
+        throw "providers-manifest.json not found at $binManifest (full providers build required for release archive)."
     }
 }
 

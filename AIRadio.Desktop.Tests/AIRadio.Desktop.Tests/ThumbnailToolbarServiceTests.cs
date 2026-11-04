@@ -22,6 +22,7 @@ public class ThumbnailToolbarServiceTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
+    [InlineData(3)]
     [InlineData(4)]
     public void MatchThumbCommand_ResolvesToolbarClicks(int id)
     {
@@ -99,6 +100,36 @@ public class ThumbnailToolbarServiceTests
 
         Assert.True(sut.HandleCommand(ThumbnailToolbarService.ButtonIdFavorite));
         Assert.Equal(1, raised);
+        audio.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void TryHandleMessage_DispatchesMatchedAndSwallowsException_IgnoresForeign()
+    {
+        var audio = new Mock<IAudioService>();
+        var sut = new ThumbnailToolbarService(audio.Object);
+        var invoked = 0;
+        sut.FavoritePressed += () =>
+        {
+            invoked++;
+            throw new InvalidOperationException("boom");
+        };
+
+        // 匹配消息：实际触发 HandleCommand（invoked==1），且异常被吞不穿透 WndProc
+        var handled = sut.TryHandleMessage(
+            ThumbnailToolbarService.WmCommand,
+            MakeWParam(ThumbnailToolbarService.ButtonIdFavorite, ThumbnailToolbarService.ThbnClicked));
+        Assert.True(handled);
+        Assert.Equal(1, invoked);
+
+        // 非匹配消息：必须返回 false 交由原窗口过程处理，不得误吞普通窗口消息
+        Assert.False(sut.TryHandleMessage(
+            0x0112,
+            MakeWParam(ThumbnailToolbarService.ButtonIdFavorite, ThumbnailToolbarService.ThbnClicked)));
+        Assert.False(sut.TryHandleMessage(
+            ThumbnailToolbarService.WmCommand,
+            MakeWParam(99, ThumbnailToolbarService.ThbnClicked)));
+        Assert.Equal(1, invoked);
         audio.VerifyNoOtherCalls();
     }
 
@@ -186,9 +217,12 @@ public class ThumbnailToolbarServiceTests
             var hr = taskbar.ThumbBarUpdateButtons(IntPtr.Zero, 1, new[] { dummy });
             Assert.Equal(0, hr);
         }
-        catch (COMException ex)
+        // explorerframe!CTaskbarList::HrInit 在无任务栏桌面（CI runner / 非交互桌面会话）
+        // 返回 E_NOTIMPL(0x80004001)，CLR COM 封送将其映射为 NotImplementedException
+        // （非 COMException 子类），两类异常均走 Skip
+        catch (Exception ex) when (ex is COMException or NotImplementedException)
         {
-            Skip.If(true, $"TaskbarList COM 激活不可用（无交互会话环境）: {ex.Message}");
+            Skip.If(true, $"TaskbarList COM 激活不可用（无任务栏/无交互会话环境）: {ex.Message}");
         }
     }
 
