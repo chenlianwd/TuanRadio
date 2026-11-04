@@ -49,7 +49,16 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI 
 - **歌词模式**：双源取词、按播放进度逐行滚动；时钟与歌词点击切换（偏好记忆），频谱样式点击循环，两图层共显互不打扰。
 - **复古电台氛围**：纯程序化合成的 FM 调谐音效与台呼（零外部音频资产）、真实 FFT 频谱（WASAPI 回环采集）驱动频谱与星空、深浅双变体 × 四套配色主题（薄荷绿/暖琥珀/蒸汽波紫/冰蓝，设置页即时切换）经 WCAG 对比度审计。
 - **简洁播放模式**：一键收缩为两行紧凑卡，行 1 单行动态歌词、无词时平滑退回曲目信息；窗口置顶与模式记忆可选。
+- **系统集成**：耳机/键盘媒体键直通播放控制（上一首/暂停/下一首），系统媒体浮层与锁屏面板显示封面与进度（SMTC）。
 - **状态可见**：统一电台状态机、逐源搜索状态与连接诊断、天气环境指示器（Open-Meteo）。
+
+## 下载与安装
+
+普通用户无需构建：从 [GitHub Releases](https://github.com/chenlianwd/TuanRadio/releases) 下载 `TuanRadio-v*-win-x64.zip`，解压到任意目录，运行其中的 `AIRadio.exe` 即可——免安装、无需管理员、自带 .NET 运行时。
+
+- 最低系统要求：Windows 10 2004（内部版本 19041）及以上，x64。
+- 应用未签名，首次运行如遇 SmartScreen「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」。
+- 首次运行按需联网下载：网易/酷狗音源所需的 Node.js 运行时（约 30MB，来自 nodejs.org，经官方 SHASUMS256 校验）；「按住说话」语音识别首次使用时下载 Whisper 模型（约 140MB，来自 huggingface.co——该域名在部分网络不可达，下载失败仅影响语音点歌，可手动获取 `ggml-base.bin` 放到 `%LOCALAPPDATA%\AIRadio\models\ggml-base.bin`）。
 
 ## 快速上手
 
@@ -130,3 +139,7 @@ tools/shot/                 README 实机截图脚本（UIA 定位 + 窗口截�
 - 长期收听画像纯本地文件（`listener-profile.json`），不跨设备同步（有意不做云端）。
 - 原生音频设备异常属运行环境问题，发布前仍需执行连续播放、TTS 插播、切歌和关闭窗口的人工稳定性测试（自动化耐久测试覆盖电台 30 轮续播、真实 LibVLC 四曲连播、画像 30 会话积累等场景）。
 - 深浅双变体 × 四套配色主题经 WCAG 对比度审计（文字对 ≥4.5:1、图形 ≥3:1，含每个新主题的程序化门禁测试），后续视觉调整需保持该标准。
+
+## 许可证
+
+本项目以 GPL-3.0-only 许可证发布（见 [LICENSE](LICENSE)），Copyright (C) 2026 陈亮。随包分发的第三方组件（LibVLC、LibVLCSharp、TagLibSharp、npm 依赖等）许可声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
