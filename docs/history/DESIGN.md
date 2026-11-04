@@ -1,6 +1,6 @@
 # Design System Inspired by Spotify
 
-> 历史文档：本文记录 2026-05 初期的 Spotify 风格视觉参考。当前实际颜色以 `AIRadio.Desktop/Themes/Colors.axaml` 的 token 为准；当前状态见 `README.md` 和 `ai-radio-plan.md`。
+> 历史文档：本文记录 2026-05 初期的 Spotify 风格视觉参考。当前实际颜色以 `../../AIRadio.Desktop/Themes/Colors.axaml` 的 token 为准；当前状态见 `../../README.md` 和 `../plans/ai-radio-plan.md`。
 
 ## 1. Visual Theme & Atmosphere
 
