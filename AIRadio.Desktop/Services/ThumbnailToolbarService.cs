@@ -213,13 +213,26 @@ internal sealed class ThumbnailToolbarService : IDisposable
 
     private IntPtr WndProc(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (TryHandleMessage(message, wParam))
+            return IntPtr.Zero;
+        return CallWindowProc(_previousWndProc, hWnd, message, wParam, lParam);
+    }
+
+    /// <summary>internal 供测试直驱：拦截匹配的缩略图按钮点击并兜住命令异常，防止托管异常穿透原生 WndProc。</summary>
+    internal bool TryHandleMessage(uint message, IntPtr wParam)
+    {
         var buttonId = MatchThumbCommand(message, wParam);
-        if (buttonId is > 0)
+        if (buttonId is not > 0)
+            return false;
+        try
         {
             _ = HandleCommand(buttonId.Value);
-            return IntPtr.Zero;
         }
-        return CallWindowProc(_previousWndProc, hWnd, message, wParam, lParam);
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Thumbnail toolbar command dispatch failed for button {ButtonId}", buttonId.Value);
+        }
+        return true;
     }
 
     public void Dispose()
