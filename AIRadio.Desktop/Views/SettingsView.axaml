@@ -163,7 +163,7 @@
 
                             <!-- 私有曲库收纳：永远默认折叠（自建 Navidrome/Subsonic 服务器才用得上），
                                  设置弹层每次打开时重置折叠；标题挪进 Expander.Header -->
-                            <Expander x:Name="OpenSubsonicExpander" Margin="0,6,0,0"
+                            <Expander x:Name="OpenSubsonicExpander" Margin="0,6,0,0" HorizontalAlignment="Stretch"
                                       IsExpanded="{Binding IsOpenSubsonicExpanded, Mode=TwoWay}">
                                 <Expander.Header>
                                     <TextBlock Text="{DynamicResource S_OpenSubsonicTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
@@ -194,7 +194,7 @@
                             </Expander>
 
                             <!-- Audius 收纳：零配置即用（公开无 Key 模式），Key 是可选增强 -->
-                            <Expander x:Name="AudiusExpander" Margin="0,6,0,0"
+                            <Expander x:Name="AudiusExpander" Margin="0,6,0,0" HorizontalAlignment="Stretch"
                                       IsExpanded="{Binding IsAudiusExpanded, Mode=TwoWay}">
                                 <Expander.Header>
                                     <TextBlock Text="{DynamicResource S_AudiusTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
@@ -217,7 +217,7 @@
 
                             <!-- YouTube 收纳：国内默认不可达（yt-dlp 子进程只认环境变量代理），登录态是高级配置 -->
                             <Expander x:Name="YtdlpExpander" Margin="0,6,0,0" IsVisible="{Binding HasExperimentalProviders}"
-                                      IsExpanded="{Binding IsYtdlpExpanded, Mode=TwoWay}">
+                                      HorizontalAlignment="Stretch" IsExpanded="{Binding IsYtdlpExpanded, Mode=TwoWay}">
                                 <Expander.Header>
                                     <TextBlock Text="{DynamicResource S_YtdlpTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                                 </Expander.Header>
