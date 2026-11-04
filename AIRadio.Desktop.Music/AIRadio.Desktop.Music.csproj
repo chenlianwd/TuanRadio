@@ -8,6 +8,9 @@
     <Description>Music domain library: provider contracts, sources, broker and account family</Description>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- 主工程 publish -r win-x64 会按 RID 还原本工程：声明同图使锁文件恒含 win-x64 targets，
+         日常无 RID restore 不回洗（与主工程同一治法） -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
