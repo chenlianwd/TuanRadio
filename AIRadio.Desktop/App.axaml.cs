@@ -25,6 +25,7 @@ public partial class App : Application
 #endif
     private MainWindowViewModel? _mainVm;
     private SmtcService? _smtcService;
+    private ThumbnailToolbarService? _thumbnailToolbar;
     private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
 
@@ -90,6 +91,14 @@ public partial class App : Application
                 // 在 Show 时才创建，此处拿不到句柄；失败静默降级（同 KillOnCloseJob 语义）
                 _smtcService = new SmtcService(_serviceProvider.GetRequiredService<IAudioService>());
                 mainWindow.Opened += OnMainWindowOpenedForSmtc;
+                // 任务栏悬停缩略图下方的媒体按钮行（上一首/播放暂停/下一首/心形收藏，
+                // ITaskbarList3 Thumbnail Toolbar）：SMTC 无自定义按钮通道故走此路。
+                // 心形点击转发主界面同款收藏命令；IsCurrentFavorite 变化驱动实/空心
+                _thumbnailToolbar = new ThumbnailToolbarService(_serviceProvider.GetRequiredService<IAudioService>());
+                _thumbnailToolbar.FavoritePressed += OnThumbnailFavoritePressed;
+                _ = _mainVm.WhenAnyValue(vm => vm.IsCurrentFavorite)
+                    .Subscribe(liked => _thumbnailToolbar?.SetFavoriteState(liked));
+                mainWindow.Opened += OnMainWindowOpenedForThumbnailToolbar;
 #if !TUANRADIO_SLIM_CORE
                 var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
                 // 网易代理收养判定与酷狗同构升级为身份摘要比对：原先仅凭"像搜索响应的
@@ -135,6 +144,19 @@ public partial class App : Application
         // 一次性挂载：自解绑防窗口 hide/show 再次触发重复注册 SMTC
         window.Opened -= OnMainWindowOpenedForSmtc;
         _smtcService?.TryAttach(window);
+    }
+
+    /// <summary>thumbbar 点击经窗口消息路由，回调已在 UI 线程，直接执行命令。</summary>
+    private void OnThumbnailFavoritePressed()
+        => _mainVm?.ToggleCurrentFavoriteCommand.Execute().Subscribe();
+
+    private void OnMainWindowOpenedForThumbnailToolbar(object? sender, EventArgs e)
+    {
+        if (sender is not Views.MainWindow window)
+            return;
+        // 一次性挂载：需任务栏按钮已存在（窗口 Show 后）
+        window.Opened -= OnMainWindowOpenedForThumbnailToolbar;
+        _thumbnailToolbar?.TryAttach(window);
     }
 
     private async System.Threading.Tasks.Task StartMusicAndInitializeAsync(CancellationToken cancellationToken)
@@ -360,6 +382,9 @@ public partial class App : Application
         // 先于 DI 容器释放（AudioService 随后销毁），移除按钮回调并置 SMTC 关闭态
         _smtcService?.Dispose();
         Log.Information("Shutdown trace: smtc disposed");
+        // 还原 wndproc 子类化并销毁按钮图标（窗口仍在，安全拆除）
+        _thumbnailToolbar?.Dispose();
+        Log.Information("Shutdown trace: thumbnail toolbar disposed");
 #if !TUANRADIO_SLIM_CORE
         _kugouApiServer?.Dispose();
         Log.Information("Shutdown trace: kugou proxy disposed");
