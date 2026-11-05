@@ -54,7 +54,9 @@ TuanRadio 是一个 Windows 桌面 AI 电台播放器：复古电台界面、AI 
 
 ## 下载与安装
 
-普通用户无需构建：从 [GitHub Releases](https://github.com/chenlianwd/TuanRadio/releases) 下载 `TuanRadio-v*-win-x64.zip`，解压到任意目录，运行其中的 `AIRadio.exe` 即可——免安装、无需管理员、自带 .NET 运行时。
+普通用户无需构建，从 [GitHub Releases](https://github.com/chenlianwd/TuanRadio/releases) 选择以下任一方式下载：
+- **一键安装版（推荐）**：下载 `TuanRadio-win-Setup.exe` 双击即可完成安装（无需管理员权限、自带 .NET 运行时、自动创建快捷方式，支持在「设置 → 外观与通用 → 版本与更新」中应用内检查并一键升级）。
+- **绿色免安装版**：下载 `TuanRadio-v*-win-x64.zip`，解压到任意目录，运行其中的 `AIRadio.exe` 即可。
 
 - 最低系统要求：Windows 10 2004（内部版本 19041）及以上，x64。
 - 应用未签名，首次运行如遇 SmartScreen「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」。

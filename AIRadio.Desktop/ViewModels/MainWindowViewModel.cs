@@ -166,7 +166,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LocalLibraryProvider? localLibrary = null,
         OpenSubsonicProvider? openSubsonic = null,
         AudiusProvider? audius = null,
-        ITtsService? ttsService = null)
+        ITtsService? ttsService = null,
+        IAppUpdateService? appUpdateService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -197,7 +198,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             recommendationService: _recommendationService, listeningProfile: listeningProfile);
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
             listeningProfile, musicSearchService, openSubsonic, audius, recommendationService: _recommendationService,
-            weatherService: weatherService, ttsService: ttsService, audioService: _audioService);
+            weatherService: weatherService, ttsService: ttsService, audioService: _audioService,
+            appUpdateService: appUpdateService);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));

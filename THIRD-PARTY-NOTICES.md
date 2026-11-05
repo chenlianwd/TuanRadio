@@ -27,6 +27,7 @@ LGPL-2.1 全文随包附于 [licenses/lgpl-2.1.txt](licenses/lgpl-2.1.txt)。
 | NAudio | 2.3.0 | MIT | <https://github.com/naudio/NAudio> |
 | Whisper.net + Whisper.net.Runtime | 1.7.4 | MIT | <https://github.com/sandrohanea/whisper.net> |
 | Tmds.DBus.Protocol | 0.21.3 | MIT | <https://github.com/tmds/Tmds.DBus> |
+| Velopack | 1.2.161 | MIT | <https://github.com/velopack/velopack> |
 | Serilog + Serilog.Sinks.Console + Serilog.Sinks.File | 4.3.1 / 6.1.1 / 7.0.0 | Apache-2.0 | <https://github.com/serilog> |
 
 NuGet 完整依赖图（含传递依赖与精确版本）见各工程 `packages.lock.json`。

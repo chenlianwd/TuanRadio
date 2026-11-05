@@ -542,6 +542,11 @@
         "resolved": "2.5.51",
         "contentHash": "g/Aug7PVWaenlJ0QUyt/mEetngkQNsMCuNeRVXbcJED1nZS7JcK+GTU4kz3jcQ7bFuKfi8PF4ExXH7XSFNuSLQ=="
       },
+      "Velopack": {
+        "type": "Transitive",
+        "resolved": "1.2.161",
+        "contentHash": "OpHNacIumnkhaaX3ZlQ/TCR4YPOJvud2/PAOoWb6o+mIrLwIVA275I5wAgt4q/1O2VrJeDwR1qFQyqzG4lUArg=="
+      },
       "VideoLAN.LibVLC.Windows": {
         "type": "Transitive",
         "resolved": "3.0.23.1",
@@ -618,6 +623,7 @@
           "System.Reactive": "[6.1.0, )",
           "TagLibSharp": "[2.3.0, )",
           "Tmds.DBus.Protocol": "[0.21.3, )",
+          "Velopack": "[1.2.161, )",
           "VideoLAN.LibVLC.Windows": "[3.0.23.1, )",
           "Whisper.net": "[1.7.4, )",
           "Whisper.net.Runtime": "[1.7.4, )"
