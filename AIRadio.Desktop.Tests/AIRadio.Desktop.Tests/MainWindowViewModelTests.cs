@@ -862,9 +862,44 @@ public class MainWindowViewModelTests
 
             await vm.StartSessionAsync();
 
+            Assert.Empty(vm.ChatVM.Messages);
+            dj.Verify(x => x.GenerateSpeechAsync(It.IsAny<string>()), Times.Never);
             audio.Verify(x => x.PlayTrack(It.IsAny<Track>()), Times.Never);
             audio.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
             audio.Verify(x => x.Play(), Times.Never);
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_YieldsWhenUserAlreadyInteractedInChat()
+    {
+        // 本地代理启动期间用户已先点了反馈按钮或发了消息（ChatVM.Messages 非空）：
+        // 开台欢迎语不得在用户交互气泡之后马后炮追加"这里是 Lumen，电台已经上线…"
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            vm.ChatVM.AddAssistantMessage("好，这就换一首舒缓一点的。");
+
+            await vm.StartSessionAsync();
+
+            Assert.Single(vm.ChatVM.Messages);
+            Assert.DoesNotContain(vm.ChatVM.Messages, m => m.Content.Contains("电台已经上线"));
+            dj.Verify(x => x.GenerateSpeechAsync(It.IsAny<string>()), Times.Never);
         }
         finally
         {

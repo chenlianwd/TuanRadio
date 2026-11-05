@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using AIRadio.Desktop.ViewModels;
 using AIRadio.Desktop.Views;
 using Avalonia.Controls;
@@ -66,6 +67,64 @@ public class ChatAreaSendButtonTests
         finally
         {
             window?.Close();
+            vm.Dispose();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ChatMessages_SupportTextSelectionAndCopyContextMenu()
+    {
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        var fluent = new Avalonia.Themes.Fluent.FluentTheme();
+        Avalonia.Application.Current!.Styles.Add(fluent);
+        Window? window = null;
+        try
+        {
+            vm.ChatVM.Messages.Add(new AIRadio.Desktop.Models.ChatMessage
+            {
+                Role = AIRadio.Desktop.Models.MessageRole.User,
+                Content = "放一首安静的歌"
+            });
+            vm.ChatVM.AddAssistantMessage("好，这就换一首舒缓一点的。");
+
+            var view = new ChatArea { DataContext = vm };
+            window = new Window { Content = view };
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            // 气泡文本必须用 SelectableTextBlock，支持鼠标直接划选 + Ctrl+C 复制
+            var selectables = Avalonia.VisualTree.VisualExtensions
+                .GetVisualDescendants(view)
+                .OfType<SelectableTextBlock>()
+                .ToList();
+            Assert.Equal(2, selectables.Count);
+
+            // 全部对话格式化：带发言人署名
+            var formatted = ChatViewModel.FormatConversation(vm.ChatVM.Messages);
+            Assert.Contains("放一首安静的歌", formatted);
+            // mock DJ 无实名 → 回退通用署名
+            Assert.Contains("AI 主播: 好，这就换一首舒缓一点的。", formatted);
+            Assert.Contains("我: 放一首安静的歌", formatted);
+
+            // 右键菜单项：有选中文本 + 命中气泡 + 有历史消息时三项齐全
+            var entriesWithSelection = ChatArea.BuildContextMenuEntries(
+                vm.ChatVM.Messages[1], "舒缓一点", vm.ChatVM.Messages.Count);
+            Assert.Equal(3, entriesWithSelection.Count);
+            Assert.Equal(ChatArea.ChatMenuAction.CopySelection, entriesWithSelection[0].Action);
+            Assert.Equal(ChatArea.ChatMenuAction.CopyMessage, entriesWithSelection[1].Action);
+            Assert.Equal(ChatArea.ChatMenuAction.CopyConversation, entriesWithSelection[2].Action);
+
+            // 未选中文本但右键气泡：复制本条消息 + 复制全部对话
+            var entriesBubbleOnly = ChatArea.BuildContextMenuEntries(
+                vm.ChatVM.Messages[1], null, vm.ChatVM.Messages.Count);
+            Assert.Equal(2, entriesBubbleOnly.Count);
+            Assert.Equal(ChatArea.ChatMenuAction.CopyMessage, entriesBubbleOnly[0].Action);
+            Assert.Equal(ChatArea.ChatMenuAction.CopyConversation, entriesBubbleOnly[1].Action);
+        }
+        finally
+        {
+            window?.Close();
+            Avalonia.Application.Current!.Styles.Remove(fluent);
             vm.Dispose();
         }
     }

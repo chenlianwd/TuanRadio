@@ -769,15 +769,22 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 });
         }
 
-        // CALM/FIRE 同步切换会话级氛围偏好，让按钮立即影响后续推荐
+        // CALM/FIRE 同步切换会话级氛围偏好（内部作废旧节目单缓存），让按钮立即影响下一首推荐
         if (action == MusicFeedbackAction.Calmer)
             _recommendationService.SetMoodBias("calm");
         else if (action == MusicFeedbackAction.Energetic)
             _recommendationService.SetMoodBias("energetic");
 
-        // NOPE 立即切歌：没人会把不喜欢的歌听完；会话避开已落，Next 的推荐回调不会再选它。
-        // 单曲队列下 Next 会绕回重播本曲（刚拉黑的歌从头再来是二次折磨），切不动就只记录不切。
-        var skipRequested = action == MusicFeedbackAction.Dislike && CanSkipAwayFromCurrentTrack();
+        // NOPE / CALM / FIRE 立即切歌：
+        // - NOPE：没人会把不喜欢的歌听完；
+        // - CALM / FIRE（"换安静一点" / "换燃一点"）：用户嫌当前曲目氛围不对，期望马上换歌而非听完当前曲目。
+        // 单曲列表下 Next 会绕回重播本曲，切不动就只记录不切。
+        // CALM/FIRE 只在电台模式立即切：Next 经推荐回调按新氛围取曲；列表/单曲模式下 Next
+        // 只会顺延歌单下一首（与氛围无关），切了反而答非所问，只记偏好不切
+        var wantsImmediateSwitch = action == MusicFeedbackAction.Dislike
+            || (action is MusicFeedbackAction.Calmer or MusicFeedbackAction.Energetic
+                && _audioService.RepeatMode == "radio");
+        var skipRequested = wantsImmediateSwitch && CanSkipAwayFromCurrentTrack();
         if (skipRequested)
             _audioService.Next();
 
@@ -785,7 +792,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (action == MusicFeedbackAction.Similar)
             _ = LoadProgramAsync(force: true, intentKey: RecommendationIntentKeys.SimilarToCurrent);
 
-        // 反馈只影响后续节目单，用户无感即"按钮无效"：每个动作给一句即时可见回应
+        // 每个动作给一句即时可见回应
         var ack = action switch
         {
             MusicFeedbackAction.Dislike => skipRequested
@@ -798,12 +805,20 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             MusicFeedbackAction.Similar => AppLanguage.T(
                 "收到，正在以这首为锚重新编排接下来的节目单。",
                 "Got it — re-curating the upcoming program around this track."),
-            MusicFeedbackAction.Calmer => AppLanguage.T(
-                "好，接下来把氛围调得舒缓一点。",
-                "Sure — easing the vibe down from here."),
-            MusicFeedbackAction.Energetic => AppLanguage.T(
-                "收到，接下来往燃一点的方向调。",
-                "Got it — turning the energy up from here."),
+            MusicFeedbackAction.Calmer => skipRequested
+                ? AppLanguage.T(
+                    "好，这就换一首舒缓一点的。",
+                    "Sure — switching to something calmer now.")
+                : AppLanguage.T(
+                    "好，接下来把氛围调得舒缓一点。",
+                    "Sure — easing the vibe down from here."),
+            MusicFeedbackAction.Energetic => skipRequested
+                ? AppLanguage.T(
+                    "收到，这就换一首燃一点的。",
+                    "Got it — switching to something more energetic now.")
+                : AppLanguage.T(
+                    "收到，接下来往燃一点的方向调。",
+                    "Got it — turning the energy up from here."),
             _ => string.Empty,
         };
         if (!string.IsNullOrEmpty(ack))
@@ -929,11 +944,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed)
             return;
 
-        await SettingsVM.RefreshAccountStatusAsync();
+        // 账号昵称刷新（网易/酷狗数次网络往返）与开台欢迎语并行执行，不阻塞欢迎语出场
+        var accountRefreshTask = SettingsVM.RefreshAccountStatusAsync();
 
         // 在线曲目 v2 歌单不再持久化临时直链：播放前由 AudioService 懒解析，
         // 启动无需批量刷新 URL，避免可播前的额外等待
         await AnnounceWelcomeAsync(cancellationToken);
+        await accountRefreshTask;
         cancellationToken.ThrowIfCancellationRequested();
         if (IsDisposed)
             return;
@@ -994,6 +1011,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private async System.Threading.Tasks.Task AnnounceWelcomeAsync(CancellationToken cancellationToken)
     {
         if (IsDisposed || cancellationToken.IsCancellationRequested)
+            return;
+
+        // 本地音源代理启动期间窗口已可交互：若用户已自行开播或已与 DJ 产生对话/反馈气泡，
+        // 说明会话早已进入使用态，让位跳过开台欢迎语，避免在用户交互后马后炮重念欢迎词
+        if (_audioService.IsPlaying || ChatVM.Messages.Count > 0)
             return;
 
         var text = AppLanguage.T(
