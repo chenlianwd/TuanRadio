@@ -434,6 +434,22 @@
                                               OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
                             </Grid>
                         </StackPanel>
+
+                        <!-- 版本与更新：平铺行布局（标签 C_FFB3B3B3 + 辅助提示 C_FF666666 在页面底上对比度 4.82 达标） -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_UpdateSectionTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                            <DockPanel>
+                                <Button x:Name="UpdateActionButton" DockPanel.Dock="Right"
+                                        Command="{Binding UpdateActionCommand}"
+                                        Content="{Binding UpdateActionButtonText}"
+                                        Padding="14,6" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="AppVersionTextBlock" Text="{Binding AppVersionText}"
+                                           Foreground="{DynamicResource C_FFEDEDF5}" FontSize="12" VerticalAlignment="Center"
+                                           TextWrapping="Wrap"/>
+                            </DockPanel>
+                            <TextBlock x:Name="UpdateStatusTextBlock" Text="{Binding UpdateStatusText}"
+                                       Foreground="{DynamicResource C_FF666666}" FontSize="11" TextWrapping="Wrap"/>
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- 页 4：收听画像 -->

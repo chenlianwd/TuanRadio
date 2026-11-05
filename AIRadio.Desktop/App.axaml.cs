@@ -337,6 +337,10 @@ public partial class App : Application
             new LyricService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         services.AddSingleton<IWeatherService>(sp =>
             new WeatherService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<IAppUpdateService>(sp =>
+            new AppUpdateService(
+                sp.GetRequiredService<System.Net.Http.HttpClient>(),
+                beforeRestart: PrepareForUpdateRestart));
         // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
         services.AddSingleton(sp => new MainWindowViewModel(
             sp.GetRequiredService<IAudioService>(),
@@ -356,7 +360,27 @@ public partial class App : Application
             localLibrary: sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
             openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
             audius: sp.GetRequiredService<Services.Music.AudiusProvider>(),
-            ttsService: sp.GetRequiredService<ITtsService>()));
+            ttsService: sp.GetRequiredService<ITtsService>(),
+            appUpdateService: sp.GetRequiredService<IAppUpdateService>()));
+    }
+
+    private void PrepareForUpdateRestart()
+    {
+        Log.Information("Preparing for Velopack update restart...");
+        try
+        {
+            if (_serviceProvider?.GetService<IAudioService>() is IDisposable audioDisposable)
+                audioDisposable.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Early audio dispose failed before update restart");
+        }
+#if !TUANRADIO_SLIM_CORE
+        try { _kugouApiServer?.Dispose(); } catch { }
+        try { _musicApiServer?.Dispose(); } catch { }
+#endif
+        Log.CloseAndFlush();
     }
 
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)

@@ -1,14 +1,19 @@
 # TuanRadio release packaging script.
-# Usage: powershell -File tools\publish.ps1 [-Version 1.0.0]
+# Usage: powershell -File tools\publish.ps1 [-Version 1.0.0] [-PackInstaller]
 # Version defaults to <Version> in AIRadio.Desktop.csproj.
 # Produces: release\TuanRadio-v{version}-win-x64\ (staged folder, root layer of the zip)
 #           release\TuanRadio-v{version}-win-x64.zip
 #           release\TuanRadio-v{version}-win-x64.zip.sha256
-# Also reused by .github/workflows/release.yml — keep it PowerShell 5.1 compatible
+# When -PackInstaller is specified, also produces in release\velopack\:
+#           TuanRadio-win-Setup.exe (+ .sha256)
+#           TuanRadio-{version}-full.nupkg
+#           releases.win.json
+# Also reused by .github/workflows/release.yml - keep it PowerShell 5.1 compatible
 # (no ?? operator, no ternary) and ASCII-only to avoid codepage issues.
 
 param(
-    [string]$Version = ""
+    [string]$Version = "",
+    [switch]$PackInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,3 +85,45 @@ $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvar
 $sizeMb = [math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB, 1)
 Write-Host "==> done: $zipPath ($sizeMb MB)"
 Write-Host "SHA256: $hash"
+
+if ($PackInstaller) {
+    $vpkCmd = Get-Command 'vpk' -ErrorAction SilentlyContinue
+    if ($vpkCmd) {
+        $vpkExe = $vpkCmd.Source
+    } else {
+        $toolCandidate = Join-Path $env:USERPROFILE '.dotnet\tools\vpk.exe'
+        if (Test-Path -LiteralPath $toolCandidate) {
+            $vpkExe = $toolCandidate
+        } else {
+            throw "vpk CLI not found on PATH or at $toolCandidate. Install with: dotnet tool install -g vpk"
+        }
+    }
+
+    $vpkOutDir = Join-Path $outDir 'velopack'
+    if (Test-Path -LiteralPath $vpkOutDir) { Remove-Item -LiteralPath $vpkOutDir -Recurse -Force }
+    $iconPath = Join-Path $repoRoot 'AIRadio.Desktop\Assets\airadio.ico'
+
+    Write-Host "==> vpk pack (TuanRadio v$Version)"
+    & $vpkExe pack `
+        --packId 'TuanRadio' `
+        --packVersion $Version `
+        --packDir $stageDir `
+        --mainExe 'AIRadio.exe' `
+        --packTitle 'TuanRadio FM' `
+        --runtime $rid `
+        --channel 'win' `
+        --icon $iconPath `
+        --outputDir $vpkOutDir
+    if ($LASTEXITCODE -ne 0) { throw "vpk pack failed with exit code $LASTEXITCODE" }
+
+    $setupPath = Join-Path $vpkOutDir 'TuanRadio-win-Setup.exe'
+    if (-not (Test-Path -LiteralPath $setupPath)) {
+        throw "Expected installer not found at $setupPath"
+    }
+
+    $setupHash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$setupHash  $(Split-Path -Leaf $setupPath)" | Out-File -FilePath "$setupPath.sha256" -Encoding ascii
+    $setupSizeMb = [math]::Round((Get-Item -LiteralPath $setupPath).Length / 1MB, 1)
+    Write-Host "==> installer done: $setupPath ($setupSizeMb MB)"
+    Write-Host "Setup SHA256: $setupHash"
+}

@@ -42,6 +42,15 @@ public sealed class MusicProviderOption : ReactiveObject
 /// <summary>「不爱听的歌」展示条目（Title/Artist 供移除回传，DisplayText 供列表渲染）。</summary>
 public sealed record ProfileBlacklistItem(string Title, string Artist, string DisplayText);
 
+/// <summary>设置页「版本与更新」按钮状态机阶段。</summary>
+public enum UpdateActionPhase
+{
+    Check,
+    Download,
+    OpenReleasePage,
+    RestartToApply
+}
+
 public partial class SettingsViewModel : ViewModelBase, IDisposable
 {
 #if TUANRADIO_SLIM_CORE
@@ -113,6 +122,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private Func<string>? _statusMessageFactory;
     private Func<string>? _neteaseAccountStatusFactory;
     private Func<string>? _kugouAccountStatusFactory;
+    private Func<string>? _updateStatusFactory;
+    private readonly IAppUpdateService _appUpdate;
+    private readonly Action<string> _openExternalUrl;
+    private AppUpdateCheckResult? _pendingUpdate;
+    private int _updateDownloadPercent;
     private int _disposed;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -287,7 +301,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial List<VoiceOption> MusicSourcePolicies { get; set; } = new();
     [Reactive] public partial List<VoiceOption> AccentPaletteOptions { get; set; } = new();
 
+    // 版本与更新状态
+    [Reactive] public partial string AppVersionText { get; private set; } = string.Empty;
+    [Reactive] public partial string UpdateActionButtonText { get; private set; } = string.Empty;
+    [Reactive] public partial string UpdateStatusText { get; private set; } = string.Empty;
+    [Reactive] public partial bool IsUpdateBusy { get; private set; }
+    [Reactive] public partial UpdateActionPhase UpdatePhase { get; private set; } = UpdateActionPhase.Check;
+
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
+    public ReactiveCommand<Unit, Unit> UpdateActionCommand { get; }
     // 音色试听：合成走与 DJ 开口同链的风格 Id 映射，播放走真实 TTS 通道（听到即所得）
     public ReactiveCommand<Unit, Unit> PreviewVoiceCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveCommand { get; }
@@ -335,7 +357,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         IRecommendationService? recommendationService = null,
         IWeatherService? weatherService = null,
         ITtsService? ttsService = null,
-        IAudioService? audioService = null)
+        IAudioService? audioService = null,
+        IAppUpdateService? appUpdateService = null,
+        Action<string>? openExternalUrl = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -354,10 +378,16 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _audius = audius;
         _tts = ttsService;
         _audio = audioService;
+        _appUpdate = appUpdateService ?? new AppUpdateService(http);
+        _openExternalUrl = openExternalUrl ?? OpenExternalUrlSafe;
+        RefreshUpdateTexts();
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
+        UpdateActionCommand = ReactiveCommand.CreateFromTask(
+            ExecuteUpdateActionAsync,
+            this.WhenAnyValue(x => x.IsUpdateBusy).Select(busy => !busy));
         PreviewVoiceCommand = ReactiveCommand.CreateFromTask(
             PreviewVoiceAsync,
             this.WhenAnyValue(x => x.IsPreviewingVoice).Select(running => !running));
@@ -542,6 +572,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 OpenSubsonicStatus = _openSubsonicStatusFactory();
             if (_audiusStatusFactory != null)
                 AudiusStatus = _audiusStatusFactory();
+            RefreshUpdateTexts();
+            if (_updateStatusFactory != null)
+                UpdateStatusText = _updateStatusFactory();
             if (IsYtdlpCookieNoticeVisible && SelectedYtdlpBrowser is { Id.Length: > 0 } browser)
                 YtdlpCookieNotice = BuildYtdlpCookieNotice(browser.Id);
             RebuildLocalizedOptionLists();
@@ -2564,4 +2597,204 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     private static bool RequiresApiKey(string provider)
         => !string.Equals(NormalizeProvider(provider), "local", StringComparison.OrdinalIgnoreCase);
+
+    private void SetUpdateStatus(Func<string> factory)
+    {
+        _updateStatusFactory = factory;
+        UpdateStatusText = factory();
+    }
+
+    private void RefreshUpdateTexts()
+    {
+        var ver = _appUpdate.CurrentVersion;
+        AppVersionText = _appUpdate.IsInstalled
+            ? AppLanguage.T($"TuanRadio FM v{ver}（安装版）", $"TuanRadio FM v{ver} (Installed)")
+            : AppLanguage.T($"TuanRadio FM v{ver}（免安装版）", $"TuanRadio FM v{ver} (Portable)");
+
+        if (IsUpdateBusy)
+        {
+            UpdateActionButtonText = UpdatePhase == UpdateActionPhase.Download
+                ? AppLanguage.T($"正在下载 {_updateDownloadPercent}%…", $"Downloading {_updateDownloadPercent}%…")
+                : AppLanguage.T("正在检查…", "Checking…");
+            return;
+        }
+
+        UpdateActionButtonText = UpdatePhase switch
+        {
+            UpdateActionPhase.Download => AppLanguage.T("下载并更新", "Download & update"),
+            UpdateActionPhase.OpenReleasePage => AppLanguage.T("前往下载页", "Open download page"),
+            UpdateActionPhase.RestartToApply => AppLanguage.T("立即重启并更新", "Restart to update"),
+            _ => AppLanguage.T("检查更新", "Check for updates")
+        };
+    }
+
+    private async Task ExecuteUpdateActionAsync()
+    {
+        if (Volatile.Read(ref _disposed) != 0 || IsUpdateBusy)
+            return;
+
+        switch (UpdatePhase)
+        {
+            case UpdateActionPhase.Check:
+                await RunUpdateCheckAsync();
+                break;
+
+            case UpdateActionPhase.Download:
+                await RunUpdateDownloadAsync();
+                break;
+
+            case UpdateActionPhase.OpenReleasePage:
+                var url = _pendingUpdate?.ReleasePageUrl ?? AppUpdateService.ReleasesPageUrl;
+                _openExternalUrl(url);
+                break;
+
+            case UpdateActionPhase.RestartToApply:
+                if (_pendingUpdate != null)
+                {
+                    try
+                    {
+                        _appUpdate.ApplyUpdatesAndRestart(_pendingUpdate);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to apply update and restart");
+                        SetUpdateStatus(() => AppLanguage.T(
+                            "应用更新失败，请前往下载页手动获取最新版",
+                            "Failed to apply update; please download the latest release manually"));
+                        UpdatePhase = UpdateActionPhase.OpenReleasePage;
+                        RefreshUpdateTexts();
+                    }
+                }
+                break;
+        }
+    }
+
+    private async Task RunUpdateCheckAsync()
+    {
+        IsUpdateBusy = true;
+        RefreshUpdateTexts();
+        try
+        {
+            var result = await _appUpdate.CheckForUpdatesAsync(_lifetimeCts.Token);
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+
+            if (result.HasUpdate)
+            {
+                _pendingUpdate = result;
+                var latestVer = result.LatestVersion ?? _appUpdate.CurrentVersion;
+                if (result.CanInstallInApp)
+                {
+                    UpdatePhase = UpdateActionPhase.Download;
+                    SetUpdateStatus(() => AppLanguage.T(
+                        $"发现新版本 v{latestVer}，可直接在应用内下载更新",
+                        $"New version v{latestVer} available for in-app update"));
+                }
+                else
+                {
+                    UpdatePhase = UpdateActionPhase.OpenReleasePage;
+                    SetUpdateStatus(() => AppLanguage.T(
+                        $"发现新版本 v{latestVer}（免安装版请前往发布页下载更新）",
+                        $"New version v{latestVer} available on the release page"));
+                }
+            }
+            else
+            {
+                _pendingUpdate = null;
+                UpdatePhase = UpdateActionPhase.Check;
+                var curVer = _appUpdate.CurrentVersion;
+                SetUpdateStatus(() => AppLanguage.T(
+                    $"当前已是最新版本（v{curVer}）",
+                    $"You're up to date (v{curVer})"));
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "App update check failed");
+            UpdatePhase = UpdateActionPhase.Check;
+            SetUpdateStatus(() => AppLanguage.T(
+                "检查更新失败，请检查网络或稍后重试",
+                "Update check failed; check your network and try again"));
+        }
+        finally
+        {
+            IsUpdateBusy = false;
+            RefreshUpdateTexts();
+        }
+    }
+
+    private async Task RunUpdateDownloadAsync()
+    {
+        if (_pendingUpdate == null)
+        {
+            UpdatePhase = UpdateActionPhase.Check;
+            RefreshUpdateTexts();
+            return;
+        }
+
+        IsUpdateBusy = true;
+        _updateDownloadPercent = 0;
+        RefreshUpdateTexts();
+        try
+        {
+            await _appUpdate.DownloadUpdatesAsync(
+                _pendingUpdate,
+                percent =>
+                {
+                    _updateDownloadPercent = Math.Clamp(percent, 0, 100);
+                    RefreshUpdateTexts();
+                },
+                _lifetimeCts.Token);
+
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+
+            var latestVer = _pendingUpdate.LatestVersion ?? _appUpdate.CurrentVersion;
+            UpdatePhase = UpdateActionPhase.RestartToApply;
+            SetUpdateStatus(() => AppLanguage.T(
+                $"v{latestVer} 已下载完成，点击按钮重启即可完成更新",
+                $"v{latestVer} downloaded; click to restart and finish updating"));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "App update download failed");
+            UpdatePhase = UpdateActionPhase.Download;
+            SetUpdateStatus(() => AppLanguage.T(
+                "更新包下载失败，请稍后重试",
+                "Failed to download update; please try again"));
+        }
+        finally
+        {
+            IsUpdateBusy = false;
+            RefreshUpdateTexts();
+        }
+    }
+
+    private static void OpenExternalUrlSafe(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = uri.AbsoluteUri,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to open external release page: {Url}", uri.AbsoluteUri);
+        }
+    }
 }
