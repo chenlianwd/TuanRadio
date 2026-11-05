@@ -51,6 +51,33 @@ public sealed class AppUpdateServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PortableMode_CheckForUpdates_ParsesDirectVelopackFeedWithoutHittingRestApi()
+    {
+        const string feedJson = """
+        {
+          "Assets": [
+            {
+              "PackageId": "TuanRadio",
+              "Version": "1.2.0",
+              "Type": "Full",
+              "FileName": "TuanRadio-1.2.0-full.nupkg"
+            }
+          ]
+        }
+        """;
+        using var http = CreateMockHttpClient(HttpStatusCode.OK, feedJson);
+        var fakeVpk = new FakeVelopackClient { IsInstalled = false };
+        var svc = new AppUpdateService(http, fakeVpk, fallbackVersion: "1.0.0");
+
+        var result = await svc.CheckForUpdatesAsync();
+
+        Assert.True(result.HasUpdate);
+        Assert.False(result.CanInstallInApp);
+        Assert.Equal("1.2.0", result.LatestVersion);
+        Assert.Equal("https://github.com/chenlianwd/TuanRadio/releases/tag/v1.2.0", result.ReleasePageUrl);
+    }
+
+    [Fact]
     public async Task PortableMode_CheckForUpdates_ReturnsNewerReleaseFromGithubApi()
     {
         const string json = """
