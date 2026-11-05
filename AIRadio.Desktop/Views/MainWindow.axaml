@@ -101,13 +101,13 @@
                                 <!-- 黑胶唱片头像（网易云播放页黑胶的 34px 简化）：外缘高光 + 三圈沟纹 +
                                      中心专属色标签 + 对置反光点；外层 Border 承担说话辉光/描圈/弹跳
                                      （RenderTransform 被 TranslateTransform 占用），内层 AvatarDisc 挂旋转。
-                                     旋转中心必须写 RotateTransform CenterX/Y——RenderTransformOrigin="0.5,0.5"
-                                     是绝对 0.5px≈左上角（探针实证：整盘扫出徽章外），比例要写 50%,50% -->
+                                     注意：Avalonia Visual.RenderTransformOrigin 默认即 RelativePoint.Center（50%,50% = 盘心 17,17），
+                                     而 RotateTransform.CenterX/Y 是相对原点的额外偏移，必须保持 0,0（默认）才原地自转 -->
                                 <Border x:Name="AvatarBorder" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource C_FF262632}"
                                         Classes.speaking="{Binding ChatVM.IsSpeaking}">
                                     <Grid x:Name="AvatarDisc" Width="34" Height="34">
                                         <Grid.RenderTransform>
-                                            <RotateTransform CenterX="17" CenterY="17"/>
+                                            <RotateTransform/>
                                         </Grid.RenderTransform>
                                         <!-- 外缘高光（黑胶边缘反光） -->
                                         <Ellipse Width="33" Height="33" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="1"

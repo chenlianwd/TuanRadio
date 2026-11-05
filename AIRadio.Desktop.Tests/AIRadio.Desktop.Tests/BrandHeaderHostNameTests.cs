@@ -282,11 +282,22 @@ public class BrandHeaderHostNameTests
             var disc = window.FindControl<Grid>("AvatarDisc")
                 ?? throw new InvalidOperationException("AvatarDisc not found");
             var spin = Assert.IsType<RotateTransform>(disc.RenderTransform);
-            // 旋转中心必须为盘心（17,17）：CenterX/Y 丢失会退化为绕 (0,0) 左上角旋转，
-            // 整盘扫出徽章外（2026-11-03 用户实测"转到外面去了"，探针定谳）
-            Assert.Equal(17, spin.CenterX);
-            Assert.Equal(17, spin.CenterY);
+            var border = window.FindControl<Border>("AvatarBorder") ?? throw new InvalidOperationException("AvatarBorder not found");
+            // 真实几何锚：旋转 180° 时盘心 (17,17) 映射到外框 AvatarBorder 必须原地不动（自转而非公转甩出框外）
+            Assert.Equal(RelativePoint.Center, disc.RenderTransformOrigin);
+            Assert.Equal(0, spin.CenterX);
+            Assert.Equal(0, spin.CenterY);
             Assert.Equal(0, spin.Angle);
+            spin.Angle = 180;
+            Dispatcher.UIThread.RunJobs();
+            var toBorder = disc.TransformToVisual(border)!.Value;
+            var mappedCenter = toBorder.Transform(new Point(17, 17));
+            var mappedTopLeft = toBorder.Transform(new Point(0, 0));
+            Assert.Equal(17, mappedCenter.X, 1);
+            Assert.Equal(17, mappedCenter.Y, 1);
+            Assert.Equal(34, mappedTopLeft.X, 1);
+            Assert.Equal(34, mappedTopLeft.Y, 1);
+            spin.Angle = 0;
 
             vm.ChatVM.IsSpeaking = true;
             Dispatcher.UIThread.RunJobs();
