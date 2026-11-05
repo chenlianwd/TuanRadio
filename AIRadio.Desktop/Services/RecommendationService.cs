@@ -303,7 +303,12 @@ public class RecommendationService : IRecommendationService
     {
         string? normalized;
         lock (_stateGate)
+        {
             _moodBias = normalized = NormalizeMood(mood);
+            // 切换氛围偏好后立即作废旧节目单缓存：否则 GetNextTrackAsync 会先把旧氛围节目单里
+            // 剩余的候选曲消费完才按新 _moodBias 重新编排
+            CurrentProgram = null;
+        }
         // 返回值在锁内取局部快照：锁外读 _moodBias 在并发两次调用时可能拿到对方刚写入的值
         return normalized;
     }

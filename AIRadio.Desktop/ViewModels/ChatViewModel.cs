@@ -1,4 +1,4 @@
-﻿using ReactiveUI;
+using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -218,6 +218,21 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         // UI 集合不设上限会让长电台会话内存缓慢膨胀、语言切换的全量刷新越来越慢
         while (Messages.Count > MaxChatMessages)
             Messages.RemoveAt(0);
+    }
+
+    /// <summary>将对话记录格式化为带发言人前缀的纯文本（供「复制全部对话」写入剪贴板）。</summary>
+    public static string FormatConversation(IEnumerable<ChatMessage> messages)
+    {
+        if (messages == null)
+            return string.Empty;
+
+        return string.Join(
+            Environment.NewLine + Environment.NewLine,
+            messages
+                .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Content))
+                .Select(m => string.IsNullOrWhiteSpace(m.SenderName)
+                    ? m.Content.Trim()
+                    : $"{m.SenderName}: {m.Content.Trim()}"));
     }
 
     private void ToggleVoiceInput()

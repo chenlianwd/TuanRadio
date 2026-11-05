@@ -23,9 +23,11 @@
                                                FontFamily="Consolas, Microsoft YaHei UI"
                                                Foreground="{DynamicResource C_FFA783FF}" Margin="0,0,0,4"/>
                                     <Border Background="{DynamicResource C_EE050507}" CornerRadius="4" Padding="14,10" MaxWidth="380">
-                                        <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
-                                                   FontSize="13" LineHeight="21"
-                                                   FontFamily="Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"/>
+                                        <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                                             FontSize="13" LineHeight="21"
+                                                             FontFamily="Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"
+                                                             SelectionBrush="{DynamicResource C_6656F5C4}"
+                                                             ContextFlyout="{x:Null}"/>
                                     </Border>
                                 </StackPanel>
                             </DataTemplate>

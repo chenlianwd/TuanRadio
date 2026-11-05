@@ -283,8 +283,9 @@ public class PlayerDeckFeedbackButtonTests
     }
 
     /// <summary>
-    /// 回归（2026-10-20 用户反馈：不喜欢的时候没人愿意把歌听完）：NOPE 必须立即切歌。
-    /// 会话级避开只防"后续推荐再选它"，正在播的这首必须马上跳过；其余反馈动作不得切歌。
+    /// 回归（2026-10-20 用户反馈 NOPE + 2026-11-05 用户反馈 CALM/FIRE）：
+    /// NOPE（不喜欢）与 CALM/FIRE（换安静一点/换燃一点）都代表当前曲目不合当下心意，必须立即切歌；
+    /// 收藏与 SIM（再来类似——喜欢当前这首，希望后续延续同风格）不得打断当前播放。
     /// </summary>
     [AvaloniaFact]
     public void DislikeCurrentTrack_SkipsToNextTrackImmediately()
@@ -298,12 +299,19 @@ public class PlayerDeckFeedbackButtonTests
         try
         {
             Execute(vm.ToggleCurrentFavoriteCommand);
-            Execute(vm.CalmerRecommendationCommand);
             Execute(vm.SimilarToCurrentTrackCommand);
             audio.Verify(x => x.Next(), Times.Never);
 
-            Execute(vm.DislikeCurrentTrackCommand);
+            Execute(vm.CalmerRecommendationCommand);
             audio.Verify(x => x.Next(), Times.Once);
+            Assert.Contains(vm.ChatVM.Messages, m => m.Content.Contains("这就换一首舒缓一点的"));
+
+            Execute(vm.EnergeticRecommendationCommand);
+            audio.Verify(x => x.Next(), Times.Exactly(2));
+            Assert.Contains(vm.ChatVM.Messages, m => m.Content.Contains("这就换一首燃一点的"));
+
+            Execute(vm.DislikeCurrentTrackCommand);
+            audio.Verify(x => x.Next(), Times.Exactly(3));
             rec.Verify(x => x.RecordFeedback(It.Is<UserMusicFeedback>(
                 f => f.Action == MusicFeedbackAction.Dislike)), Times.Once);
         }
