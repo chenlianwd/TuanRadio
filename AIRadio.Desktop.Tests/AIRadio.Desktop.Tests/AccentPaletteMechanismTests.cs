@@ -27,7 +27,7 @@ public class AccentPaletteMechanismTests
         return dict;
     }
 
-    [Fact]
+    [AvaloniaFact]
     public void LaterMergedThemeDictionary_ShadowsEarlier_PerVariant()
     {
         var host = new ResourceDictionary();
@@ -38,7 +38,7 @@ public class AccentPaletteMechanismTests
         Assert.Equal(Colors.Green, Assert.IsType<Color>(dark));
     }
 
-    [Fact]
+    [AvaloniaFact]
     public void LaterMergedThemeDictionary_ShadowsOnlyItsOwnVariant()
     {
         var host = new ResourceDictionary();
@@ -52,7 +52,7 @@ public class AccentPaletteMechanismTests
         Assert.Equal(Colors.Green, Assert.IsType<Color>(dark));
     }
 
-    [Fact]
+    [AvaloniaFact]
     public void EmptyLaterThemeDictionary_FallsThroughToEarlier()
     {
         var host = new ResourceDictionary();
