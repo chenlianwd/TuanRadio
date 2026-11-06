@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reactive;
+using System.Reactive.Subjects;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -14,6 +16,21 @@ namespace AIRadio.Desktop.Tests;
 
 public class TrayAndCloseActionTests
 {
+    private static Mock<IAudioService> CreateAudioMock()
+    {
+        var audio = new Mock<IAudioService>();
+        audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
+        audio.Setup(x => x.TrackChanged).Returns(new Subject<Track?>());
+        audio.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audio.Setup(x => x.PositionChanged).Returns(new Subject<TimeSpan>());
+        audio.Setup(x => x.SpectrumData).Returns(new Subject<float[]>());
+        audio.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audio.Setup(x => x.TtsError).Returns(new Subject<string>());
+        audio.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+        audio.Setup(x => x.CurrentTrack).Returns((Track?)null);
+        audio.Setup(x => x.RepeatMode).Returns("radio");
+        return audio;
+    }
     [Theory]
     [InlineData("exit", "exit")]
     [InlineData("EXIT", "exit")]
@@ -32,7 +49,7 @@ public class TrayAndCloseActionTests
     [Fact]
     public void MainWindowViewModel_ConfirmCloseDialog_TriggersHide_WhenTraySelected()
     {
-        var audio = new Mock<IAudioService>();
+        var audio = CreateAudioMock();
         var dj = new Mock<IDJService>();
         var llm = new Mock<ILLMService>();
         var storage = new Mock<ISecureStorage>();
@@ -76,7 +93,7 @@ public class TrayAndCloseActionTests
     [Fact]
     public void MainWindowViewModel_ConfirmCloseDialog_TriggersExit_WhenExitSelected()
     {
-        var audio = new Mock<IAudioService>();
+        var audio = CreateAudioMock();
         var dj = new Mock<IDJService>();
         var llm = new Mock<ILLMService>();
         var storage = new Mock<ISecureStorage>();
@@ -120,7 +137,7 @@ public class TrayAndCloseActionTests
     [Fact]
     public void MainWindowViewModel_CancelCloseDialog_JustDismissesDialog()
     {
-        var audio = new Mock<IAudioService>();
+        var audio = CreateAudioMock();
         var dj = new Mock<IDJService>();
         var llm = new Mock<ILLMService>();
         var storage = new Mock<ISecureStorage>();

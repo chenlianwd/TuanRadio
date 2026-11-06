@@ -42,6 +42,7 @@ public class AudioVolumeUnificationTests
     public void Volume_DuringTtsSpeaking_MaintainsDuckRatioInsteadOfFullVolume()
     {
         var mockSfx = new Mock<IRadioSoundFxService>();
+        mockSfx.SetupProperty(x => x.Volume);
         using var audio = new AudioService(mockSfx.Object);
 
         audio.Volume = 0.8f;
@@ -49,7 +50,7 @@ public class AudioVolumeUnificationTests
         // 通过反射模拟 TTS 状态进入 speaking (true)
         var ttsStateSubjectField = typeof(AudioService).GetField("_ttsStateSubject", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(ttsStateSubjectField);
-        var subject = ttsStateSubjectField.GetValue(audio) as System.Reactive.Subjects.BehaviorSubject<bool>;
+        var subject = ttsStateSubjectField.GetValue(audio) as System.Reactive.Subjects.Subject<bool>;
         Assert.NotNull(subject);
 
         subject.OnNext(true);

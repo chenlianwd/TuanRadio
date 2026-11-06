@@ -35,7 +35,11 @@ public class MainWindowTaskbarIconReassertTests
         }
         finally
         {
-            window?.Close();
+            if (window != null)
+            {
+                window.IsExplicitExit = true;
+                window.Close();
+            }
             vm.Dispose();
         }
     }
@@ -64,7 +68,11 @@ public class MainWindowTaskbarIconReassertTests
         }
         finally
         {
-            window?.Close();
+            if (window != null)
+            {
+                window.IsExplicitExit = true;
+                window.Close();
+            }
             vm.Dispose();
         }
     }
@@ -78,6 +86,7 @@ public class MainWindowTaskbarIconReassertTests
         {
             window = new MainWindow { DataContext = vm };
             window.Show();
+            window.IsExplicitExit = true;
             window.Close(); // OnClosed→Dispose：挂起的重发定时器必须被停掉
             var atClose = window.Icon;
 
@@ -89,7 +98,11 @@ public class MainWindowTaskbarIconReassertTests
         }
         finally
         {
-            window?.Close();
+            if (window != null)
+            {
+                window.IsExplicitExit = true;
+                window.Close();
+            }
             vm.Dispose();
         }
     }
