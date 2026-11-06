@@ -80,9 +80,13 @@ public partial class MainWindow : Window, IDisposable
                     {
                         _activeVm.ChatVM.TtsLevelChanged -= _ttsLevelHandler;
                     }
+                    _activeVm.RequestHideWindow -= OnRequestHideWindow;
+                    _activeVm.RequestExitWindow -= OnRequestExitWindow;
                 }
 
                 _activeVm = vm;
+                vm.RequestHideWindow += OnRequestHideWindow;
+                vm.RequestExitWindow += OnRequestExitWindow;
                 _djVisualCueHandler = OnDjVisualCue;
                 vm.ChatVM.DjVisualCue += _djVisualCueHandler;
                 vm.DjVisualCue += _djVisualCueHandler;
@@ -223,6 +227,56 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
+    public bool IsExplicitExit { get; set; }
+
+    private void OnRequestHideWindow() => Hide();
+
+    private void OnRequestExitWindow()
+    {
+        IsExplicitExit = true;
+        Close();
+    }
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (IsExplicitExit)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        if (DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            var action = vm.SettingsVM.CloseAction;
+            var prompted = vm.SettingsVM.HasPromptedCloseAction;
+
+            if (action == "exit")
+            {
+                base.OnClosing(e);
+                return;
+            }
+
+            if (action == "tray" && prompted)
+            {
+                e.Cancel = true;
+                Hide();
+                return;
+            }
+
+            // 首次关闭或设置为每次询问：弹出确认浮层（若处于简洁模式先切回标准模式以展示浮层）
+            if (vm.IsCompactMode)
+                vm.IsCompactMode = false;
+            e.Cancel = true;
+            vm.CloseDialogIsTray = action != "exit";
+            vm.CloseDialogIsExit = action == "exit";
+            vm.CloseDialogRemember = !prompted;
+            vm.IsCloseConfirmOpen = true;
+            return;
+        }
+
+        base.OnClosing(e);
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         Dispose();
@@ -352,6 +406,8 @@ public partial class MainWindow : Window, IDisposable
             {
                 _activeVm.ChatVM.TtsLevelChanged -= _ttsLevelHandler;
             }
+            _activeVm.RequestHideWindow -= OnRequestHideWindow;
+            _activeVm.RequestExitWindow -= OnRequestExitWindow;
         }
     }
 }

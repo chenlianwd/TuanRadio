@@ -1,4 +1,4 @@
-using ReactiveUI;
+﻿using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -85,6 +85,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool IsSettingsOpen { get; set; }
     [Reactive] public partial bool IsLibraryOpen { get; set; }
     [Reactive] public partial bool IsCharacterPickerOpen { get; set; }
+    [Reactive] public partial bool IsCloseConfirmOpen { get; set; }
+    [Reactive] public partial bool CloseDialogIsTray { get; set; } = true;
+    [Reactive] public partial bool CloseDialogIsExit { get; set; } = false;
+    [Reactive] public partial bool CloseDialogRemember { get; set; } = true;
+
+    public event Action? RequestHideWindow;
+    public event Action? RequestExitWindow;
+
+    public ReactiveCommand<Unit, Unit> ConfirmCloseDialogCommand { get; }
+    public ReactiveCommand<Unit, Unit> CancelCloseDialogCommand { get; }
     [Reactive] public partial CharacterProfile SelectedCharacter { get; set; }
     [Reactive] public partial bool IsDarkMode { get; set; } = true;
     [Reactive] public partial bool IsCurrentFavorite { get; set; }
@@ -248,6 +258,27 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
 
         ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
+        ConfirmCloseDialogCommand = ReactiveCommand.Create(() =>
+        {
+            IsCloseConfirmOpen = false;
+            var chosenAction = CloseDialogIsExit ? "exit" : "tray";
+            if (CloseDialogRemember)
+            {
+                SettingsVM.CloseAction = chosenAction;
+                SettingsVM.HasPromptedCloseAction = true;
+                _ = SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+            }
+
+            if (chosenAction == "exit")
+                RequestExitWindow?.Invoke();
+            else
+                RequestHideWindow?.Invoke();
+        });
+        CancelCloseDialogCommand = ReactiveCommand.Create(() => { IsCloseConfirmOpen = false; });
+        this.WhenAnyValue(x => x.CloseDialogIsTray)
+            .Subscribe(tray => { if (tray && CloseDialogIsExit) CloseDialogIsExit = false; });
+        this.WhenAnyValue(x => x.CloseDialogIsExit)
+            .Subscribe(exit => { if (exit && CloseDialogIsTray) CloseDialogIsTray = false; });
         ToggleLibraryCommand = ReactiveCommand.Create(() => { IsLibraryOpen = !IsLibraryOpen; });
         OpenPlaylistCommand = ReactiveCommand.Create(() =>
         {
@@ -989,6 +1020,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IsSettingsOpen = false;
         IsLibraryOpen = false;
         IsCharacterPickerOpen = false;
+        IsCloseConfirmOpen = false;
     }
 
     private async System.Threading.Tasks.Task AnnounceEmptyLibraryAsync(CancellationToken cancellationToken)

@@ -176,6 +176,7 @@
             <Border IsVisible="{Binding IsLibraryOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
             <Border IsVisible="{Binding IsSettingsOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
             <Border IsVisible="{Binding IsCharacterPickerOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
+            <Border IsVisible="{Binding IsCloseConfirmOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
 
             <local:PlaylistDrawer DataContext="{Binding}"/>
 
@@ -203,6 +204,38 @@
             </Border>
 
             <local:CharacterPicker DataContext="{Binding}"/>
+
+            <!-- Close confirm dialog overlay -->
+            <Border IsVisible="{Binding IsCloseConfirmOpen}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    MinWidth="340" MaxWidth="400"
+                    Background="{DynamicResource C_FC0E0E15}"
+                    BorderBrush="{DynamicResource C_667B7898}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="20">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="{DynamicResource S_CloseDialogTitle}" FontSize="15" FontWeight="Bold"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"/>
+                    <TextBlock Text="{DynamicResource S_CloseDialogHint}" FontSize="12"
+                               Foreground="{DynamicResource C_FFB3B3B3}"/>
+                    <StackPanel Spacing="10">
+                        <RadioButton GroupName="CloseActionGroup" IsChecked="{Binding CloseDialogIsTray, Mode=TwoWay}"
+                                     Content="{DynamicResource S_CloseActionTray}"/>
+                        <RadioButton GroupName="CloseActionGroup" IsChecked="{Binding CloseDialogIsExit, Mode=TwoWay}"
+                                     Content="{DynamicResource S_CloseActionExit}"/>
+                    </StackPanel>
+                    <CheckBox IsChecked="{Binding CloseDialogRemember, Mode=TwoWay}"
+                              Content="{DynamicResource S_RememberChoice}" FontSize="12"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                        <Button Content="{DynamicResource S_Cancel}" Command="{Binding CancelCloseDialogCommand}"
+                                Padding="14,6" FontSize="12"/>
+                        <Button Content="{DynamicResource S_Confirm}" Command="{Binding ConfirmCloseDialogCommand}"
+                                Background="{DynamicResource AccentGreen}" Foreground="{DynamicResource C_FF07070B}"
+                                FontWeight="Bold" Padding="14,6" FontSize="12"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
             </Grid>
         </Border>
 

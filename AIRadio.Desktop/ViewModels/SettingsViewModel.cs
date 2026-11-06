@@ -112,6 +112,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _accentPaletteSub;
     private bool _ytdlpCookieNoticeShown;
     private readonly IDisposable _selectedLanguageSub;
+    private bool _loadingCloseAction;
+    private readonly IDisposable _closeActionSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
     private string? _lastCharacterSignature;
@@ -178,6 +180,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string SelectedSpectrumStyle { get; set; } = "bars";
     [Reactive] public partial bool CompactModeTopmost { get; set; } = true;
     [Reactive] public partial bool CompactShowLyrics { get; set; } = true;
+    [Reactive] public partial string CloseAction { get; set; } = "tray";
+    [Reactive] public partial bool HasPromptedCloseAction { get; set; } = false;
     [Reactive] public partial bool RadioSoundFxEnabled { get; set; } = true;
     [Reactive] public partial bool StartInCompactMode { get; set; }
     [Reactive] public partial bool ShowLyricsInStage { get; set; }
@@ -300,6 +304,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
     [Reactive] public partial List<VoiceOption> MusicSourcePolicies { get; set; } = new();
     [Reactive] public partial List<VoiceOption> AccentPaletteOptions { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> CloseActionOptions { get; set; } = new();
 
     // 版本与更新状态
     [Reactive] public partial string AppVersionText { get; private set; } = string.Empty;
@@ -548,6 +553,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .Skip(1)
             .Subscribe(language => AppLanguage.Apply(language));
 
+        _closeActionSub = this.WhenAnyValue(x => x.CloseAction)
+            .Skip(1)
+            .Subscribe(action =>
+            {
+                if (!_loadingCloseAction)
+                    _ = SaveUiStateCommand.Execute().Subscribe();
+            });
+
         // 语言切换时刷新常驻文案与选项列表显示名（静态事件，Dispose 退订）
         _onLanguageChanged = () =>
         {
@@ -726,6 +739,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 _ => AppLanguage.T("薄荷绿", "Mint"),
             },
         }).ToList();
+
+        CloseActionOptions = new List<VoiceOption>
+        {
+            new() { Id = "tray", DisplayName = AppLanguage.T("最小化到系统托盘", "Minimize to system tray") },
+            new() { Id = "exit", DisplayName = AppLanguage.T("退出软件", "Exit application") },
+            new() { Id = "ask", DisplayName = AppLanguage.T("每次询问", "Always ask") },
+        };
         var browserId = SelectedYtdlpBrowser?.Id;
         _loadingYtdlpBrowser = true;
         try
@@ -902,6 +922,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("compact_show_lyrics", out var compactLyrics))
                     CompactShowLyrics = compactLyrics.GetBoolean();
+
+                if (root.TryGetProperty("close_action", out var closeAct))
+                {
+                    _loadingCloseAction = true;
+                    CloseAction = NormalizeCloseAction(closeAct.GetString());
+                    _loadingCloseAction = false;
+                }
+                if (root.TryGetProperty("has_prompted_close_action", out var promptedClose))
+                    HasPromptedCloseAction = promptedClose.GetBoolean();
 
                 if (root.TryGetProperty("radio_sound_fx_enabled", out var radioFx))
                     RadioSoundFxEnabled = radioFx.GetBoolean();
@@ -2272,6 +2301,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 accent_palette = AccentPalettes.Normalize(SelectedAccentPalette),
                 compact_mode_topmost = CompactModeTopmost,
                 compact_show_lyrics = CompactShowLyrics,
+                close_action = NormalizeCloseAction(CloseAction),
+                has_prompted_close_action = HasPromptedCloseAction,
                 radio_sound_fx_enabled = RadioSoundFxEnabled,
                 start_in_compact_mode = StartInCompactMode,
                 show_lyrics_in_stage = ShowLyricsInStage,
@@ -2433,6 +2464,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _accentPaletteSub.Dispose();
         _weatherCitySearchSub.Dispose();
         _selectedLanguageSub.Dispose();
+        _closeActionSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
         _llmProfileSwapSub.Dispose();
@@ -2593,6 +2625,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         "wave" => "wave",
         "particles" => "particles",
         _ => "bars"
+    };
+
+    internal static string NormalizeCloseAction(string? action) => action?.ToLowerInvariant() switch
+    {
+        "exit" => "exit",
+        "ask" => "ask",
+        _ => "tray"
     };
 
     private static bool RequiresApiKey(string provider)

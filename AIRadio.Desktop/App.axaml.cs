@@ -26,6 +26,7 @@ public partial class App : Application
     private MainWindowViewModel? _mainVm;
     private SmtcService? _smtcService;
     private ThumbnailToolbarService? _thumbnailToolbar;
+    private TrayIconService? _trayIconService;
     private IDisposable? _thumbnailFavoriteSub;
     private Task? _initializationTask;
     private readonly CancellationTokenSource _lifetimeCts = new();
@@ -100,6 +101,8 @@ public partial class App : Application
                 _thumbnailFavoriteSub = _mainVm.WhenAnyValue(vm => vm.IsCurrentFavorite)
                     .Subscribe(liked => _thumbnailToolbar?.SetFavoriteState(liked));
                 mainWindow.Opened += OnMainWindowOpenedForThumbnailToolbar;
+                _trayIconService = new TrayIconService(_serviceProvider.GetRequiredService<IAudioService>(), _mainVm);
+                mainWindow.Opened += OnMainWindowOpenedForTrayIcon;
 #if !TUANRADIO_SLIM_CORE
                 var musicAccounts = _serviceProvider.GetRequiredService<MusicAccountStore>();
                 // 网易代理收养判定与酷狗同构升级为身份摘要比对：原先仅凭"像搜索响应的
@@ -158,6 +161,14 @@ public partial class App : Application
         // 一次性挂载：需任务栏按钮已存在（窗口 Show 后）
         window.Opened -= OnMainWindowOpenedForThumbnailToolbar;
         _thumbnailToolbar?.TryAttach(window);
+    }
+
+    private void OnMainWindowOpenedForTrayIcon(object? sender, EventArgs e)
+    {
+        if (sender is not Views.MainWindow window)
+            return;
+        window.Opened -= OnMainWindowOpenedForTrayIcon;
+        _trayIconService?.TryAttach(window);
     }
 
     private async System.Threading.Tasks.Task StartMusicAndInitializeAsync(CancellationToken cancellationToken)
@@ -369,6 +380,7 @@ public partial class App : Application
         Log.Information("Preparing for Velopack update restart...");
         try
         {
+            _trayIconService?.Dispose();
             if (_serviceProvider?.GetService<IAudioService>() is IDisposable audioDisposable)
                 audioDisposable.Dispose();
         }
@@ -404,6 +416,8 @@ public partial class App : Application
         Log.Information("Shutdown trace: lifetime cancelled");
         _mainVm?.Dispose();
         Log.Information("Shutdown trace: main view model disposed");
+        _trayIconService?.Dispose();
+        Log.Information("Shutdown trace: tray icon disposed");
         // 先于 DI 容器释放（AudioService 随后销毁），移除按钮回调并置 SMTC 关闭态
         _smtcService?.Dispose();
         Log.Information("Shutdown trace: smtc disposed");

@@ -433,6 +433,15 @@
                                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding CompactShowLyrics, Mode=TwoWay}"
                                               OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
                             </Grid>
+                            <DockPanel>
+                                <TextBlock Text="{DynamicResource S_CloseAction}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ComboBox DockPanel.Dock="Right" SelectedValue="{Binding CloseAction, Mode=TwoWay}"
+                                          ItemsSource="{Binding CloseActionOptions}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          Width="180" HorizontalAlignment="Right"/>
+                            </DockPanel>
                         </StackPanel>
 
                         <!-- 版本与更新：平铺行布局（标签 C_FFB3B3B3 + 辅助提示 C_FF666666 在页面底上对比度 4.82 达标） -->

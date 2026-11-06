@@ -20,6 +20,7 @@ public enum RadioFxKind
 public interface IRadioSoundFxService : IDisposable
 {
     bool IsEnabled { get; set; }
+    float Volume { get; set; }
     void PlayFx(RadioFxKind kind);
     byte[] GetSynthesizedPcm(RadioFxKind kind);
 }
@@ -37,6 +38,12 @@ public class RadioSoundFxService : IRadioSoundFxService
     private int _disposed;
 
     public bool IsEnabled { get; set; } = true;
+    private float _volume = 0.8f;
+    public float Volume
+    {
+        get => _volume;
+        set => _volume = Math.Clamp(value, 0f, 1f);
+    }
 
     static RadioSoundFxService()
     {
@@ -74,6 +81,7 @@ public class RadioSoundFxService : IRadioSoundFxService
                 raw = new RawSourceWaveStream(ms, new WaveFormat(SampleRate, 16, 1));
                 waveOut = new WaveOutEvent { DesiredLatency = 80 };
                 waveOut.Init(raw);
+                try { waveOut.Volume = Math.Clamp(Volume, 0f, 1f); } catch { }
 
                 _activeOutputs.TryAdd(waveOut, 0);
 
