@@ -162,8 +162,23 @@ public class AudioService : IAudioService, IDisposable
                 return;
 
             // TTS 播报期间调整音量不打破 duck 电平，恢复全音量由 TTS 结束路径负责
-            if (!_isFading && !IsTtsPlaybackActive)
-                QueuePlayerVolume((int)(_userVolume * 100));
+            if (!_isFading)
+            {
+                if (IsTtsPlaybackActive && _speechMixMode != "pause")
+                    QueuePlayerVolume((int)(_userVolume * TtsDuckVolumeRatio * 100));
+                else
+                    QueuePlayerVolume((int)(_userVolume * 100));
+            }
+
+            lock (_ttsStateGate)
+            {
+                if (_ttsOutput != null)
+                {
+                    TrySetTtsVolume(_ttsOutput, _userVolume);
+                }
+            }
+
+            _soundFxService.Volume = _userVolume;
         }
     }
 
@@ -233,6 +248,7 @@ public class AudioService : IAudioService, IDisposable
     public AudioService(IRadioSoundFxService? soundFxService = null)
     {
         _soundFxService = soundFxService ?? new RadioSoundFxService();
+        _soundFxService.Volume = _userVolume;
 
         // LibVLC 的全局 native 初始化/销毁不是并发安全的；测试、重启窗口或
         // 多个宿主同时创建 AudioService 时必须串行化，否则会在 LibVLCNew 处直接
@@ -2510,7 +2526,7 @@ public class AudioService : IAudioService, IDisposable
             var tap = new TtsLevelTap(reader, level => TtsLevelChanged?.Invoke(level));
             output = new WaveOutEvent { DesiredLatency = 120 };
             output.Init(tap);
-            TrySetTtsVolume(output, 1.0f);
+            TrySetTtsVolume(output, _userVolume);
             EventHandler<StoppedEventArgs> stoppedHandler = (_, e) => OnTtsPlaybackStopped(e, sessionId, tempPath);
             output.PlaybackStopped += stoppedHandler;
 
@@ -2582,7 +2598,7 @@ public class AudioService : IAudioService, IDisposable
     {
         try
         {
-            output.Volume = volume;
+            output.Volume = Math.Clamp(volume, 0f, 1f);
         }
         catch (Exception ex)
         {
