@@ -55,6 +55,54 @@ if (-not (Test-Path -LiteralPath $manifestInPublish)) {
     }
 }
 
+# Bundle a pinned node.exe so the Netease/Kugou proxies work without Node installed
+# or network access. Version/hash must match EnvironmentManager.cs (same SHASUMS256 value).
+$nodeVersion = 'v20.18.3'
+$nodeSha256 = '11D483DFBA711BC7C9BCB513E80A2941BE0C2E7CBF62753755785B9A6E80A731'
+$nodeZipName = "node-$nodeVersion-win-x64.zip"
+$nodeCache = Join-Path $outDir 'cache'
+New-Item -ItemType Directory -Force -Path $nodeCache | Out-Null
+$nodeZip = Join-Path $nodeCache $nodeZipName
+$nodeUrls = @(
+    "https://nodejs.org/dist/$nodeVersion/$nodeZipName",
+    "https://registry.npmmirror.com/-/binary/node/$nodeVersion/$nodeZipName"
+)
+function Test-NodeZip([string]$path) {
+    (Test-Path -LiteralPath $path) -and ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $nodeSha256)
+}
+if (-not (Test-NodeZip $nodeZip)) {
+    # PS 5.1 renders a progress bar per chunk, which slows large downloads badly.
+    $ProgressPreference = 'SilentlyContinue'
+    foreach ($u in $nodeUrls) {
+        try {
+            Write-Host "==> downloading $u"
+            Invoke-WebRequest -Uri $u -OutFile $nodeZip -UseBasicParsing
+            if (Test-NodeZip $nodeZip) { break }
+            Write-Warning "SHA256 mismatch from $u"
+        } catch {
+            Write-Warning "download failed from ${u}: $_"
+        }
+    }
+}
+if (-not (Test-NodeZip $nodeZip)) { throw "Node.js $nodeVersion zip unavailable or hash mismatch." }
+
+$nodeOutDir = Join-Path $publishDir 'runtime\node'
+New-Item -ItemType Directory -Force -Path $nodeOutDir | Out-Null
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::OpenRead($nodeZip)
+try {
+    $entry = $zipArchive.Entries | Where-Object { $_.FullName -eq "node-$nodeVersion-win-x64/node.exe" } | Select-Object -First 1
+    if (-not $entry) { throw "node.exe not found in $nodeZipName" }
+    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $nodeOutDir 'node.exe'), $true)
+    # MIT requires the copyright/permission notice to travel with the binary.
+    $lic = $zipArchive.Entries | Where-Object { $_.FullName -eq "node-$nodeVersion-win-x64/LICENSE" } | Select-Object -First 1
+    if (-not $lic) { throw "LICENSE not found in $nodeZipName" }
+    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($lic, (Join-Path $nodeOutDir 'LICENSE'), $true)
+} finally {
+    $zipArchive.Dispose()
+}
+Write-Host "==> bundled node.exe $nodeVersion"
+
 # Ship license texts with the archive so offline users can read them.
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $publishDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md') -Destination $publishDir -Force

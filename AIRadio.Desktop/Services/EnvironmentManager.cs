@@ -25,6 +25,15 @@ public static class EnvironmentManager
     public static async Task<string> EnsureNodeJsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // 发布包自带的固定版本 node.exe 优先：免网络、不受用户机器旧版/损坏 shim 影响
+        var bundled = FindBundledNode(AppContext.BaseDirectory);
+        if (bundled != null)
+        {
+            Log.Information("Using bundled Node.js at {Path}", bundled);
+            return bundled;
+        }
+
         // 探测加超时：损坏的 node shim 可能挂死，无超时会让音乐代理初始化无限延迟；
         // 超时/取消都要击杀探测进程
         using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -91,11 +100,57 @@ public static class EnvironmentManager
         return NodeExe;
     }
 
+    /// <summary>发布包内 node.exe 相对路径（tools/publish.ps1 写入）。</summary>
+    internal const string BundledNodeRelativePath = "runtime\\node\\node.exe";
+
+    internal static string? FindBundledNode(string baseDir)
+    {
+        try
+        {
+            var path = Path.Combine(baseDir, BundledNodeRelativePath);
+            return File.Exists(path) ? path : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>下载源顺序：官方优先，失败回退国内镜像（同一 SHA256 校验兜底，镜像不引入供应链风险）。</summary>
+    internal static readonly string[] NodeDownloadUrls =
+    {
+        "https://nodejs.org/dist/v20.18.3/node-v20.18.3-win-x64.zip",
+        "https://registry.npmmirror.com/-/binary/node/v20.18.3/node-v20.18.3-win-x64.zip",
+    };
+
     private static async Task DownloadNodeJsAsync(CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(NodeDir);
 
-        var url = "https://nodejs.org/dist/v20.18.3/node-v20.18.3-win-x64.zip";
+        Exception? last = null;
+        foreach (var candidate in NodeDownloadUrls)
+        {
+            try
+            {
+                await DownloadNodeJsFromAsync(candidate, cancellationToken);
+                return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+                Log.Warning(ex, "Node.js download from {Url} failed, trying next source", candidate);
+            }
+        }
+
+        throw new InvalidOperationException("Node.js download failed from all sources", last);
+    }
+
+    private static async Task DownloadNodeJsFromAsync(string url, CancellationToken cancellationToken)
+    {
         // 官方 SHASUMS256.txt (https://nodejs.org/dist/v20.18.3/SHASUMS256.txt) 中
         // node-v20.18.3-win-x64.zip 的校验值：下载产物必须完全一致才允许落盘解压
         const string expectedSha256 = "11D483DFBA711BC7C9BCB513E80A2941BE0C2E7CBF62753755785B9A6E80A731";
