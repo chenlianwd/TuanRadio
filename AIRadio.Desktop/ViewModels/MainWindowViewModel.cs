@@ -1,4 +1,4 @@
-﻿using ReactiveUI;
+using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -31,6 +31,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IRecommendationService _recommendationService;
     private readonly ISttService _sttService;
     private readonly IListeningProfileService? _listeningProfile;
+    private readonly IRadioBrowserService? _radioBrowserService;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _trackChangedSub;
     private readonly IDisposable? _profileTrackChangedSub;
@@ -138,6 +139,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> OpenSearchCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenProgramCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenKugouPlaylistsCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenRadioStationsCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshProgramCommand { get; }
     public ReactiveCommand<RecommendedTrack, Unit> PlayProgramTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
@@ -177,7 +179,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         OpenSubsonicProvider? openSubsonic = null,
         AudiusProvider? audius = null,
         ITtsService? ttsService = null,
-        IAppUpdateService? appUpdateService = null)
+        IAppUpdateService? appUpdateService = null,
+        IRadioBrowserService? radioBrowserService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -188,6 +191,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _accountStore = accountStore;
         _kugouVerification = kugouVerification;
         _localLibrary = localLibrary;
+        _radioBrowserService = radioBrowserService;
         _listeningProfile = listeningProfile;
 
         SelectedCharacter = Characters[0];
@@ -201,7 +205,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             musicSearchService,
             playlistFile,
             kugouPlaylistService: kugouPlaylistService,
-            localLibrary: localLibrary);
+            localLibrary: localLibrary,
+            radioBrowserService: radioBrowserService);
         if (musicSearchService is IMusicSourceBroker broker)
             _playbackPreflight = new PlaybackPreflightService(_audioService, broker, accountStore, openSubsonic);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
@@ -301,6 +306,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             PlaylistVM.TabIndex = 4;
             IsLibraryOpen = true;
             await PlaylistVM.LoadKugouPlaylistsAsync();
+        });
+        OpenRadioStationsCommand = ReactiveCommand.Create(() =>
+        {
+            PlaylistVM.TabIndex = 5;
+            IsLibraryOpen = true;
+            _ = PlaylistVM.LoadInitialRadioStationsAsync();
         });
         RefreshProgramCommand = ReactiveCommand.CreateFromTask(() => LoadProgramAsync(force: true));
         PlayProgramTrackCommand = ReactiveCommand.Create<RecommendedTrack>(PlayProgramTrack);
@@ -481,7 +492,32 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         bool requireAlternative,
         CancellationToken cancellationToken)
     {
-        var sourceId = track.SourceId ?? track.Id;
+        string sourceId = track.SourceId ?? track.Id ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sourceId))
+            return null;
+        if (sourceId.StartsWith(RadioStation.SourcePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            if (requireAlternative)
+                return null;
+
+            string? streamUrl = null;
+            if (track.ProviderMetadata.TryGetValue("stream_url", out var su) && !string.IsNullOrWhiteSpace(su))
+                streamUrl = su;
+            else if (!string.IsNullOrWhiteSpace(track.FilePath) &&
+                     (track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                      track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                streamUrl = track.FilePath;
+
+            if (string.IsNullOrWhiteSpace(streamUrl) && _radioBrowserService != null)
+            {
+                var stationUuid = sourceId.Substring(RadioStation.SourcePrefix.Length);
+                streamUrl = await _radioBrowserService.ResolveStationUrlAsync(stationUuid, cancellationToken);
+            }
+
+            return string.IsNullOrWhiteSpace(streamUrl)
+                ? null
+                : new TrackUrlResolution(streamUrl, sourceId, track.ProviderMetadata);
+        }
         if (_musicSearchService is not IMusicSourceBroker multi)
         {
             if (requireAlternative)

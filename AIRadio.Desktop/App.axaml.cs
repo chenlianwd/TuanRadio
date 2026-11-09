@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using AIRadio.Desktop.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using ReactiveUI;
@@ -352,6 +353,8 @@ public partial class App : Application
             new AppUpdateService(
                 sp.GetRequiredService<System.Net.Http.HttpClient>(),
                 beforeRestart: PrepareForUpdateRestart));
+        services.AddSingleton<IRadioBrowserService>(sp =>
+            new RadioBrowserClient(sp.GetRequiredService<System.Net.Http.HttpClient>()));
         // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
         services.AddSingleton(sp => new MainWindowViewModel(
             sp.GetRequiredService<IAudioService>(),
@@ -372,7 +375,8 @@ public partial class App : Application
             openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
             audius: sp.GetRequiredService<Services.Music.AudiusProvider>(),
             ttsService: sp.GetRequiredService<ITtsService>(),
-            appUpdateService: sp.GetRequiredService<IAppUpdateService>()));
+            appUpdateService: sp.GetRequiredService<IAppUpdateService>(),
+            radioBrowserService: sp.GetRequiredService<IRadioBrowserService>()));
     }
 
     private void PrepareForUpdateRestart()

@@ -66,6 +66,15 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     [System.Text.Json.Serialization.JsonIgnore]
     public DateTimeOffset? ResolvedAtUtc { get; set; }
 
+    /// <summary>
+    /// 是否为 24/7 直播电台流（无固定时长、不可 Seek、跳过单曲网络预解析与画像完播率统计）。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsLiveStream =>
+        (SourceId?.StartsWith("radio-browser:", StringComparison.OrdinalIgnoreCase) ?? false) ||
+        (ProviderMetadata.TryGetValue("is_live", out var flag) &&
+         string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase));
+
     [System.Text.Json.Serialization.JsonIgnore]
     public TrackPlayability Playability
     {

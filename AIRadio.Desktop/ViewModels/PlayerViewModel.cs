@@ -37,6 +37,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string TrackPreviewText { get; set; } = AppLanguage.T("试听片段", "Preview");
     [Reactive] public partial bool TrackIsPreview { get; set; }
     [Reactive] public partial bool IsPlaying { get; set; }
+    [Reactive] public partial bool IsLiveStream { get; set; }
     [Reactive] public partial double CurrentSeconds { get; set; }
     [Reactive] public partial double TotalSeconds { get; set; }
     [Reactive] public partial float Volume { get; set; } = 0.8f;
@@ -48,6 +49,8 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
 
     private bool _isDragging;
+    private string? _liveStreamNowPlaying;
+    private readonly IDisposable? _liveMetadataSub;
 
     public ReactiveCommand<Unit, Unit> PlayCommand { get; }
     public ReactiveCommand<Unit, Unit> PreviousCommand { get; }
@@ -95,17 +98,30 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             .Subscribe(track =>
             {
                 _lastMediaInfo = null;
+                _liveStreamNowPlaying = null;
+                IsLiveStream = track?.IsLiveStream ?? false;
                 if (track != null)
                 {
                     TrackTitle = track.Title;
                     TrackArtist = track.DisplayArtist;
                     TrackSource = GetTrackSource(track);
-                    TotalSeconds = track.Duration.TotalSeconds;
-                    DurationText = FormatTime(track.Duration);
+                    if (IsLiveStream)
+                    {
+                        TotalSeconds = 0;
+                        CurrentSeconds = 0;
+                        PositionText = "0:00";
+                        DurationText = AppLanguage.Get("S_LiveBadge");
+                    }
+                    else
+                    {
+                        TotalSeconds = track.Duration.TotalSeconds;
+                        DurationText = FormatTime(track.Duration);
+                    }
                     RefreshQualityTexts(track);
                 }
                 else
                 {
+                    IsLiveStream = false;
                     TrackTitle = AppLanguage.T("未播放", "Nothing playing");
                     TrackArtist = "";
                     TrackSource = "";
@@ -116,6 +132,17 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
                     TrackQualityDetail = "";
                     HasQuality = false;
                     TrackIsPreview = false;
+                }
+            });
+
+        _liveMetadataSub = _audioService.LiveMetadataChanged
+            ?.ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(metadata =>
+            {
+                if (IsLiveStream && _audioService.CurrentTrack is { IsLiveStream: true } current)
+                {
+                    _liveStreamNowPlaying = metadata;
+                    TrackArtist = FormatTrackArtist(current, _liveStreamNowPlaying);
                 }
             });
 
@@ -142,7 +169,11 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(pos =>
             {
-                // 拖动期间 Slider 通过 TwoWay 绑定写入 CurrentSeconds，此处回写会把 thumb 拉回播放位置
+                if (IsLiveStream)
+                {
+                    PositionText = FormatTime(pos);
+                    return;
+                }
                 if (!_isDragging)
                 {
                     CurrentSeconds = pos.TotalSeconds;
@@ -161,8 +192,10 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             if (_audioService.CurrentTrack is { } currentTrack)
             {
                 currentTrack.RefreshLocalization();
-                TrackArtist = currentTrack.DisplayArtist;
+                TrackArtist = FormatTrackArtist(currentTrack, _liveStreamNowPlaying);
                 TrackSource = GetTrackSource(currentTrack);
+                if (IsLiveStream)
+                    DurationText = AppLanguage.Get("S_LiveBadge");
                 RefreshQualityTexts(currentTrack);
             }
             // 仅重置占位文案；有曲目在播时保留真实标题
@@ -170,6 +203,13 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
                 TrackTitle = AppLanguage.T("未播放", "Nothing playing");
         };
         AppLanguage.Changed += _onLanguageChanged;
+    }
+
+    private static string FormatTrackArtist(Track track, string? liveNowPlaying)
+    {
+        if (!string.IsNullOrWhiteSpace(liveNowPlaying))
+            return liveNowPlaying;
+        return track.DisplayArtist;
     }
 
     private static string GetTrackSource(Track track)
@@ -182,16 +222,19 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
 
     public void SeekTo(double seconds)
     {
+        if (IsLiveStream) return;
         _audioService.Seek(TimeSpan.FromSeconds(seconds));
     }
 
     public void StartSeek()
     {
+        if (IsLiveStream) return;
         _isDragging = true;
     }
 
     public void EndSeek(double seconds)
     {
+        if (IsLiveStream) return;
         _isDragging = false;
         _audioService.Seek(TimeSpan.FromSeconds(seconds));
     }
@@ -203,6 +246,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         _posSub?.Dispose();
         _volSub?.Dispose();
         _mediaInfoSub?.Dispose();
+        _liveMetadataSub?.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
     }
 
