@@ -91,6 +91,24 @@
                     <!-- 页 0：AI 服务 -->
                     <StackPanel x:Name="PageAi" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
                         <StackPanel Spacing="6">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{DynamicResource S_LlmPresetsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <ItemsControl x:Name="LlmPresetItems" ItemsSource="{Binding LlmPresets}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="vm:LlmPresetOption">
+                                            <Button Content="{Binding DisplayName}"
+                                                    Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).ApplyLlmPresetCommand}"
+                                                    CommandParameter="{Binding Id}"
+                                                    Padding="10,4" FontSize="11" Margin="0,0,6,6" CornerRadius="6"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                             <ComboBox SelectedValue="{Binding SelectedProvider}"
                                       ItemsSource="{Binding LlmProviders}"
                                       SelectedValueBinding="{Binding Id}"

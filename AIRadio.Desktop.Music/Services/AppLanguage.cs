@@ -161,6 +161,7 @@ public static class AppLanguage
         // 设置页
         ["S_Settings"] = "设置",
         ["S_AiService"] = "AI 服务",
+        ["S_LlmPresetsLabel"] = "快速预置（一键填入地址与推荐模型）",
         // 设置页侧边导航
         ["S_SettingsNavMusic"] = "音乐音源",
         ["S_SettingsNavHost"] = "主播与语音",
@@ -324,6 +325,7 @@ public static class AppLanguage
         // Settings
         ["S_Settings"] = "Settings",
         ["S_AiService"] = "AI service",
+        ["S_LlmPresetsLabel"] = "Quick presets (one-click endpoint & model)",
         // Settings side navigation
         ["S_SettingsNavMusic"] = "Music sources",
         ["S_SettingsNavHost"] = "Host & voice",

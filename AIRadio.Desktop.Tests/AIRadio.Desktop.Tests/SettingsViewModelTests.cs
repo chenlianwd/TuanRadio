@@ -2160,6 +2160,65 @@ public class SettingsViewModelTests
         }
     }
 
+    [Theory]
+    [InlineData("deepseek", "openai", "https://api.deepseek.com/v1", "deepseek-chat")]
+    [InlineData("zhipu", "openai", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash")]
+    [InlineData("kimi", "openai", "https://api.moonshot.cn/v1", "moonshot-v1-8k")]
+    [InlineData("qwen", "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus")]
+    [InlineData("siliconflow", "openai", "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct")]
+    [InlineData("ollama", "local", "http://localhost:11434/v1", "")]
+    public void ApplyLlmPreset_SetsProviderBaseUrlAndModel_ForAllPresets(
+        string presetId, string expectedProvider, string expectedBaseUrl, string expectedModel)
+    {
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        vm.ApplyLlmPresetCommand.Execute(presetId).Subscribe();
+
+        Assert.Equal(expectedProvider, vm.SelectedProvider);
+        Assert.Equal(expectedBaseUrl, vm.BaseUrl);
+        Assert.Equal(expectedModel, vm.Model);
+        Assert.NotEmpty(vm.StatusMessage);
+    }
+
+    [Fact]
+    public void ApplyLlmPreset_FromLocalToCloud_PreservesExistingKeyAndOverwritesProfile()
+    {
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        vm.SelectedProvider = "openai";
+        vm.ApiKey = "sk-preset-test-key";
+
+        // 切到 local
+        vm.SelectedProvider = "local";
+        Assert.False(vm.LlmNeedsApiKey);
+
+        // 从 local 执行 deepseek 预置
+        vm.ApplyLlmPresetCommand.Execute("deepseek").Subscribe();
+
+        Assert.Equal("openai", vm.SelectedProvider);
+        Assert.Equal("https://api.deepseek.com/v1", vm.BaseUrl);
+        Assert.Equal("deepseek-chat", vm.Model);
+        Assert.Equal("sk-preset-test-key", vm.ApiKey);
+        Assert.True(vm.LlmNeedsApiKey);
+        _mockLlm.Verify(x => x.Configure(It.IsAny<LLMConfig>()), Times.Never);
+    }
+
+    [Fact]
+    public void ApplyLlmPreset_StatusMessage_RefreshesWithLanguage()
+    {
+        using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
+        vm.ApplyLlmPresetCommand.Execute("deepseek").Subscribe();
+        Assert.Contains("已填入", vm.StatusMessage);
+
+        AppLanguage.Apply("en");
+        try
+        {
+            Assert.Contains("Applied", vm.StatusMessage);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
     // ===== 设置持久化防覆盖回归（2026-10-29 诊断：旧版本构建保存会把新版键从
     // settings.json 整个删除，且加载侧缺键静默回默认值后被自动保存固化）=====
 

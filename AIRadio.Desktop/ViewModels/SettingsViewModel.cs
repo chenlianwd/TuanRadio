@@ -19,6 +19,9 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 
 namespace AIRadio.Desktop.ViewModels;
 
+/// <summary>国内/本地主流大模型快捷预置项。</summary>
+public sealed record LlmPresetOption(string Id, string DisplayName, string Provider, string BaseUrl, string DefaultModel);
+
 public sealed class MusicProviderOption : ReactiveObject
 {
     private bool _enabled;
@@ -149,6 +152,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string Model { get; set; } = string.Empty;
     /// <summary>本地模型不需要 API Key：选中时隐藏 Key 输入框（判定与 RequiresApiKey 同源）。</summary>
     [Reactive] public partial bool LlmNeedsApiKey { get; set; } = true;
+
+
+
 
     /// <summary>单个 LLM 服务的独立配置档案；ApiKey 是会话缓存，跨会话权威来源=凭据管理器专槽。</summary>
     private sealed class LlmProfile
@@ -292,6 +298,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         new() { Id = "zh", DisplayName = "中文" },
         new() { Id = "en", DisplayName = "English" },
     };
+
+    [Reactive] public partial List<LlmPresetOption> LlmPresets { get; set; } = new();
+    public ReactiveCommand<string, Unit> ApplyLlmPresetCommand { get; }
 
     [Reactive] public partial List<VoiceOption> LlmProviders { get; set; } = new();
 
@@ -480,6 +489,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
+        ApplyLlmPresetCommand = ReactiveCommand.Create<string>(ApplyLlmPreset);
         ShowAiTabCommand = ReactiveCommand.Create(() => { TabIndex = 0; });
         ShowMusicTabCommand = ReactiveCommand.Create(() => { TabIndex = 1; });
         ShowHostTabCommand = ReactiveCommand.Create(() => { TabIndex = 2; });
@@ -694,6 +704,16 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         };
         if (voiceId != null)
             CharacterVoice = Voices.FirstOrDefault(v => v.Id == voiceId) ?? Voices[0];
+
+        LlmPresets = new List<LlmPresetOption>
+        {
+            new("deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "deepseek-chat"),
+            new("zhipu", AppLanguage.T("智谱 GLM", "Zhipu GLM"), "openai", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
+            new("kimi", AppLanguage.T("Kimi (月之暗面)", "Kimi (Moonshot)"), "openai", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
+            new("qwen", AppLanguage.T("通义千问 (百炼)", "Qwen (DashScope)"), "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+            new("siliconflow", AppLanguage.T("硅基流动", "SiliconFlow"), "openai", "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct"),
+            new("ollama", AppLanguage.T("Ollama 本地", "Local Ollama"), "local", "http://localhost:11434/v1", ""),
+        };
 
         LlmProviders = new List<VoiceOption>
         {
@@ -2531,6 +2551,55 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     /// 切换 LLM 服务档案：当前字段存回旧服务、载入新服务自己的 Key/地址/模型。
     /// 只改表单字段，不触碰运行中服务配置（ConfigureLlm 仅发生在保存/测试连接）。
     /// </summary>
+    /// <summary>
+    /// 应用主流大模型极简预置：切协议并填入 BaseUrl 与推荐模型名。
+    /// 只改表单字段与对应档案缓存，不触碰运行中服务配置。
+    /// </summary>
+    private void ApplyLlmPreset(string? presetId)
+    {
+        if (_isLoading || string.IsNullOrWhiteSpace(presetId))
+            return;
+
+        var preset = LlmPresets.FirstOrDefault(p => string.Equals(p.Id, presetId, StringComparison.OrdinalIgnoreCase));
+        if (preset == null)
+            return;
+
+        // 1. 切换协议（若此前处于不同协议，_llmProfileSwapSub 会先将旧表单存回原档案并载入目标槽）
+        SelectedProvider = preset.Provider;
+
+        // 2. 覆写 BaseUrl 与 Model，同时更新 _llmProfiles 档案缓存防异步凭据回填冲掉新设置
+        BaseUrl = preset.BaseUrl;
+        Model = preset.DefaultModel;
+
+        var currentProfile = GetProfile(preset.Provider);
+        UpdateProfile(preset.Provider, new LlmProfile
+        {
+            BaseUrl = preset.BaseUrl,
+            Model = preset.DefaultModel,
+            ApiKey = currentProfile.ApiKey
+        });
+
+        // 3. 引导提示（随语言动态刷新）
+        var targetId = preset.Id;
+        if (preset.Provider == "local")
+        {
+            SetStatusMessage(() => AppLanguage.T(
+                "已切到本地 Ollama 预置，确保本机 Ollama 已运行后点击测试或保存",
+                "Applied Local Ollama preset; make sure Ollama is running locally, then Test or Save"));
+        }
+        else
+        {
+            SetStatusMessage(() =>
+            {
+                var currentPreset = LlmPresets.FirstOrDefault(p => string.Equals(p.Id, targetId, StringComparison.OrdinalIgnoreCase));
+                var name = currentPreset?.DisplayName ?? targetId;
+                return AppLanguage.T(
+                    $"已填入 {name} 预置配置，填入 API Key 后点击测试或保存即可生效",
+                    $"Applied {name} preset; enter your API key, then Test or Save");
+            });
+        }
+    }
+
     private void SwapLlmProfile(string from, string to)
     {
         UpdateProfile(from, new LlmProfile

@@ -17,7 +17,8 @@ public class DJService : IDJService
     private readonly IMusicSearchService? _musicSearch;
     private readonly IListeningProfileService? _listeningProfile;
     private DJProfile _profile = new();
-    private WeatherInfo? _weatherSnapshot;
+    private volatile WeatherInfo? _weatherSnapshot;
+    private int _fallbackVariantCounter;
     private string _currentEmotion = "neutral";
     private readonly List<ChatMessage> _chatHistory = new();
     private readonly SemaphoreSlim _chatGate = new(1, 1);
@@ -184,7 +185,7 @@ Response rules:
         // 未配置时 ChatRawAsync 会抛 LlmApiException：前置检查拦截，直接回退模板串场，
         // 不把"请先配置 AI 服务"当台词播报（同 GenerateSongStoryAsync 的口径）
         if (_llm is LLMService llmService && !llmService.IsConfigured())
-            return BuildFallbackIntroduction(next);
+            return BuildFallbackIntroduction(current, next);
 
         try
         {
@@ -213,7 +214,7 @@ Response rules:
                 !cleaned.Contains(next.Title, StringComparison.OrdinalIgnoreCase))
             {
                 Log.Information("Discarded track introduction with incomplete title: {Title}", next.Title);
-                return BuildFallbackIntroduction(next);
+                return BuildFallbackIntroduction(current, next);
             }
 
             // 只记 LLM 成功生成的串场：模板兜底不是 DJ 的真实语气，进了记忆会让"避免重复"的基准失真。
@@ -248,7 +249,7 @@ Response rules:
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to generate track introduction");
-            return BuildFallbackIntroduction(next);
+            return BuildFallbackIntroduction(current, next);
         }
     }
 
@@ -420,15 +421,214 @@ Requirements:
             : $"{location}现在{kind}{temperature}。";
     }
 
-    private DJScript BuildFallbackIntroduction(Track next) => new()
+    private DJScript BuildFallbackIntroduction(Track? current, Track next)
     {
-        Text = _profile.Language == "en"
-            ? $"Up next is \"{next.Title}\" by {next.DisplayArtist}. Let's settle into its mood."
-            : $"接下来为你带来《{next.Title}》 - {next.DisplayArtist}，一起听听这段情绪。",
-        Emotion = "happy",
-        Expression = "smile",
-        Motion = "wave"
-    };
+        var variant = Interlocked.Increment(ref _fallbackVariantCounter);
+        return BuildFallbackIntroduction(_profile, current, next, DateTime.Now, _weatherSnapshot, variant);
+    }
+
+    internal static DJScript BuildFallbackIntroduction(
+        DJProfile profile,
+        Track? current,
+        Track next,
+        DateTime now,
+        WeatherInfo? weather,
+        int variant = 0)
+    {
+        var isEn = profile.Language == "en";
+        var djName = PromptHygiene.StripControlMarkers(profile.Name).Trim();
+        if (string.IsNullOrWhiteSpace(djName))
+            djName = isEn ? "Lumen" : "小音";
+
+        var nextTitle = PromptHygiene.StripControlMarkers(next.Title).Trim();
+        var nextArtist = PromptHygiene.StripControlMarkers(next.Artist).Trim();
+        var prevTitle = current == null ? null : PromptHygiene.StripControlMarkers(current.Title).Trim();
+
+        static bool HasKnownArtist(string? artist) =>
+            !string.IsNullOrWhiteSpace(artist) &&
+            !artist.Equals("未知", StringComparison.OrdinalIgnoreCase) &&
+            !artist.Equals("未知艺术家", StringComparison.OrdinalIgnoreCase) &&
+            !artist.Equals("Unknown", StringComparison.OrdinalIgnoreCase) &&
+            !artist.Equals("Unknown artist", StringComparison.OrdinalIgnoreCase);
+
+        string nextPhrase;
+        if (isEn)
+        {
+            nextPhrase = HasKnownArtist(nextArtist)
+                ? $"\"{nextTitle}\" by {nextArtist}"
+                : $"\"{nextTitle}\"";
+        }
+        else
+        {
+            nextPhrase = HasKnownArtist(nextArtist)
+                ? $"{nextArtist}的《{nextTitle}》"
+                : $"这首《{nextTitle}》";
+        }
+
+        var timeBandIndex = GetTimeBand(now.Hour);
+        var timeBand = DescribeTimeOfDay(now.Hour, isEn);
+        var timeStr = now.ToString("HH:mm");
+
+        string text;
+        if (current == null)
+        {
+            // 开台首播台呼：报时 + 时段 + 可选实时天气 + 主播名 + 第一首歌
+            var weatherClause = "";
+            if (weather != null && weather.Kind != WeatherKind.Unknown)
+            {
+                var loc = PromptHygiene.StripControlMarkers(weather.LocationName).Trim();
+                var kindStr = weather.Kind switch
+                {
+                    WeatherKind.Sunny => isEn ? "clear" : "晴朗",
+                    WeatherKind.Cloudy => isEn ? "partly cloudy" : "多云",
+                    WeatherKind.Overcast => isEn ? "overcast" : "阴天",
+                    WeatherKind.Rain => isEn ? "raining" : "有雨",
+                    WeatherKind.Snow => isEn ? "snowing" : "有雪",
+                    WeatherKind.Thunder => isEn ? "stormy" : "有雷雨",
+                    WeatherKind.Fog => isEn ? "foggy" : "有雾",
+                    _ => isEn ? "fine" : "适宜"
+                };
+                var tempStr = double.IsNaN(weather.TemperatureC)
+                    ? ""
+                    : isEn ? $", {weather.TemperatureC:0}°C" : $"，气温 {weather.TemperatureC:0}°C";
+
+                if (isEn)
+                {
+                    weatherClause = string.IsNullOrWhiteSpace(loc)
+                        ? $"Outside it's {kindStr}{tempStr}. "
+                        : $"In {loc} it's {kindStr}{tempStr}. ";
+                }
+                else
+                {
+                    weatherClause = string.IsNullOrWhiteSpace(loc)
+                        ? $"窗外现在{kindStr}{tempStr}，"
+                        : $"{loc}现在{kindStr}{tempStr}，";
+                }
+            }
+
+            var mod = (variant & int.MaxValue) % 3;
+            if (isEn)
+            {
+                text = mod switch
+                {
+                    0 => $"It's {timeStr}. {weatherClause}Welcome to TuanRadio, this is {djName}. Starting off this {timeBand} with {nextPhrase}.",
+                    1 => $"Good {timeBand}, the time is {timeStr}. {weatherClause}You're listening to TuanRadio with {djName}. Let's kick things off with {nextPhrase}.",
+                    _ => $"Tuning in to TuanRadio at {timeStr}. {weatherClause}This is {djName}, and the station is live. First up is {nextPhrase}."
+                };
+            }
+            else
+            {
+                var timeBandGreeting = timeBandIndex switch
+                {
+                    0 => "清晨好",
+                    1 => "上午好",
+                    2 => "下午好",
+                    3 => "傍晚好",
+                    4 => "晚上好",
+                    _ => "夜深了"
+                };
+                text = mod switch
+                {
+                    0 => $"现在是 {timeStr}，{weatherClause}欢迎收听 TuanRadio，我是{djName}。{timeBand}的第一首歌，为你带来{nextPhrase}。",
+                    1 => $"{timeBandGreeting}，现在是北京时间 {timeStr}。{weatherClause}这里是 TuanRadio，我是{djName}，先用{nextPhrase}陪你开启这段时光。",
+                    _ => $"锁定 TuanRadio，此刻是 {timeStr}。{weatherClause}我是主播{djName}，电台已经上线，第一首为你送上{nextPhrase}。"
+                };
+            }
+        }
+        else
+        {
+            // 曲间串场：不报具体时刻数字，结合时段、天气意象与上一首衔接
+            var hasPrevTitle = !string.IsNullOrWhiteSpace(prevTitle);
+            var mod = (variant & int.MaxValue) % 4;
+
+            if (isEn)
+            {
+                var weatherWord = weather != null && weather.Kind != WeatherKind.Unknown
+                    ? weather.Kind switch
+                    {
+                        WeatherKind.Rain => "rain",
+                        WeatherKind.Snow => "snow",
+                        WeatherKind.Thunder => "thunderstorm",
+                        WeatherKind.Sunny => "sunshine",
+                        WeatherKind.Cloudy => "clouds",
+                        WeatherKind.Overcast => "gray skies",
+                        WeatherKind.Fog => "mist",
+                        _ => null
+                    }
+                    : null;
+
+                if (!hasPrevTitle)
+                {
+                    text = mod switch
+                    {
+                        0 => $"In this {timeBand} hour, up next is {nextPhrase}. Let's settle into its mood.",
+                        1 => $"Carrying through this {timeBand}, here is {nextPhrase}.",
+                        2 => $"The pace of this {timeBand} is just right. Next up is {nextPhrase}.",
+                        _ => $"This is TuanRadio with {djName}. Tuning into {nextPhrase}. Hope you enjoy it."
+                    };
+                }
+                else
+                {
+                    text = mod switch
+                    {
+                        0 => $"That was \"{prevTitle}\". In this {timeBand} hour, up next is {nextPhrase}. Let's settle into its mood.",
+                        1 => weatherWord != null
+                            ? $"With the {weatherWord} outside, we just heard \"{prevTitle}\". Up next, let {nextPhrase} keep you company."
+                            : $"The echoes of \"{prevTitle}\" are still in the air. Carrying through this {timeBand}, here is {nextPhrase}.",
+                        2 => $"Moving on from \"{prevTitle}\", the pace of this {timeBand} is just right. Next up is {nextPhrase}.",
+                        _ => $"This is TuanRadio with {djName}. After \"{prevTitle}\", tuning into {nextPhrase}. Hope you enjoy it."
+                    };
+                }
+            }
+            else
+            {
+                var weatherWord = weather != null && weather.Kind != WeatherKind.Unknown
+                    ? weather.Kind switch
+                    {
+                        WeatherKind.Rain => "雨声",
+                        WeatherKind.Snow => "雪景",
+                        WeatherKind.Thunder => "雷雨",
+                        WeatherKind.Sunny => "阳光",
+                        WeatherKind.Cloudy => "云色",
+                        WeatherKind.Overcast => "阴云",
+                        WeatherKind.Fog => "雾气",
+                        _ => null
+                    }
+                    : null;
+
+                if (!hasPrevTitle)
+                {
+                    text = mod switch
+                    {
+                        0 => $"在这段{timeBand}时光里，接下来为你带来{nextPhrase}，一起听听这段情绪。",
+                        1 => $"在这段{timeBand}的电波里，继续为你送上{nextPhrase}。",
+                        2 => $"{timeBand}的节奏刚刚好。接下来这首是{nextPhrase}。",
+                        _ => $"这里是 TuanRadio，我是{djName}。为你换上{nextPhrase}，希望你会喜欢。"
+                    };
+                }
+                else
+                {
+                    text = mod switch
+                    {
+                        0 => $"刚才那首《{prevTitle}》先告一段落，在这段{timeBand}时光里，接下来为你带来{nextPhrase}，一起听听这段情绪。",
+                        1 => weatherWord != null
+                            ? $"伴着窗外的{weatherWord}，听完了《{prevTitle}》，接下来让{nextPhrase}继续陪你。"
+                            : $"《{prevTitle}》的余韵还没散去，{timeBand}的电波里，继续为你送上{nextPhrase}。",
+                        2 => $"告别了《{prevTitle}》，{timeBand}的节奏刚刚好。接下来这首是{nextPhrase}。",
+                        _ => $"这里是 TuanRadio，我是{djName}。听过《{prevTitle}》之后，换上{nextPhrase}，希望你会喜欢。"
+                    };
+                }
+            }
+        }
+
+        return new DJScript
+        {
+            Text = text,
+            Emotion = "happy",
+            Expression = "smile",
+            Motion = "wave"
+        };
+    }
 
     public Task<SongStory> GenerateSongStoryAsync(Track track)
         => GenerateSongStoryAsync(track, CancellationToken.None);
