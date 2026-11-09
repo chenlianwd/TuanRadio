@@ -312,7 +312,7 @@ public class DJServiceTests
 
         var fallback = await _djService.GenerateTrackIntroductionAsync(
             null, new Track { Title = "晴天", Artist = "周杰伦" });
-        Assert.Contains("接下来为你带来", fallback.Text);
+        Assert.Contains("《晴天》", fallback.Text);
 
         string? nextPrompt = null;
         _mockLlm
@@ -324,7 +324,7 @@ public class DJServiceTests
             null, new Track { Title = "晴天", Artist = "周杰伦" });
 
         Assert.NotNull(nextPrompt);
-        Assert.DoesNotContain("接下来为你带来", nextPrompt);
+        Assert.DoesNotContain(fallback.Text, nextPrompt);
         Assert.DoesNotContain("最近几次串场", nextPrompt);
     }
 
@@ -1601,5 +1601,109 @@ public class DJServiceTests
         Assert.Contains(
             language == "zh" ? "不附控制块" : "no control block",
             system.Content);
+    }
+
+    [Fact]
+    public void BuildFallbackIntroduction_OpeningTrack_IncludesStationBanterTimeAndWeather()
+    {
+        var profileZh = new DJProfile { Name = "小音", Language = "zh" };
+        var profileEn = new DJProfile { Name = "Lumen", Language = "en" };
+        var next = new Track { Title = "晴天", Artist = "周杰伦" };
+        var now = new DateTime(2026, 11, 9, 21, 30, 0);
+        var weather = new WeatherInfo(WeatherKind.Rain, 18, "上海");
+
+        var scriptZh = DJService.BuildFallbackIntroduction(profileZh, null, next, now, weather, variant: 0);
+        Assert.Contains("21:30", scriptZh.Text);
+        Assert.Contains("上海", scriptZh.Text);
+        Assert.Contains("18°C", scriptZh.Text);
+        Assert.Contains("小音", scriptZh.Text);
+        Assert.Contains("周杰伦的《晴天》", scriptZh.Text);
+        Assert.Equal("happy", scriptZh.Emotion);
+
+        var weatherEn = new WeatherInfo(WeatherKind.Rain, 18, "Shanghai");
+        var scriptEn = DJService.BuildFallbackIntroduction(profileEn, null, next, now, weatherEn, variant: 0);
+        Assert.Contains("21:30", scriptEn.Text);
+        Assert.Contains("Shanghai", scriptEn.Text);
+        Assert.Contains("18°C", scriptEn.Text);
+        Assert.Contains("Lumen", scriptEn.Text);
+        Assert.Contains("\"晴天\" by 周杰伦", scriptEn.Text);
+    }
+
+    [Fact]
+    public void BuildFallbackIntroduction_OpeningTrack_WithoutWeather_OmitWeatherCleanly()
+    {
+        var profile = new DJProfile { Name = "小音", Language = "zh" };
+        var next = new Track { Title = "晴天", Artist = "周杰伦" };
+        var now = new DateTime(2026, 11, 9, 14, 15, 0);
+
+        var scriptNullWeather = DJService.BuildFallbackIntroduction(profile, null, next, now, null, variant: 1);
+        Assert.Contains("14:15", scriptNullWeather.Text);
+        Assert.DoesNotContain("现在，", scriptNullWeather.Text);
+        Assert.DoesNotContain("NaN", scriptNullWeather.Text);
+
+        var nanWeather = new WeatherInfo(WeatherKind.Sunny, double.NaN, "北京");
+        var scriptNanWeather = DJService.BuildFallbackIntroduction(profile, null, next, now, nanWeather, variant: 0);
+        Assert.Contains("北京", scriptNanWeather.Text);
+        Assert.DoesNotContain("NaN", scriptNanWeather.Text);
+        Assert.DoesNotContain("°C", scriptNanWeather.Text);
+    }
+
+    [Fact]
+    public void BuildFallbackIntroduction_TransitionTrack_BridgesPreviousAndNext_WithoutExplicitClock()
+    {
+        var profile = new DJProfile { Name = "小音", Language = "zh" };
+        var current = new Track { Title = "告白气球", Artist = "周杰伦" };
+        var next = new Track { Title = "七里香", Artist = "周杰伦" };
+        var now = new DateTime(2026, 11, 9, 15, 45, 0);
+        var weather = new WeatherInfo(WeatherKind.Rain, 20, "成都");
+
+        for (var v = 0; v < 4; v++)
+        {
+            var script = DJService.BuildFallbackIntroduction(profile, current, next, now, weather, variant: v);
+            Assert.Contains("《告白气球》", script.Text);
+            Assert.Contains("《七里香》", script.Text);
+            // 曲间串场不报出具体时刻数字
+            Assert.DoesNotContain("15:45", script.Text);
+        }
+    }
+
+    [Fact]
+    public void BuildFallbackIntroduction_UnknownArtistAndMissingPrevTitle_HandledGracefully()
+    {
+        var profileZh = new DJProfile { Name = "小音", Language = "zh" };
+        var nextUnknown = new Track { Title = "神秘旋律", Artist = "未知艺术家" };
+        var currentEmptyTitle = new Track { Title = "", Artist = "某歌手" };
+        var now = new DateTime(2026, 11, 9, 10, 0, 0);
+
+        var scriptZh = DJService.BuildFallbackIntroduction(profileZh, currentEmptyTitle, nextUnknown, now, null, variant: 0);
+        Assert.Contains("这首《神秘旋律》", scriptZh.Text);
+        Assert.DoesNotContain("未知艺术家的", scriptZh.Text);
+        Assert.DoesNotContain("《》", scriptZh.Text);
+
+        var profileEn = new DJProfile { Name = "", Language = "en" };
+        var scriptEn = DJService.BuildFallbackIntroduction(profileEn, null, nextUnknown, now, null, variant: 0);
+        // 主播名空兜底 Lumen，无已知歌手时不拼 by Unknown
+        Assert.Contains("Lumen", scriptEn.Text);
+        Assert.Contains("\"神秘旋律\"", scriptEn.Text);
+        Assert.DoesNotContain("by Unknown", scriptEn.Text);
+    }
+
+    [Fact]
+    public async Task GenerateTrackIntroductionAsync_RotatesFallbackVariants()
+    {
+        var llm = new LLMService(new HttpClient());
+        var dj = new DJService(llm);
+        dj.Initialize(new DJProfile { Name = "小音", Language = "zh" });
+
+        var t1 = new Track { Title = "歌曲1", Artist = "歌手1" };
+        var t2 = new Track { Title = "歌曲2", Artist = "歌手2" };
+        var t3 = new Track { Title = "歌曲3", Artist = "歌手3" };
+
+        var intro1 = await dj.GenerateTrackIntroductionAsync(t1, t2);
+        var intro2 = await dj.GenerateTrackIntroductionAsync(t2, t3);
+
+        Assert.NotEmpty(intro1.Text);
+        Assert.NotEmpty(intro2.Text);
+        Assert.NotEqual(intro1.Text, intro2.Text);
     }
 }

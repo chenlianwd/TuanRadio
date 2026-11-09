@@ -369,4 +369,32 @@ public class SettingsNavTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [AvaloniaFact]
+    public void LlmPresetItems_BindsToViewModel_AndHasPresetButtons()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        Window? window = null;
+        try
+        {
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+
+            var view = window.FindDescendantOfType<SettingsView>()
+                ?? throw new InvalidOperationException("SettingsView not found");
+            var itemsControl = view.FindControl<ItemsControl>("LlmPresetItems")
+                ?? throw new InvalidOperationException("LlmPresetItems not found");
+
+            Assert.NotNull(itemsControl.ItemsSource);
+            Assert.Equal(6, vm.SettingsVM.LlmPresets.Count);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }
