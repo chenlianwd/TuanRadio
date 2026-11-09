@@ -121,7 +121,22 @@ public sealed class PlaybackPreflightService : IDisposable
         PlaybackFailureKind failure;
         try
         {
-            if (string.IsNullOrWhiteSpace(track.SourceId))
+            if (track.IsLiveStream)
+            {
+                var streamUrl = track.ProviderMetadata.TryGetValue("stream_url", out var su) && !string.IsNullOrWhiteSpace(su)
+                    ? su
+                    : track.FilePath;
+                if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
+                {
+                    var isValid = await MediaUriPolicy.ValidateAsync(ProviderNetworkScope.PublicInternet, uri, cancellationToken);
+                    failure = isValid ? PlaybackFailureKind.None : PlaybackFailureKind.SourceUnavailable;
+                }
+                else
+                {
+                    failure = PlaybackFailureKind.NotFound;
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(track.SourceId))
                 failure = File.Exists(track.FilePath) ? PlaybackFailureKind.None : PlaybackFailureKind.NotFound;
             else
             {

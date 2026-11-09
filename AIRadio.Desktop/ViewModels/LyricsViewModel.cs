@@ -89,6 +89,12 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        if (track.IsLiveStream)
+        {
+            SetStatus(StatusKind.NoLyrics);
+            return;
+        }
+
         SetStatus(StatusKind.Loading);
         _ = LoadLyricsAsync(track, generation);
     }

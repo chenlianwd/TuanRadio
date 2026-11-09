@@ -70,6 +70,11 @@
                             ToolTip.Tip="{DynamicResource S_ProgramTab}" AutomationProperties.Name="{DynamicResource S_ProgramTab}">
                         <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M4,6 L20,6 M4,12 L20,12 M4,18 L14,18"/>
                     </Button>
+                    <Button Width="32" Height="28" Padding="0" Command="{Binding OpenRadioStationsCommand}"
+                            ToolTip.Tip="{DynamicResource S_RadioStationsTab}" AutomationProperties.Name="{DynamicResource S_RadioStationsTab}">
+                        <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2"
+                              Data="M12,12 A2,2 0 1,0 12,16 A2,2 0 1,0 12,12 M12,16 L12,22 M8.5,9.5 A5,5 0 0,0 8.5,18.5 M15.5,9.5 A5,5 0 0,1 15.5,18.5 M5.5,6.5 A9,9 0 0,0 5.5,21.5 M18.5,6.5 A9,9 0 0,1 18.5,21.5"/>
+                    </Button>
                     <Button Width="32" Height="28" Padding="0" Command="{Binding OpenKugouPlaylistsCommand}"
                             IsVisible="{Binding HasExperimentalProviders}"
                             ToolTip.Tip="{DynamicResource S_KugouPlaylistsTab}" AutomationProperties.Name="{DynamicResource S_KugouPlaylistsTab}"
@@ -162,6 +167,26 @@
                     <Button Grid.Column="4" Content="{DynamicResource S_ImportPlaylist}"
                             IsEnabled="{Binding PlaylistVM.HasKugouPlaylistTracks}"
                             Command="{Binding PlaylistVM.ImportKugouPlaylistCommand}"/>
+                </Grid>
+                <!-- tab5 网络电台流派与搜索栏 -->
+                <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6"
+                      IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=5}">
+                    <ComboBox ItemsSource="{Binding PlaylistVM.RadioCategories}"
+                              SelectedItem="{Binding PlaylistVM.SelectedRadioCategory, Mode=TwoWay}"
+                              Width="105">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate DataType="vm:RadioCategoryItem">
+                                <TextBlock Text="{Binding DisplayName}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBox Grid.Column="1" Text="{Binding PlaylistVM.RadioSearchText, Mode=TwoWay}"
+                             Watermark="{DynamicResource S_RadioSearchWatermark}" KeyDown="OnRadioSearchKeyDown"/>
+                    <Button Grid.Column="2" Content="↻" Width="32" Height="28" Padding="0"
+                            IsEnabled="{Binding PlaylistVM.IsRadioLoading, Converter={StaticResource InverseBoolConverter}}"
+                            Command="{Binding PlaylistVM.RefreshRadioStationsCommand}"
+                            ToolTip.Tip="{DynamicResource S_RefreshProgram}"
+                            AutomationProperties.Name="{DynamicResource S_RefreshProgram}"/>
                 </Grid>
                 <TextBlock Grid.Row="2" Text="{Binding PlaylistVM.SearchStatusMessage}"
                            IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}"
@@ -401,6 +426,52 @@
                                                         ToolTip.Tip="{DynamicResource S_AddToQueue}"
                                                         AutomationProperties.Name="{DynamicResource S_AddToQueue}"
                                                         Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.AddKugouToQueueCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                        <!-- tab5 网络电台列表 -->
+                        <Grid IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=5}">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                        IsVisible="{Binding PlaylistVM.HasRadioStations, Converter={StaticResource InverseBoolConverter}}">
+                                <TextBlock Text="{Binding PlaylistVM.RadioStatusMessage}" MaxWidth="320" TextAlignment="Center"
+                                           TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                            </StackPanel>
+                            <ListBox ItemsSource="{Binding PlaylistVM.RadioStations}"
+                                     IsVisible="{Binding PlaylistVM.HasRadioStations}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="models:RadioStation">
+                                        <Border Classes="library-row">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" Classes="track-title" FontSize="13" FontWeight="700"
+                                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding DisplayCountryAndTags}" FontSize="11"
+                                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                                               Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <Border Grid.Column="1" Background="{DynamicResource C_2221ED76}" CornerRadius="3"
+                                                        Padding="6,1" VerticalAlignment="Center"
+                                                        IsVisible="{Binding DisplayQuality, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                    <TextBlock Text="{Binding DisplayQuality}" FontSize="9" Foreground="{DynamicResource C_FFB9FFE8}"/>
+                                                </Border>
+                                                <Button Grid.Column="2" Width="32" Height="28" Padding="0"
+                                                        ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}"
+                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.FavoriteRadioStationCommand}"
+                                                        CommandParameter="{Binding}">
+                                                    <Panel>
+                                                        <PathIcon Width="16" Height="16" IsVisible="{Binding !IsFavorite}"
+                                                              Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                        <PathIcon Width="16" Height="16" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsFavorite}"
+                                                              Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                    </Panel>
+                                                </Button>
+                                                <Button Grid.Column="3" Content="{DynamicResource S_TuneInStation}"
+                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayRadioStationCommand}"
                                                         CommandParameter="{Binding}"/>
                                             </Grid>
                                         </Border>

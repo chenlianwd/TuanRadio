@@ -23,6 +23,7 @@ public interface IAudioService
     IObservable<Track?> TrackEnded { get; }
     IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices { get; }
     IObservable<TrackMediaInfo> TrackMediaInfo { get; }
+    IObservable<string?> LiveMetadataChanged => System.Reactive.Linq.Observable.Empty<string?>();
 
     void LoadTracks(IEnumerable<Track> tracks);
     void LoadFiles(IEnumerable<string> filePaths);

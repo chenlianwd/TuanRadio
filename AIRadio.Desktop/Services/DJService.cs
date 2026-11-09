@@ -469,6 +469,26 @@ Requirements:
         var timeBand = DescribeTimeOfDay(now.Hour, isEn);
         var timeStr = now.ToString("HH:mm");
 
+        if (next.IsLiveStream)
+        {
+            var stationName = string.IsNullOrWhiteSpace(nextTitle) ? (isEn ? "Live Radio" : "网络电台") : nextTitle;
+            var liveText = current == null
+                ? (isEn
+                    ? $"It is {timeBand} on TuanRadio. I'm {djName}. Tuning you live to \"{stationName}\" — enjoy the broadcast."
+                    : $"现在是{timeBand}，这里是 TuanRadio，我是{djName}。为你连线网络电台《{stationName}》，让远方电波陪你度过这段时光。")
+                : (isEn
+                    ? $"{timeBand} vibes on TuanRadio with {djName}. Switching frequency now to live station \"{stationName}\"."
+                    : $"这里是 TuanRadio，我是{djName}。接下来为你切换波段，连线网络电台《{stationName}》，让这段实时电波继续陪你。");
+
+            return new DJScript
+            {
+                Text = liveText,
+                Emotion = "happy",
+                Expression = "smile",
+                Motion = "wave",
+            };
+        }
+
         string text;
         if (current == null)
         {

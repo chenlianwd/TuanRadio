@@ -374,6 +374,12 @@ public partial class PlaylistDrawer : UserControl
         }
     }
 
+    private void OnRadioSearchKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm)
+            vm.PlaylistVM.SearchRadioStationsCommand.Execute(Unit.Default).Subscribe();
+    }
+
     private void OnSearchKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm)

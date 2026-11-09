@@ -48,6 +48,7 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<string> _ttsErrorSubject = new();
     private readonly Subject<PlaybackRecoveryNotice> _playbackRecoverySubject = new();
     private readonly Subject<TrackMediaInfo> _trackMediaInfoSubject = new();
+    private readonly Subject<string?> _liveMetadataSubject = new();
     private readonly AutomaticSkipGuard _automaticSkipGuard = new();
     private readonly List<Track> _playlist = new();
     // UI 线程（增删/清空）与后台续播线程（NextAsync 追加）并发访问 _playlist/_currentIndex，
@@ -214,6 +215,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
     public IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices => _playbackRecoverySubject.AsObservable();
     public IObservable<TrackMediaInfo> TrackMediaInfo => _trackMediaInfoSubject.AsObservable();
+    public IObservable<string?> LiveMetadataChanged => _liveMetadataSubject.AsObservable();
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
     public IObservable<string> TtsError => _ttsErrorSubject.AsObservable();
 
@@ -513,6 +515,7 @@ public class AudioService : IAudioService, IDisposable
         _trackEndedSubject.Dispose();
         _playbackRecoverySubject.Dispose();
         _trackMediaInfoSubject.Dispose();
+        _liveMetadataSubject.Dispose();
         _ttsStateSubject.Dispose();
         _ttsErrorSubject.Dispose();
         // 不释放 _lifetimeCts：后台延迟任务（重试/续播/旧 Media 释放）在 IsDisposed 检查
@@ -561,7 +564,7 @@ public class AudioService : IAudioService, IDisposable
             return;
         }
 
-        var recoveryAction = GetEarlyEndRecoveryAction(_playbackErrorRetryCount);
+        var recoveryAction = GetRecoveryActionForTrack(track, _playbackErrorRetryCount);
         _playbackErrorRetryCount++;
         if (recoveryAction == EarlyEndRecoveryAction.RefreshCurrentSource)
         {
@@ -851,9 +854,8 @@ public class AudioService : IAudioService, IDisposable
 
     public void Seek(TimeSpan position)
     {
-        if (IsDisposed)
+        if (IsDisposed || CurrentTrack?.IsLiveStream == true)
             return;
-
         if (_currentState == PlaybackState.Playing || _currentState == PlaybackState.Paused)
         {
             var positionMs = Math.Max(0, (long)position.TotalMilliseconds);
@@ -1038,7 +1040,7 @@ public class AudioService : IAudioService, IDisposable
                 var (count, currentIndex) = SnapshotPlaylist();
                 if (count == 0) return;
 
-                if (GetLastKnownPositionMs() > 3000)
+                if (GetLastKnownPositionMs() > 3000 && CurrentTrack?.IsLiveStream != true)
                 {
                     if (_currentState == PlaybackState.Playing || _currentState == PlaybackState.Paused)
                     {
@@ -1438,6 +1440,7 @@ public class AudioService : IAudioService, IDisposable
             // 新曲目正常开播：清零上一首的恢复预算锚点
             Volatile.Write(ref _recoveryDeadlineMs, 0);
             Volatile.Write(ref _recoveryPlaybackStartedAtMs, 0);
+            _liveMetadataSubject.OnNext(null);
         }
         Media? newMedia = null;
         Media? oldMedia = null;
@@ -1471,7 +1474,7 @@ public class AudioService : IAudioService, IDisposable
                 // to get a fresh link, but still play immediately with the current URL.
                 // Only skip if the URL looks like a local file path; freshly resolved
                 // tracks (ResolvedAtUtc within window) skip the redundant background resolve.
-                if (isOnlineUrl && !IsRecentlyResolved(track))
+                if (isOnlineUrl && !track.IsLiveStream && !IsRecentlyResolved(track))
                 {
                     _ = RefreshTrackUrlAsync(track, requestId);
                 }
@@ -1508,6 +1511,35 @@ public class AudioService : IAudioService, IDisposable
                     // 音源声明的播放头（UA 可靠投递/Cookie 通道/Referer 尽力，见 MediaHttpOptions）
                     foreach (var headerOption in MediaHttpOptions.Build(track.PlaybackHeaders))
                         newMedia.AddOption(headerOption);
+                }
+
+                if (track.IsLiveStream && isUrl)
+                {
+                    newMedia.MetaChanged += (s, e) =>
+                    {
+                        if (IsDisposed || requestId != Volatile.Read(ref _playRequestId))
+                            return;
+                        try
+                        {
+                            if (e.MetadataType is MetadataType.NowPlaying or MetadataType.Title)
+                            {
+                                var nowPlaying = newMedia.Meta(MetadataType.NowPlaying);
+                                var metaText = string.IsNullOrWhiteSpace(nowPlaying) ? newMedia.Meta(MetadataType.Title) : nowPlaying;
+                                if (!string.IsNullOrWhiteSpace(metaText))
+                                {
+                                    var cleaned = PromptHygiene.StripControlMarkers(metaText).Trim();
+                                    if (!string.IsNullOrWhiteSpace(cleaned) && !string.Equals(cleaned, track.Title, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        _liveMetadataSubject.OnNext(cleaned);
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Debug(ex, "Failed to read live metadata for {Track}", track);
+                        }
+                    };
                 }
 
                 _player.Media = newMedia;
@@ -1551,6 +1583,8 @@ public class AudioService : IAudioService, IDisposable
     /// </summary>
     private async Task CollectTrackMediaInfoAsync(Media media, Track track, int requestId, bool isUrl)
     {
+        if (track.IsLiveStream)
+            return;
         if (isUrl && !CollectMediaInfoForOnlineTracks)
             return;
         // await 前快照曲目身份：解析等待期间跨源回退可能改写 track.Id，
@@ -1617,7 +1651,7 @@ public class AudioService : IAudioService, IDisposable
             return true;
         }
 
-        var recoveryAction = GetEarlyEndRecoveryAction(_earlyEndRetryCount);
+        var recoveryAction = GetRecoveryActionForTrack(track, _earlyEndRetryCount);
         _earlyEndRetryCount++;
         if (recoveryAction == EarlyEndRecoveryAction.RefreshCurrentSource)
         {
@@ -1656,6 +1690,14 @@ public class AudioService : IAudioService, IDisposable
         }
 
         return true;
+    }
+
+    internal static EarlyEndRecoveryAction GetRecoveryActionForTrack(Track track, int completedRecoveryCount)
+    {
+        var action = GetEarlyEndRecoveryAction(completedRecoveryCount);
+        if (track.IsLiveStream && action == EarlyEndRecoveryAction.TryAlternativeSource)
+            return EarlyEndRecoveryAction.Advance;
+        return action;
     }
 
     internal static EarlyEndRecoveryAction GetEarlyEndRecoveryAction(int completedRecoveryCount)
@@ -1726,6 +1768,9 @@ public class AudioService : IAudioService, IDisposable
 
     private bool LooksLikeEarlyEnd(Track track)
     {
+        if (track.IsLiveStream)
+            return true;
+
         var durationMs = track.Duration.TotalMilliseconds;
         if (durationMs < 90_000)
             return false;
@@ -2238,7 +2283,9 @@ public class AudioService : IAudioService, IDisposable
                 if (IsDisposed)
                     return;
 
-                pos = Math.Max(0, _player.Time);
+                pos = CurrentTrack?.IsLiveStream == true
+                    ? Math.Max(0, Environment.TickCount64 - _trackStartedAtMs)
+                    : Math.Max(0, _player.Time);
             }
 
             if (pos != Interlocked.Read(ref _lastPositionMs))

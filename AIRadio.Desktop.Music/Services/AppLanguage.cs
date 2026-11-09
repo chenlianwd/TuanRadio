@@ -43,6 +43,13 @@ public static class AppLanguage
     public static string T(string zh, string en)
         => _current == "en" ? en : zh;
 
+    /// <summary>按键读取当前语言字符串字典的值；键不存在时回退 key 本身。</summary>
+    public static string Get(string key)
+    {
+        var dict = _current == "en" ? EnStrings : ZhStrings;
+        return dict.TryGetValue(key, out var val) ? val : key;
+    }
+
     /// <summary>把音源内部名称转换为当前界面的显示名称，兼容历史中英文及简称。</summary>
     public static string MusicSourceName(string? source)
     {
@@ -59,6 +66,7 @@ public static class AppLanguage
             "local" or "local library" or "本地曲库" => T("本地曲库", "Local library"),
             "opensubsonic" => "OpenSubsonic",
             "audius" => "Audius",
+            "radio-browser" or "radio" or "网络电台" or "internet radio" => T("网络电台", "Internet Radio"),
             "多平台聚合" or "multi-source" or "multi-source music" => T("多平台聚合", "Multi-source"),
             _ => source
         };
@@ -231,6 +239,10 @@ public static class AppLanguage
         ["S_VoicePreview"] = "试听",
         ["S_Personality"] = "人格提示词",
         ["S_UpdateSectionTitle"] = "版本与更新",
+        ["S_RadioStationsTab"] = "网络电台",
+        ["S_RadioSearchWatermark"] = "搜索全球电台名称或标签...",
+        ["S_LiveBadge"] = "● 直播",
+        ["S_TuneInStation"] = "调频收听",
         ["S_Save"] = "保存设置",
     };
 
@@ -395,6 +407,10 @@ public static class AppLanguage
         ["S_VoicePreview"] = "Preview",
         ["S_Personality"] = "Personality prompt",
         ["S_UpdateSectionTitle"] = "Version & updates",
+        ["S_RadioStationsTab"] = "Radio Stations",
+        ["S_RadioSearchWatermark"] = "Search global radio stations...",
+        ["S_LiveBadge"] = "● LIVE",
+        ["S_TuneInStation"] = "Tune in",
         ["S_Save"] = "Save settings",
     };
 }

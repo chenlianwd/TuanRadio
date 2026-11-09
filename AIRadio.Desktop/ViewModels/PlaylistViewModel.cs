@@ -24,6 +24,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService _musicSearchService;
     private readonly IKugouPlaylistService? _kugouPlaylistService;
     private readonly LocalLibraryProvider? _localLibrary;
+    private readonly IRadioBrowserService? _radioBrowserService;
+    private string _currentCategoryKey = "lofi";
     private readonly string _playlistDir;
     private readonly string _playlistFile;
     private readonly Func<string, string, Task> _writeAllTextAsync;
@@ -68,6 +70,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<OnlineTrack> KugouPlaylistTracks { get; } = new();
     public ObservableCollection<OnlineTrack> FilteredKugouPlaylistTracks { get; } = new();
     public ObservableCollection<SyncedPlaylistInfo> SyncedPlaylists { get; } = new();
+    public ObservableCollection<RadioCategoryItem> RadioCategories { get; } = new();
+    public ObservableCollection<RadioStation> RadioStations { get; } = new();
     public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
     /// <summary>主歌单多选结果（OneWayToSource 绑定 ListBox.SelectedItems，控件侧写入）。</summary>
     public ObservableCollection<Track> SelectedLibraryTracks { get; } = new();
@@ -97,7 +101,17 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string KugouFilterText { get; set; } = string.Empty;
     [Reactive] public partial SyncedPlaylistInfo? SelectedSyncedPlaylist { get; set; }
     [Reactive] public partial bool HasSyncedPlaylists { get; set; }
-    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单
+    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单, 5=网络电台
+    [Reactive] public partial RadioCategoryItem? SelectedRadioCategory { get; set; }
+    [Reactive] public partial string RadioSearchText { get; set; } = string.Empty;
+    [Reactive] public partial string RadioStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial bool IsRadioLoading { get; set; }
+    [Reactive] public partial bool HasRadioStations { get; set; }
+
+    public ReactiveCommand<Unit, Unit> SearchRadioStationsCommand { get; }
+    public ReactiveCommand<Unit, Unit> RefreshRadioStationsCommand { get; }
+    public ReactiveCommand<RadioStation, Unit> PlayRadioStationCommand { get; }
+    public ReactiveCommand<RadioStation, Unit> FavoriteRadioStationCommand { get; }
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> RemoveSelectedTracksCommand { get; }
@@ -131,12 +145,14 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         string? playlistFile = null,
         Func<string, string, Task>? writeAllTextAsync = null,
         IKugouPlaylistService? kugouPlaylistService = null,
-        LocalLibraryProvider? localLibrary = null)
+        LocalLibraryProvider? localLibrary = null,
+        IRadioBrowserService? radioBrowserService = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
         _kugouPlaylistService = kugouPlaylistService;
         _localLibrary = localLibrary;
+        _radioBrowserService = radioBrowserService;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
         _customWriter = writeAllTextAsync != null;
@@ -330,6 +346,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 if (!Favorites.Contains(playlistTrack))
                     Favorites.Add(playlistTrack);
             }
+            var stationInList = RadioStations.FirstOrDefault(s => (RadioStation.SourcePrefix + s.StationUuid) == playlistTrack.Id);
+            if (stationInList != null)
+                stationInList.IsFavorite = playlistTrack.IsFavorite;
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
@@ -387,6 +406,31 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _selectedSyncedPlaylistSub = this.WhenAnyValue(x => x.SelectedSyncedPlaylist)
             .Subscribe(_ => ApplyLibraryPlaylistFilter());
 
+        SearchRadioStationsCommand = ReactiveCommand.CreateFromTask(SearchRadioStationsAsync);
+        RefreshRadioStationsCommand = ReactiveCommand.CreateFromTask(() =>
+        {
+            var key = SelectedRadioCategory?.Key ?? "lofi";
+            return LoadRadioStationsByCategoryAsync(key, force: true);
+        });
+        PlayRadioStationCommand = ReactiveCommand.Create<RadioStation>(PlayRadioStation);
+        FavoriteRadioStationCommand = ReactiveCommand.Create<RadioStation>(FavoriteRadioStation);
+
+        PopulateRadioCategories();
+        SelectedRadioCategory = RadioCategories.FirstOrDefault();
+        _currentCategoryKey = SelectedRadioCategory?.Key ?? "lofi";
+
+        this.WhenAnyValue(x => x.SelectedRadioCategory)
+            .WhereNotNull()
+            .Skip(1)
+            .Subscribe(category =>
+            {
+                if (category.Key == _currentCategoryKey)
+                    return;
+                _currentCategoryKey = category.Key;
+                RadioSearchText = string.Empty;
+                _ = LoadRadioStationsByCategoryAsync(category.Key);
+            });
+
         // Auto-save when tracks change (skip during initial load)
         Tracks.CollectionChanged += OnTracksChanged;
 
@@ -409,6 +453,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 : AppLanguage.T("清空歌单", "Clear playlist");
             if (_localLibraryCount is { } count)
                 LocalLibraryStatus = FormatLocalLibraryCount(count);
+            PopulateRadioCategories();
         };
         AppLanguage.Changed += _onLanguageChanged;
         _searchTextSub = this.WhenAnyValue(x => x.SearchText).Skip(1)
@@ -576,6 +621,12 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                             : new Dictionary<string, string>(item.Provider.Metadata, StringComparer.OrdinalIgnoreCase),
                         IsFavorite = _favoriteIds.Contains(item.Id) || item.IsFavorite
                     };
+                    if (track.ProviderMetadata.TryGetValue("codec", out var codecVal) && !string.IsNullOrWhiteSpace(codecVal))
+                        track.DeclaredCodec = codecVal.ToUpperInvariant();
+                    if (track.ProviderMetadata.TryGetValue("bitrate", out var brVal) && int.TryParse(brVal, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var br) && br > 0)
+                        track.DeclaredBitrateKbps = br;
+                    if (track.IsLiveStream && track.ProviderMetadata.TryGetValue("stream_url", out var su) && !string.IsNullOrWhiteSpace(su))
+                        track.FilePath = su;
                     // 仅存在于 legacy IsFavorite 字段的收藏要并入 _favoriteIds：保存侧只看它，
                     // 否则先显示为已收藏、首次保存即被静默清除（空 Id 与 legacy 回填路径同口径排除）
                     if (track.IsFavorite && !string.IsNullOrEmpty(track.Id))
@@ -1644,11 +1695,154 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _searchTextSub.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
         AppLanguage.Changed -= _onLanguageChanged;
-        // _lifetimeCts/_saveGate/_kugouGate 不显式释放：均为无定时器的纯托管对象，
-        // 同步 Dispose 里等待在途保存会阻塞关闭线程，强制释放则让在途 SaveAsync 的
-        // await/Release 抛 ObjectDisposedException 丢掉最后一次持久化。交给 finalizer 回收。
+    }
+
+    private void PopulateRadioCategories()
+    {
+        var selectedKey = SelectedRadioCategory?.Key ?? "lofi";
+        RadioCategories.Clear();
+        RadioCategories.Add(new RadioCategoryItem("lofi", AppLanguage.T("Lofi 低保真", "Lofi")));
+        RadioCategories.Add(new RadioCategoryItem("jazz", AppLanguage.T("爵士", "Jazz")));
+        RadioCategories.Add(new RadioCategoryItem("classical", AppLanguage.T("古典", "Classical")));
+        RadioCategories.Add(new RadioCategoryItem("synthwave", AppLanguage.T("合成波", "Synthwave")));
+        RadioCategories.Add(new RadioCategoryItem("pop", AppLanguage.T("流行", "Pop")));
+        RadioCategories.Add(new RadioCategoryItem("news", AppLanguage.T("新闻资讯", "News")));
+        RadioCategories.Add(new RadioCategoryItem("chinese", AppLanguage.T("中文电台", "Chinese")));
+        RadioCategories.Add(new RadioCategoryItem("top", AppLanguage.T("热门榜单", "Top Hits")));
+        SelectedRadioCategory = RadioCategories.FirstOrDefault(c => c.Key == selectedKey) ?? RadioCategories.FirstOrDefault();
+    }
+
+    public async Task LoadInitialRadioStationsAsync()
+    {
+        if (RadioStations.Count > 0)
+            return;
+
+        var key = SelectedRadioCategory?.Key ?? "lofi";
+        await LoadRadioStationsByCategoryAsync(key);
+    }
+
+    public async Task LoadRadioStationsByCategoryAsync(string category, bool force = false)
+    {
+        _currentCategoryKey = category;
+        if (_radioBrowserService == null)
+        {
+            RadioStatusMessage = AppLanguage.T("电台服务未初始化", "Radio service not initialized");
+            HasRadioStations = false;
+            return;
+        }
+
+        IsRadioLoading = true;
+        RadioStatusMessage = AppLanguage.T("正在连接全球电台网络...", "Connecting to global radio network...");
+        try
+        {
+            var result = await _radioBrowserService.GetStationsByCategoryAsync(category, forceRefresh: force, _lifetimeCts.Token);
+            RadioStations.Clear();
+            foreach (var s in result.Stations)
+            {
+                s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
+                RadioStations.Add(s);
+            }
+            HasRadioStations = RadioStations.Count > 0;
+            RadioStatusMessage = HasRadioStations
+                ? string.Empty
+                : AppLanguage.T("暂无可用电台", "No stations available");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load radio stations for category {Category}", category);
+            RadioStatusMessage = AppLanguage.T("电台加载失败，请检查网络后重试", "Failed to load stations; check network and retry");
+            HasRadioStations = false;
+        }
+        finally
+        {
+            IsRadioLoading = false;
+        }
+    }
+
+    public async Task SearchRadioStationsAsync()
+    {
+        var query = RadioSearchText.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            var key = SelectedRadioCategory?.Key ?? "lofi";
+            await LoadRadioStationsByCategoryAsync(key);
+            return;
+        }
+
+        if (_radioBrowserService == null)
+            return;
+
+        IsRadioLoading = true;
+        RadioStatusMessage = AppLanguage.T($"正在搜索“{query}”...", $"Searching for \"{query}\"...");
+        try
+        {
+            var result = await _radioBrowserService.SearchStationsAsync(query, _lifetimeCts.Token);
+            RadioStations.Clear();
+            foreach (var s in result.Stations)
+            {
+                s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
+                RadioStations.Add(s);
+            }
+            HasRadioStations = RadioStations.Count > 0;
+            RadioStatusMessage = HasRadioStations
+                ? string.Empty
+                : AppLanguage.T($"未找到与“{query}”相关的电台", $"No stations found for \"{query}\"");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to search radio stations for {Query}", query);
+            RadioStatusMessage = AppLanguage.T("搜索失败，请重试", "Search failed; try again");
+            HasRadioStations = false;
+        }
+        finally
+        {
+            IsRadioLoading = false;
+        }
+    }
+
+    private void PlayRadioStation(RadioStation station)
+    {
+        _audioService.PlayRadioSoundFx(RadioFxKind.TuningSweep);
+
+        var tracks = RadioStations.Select(s => s.ToTrack()).ToList();
+        var startIndex = RadioStations.IndexOf(station);
+        if (startIndex < 0) startIndex = 0;
+
+        foreach (var t in tracks)
+        {
+            if (_favoriteIds.Contains(t.Id))
+                t.IsFavorite = true;
+        }
+
+        _audioService.StartPlaybackContext(tracks, startIndex, shuffle: false,
+            AppLanguage.T("网络电台", "Internet Radio"));
+    }
+
+    private void FavoriteRadioStation(RadioStation station)
+    {
+        var track = station.ToTrack();
+        ToggleFavoriteCommand.Execute(track).Subscribe();
     }
 }
+
+public sealed class RadioCategoryItem
+{
+    public string Key { get; }
+    public string DisplayName { get; }
+    public RadioCategoryItem(string key, string displayName)
+    {
+        Key = key;
+        DisplayName = displayName;
+    }
+    public override string ToString() => DisplayName;
+}
+
 
 // ObservableCollection lacks FindIndex; used by MainWindowViewModel and ChatViewModel
 public static class ObservableCollectionExtensions
