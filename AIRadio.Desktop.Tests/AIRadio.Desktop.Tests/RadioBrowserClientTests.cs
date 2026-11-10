@@ -52,8 +52,7 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid"]);
         var result = await client.GetStationsByCategoryAsync("lofi", forceRefresh: false, CancellationToken.None);
 
-        Assert.False(result.IsOfflineFallback);
-        var station = Assert.Single(result.Stations);
+        var station = Assert.Single(result);
         Assert.Equal("test-uuid-1", station.StationUuid);
         Assert.Equal("Lofi Beats & Chill", station.Name); // HTML decoded
         Assert.Equal("https://stream.example.com/lofi.mp3", station.StreamUrl);
@@ -68,7 +67,6 @@ public sealed class RadioBrowserClientTests
 
         // 第二次获取同流派命中缓存，不触发网络请求
         var cachedResult = await client.GetStationsByCategoryAsync("lofi", forceRefresh: false, CancellationToken.None);
-        Assert.False(cachedResult.IsOfflineFallback);
         Assert.Equal(1, callCount);
     }
 
@@ -94,8 +92,7 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid", "https://mirror2.invalid"]);
         var result = await client.GetStationsByCategoryAsync("jazz", forceRefresh: true, CancellationToken.None);
 
-        Assert.False(result.IsOfflineFallback);
-        Assert.Single(result.Stations);
+        Assert.Single(result);
         Assert.Equal(2, visitedMirrors.Count);
         Assert.Equal("mirror1.invalid", visitedMirrors[0]);
         Assert.Equal("mirror2.invalid", visitedMirrors[1]);
@@ -110,9 +107,8 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid", "https://mirror2.invalid"]);
         var result = await client.GetStationsByCategoryAsync("classical", forceRefresh: true, CancellationToken.None);
 
-        Assert.True(result.IsOfflineFallback);
-        Assert.NotEmpty(result.Stations);
-        Assert.All(result.Stations, s => Assert.StartsWith("curated-classical-", s.StationUuid));
+        Assert.NotEmpty(result);
+        Assert.All(result, s => Assert.StartsWith("curated-classical-", s.StationUuid));
     }
 
     [Fact]
@@ -130,8 +126,7 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid"]);
         var result = await client.SearchStationsAsync("BBC", CancellationToken.None);
 
-        Assert.False(result.IsOfflineFallback);
-        Assert.Single(result.Stations);
+        Assert.Single(result);
     }
 
     [Fact]
@@ -143,9 +138,8 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid"]);
         var result = await client.SearchStationsAsync("SomaFM", CancellationToken.None);
 
-        Assert.True(result.IsOfflineFallback);
-        Assert.NotEmpty(result.Stations);
-        Assert.All(result.Stations, s => Assert.Contains("SomaFM", s.Name, StringComparison.OrdinalIgnoreCase));
+        Assert.NotEmpty(result);
+        Assert.All(result, s => Assert.Contains("SomaFM", s.Name, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -213,7 +207,7 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid"]);
         var result = await client.GetStationsByCategoryAsync("top", forceRefresh: true, CancellationToken.None);
 
-        var station = Assert.Single(result.Stations);
+        var station = Assert.Single(result);
         Assert.Equal("http://shoutcast.example.com:8000/stream", station.StreamUrl);
     }
 
@@ -248,7 +242,7 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://mirror1.invalid"]);
         var result = await client.GetStationsByCategoryAsync("top", forceRefresh: true, CancellationToken.None);
 
-        var station = Assert.Single(result.Stations);
+        var station = Assert.Single(result);
         Assert.Equal("valid-3", station.StationUuid);
     }
 
@@ -361,8 +355,7 @@ public sealed class RadioBrowserClientTests
         using var client = new RadioBrowserClient(http, ["https://slow.invalid", "https://fast.invalid"]);
         var result = await client.GetStationsByCategoryAsync("lofi", forceRefresh: true, CancellationToken.None);
 
-        Assert.False(result.IsOfflineFallback);
-        Assert.Single(result.Stations);
+        Assert.Single(result);
         Assert.Equal(new[] { "slow.invalid", "fast.invalid" }, visited);
     }
 
