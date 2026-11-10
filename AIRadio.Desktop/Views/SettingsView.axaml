@@ -414,6 +414,15 @@
 
                         <StackPanel Spacing="6">
                             <Grid ColumnDefinitions="*,180" ColumnSpacing="12">
+                                <TextBlock Text="{DynamicResource S_ThemeMode}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                                <ComboBox Grid.Column="1" SelectedValue="{Binding SelectedThemeMode, Mode=TwoWay}"
+                                          ItemsSource="{Binding ThemeModeOptions}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,180" ColumnSpacing="12">
                                 <TextBlock Text="{DynamicResource S_AccentPalette}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
                                            VerticalAlignment="Center"/>
                                 <!-- Fluent ControlTheme 对 ComboBox 默认 HorizontalAlignment=Left，

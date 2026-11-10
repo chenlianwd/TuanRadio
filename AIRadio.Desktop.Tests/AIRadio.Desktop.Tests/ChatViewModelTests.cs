@@ -623,4 +623,172 @@ public class ChatViewModelTests
     [InlineData("有没有类似的音乐", true)]
     public void IsFreshRecommendationRequest_DoesNotHijackDailyChat(string text, bool expected)
         => Assert.Equal(expected, ChatViewModel.IsFreshRecommendationRequest(text));
+
+    [Fact]
+    public async Task SendMessage_WhenLlmConfigured_SongRequestDispatchesToLlmWithoutShortcutHijack()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync("想听李荣浩的麻雀", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好呀，这就为你放李荣浩的《麻雀》[happy]<cmd>{\"action\":\"play\",\"query\":\"李荣浩 麻雀\"}</cmd>");
+
+        var matchTrack = new OnlineTrack { Id = "netease:sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 5))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sparrow"))
+            .ReturnsAsync("http://example.com/sparrow.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // 验证：已配 LLM 时，不被本地正则短路拦截，大模型真实被调用 1 次
+        djMock.Verify(x => x.GenerateChatResponseAsync("想听李荣浩的麻雀", It.IsAny<CancellationToken>()), Times.Once);
+        // 验证：大模型回复内容展示进消息流
+        Assert.Contains(vm.Messages, m => m.Content == "好呀，这就为你放李荣浩的《麻雀》");
+        // 验证：成功执行播放
+        audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "麻雀" && t.Artist == "李荣浩"), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmConfiguredAndCommandOmitted_HeuristicallySelfHealsPlayCommand()
+    {
+        // 虚假承诺自愈：大模型台词答应放歌但漏带 <cmd> 标签，客户端启发式自愈补充播放指令
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync("想听李荣浩的麻雀", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好呀，这就为你放李荣浩的麻雀[happy]");
+
+        var matchTrack = new OnlineTrack { Id = "netease:sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sparrow"))
+            .ReturnsAsync("http://example.com/sparrow.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync("想听李荣浩的麻雀", It.IsAny<CancellationToken>()), Times.Once);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmNotConfigured_ArtistAndTitleSplitsGracefully()
+    {
+        // 未配置 AI 兜底分支：识别"歌手的歌名"，规整展示为"好，我来找{artist}的《{title}》。"
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+
+        var matchTrack = new OnlineTrack { Id = "netease:sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 3))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 5))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sparrow"))
+            .ReturnsAsync("http://example.com/sparrow.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // 验证：绝不包含《李荣浩的麻雀》整句带书名号
+        Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("《李荣浩的麻雀》"));
+        // 验证：文案规整拆解为歌手 + 《歌名》
+        Assert.Contains(vm.Messages, m => m.Content == "好，我来找李荣浩的《麻雀》。");
+        audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "麻雀" && t.Artist == "李荣浩"), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmNotConfigured_SongTitleContainingDe_KeepsFullTitle()
+    {
+        // 权威事实校验：夏天的风等歌名本身带"的"字，不误拆成"夏天的《风》"
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+
+        var windTrack = new OnlineTrack { Id = "netease:wind", Title = "夏天的风", Artist = "温岚" };
+        searchMock.Setup(x => x.SearchAsync("夏天 风", 3))
+            .ReturnsAsync(new List<OnlineTrack> { windTrack });
+        searchMock.Setup(x => x.SearchAsync("夏天 风", 5))
+            .ReturnsAsync(new List<OnlineTrack> { windTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:wind"))
+            .ReturnsAsync("http://example.com/wind.mp3");
+
+        vm.InputText = "想听夏天的风";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // 验证：不被误切成 夏天的《风》
+        Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("夏天的《风》"));
+        // 验证：保留完整歌名书名号《夏天的风》
+        Assert.Contains(vm.Messages, m => m.Content == "好，我来找《夏天的风》。");
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmCallFails_FallsBackToLocalSongRequest()
+    {
+        // 弹性容灾：配置了 LLM 但调用抛出异常，自动降级本地搜歌播放
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fail");
+        djMock.SetupGet(x => x.LastChatFailure).Returns(new ApiFailureInfo(ApiFailureKind.Network, "网络错误", "detail", "hint"));
+
+        var matchTrack = new OnlineTrack { Id = "netease:sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sparrow"))
+            .ReturnsAsync("http://example.com/sparrow.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // 验证：即使 LLM 报错，依然成功切播
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PlaySongAsync_WhenFirstTrackFails_CascadesToNextPlayableCandidate()
+    {
+        // 候选曲目级联重试：第 1 首 VIP/无音源，自动顺延尝试第 2 首
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好的[happy]<cmd>{\"action\":\"play\",\"query\":\"李荣浩 麻雀\"}</cmd>");
+
+        var vipTrack = new OnlineTrack { Id = "netease:vip-sparrow", Title = "麻雀 (VIP)", Artist = "李荣浩" };
+        var freeTrack = new OnlineTrack { Id = "netease:free-sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 5))
+            .ReturnsAsync(new List<OnlineTrack> { vipTrack, freeTrack });
+        // 第 1 首解析返回 null（模拟不可播）
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:vip-sparrow"))
+            .ReturnsAsync((string?)null);
+        // 第 2 首返回可播 URL
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:free-sparrow"))
+            .ReturnsAsync("http://example.com/free.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // 验证：成功级联播放第 2 首
+        audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "麻雀 (VIP)"), It.IsAny<string?>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "麻雀"), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenInputAlreadyHasBookTitle_PreventsDoubleBookTitle()
+    {
+        // 标点消毒验证：输入已自带书名号《麻雀》，输出绝不出现双层书名号《《麻雀》》
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+
+        var matchTrack = new OnlineTrack { Id = "netease:sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sparrow"))
+            .ReturnsAsync("http://example.com/sparrow.mp3");
+
+        vm.InputText = "想听李荣浩的《麻雀》";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("《《"));
+        Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("》》"));
+        Assert.Contains(vm.Messages, m => m.Content == "好，我来找李荣浩的《麻雀》。");
+    }
 }

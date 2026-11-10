@@ -31,6 +31,8 @@ public interface IDJService
     Task<byte[]?> GenerateSpeechAsync(string text);
     string CurrentEmotion { get; }
     bool TtsEnabled { get; }
+    /// <summary>大模型服务是否已完成有效配置（云端 Key 已填或本地模型已选）。</summary>
+    bool IsLlmConfigured { get; }
     /// <summary>当前 DJ 实名（人设 DisplayName，随 Initialize 更新），供聊天署名等展示。</summary>
     string DjName { get; }
     /// <summary>最近一次聊天生成的失败信息（成功即清空）。与 TTS 失败分字段存放：

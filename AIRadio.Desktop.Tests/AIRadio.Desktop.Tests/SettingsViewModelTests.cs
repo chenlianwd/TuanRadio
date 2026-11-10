@@ -2363,4 +2363,91 @@ public class SettingsViewModelTests
             File.Delete(settingsFile + ".bak");
         }
     }
+
+    [Fact]
+    public void ThemeMode_Default_IsDark()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            Assert.Equal(ThemeModes.Dark, vm.SelectedThemeMode);
+            Assert.Equal(3, vm.ThemeModeOptions.Count);
+            Assert.Contains(vm.ThemeModeOptions, o => o.Id == ThemeModes.System);
+            Assert.Contains(vm.ThemeModeOptions, o => o.Id == ThemeModes.Dark);
+            Assert.Contains(vm.ThemeModeOptions, o => o.Id == ThemeModes.Light);
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task ThemeMode_SaveAndLoad_PreservesValue()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                vm.SelectedThemeMode = ThemeModes.Dark;
+                await vm.SaveUiStateCommand.Execute();
+            }
+
+            using (var loaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await loaded.LoadAsync();
+                Assert.Equal(ThemeModes.Dark, loaded.SelectedThemeMode);
+                Assert.True(loaded.IsDarkMode);
+            }
+
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                vm.SelectedThemeMode = ThemeModes.Light;
+                await vm.SaveUiStateCommand.Execute();
+            }
+
+            using (var loaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await loaded.LoadAsync();
+                Assert.Equal(ThemeModes.Light, loaded.SelectedThemeMode);
+                Assert.False(loaded.IsDarkMode);
+            }
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task ThemeMode_LegacyDarkModeConfig_MigratesCorrectly()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            await File.WriteAllTextAsync(settingsFile, """{"is_dark_mode": false}""");
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                Assert.Equal(ThemeModes.Light, vm.SelectedThemeMode);
+                Assert.False(vm.IsDarkMode);
+            }
+
+            await File.WriteAllTextAsync(settingsFile, """{"is_dark_mode": true}""");
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                Assert.Equal(ThemeModes.Dark, vm.SelectedThemeMode);
+                Assert.True(vm.IsDarkMode);
+            }
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
 }

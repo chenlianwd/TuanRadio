@@ -58,6 +58,7 @@ public class DJService : IDJService
 
     public string CurrentEmotion => _currentEmotion;
     public bool TtsEnabled => _profile.TtsEnabled;
+    public bool IsLlmConfigured => !(_llm is LLMService llmService && !llmService.IsConfigured());
     public string DjName => _profile.Name;
     public ApiFailureInfo? LastChatFailure { get; private set; }
     public ApiFailureInfo? LastTtsFailure { get; private set; }
@@ -115,7 +116,7 @@ At the END of every response, append exactly ONE emotion tag in square brackets 
 
 Command rules:
 Append ONE JSON control block after the emotion tag ONLY when the listener explicitly asks to change playback (play a song or artist, skip, pause, resume, want a recommendation, or set the mood):
-<cmd>{"action":"play","query":"song name"}</cmd>
+<cmd>{"action":"play","query":"artist song"}</cmd>
 <cmd>{"action":"next"}</cmd>
 <cmd>{"action":"pause"}</cmd>
 <cmd>{"action":"resume"}</cmd>

@@ -42,6 +42,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
+    private readonly IDisposable? _themeModeSub;
     private readonly IDisposable _compactLyricsSub;
     private readonly IDisposable _radioFxSub;
     private readonly IDisposable _languageTtsSub;
@@ -316,7 +317,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         RefreshProgramCommand = ReactiveCommand.CreateFromTask(() => LoadProgramAsync(force: true));
         PlayProgramTrackCommand = ReactiveCommand.Create<RecommendedTrack>(PlayProgramTrack);
         ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
-        ToggleThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = !IsDarkMode; });
+        ToggleThemeCommand = ReactiveCommand.Create(() =>
+        {
+            SettingsVM.SelectedThemeMode = SettingsVM.SelectedThemeMode switch
+            {
+                ThemeModes.System => ThemeModes.Dark,
+                ThemeModes.Dark => ThemeModes.Light,
+                _ => ThemeModes.System,
+            };
+        });
         ToggleCompactModeCommand = ReactiveCommand.Create(ToggleCompactMode);
         ToggleLyricsModeCommand = ReactiveCommand.Create(ToggleLyricsMode);
         CycleSpectrumStyleCommand = ReactiveCommand.Create(CycleSpectrumStyle);
@@ -337,21 +346,48 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(visible => IsCompactLyricsVisible = visible);
         _radioFxSub = this.WhenAnyValue(x => x.SettingsVM.RadioSoundFxEnabled)
             .Subscribe(enabled => _audioService.IsRadioSoundFxEnabled = enabled);
-        UseDarkThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = true; });
-        UseLightThemeCommand = ReactiveCommand.Create(() => { IsDarkMode = false; });
+        UseDarkThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Dark; });
+        UseLightThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Light; });
 
         // Apply initial theme variant + sync RequestedThemeVariant on change (spec §5.4.2)
         if (Avalonia.Application.Current is { } app0)
-            app0.RequestedThemeVariant = IsDarkMode ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
+        {
+            app0.RequestedThemeVariant = ThemeModes.ToThemeVariant(SettingsVM.SelectedThemeMode);
+            IsDarkMode = ThemeModes.ResolveIsDarkMode(app0, SettingsVM.SelectedThemeMode);
+            app0.ActualThemeVariantChanged += OnActualThemeVariantChanged;
+        }
+        else
+        {
+            IsDarkMode = ThemeModes.ResolveIsDarkMode(null, SettingsVM.SelectedThemeMode);
+        }
+        SettingsVM.IsDarkMode = IsDarkMode;
+
+        _themeModeSub = SettingsVM.WhenAnyValue(x => x.SelectedThemeMode)
+            .Skip(1)
+            .Subscribe(mode =>
+            {
+                if (Avalonia.Application.Current is { } app)
+                {
+                    app.RequestedThemeVariant = ThemeModes.ToThemeVariant(mode);
+                    var dark = ThemeModes.ResolveIsDarkMode(app, mode);
+                    IsDarkMode = dark;
+                    SettingsVM.IsDarkMode = dark;
+                }
+                else
+                {
+                    var dark = ThemeModes.Normalize(mode) != ThemeModes.Light;
+                    IsDarkMode = dark;
+                    SettingsVM.IsDarkMode = dark;
+                }
+            });
+
         _darkModePersistSub = this.WhenAnyValue(x => x.IsDarkMode)
             .Skip(1)
             .Subscribe(isDark =>
             {
-                if (Avalonia.Application.Current is { } app)
-                    app.RequestedThemeVariant = isDark ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
-                SettingsVM.IsDarkMode = isDark;
-                SettingsVM.SaveUiStateCommand.Execute().Subscribe();
-        });
+                if (SettingsVM.IsDarkMode != isDark)
+                    SettingsVM.IsDarkMode = isDark;
+            });
         ToggleCurrentFavoriteCommand = ReactiveCommand.Create(ToggleCurrentFavorite);
         DislikeCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Dislike));
         SimilarToCurrentTrackCommand = ReactiveCommand.Create(() => RecordCurrentTrackFeedback(MusicFeedbackAction.Similar));
@@ -1696,6 +1732,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         });
     }
 
+    private void OnActualThemeVariantChanged(object? sender, EventArgs e)
+    {
+        if (SettingsVM.SelectedThemeMode == ThemeModes.System && Avalonia.Application.Current is { } app)
+        {
+            var isDark = app.ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+            IsDarkMode = isDark;
+            SettingsVM.IsDarkMode = isDark;
+        }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -1715,6 +1761,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _positionSampleSub?.Dispose();
         _playbackRecoverySub?.Dispose();
         _darkModePersistSub?.Dispose();
+        _themeModeSub?.Dispose();
+        if (Avalonia.Application.Current is { } app)
+        {
+            app.ActualThemeVariantChanged -= OnActualThemeVariantChanged;
+        }
         _compactLyricsSub?.Dispose();
         _radioFxSub?.Dispose();
         _languageTtsSub?.Dispose();

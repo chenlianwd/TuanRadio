@@ -111,6 +111,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private bool _loadingOpenSubsonicQuality;
     private bool _loadingMusicSourcePolicy;
     private readonly IDisposable _musicSourcePolicySub;
+    private bool _loadingThemeMode;
+    private bool _syncingThemeMode;
+    private readonly IDisposable? _themeModeSub;
     private bool _loadingAccentPalette;
     private readonly IDisposable _accentPaletteSub;
     private bool _ytdlpCookieNoticeShown;
@@ -182,6 +185,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string TestConnectionButtonText { get; set; } = AppLanguage.T("测试连接", "Test");
     [Reactive] public partial bool TtsEnabled { get; set; } = true;
     [Reactive] public partial bool IsDarkMode { get; set; } = true;
+    [Reactive] public partial string SelectedThemeMode { get; set; } = ThemeModes.Dark;
     [Reactive] public partial bool EnableStarfield { get; set; } = true;
     [Reactive] public partial string SelectedSpectrumStyle { get; set; } = "bars";
     [Reactive] public partial bool CompactModeTopmost { get; set; } = true;
@@ -312,6 +316,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial List<MusicProviderOption> MusicProviders { get; set; } = new();
     [Reactive] public partial List<VoiceOption> OpenSubsonicQualities { get; set; } = new();
     [Reactive] public partial List<VoiceOption> MusicSourcePolicies { get; set; } = new();
+    [Reactive] public partial List<VoiceOption> ThemeModeOptions { get; set; } = new();
     [Reactive] public partial List<VoiceOption> AccentPaletteOptions { get; set; } = new();
     [Reactive] public partial List<VoiceOption> CloseActionOptions { get; set; } = new();
 
@@ -547,6 +552,47 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (!_loadingMusicSourcePolicy)
                     _ = SaveUiStateCommand.Execute().Subscribe();
             });
+        // 外观主题：切换即生效并跟随保存（加载期赋值由 _loadingThemeMode 屏蔽）
+        _themeModeSub = this.WhenAnyValue(x => x.SelectedThemeMode)
+            .Skip(1)
+            .Subscribe(mode =>
+            {
+                if (_loadingThemeMode)
+                    return;
+                var normalized = ThemeModes.Normalize(mode);
+                _syncingThemeMode = true;
+                try
+                {
+                    if (Avalonia.Application.Current is { } app)
+                    {
+                        app.RequestedThemeVariant = ThemeModes.ToThemeVariant(normalized);
+                        IsDarkMode = ThemeModes.ResolveIsDarkMode(app, normalized);
+                    }
+                    else
+                    {
+                        IsDarkMode = normalized != ThemeModes.Light;
+                    }
+                }
+                finally
+                {
+                    _syncingThemeMode = false;
+                }
+                _ = SaveUiStateCommand.Execute().Subscribe();
+            });
+        // 兼容单设 IsDarkMode 的旧调用路径（如单测或快捷指令）：
+        // 仅在非跟随系统模式、且非主题模式同步期间生效，避免破坏跟随系统语义或循环倒灌
+        this.WhenAnyValue(x => x.IsDarkMode)
+            .Skip(1)
+            .Subscribe(dark =>
+            {
+                if (_loadingThemeMode || _syncingThemeMode) return;
+                if (SelectedThemeMode == ThemeModes.System) return;
+                var target = dark ? ThemeModes.Dark : ThemeModes.Light;
+                if (SelectedThemeMode != target)
+                {
+                    SelectedThemeMode = target;
+                }
+            });
         // 配色主题：切换即生效并跟随保存（加载期赋值由 _loadingAccentPalette 屏蔽，
         // 启动恢复由 MainWindowViewModel.LoadLocalStateAsync 统一 Apply）
         _accentPaletteSub = this.WhenAnyValue(x => x.SelectedAccentPalette)
@@ -748,6 +794,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             new() { Id = "stability", DisplayName = AppLanguage.T("稳定优先", "Stability first") },
             new() { Id = "quality", DisplayName = AppLanguage.T("音质优先", "Quality first") },
         };
+        ThemeModeOptions = new List<VoiceOption>
+        {
+            new() { Id = ThemeModes.System, DisplayName = AppLanguage.T("跟随系统", "Follow system") },
+            new() { Id = ThemeModes.Dark, DisplayName = AppLanguage.T("深色", "Dark") },
+            new() { Id = ThemeModes.Light, DisplayName = AppLanguage.T("浅色", "Light") },
+        };
         AccentPaletteOptions = AccentPalettes.AllIds.Select(id => new VoiceOption
         {
             Id = id,
@@ -921,8 +973,23 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (root.TryGetProperty("tts_enabled", out var tts))
                     TtsEnabled = tts.GetBoolean();
 
-                if (root.TryGetProperty("is_dark_mode", out var dark))
-                    IsDarkMode = dark.GetBoolean();
+                _loadingThemeMode = true;
+                if (root.TryGetProperty("theme_mode", out var themeModeProp) && themeModeProp.GetString() is { } tm)
+                {
+                    SelectedThemeMode = ThemeModes.Normalize(tm);
+                }
+                else if (root.TryGetProperty("is_dark_mode", out var dark))
+                {
+                    SelectedThemeMode = dark.GetBoolean() ? ThemeModes.Dark : ThemeModes.Light;
+                }
+                else
+                {
+                    SelectedThemeMode = ThemeModes.Dark;
+                }
+                IsDarkMode = ThemeModes.ResolveIsDarkMode(Avalonia.Application.Current, SelectedThemeMode);
+                _loadingThemeMode = false;
+
+
 
                 if (root.TryGetProperty("enable_starfield", out var starfield))
                     EnableStarfield = starfield.GetBoolean();
@@ -2315,6 +2382,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 llm_model = modelToWrite,
                 llm_profiles = profilesToWrite,
                 tts_enabled = TtsEnabled,
+                theme_mode = ThemeModes.Normalize(SelectedThemeMode),
                 is_dark_mode = IsDarkMode,
                 enable_starfield = EnableStarfield,
                 spectrum_style = NormalizeSpectrumStyle(SelectedSpectrumStyle),
@@ -2481,6 +2549,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _selectedYtdlpBrowserSub.Dispose();
         _openSubsonicQualitySub.Dispose();
         _musicSourcePolicySub.Dispose();
+        _themeModeSub?.Dispose();
         _accentPaletteSub.Dispose();
         _weatherCitySearchSub.Dispose();
         _selectedLanguageSub.Dispose();
