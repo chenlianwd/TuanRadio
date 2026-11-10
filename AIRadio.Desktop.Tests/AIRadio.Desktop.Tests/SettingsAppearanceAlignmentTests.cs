@@ -13,7 +13,7 @@ using Xunit;
 
 namespace AIRadio.Desktop.Tests;
 
-// 外观页控件列右缘对齐锚定：配色主题/频谱样式两行的 ComboBox 与三行 ToggleSwitch
+// 外观页控件列右缘对齐锚定：应用主题/配色主题/频谱样式三行的 ComboBox 与三行 ToggleSwitch
 // 必须与内容列右缘对齐。Fluent ControlTheme 对 ComboBox 默认 HorizontalAlignment=Left，
 // 定宽列（*,180）内不显式 Stretch 时按内容宽度靠左，右缘与开关行错位（2026-10-27
 // 用户截图实测）。真实 MainWindow + 真实 FluentTheme 下的布局断言；主题必须先于
@@ -46,14 +46,14 @@ public class SettingsAppearanceAlignmentTests
             var page = view.FindControl<StackPanel>("PageAppearance")
                 ?? throw new InvalidOperationException("PageAppearance not found");
 
-            // 五个控件行：Grid 直挂 PageAppearance 或挂其子 StackPanel（外观页两组布局）；
+            // 六个控件行：Grid 直挂 PageAppearance 或挂其子 StackPanel（外观页两组布局）；
             // 天气城市的输入行（TextBox+定位按钮，*,Auto）不是对齐审计对象——按钮右缘
             // 由 Auto 列天然贴内容列右缘，无审计意义，按含 TextBox 排除
             var rows = page.GetVisualDescendants().OfType<Grid>()
                 .Where(g => ReferenceEquals(g.Parent, page) || (g.Parent is StackPanel sp && ReferenceEquals(sp.Parent, page)))
                 .Where(g => !g.Children.OfType<TextBox>().Any())
                 .ToList();
-            Assert.Equal(5, rows.Count);
+            Assert.Equal(6, rows.Count);
 
             var rightEdges = new List<double>();
             foreach (var row in rows)
@@ -66,7 +66,7 @@ public class SettingsAppearanceAlignmentTests
                 rightEdges.Add(control.Bounds.Right);
             }
 
-            // 五行控件右缘一致，且对齐到行（=内容列）右缘
+            // 六行控件右缘一致，且对齐到行（=内容列）右缘
             Assert.All(rightEdges, r => Assert.Equal(rightEdges[0], r, 0.5));
             Assert.Equal(rows[0].Bounds.Right, rightEdges[0], 0.5);
         }

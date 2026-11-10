@@ -1307,4 +1307,53 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void ToggleThemeCommand_CyclesThemeModes()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        try
+        {
+            vm.SettingsVM.SelectedThemeMode = ThemeModes.System;
+
+            vm.ToggleThemeCommand.Execute().Subscribe();
+            Assert.Equal(ThemeModes.Dark, vm.SettingsVM.SelectedThemeMode);
+
+            vm.ToggleThemeCommand.Execute().Subscribe();
+            Assert.Equal(ThemeModes.Light, vm.SettingsVM.SelectedThemeMode);
+
+            vm.ToggleThemeCommand.Execute().Subscribe();
+            Assert.Equal(ThemeModes.System, vm.SettingsVM.SelectedThemeMode);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public void UseDarkAndLightThemeCommands_UpdateSelectedThemeMode()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        try
+        {
+            vm.SettingsVM.SelectedThemeMode = ThemeModes.System;
+
+            vm.UseDarkThemeCommand.Execute().Subscribe();
+            Assert.Equal(ThemeModes.Dark, vm.SettingsVM.SelectedThemeMode);
+
+            vm.UseLightThemeCommand.Execute().Subscribe();
+            Assert.Equal(ThemeModes.Light, vm.SettingsVM.SelectedThemeMode);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

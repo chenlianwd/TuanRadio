@@ -560,22 +560,37 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            if (TryParseSongRequest(text, out var songQuery, out var requiresConfidentMatch, out var isArtistRequest) &&
-                (!requiresConfidentMatch || await HasConfidentSongMatchAsync(songQuery)))
+            // 未配置大模型时：保留本地规则点歌快速通道，确保零 Key 用户基础播放器功能可用
+            if (!_djService.IsLlmConfigured)
             {
-                var displayText = isArtistRequest
-                    ? AppLanguage.T($"好，我来找{songQuery}的歌。", $"OK, finding songs by {songQuery}.")
-                    : AppLanguage.T($"好，我来找《{songQuery}》。", $"OK, let me find \"{songQuery}\".");
-                var playCommand = isArtistRequest
-                    ? $"play_artist:{songQuery}"
-                    : $"play:{songQuery}";
-                await RespondWithCommandAsync(displayText, playCommand, "happy");
-                return;
+                if (TryParseSongRequest(text, out var songQuery, out var requiresConfidentMatch, out var isArtistRequest, out var parsedArtist, out var parsedTitle) &&
+                    (!requiresConfidentMatch || await HasConfidentSongMatchAsync(songQuery)))
+                {
+                    var (finalArtist, finalTitle) = await VerifyArtistAndTitleWithSearchAsync(songQuery, isArtistRequest, parsedArtist, parsedTitle);
+                    var displayText = FormatLocalSongRequestDisplayText(isArtistRequest, finalArtist, finalTitle, songQuery);
+                    var playCommand = isArtistRequest
+                        ? $"play_artist:{songQuery}"
+                        : $"play:{songQuery}";
+                    await RespondWithCommandAsync(displayText, playCommand, "happy");
+                    return;
+                }
             }
 
+            // 已配置大模型（本地或云端）：全量放行大模型理解自然语言并生成拟人化回复
             var response = await _djService.GenerateChatResponseAsync(text, _lifetimeCts.Token);
             if (_djService.LastChatFailure is { } chatFailure)
             {
+                // 弹性容灾：大模型服务故障（如网络抖动或本地服务离线）时，若具备明确点歌意图，尝试降级本地点歌挽救
+                if (TryParseSongRequest(text, out var fallbackQuery, out _, out var fallbackIsArtist, out var fbArtist, out var fbTitle))
+                {
+                    Log.Warning("LLM chat failed, falling back to local song request: {Query}", fallbackQuery);
+                    var (fbFinalArtist, fbFinalTitle) = await VerifyArtistAndTitleWithSearchAsync(fallbackQuery, fallbackIsArtist, fbArtist, fbTitle);
+                    var fallbackText = FormatLocalSongRequestDisplayText(fallbackIsArtist, fbFinalArtist, fbFinalTitle, fallbackQuery);
+                    var fallbackCmd = fallbackIsArtist ? $"play_artist:{fallbackQuery}" : $"play:{fallbackQuery}";
+                    await RespondWithCommandAsync(fallbackText, fallbackCmd, "calm");
+                    return;
+                }
+
                 AddFailureMessage(AppLanguage.T("AI 回复失败", "AI reply failed"), chatFailure);
                 SetFailureNotice(chatFailure);
                 return;
@@ -599,7 +614,18 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             }
 
             var parsed = ParseDjResponse(response);
-            await RespondWithCommandAsync(parsed.DisplayText, parsed.Command, parsed.Emotion);
+            var command = parsed.Command;
+
+            // 虚假承诺自愈：大模型若在台词中承诺播放但漏带 <cmd> 控制块，从明确点歌意图中自愈补齐指令
+            if (string.IsNullOrWhiteSpace(command) &&
+                TryParseSongRequest(text, out var impliedQuery, out _, out var impliedIsArtist, out _, out _) &&
+                !string.IsNullOrWhiteSpace(impliedQuery))
+            {
+                command = impliedIsArtist ? $"play_artist:{impliedQuery}" : $"play:{impliedQuery}";
+                Log.Information("Heuristically patched omitted play command for user request: {Command}", command);
+            }
+
+            await RespondWithCommandAsync(parsed.DisplayText, command, parsed.Emotion);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -642,7 +668,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         var willSpeak = _djService.TtsEnabled && !string.IsNullOrWhiteSpace(ttsText);
 
         if (command != null && !willSpeak)
-            await ExecuteCommandAsync(command);
+            _commandQueue.OnNext(command);
         else if (command != null)
             _pendingCommand = command;
 
@@ -671,7 +697,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                     var cmd = _pendingCommand;
                     _pendingCommand = null;
                     _pendingCommandSpeechStarted = false;
-                    await ExecuteCommandAsync(cmd);
+                    _commandQueue.OnNext(cmd);
                 }
             }
         }
@@ -965,10 +991,21 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         out string query,
         out bool requiresConfidentMatch,
         out bool isArtistRequest)
+        => TryParseSongRequest(text, out query, out requiresConfidentMatch, out isArtistRequest, out _, out _);
+
+    private static bool TryParseSongRequest(
+        string text,
+        out string query,
+        out bool requiresConfidentMatch,
+        out bool isArtistRequest,
+        out string? parsedArtist,
+        out string? parsedTitle)
     {
         query = string.Empty;
         requiresConfidentMatch = false;
         isArtistRequest = false;
+        parsedArtist = null;
+        parsedTitle = null;
         var normalized = NormalizeSongQuery(text);
         if (string.IsNullOrWhiteSpace(normalized))
             return false;
@@ -977,9 +1014,18 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             normalized,
             @"^(?:请|麻烦|帮我|给我)?\s*(?:播放|放一下|放下|放|听一下|听下|听|来一首|来首|点一首|点首|我想听|想听)\s*(?:一首|首)?\s*(?<query>.+)$",
             RegexOptions.IgnoreCase);
+        if (!explicitMatch.Success)
+        {
+            explicitMatch = Regex.Match(
+                normalized,
+                @"(?:播放|放一下|放下|放|听一下|听下|听|来一首|来首|点一首|点首|我想听|想听)\s+(?:一首|首)?\s*(?<query>.+)$",
+                RegexOptions.IgnoreCase);
+        }
+
         if (explicitMatch.Success)
         {
-            query = NormalizeMusicSearchQuery(explicitMatch.Groups["query"].Value, out isArtistRequest);
+            var rawQuery = explicitMatch.Groups["query"].Value;
+            query = NormalizeMusicSearchQuery(rawQuery, out isArtistRequest, out parsedArtist, out parsedTitle);
             return !string.IsNullOrWhiteSpace(query) && !IsGenericMusicRequest(query);
         }
 
@@ -991,28 +1037,150 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             return false;
 
         query = normalized;
+        parsedTitle = normalized;
         requiresConfidentMatch = true;
         return true;
     }
 
     private static string NormalizeMusicSearchQuery(string query, out bool isArtistRequest)
+        => NormalizeMusicSearchQuery(query, out isArtistRequest, out _, out _);
+
+    private static string NormalizeMusicSearchQuery(
+        string query,
+        out bool isArtistRequest,
+        out string? parsedArtist,
+        out string? parsedTitle)
     {
         isArtistRequest = false;
+        parsedArtist = null;
+        parsedTitle = null;
         var normalized = NormalizeSongQuery(query);
-        var artistMatch = Regex.Match(
+
+        // 模式 1：歌手专场点歌，如"李荣浩的歌" / "周杰伦的音乐"
+        var artistOnlyMatch = Regex.Match(
             normalized,
             @"^(?<artist>.+?)\s*的\s*(?:歌|歌曲|音乐)$",
             RegexOptions.IgnoreCase);
+        if (artistOnlyMatch.Success)
+        {
+            var artist = NormalizeSongQuery(artistOnlyMatch.Groups["artist"].Value);
+            if (!string.IsNullOrWhiteSpace(artist) && !IsGenericMusicRequest(artist))
+            {
+                isArtistRequest = true;
+                parsedArtist = artist;
+                return artist;
+            }
+        }
 
-        if (!artistMatch.Success)
-            return normalized;
+        // 模式 2：显式横杠连接，如"李荣浩 - 麻雀"
+        var dashMatch = Regex.Match(
+            normalized,
+            @"^(?<artist>.+?)\s*[-—–]\s*(?<title>.+)$");
+        if (dashMatch.Success)
+        {
+            var artist = NormalizeSongQuery(dashMatch.Groups["artist"].Value);
+            var title = NormalizeSongQuery(dashMatch.Groups["title"].Value);
+            if (!string.IsNullOrWhiteSpace(artist) && !string.IsNullOrWhiteSpace(title))
+            {
+                parsedArtist = artist;
+                parsedTitle = title;
+                return $"{artist} {title}";
+            }
+        }
 
-        var artist = NormalizeSongQuery(artistMatch.Groups["artist"].Value);
-        if (string.IsNullOrWhiteSpace(artist) || IsGenericMusicRequest(artist))
-            return normalized;
+        // 模式 3："歌手 的 歌名"，如"李荣浩的麻雀" / "周杰伦的晴天"
+        var artistSongMatch = Regex.Match(
+            normalized,
+            @"^(?<artist>.+?)\s*的\s*(?<title>.+)$");
+        if (artistSongMatch.Success)
+        {
+            var artist = NormalizeSongQuery(artistSongMatch.Groups["artist"].Value);
+            var title = NormalizeSongQuery(artistSongMatch.Groups["title"].Value);
+            if (!string.IsNullOrWhiteSpace(artist) && !string.IsNullOrWhiteSpace(title) && !IsGenericMusicRequest(artist))
+            {
+                parsedArtist = artist;
+                parsedTitle = title;
+                return $"{artist} {title}";
+            }
+        }
 
-        isArtistRequest = true;
-        return artist;
+        parsedTitle = normalized;
+        return normalized;
+    }
+
+    private async Task<(string? artist, string? title)> VerifyArtistAndTitleWithSearchAsync(
+        string query,
+        bool isArtistRequest,
+        string? candidateArtist,
+        string? candidateTitle)
+    {
+        if (isArtistRequest || string.IsNullOrWhiteSpace(candidateArtist) || string.IsNullOrWhiteSpace(candidateTitle))
+            return (candidateArtist, candidateTitle);
+
+        try
+        {
+            var results = await SearchMusicAsync(query, 3, _lifetimeCts.Token);
+            if (results.Count > 0)
+            {
+                var top = results[0];
+                var normalizedTopTitle = NormalizeForMusicCompare(top.Title);
+                var rawCombined = NormalizeForMusicCompare(candidateArtist + "的" + candidateTitle);
+                // 如果搜索结果第一名的标题直接包含了整个短语（例如搜索出来标题就是《夏天的风》），说明"夏天的风"本身就是完整歌名，绝非歌手+歌名
+                if (normalizedTopTitle.Equals(rawCombined, StringComparison.OrdinalIgnoreCase) ||
+                    normalizedTopTitle.Contains(rawCombined, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, top.Title);
+                }
+
+                // 如果搜索结果的歌手匹配 candidateArtist，歌曲名匹配 candidateTitle，强化证实了歌手与歌名的有效性
+                var normalizedTopArtist = NormalizeForMusicCompare(top.Artist);
+                if (normalizedTopArtist.Contains(NormalizeForMusicCompare(candidateArtist), StringComparison.OrdinalIgnoreCase) ||
+                    NormalizeForMusicCompare(candidateArtist).Contains(normalizedTopArtist, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (top.Artist, top.Title);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Artist and title verification skipped due to search error");
+        }
+
+        return (candidateArtist, candidateTitle);
+    }
+
+    private static string FormatLocalSongRequestDisplayText(
+        bool isArtistRequest,
+        string? artist,
+        string? title,
+        string rawQuery)
+    {
+        if (isArtistRequest)
+        {
+            var artistName = !string.IsNullOrWhiteSpace(artist) ? CleanDisplayPunctuation(artist) : CleanDisplayPunctuation(rawQuery);
+            return AppLanguage.T($"好，我来找{artistName}的歌。", $"OK, finding songs by {artistName}.");
+        }
+
+        var cleanTitle = CleanDisplayPunctuation(title);
+        var cleanArtist = CleanDisplayPunctuation(artist);
+
+        if (!string.IsNullOrWhiteSpace(cleanArtist) && !string.IsNullOrWhiteSpace(cleanTitle))
+        {
+            return AppLanguage.T($"好，我来找{cleanArtist}的《{cleanTitle}》。", $"OK, let me find \"{cleanTitle}\" by {cleanArtist}.");
+        }
+
+        var songName = !string.IsNullOrWhiteSpace(cleanTitle) ? cleanTitle : CleanDisplayPunctuation(rawQuery);
+        return AppLanguage.T($"好，我来找《{songName}》。", $"OK, let me find \"{songName}\".");
+    }
+
+    private static string CleanDisplayPunctuation(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        return Regex.Replace(text.Trim(), @"^[\s""'“”‘’《<]+|[\s""'“”‘’》>。.!！]+$", "").Trim();
     }
 
     private static string NormalizeSongQuery(string text)
@@ -1070,9 +1238,9 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 normalizedQuery.Contains(title, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string NormalizeForMusicCompare(string value)
+    private static string NormalizeForMusicCompare(string? value)
     {
-        return Regex.Replace(value.ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
+        return Regex.Replace((value ?? string.Empty).ToLowerInvariant(), @"[\s""'“”‘’《》<>。.!！?？,，;；:\-_/\\]+", "");
     }
 
     private static string StripEmoji(string text)
@@ -1200,11 +1368,25 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            var track = SelectBestTrack(searchQuery, results, preferArtistMatch);
-            Log.Debug("DJ got track: {Track}, fetching URL...", track.Title);
-            var t = await ResolvePlayableTrackAsync(track, _lifetimeCts.Token);
-            Log.Debug("DJ got URL: {Url}", t != null ? "present" : "null");
-            if (t == null)
+            var primaryTrack = SelectBestTrack(searchQuery, results, preferArtistMatch);
+            // 候选曲目级联解析：首选最佳匹配，其余候选歌曲按搜索顺序顺延兜底，防首选为 VIP 灰阶歌曲导致点歌中断
+            var candidates = new List<OnlineTrack> { primaryTrack };
+            candidates.AddRange(results.Where(r => !string.Equals(r.Id, primaryTrack.Id, StringComparison.Ordinal)));
+
+            Track? playableTrack = null;
+            foreach (var candidate in candidates)
+            {
+                Log.Debug("DJ resolving candidate track: {Track} ({Id})...", candidate.Title, candidate.Id);
+                var resolved = await ResolvePlayableTrackAsync(candidate, _lifetimeCts.Token);
+                if (resolved != null)
+                {
+                    playableTrack = resolved;
+                    break;
+                }
+                Log.Warning("Track {Track} ({Id}) was not playable, trying next candidate...", candidate.Title, candidate.Id);
+            }
+
+            if (playableTrack == null)
             {
                 AddMessage(new ChatMessage
                 {
@@ -1216,8 +1398,8 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
             // 点歌 = 插播单曲（瞬态，不写主歌单不落盘）：同曲已在歌单时 PlayOneShot 内部
             // 会复用既有实例；想留存由用户 ❤️ 收藏转正
-            _audioService.PlayOneShot(t, AppLanguage.T("点歌", "Request"));
-            Log.Information("DJ track play initiated: {Track}", t);
+            _audioService.PlayOneShot(playableTrack, AppLanguage.T("点歌", "Request"));
+            Log.Information("DJ track play initiated: {Track}", playableTrack);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
