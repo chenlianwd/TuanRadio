@@ -6,8 +6,9 @@ using AIRadio.Desktop.Models;
 namespace AIRadio.Desktop.Services.Music;
 
 /// <summary>
-/// 内置精选离线兜底电台库（覆盖 8 大主流流派与公共广播高可用种子）。
-/// 当 Radio-Browser 镜像集群全部不可达或处于离线断网环境时，保证网络电台列表零红字、永远有台可播。
+/// 公开网络电台高可用兜底库。
+/// 当 Radio-Browser 元数据 API 集群不可达或请求超时时，提供主流流派的权威公开广播流种子，保障基础收听可用。
+/// 注意：流地址仍为在线 HTTP/HTTPS 音频流，需网络连接可达方能播发。
 /// </summary>
 public static class CuratedStationRegistry
 {
@@ -37,17 +38,6 @@ public static class CuratedStationRegistry
                     CountryCode = "US",
                     Codec = "MP3",
                     Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-lofi-3",
-                    Name = "Chillsky Lo-Fi Radio",
-                    StreamUrl = "https://stream.zeno.fm/f3wvbbqmdg8uv",
-                    Tags = "lofi, relaxing, beats",
-                    Country = "United States",
-                    CountryCode = "US",
-                    Codec = "MP3",
-                    Bitrate = 128
                 }
             ],
             ["jazz"] =
@@ -73,17 +63,6 @@ public static class CuratedStationRegistry
                     CountryCode = "US",
                     Codec = "MP3",
                     Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-jazz-3",
-                    Name = "Jazz24",
-                    StreamUrl = "https://live.wostreaming.net/manifest/ppm-jazz24aac-ibc1",
-                    Tags = "jazz, classic jazz, vocal",
-                    Country = "United States",
-                    CountryCode = "US",
-                    Codec = "AAC",
-                    Bitrate = 128
                 }
             ],
             ["classical"] =
@@ -102,17 +81,6 @@ public static class CuratedStationRegistry
                 new RadioStation
                 {
                     StationUuid = "curated-classical-2",
-                    Name = "Venice Classic Radio",
-                    StreamUrl = "http://174.36.206.197:8000/stream",
-                    Tags = "classical, opera, symphonic",
-                    Country = "Italy",
-                    CountryCode = "IT",
-                    Codec = "MP3",
-                    Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-classical-3",
                     Name = "Calm Radio Classical",
                     StreamUrl = "http://streams.calmradio.com:2128/stream",
                     Tags = "classical, relaxing, focus",
@@ -138,17 +106,6 @@ public static class CuratedStationRegistry
                 new RadioStation
                 {
                     StationUuid = "curated-synth-2",
-                    Name = "SomaFM Space Station",
-                    StreamUrl = "https://ice2.somafm.com/spacestation-128-mp3",
-                    Tags = "ambient, space, electronic",
-                    Country = "United States",
-                    CountryCode = "US",
-                    Codec = "MP3",
-                    Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-synth-3",
                     Name = "SomaFM Groove Salad",
                     StreamUrl = "https://ice2.somafm.com/groovesalad-128-mp3",
                     Tags = "ambient, downtempo, chillout",
@@ -181,17 +138,6 @@ public static class CuratedStationRegistry
                     CountryCode = "US",
                     Codec = "MP3",
                     Bitrate = 96
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-news-3",
-                    Name = "RFI Monde (Radio France)",
-                    StreamUrl = "https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3",
-                    Tags = "news, international, french",
-                    Country = "France",
-                    CountryCode = "FR",
-                    Codec = "MP3",
-                    Bitrate = 64
                 }
             ],
             ["pop"] =
@@ -217,17 +163,6 @@ public static class CuratedStationRegistry
                     CountryCode = "US",
                     Codec = "MP3",
                     Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-pop-3",
-                    Name = "Dance Wave! Retro",
-                    StreamUrl = "https://dancewave.online/dance.mp3",
-                    Tags = "dance, retro, electronic",
-                    Country = "Hungary",
-                    CountryCode = "HU",
-                    Codec = "MP3",
-                    Bitrate = 128
                 }
             ],
             ["chinese"] =
@@ -246,17 +181,6 @@ public static class CuratedStationRegistry
                 new RadioStation
                 {
                     StationUuid = "curated-cn-2",
-                    Name = "Radio Taiwan International (华语广播)",
-                    StreamUrl = "https://stream.rti.org.tw/live.mp3",
-                    Tags = "chinese, talk, culture",
-                    Country = "Taiwan",
-                    CountryCode = "TW",
-                    Codec = "MP3",
-                    Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-cn-3",
                     Name = "Chinese Classical Music Radio",
                     StreamUrl = "http://stream.zeno.fm/3h7k5b721nhvv",
                     Tags = "chinese, traditional, instrumental",
@@ -289,36 +213,14 @@ public static class CuratedStationRegistry
                     CountryCode = "CH",
                     Codec = "MP3",
                     Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-top-3",
-                    Name = "Radio Swiss Jazz",
-                    StreamUrl = "https://stream.srg-ssr.ch/m/rsj/mp3_128",
-                    Tags = "jazz, blues, swing",
-                    Country = "Switzerland",
-                    CountryCode = "CH",
-                    Codec = "MP3",
-                    Bitrate = 128
-                },
-                new RadioStation
-                {
-                    StationUuid = "curated-top-4",
-                    Name = "Lofi Girl Radio (Chill Beats)",
-                    StreamUrl = "https://play.streamafrica.net/lofigirl",
-                    Tags = "lofi, chillhop, study beats",
-                    Country = "France",
-                    CountryCode = "FR",
-                    Codec = "MP3",
-                    Bitrate = 128
                 }
             ]
         };
 
     private static readonly IReadOnlyList<RadioStation> AllCuratedStations =
-        StationsByCategory.Values.SelectMany(s => s)
-            .GroupBy(s => s.StationUuid, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
+        StationsByCategory.Values
+            .SelectMany(s => s)
+            .DistinctBy(s => s.StationUuid, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
     public static IReadOnlyList<RadioStation> GetCuratedStations(string? category)

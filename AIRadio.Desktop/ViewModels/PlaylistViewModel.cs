@@ -1735,9 +1735,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         RadioStatusMessage = AppLanguage.T("正在连接全球电台网络...", "Connecting to global radio network...");
         try
         {
-            var result = await _radioBrowserService.GetStationsByCategoryAsync(category, forceRefresh: force, _lifetimeCts.Token);
+            var stations = await _radioBrowserService.GetStationsByCategoryAsync(category, forceRefresh: force, _lifetimeCts.Token);
             RadioStations.Clear();
-            foreach (var s in result.Stations)
+            foreach (var s in stations)
             {
                 s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
                 RadioStations.Add(s);
@@ -1779,9 +1779,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         RadioStatusMessage = AppLanguage.T($"正在搜索“{query}”...", $"Searching for \"{query}\"...");
         try
         {
-            var result = await _radioBrowserService.SearchStationsAsync(query, _lifetimeCts.Token);
+            var stations = await _radioBrowserService.SearchStationsAsync(query, _lifetimeCts.Token);
             RadioStations.Clear();
-            foreach (var s in result.Stations)
+            foreach (var s in stations)
             {
                 s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
                 RadioStations.Add(s);

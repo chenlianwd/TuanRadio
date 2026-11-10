@@ -14,12 +14,11 @@ namespace AIRadio.Desktop.Services.Music;
 
 /// <summary>
 /// Radio-Browser 开放网络电台客户端。
-/// 具备官方集群多镜像故障感知、请求级自动容灾轮转、15 分钟内存缓存与离线精选兜底库。
+/// 具备官方集群多镜像故障感知、请求级自动容灾轮转、15 分钟内存缓存与公开电台兜底库。
 /// </summary>
 public sealed class RadioBrowserClient : IRadioBrowserService, IDisposable
 {
     private const string UserAgent = "TuanRadio/1.0.1 (+https://github.com/chenlianwd/TuanRadio)";
-    private const int MaxResponseBytes = 2 * 1024 * 1024; // 2 MB 安全响应上限
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(15);
     private const int MaxCacheEntries = 100;
@@ -60,7 +59,7 @@ public sealed class RadioBrowserClient : IRadioBrowserService, IDisposable
         }
     }
 
-    public async Task<RadioStationQueryResult> GetStationsByCategoryAsync(
+    public async Task<IReadOnlyList<RadioStation>> GetStationsByCategoryAsync(
         string category,
         bool forceRefresh = false,
         CancellationToken cancellationToken = default)
@@ -70,7 +69,7 @@ public sealed class RadioBrowserClient : IRadioBrowserService, IDisposable
         if (!forceRefresh && _cache.TryGetValue(key, out var cached) &&
             DateTimeOffset.UtcNow - cached.CachedAt <= CacheDuration)
         {
-            return new RadioStationQueryResult(cached.Stations, IsOfflineFallback: false);
+            return cached.Stations;
         }
 
         var path = MapCategoryPath(key);
@@ -79,16 +78,15 @@ public sealed class RadioBrowserClient : IRadioBrowserService, IDisposable
         if (stations != null && stations.Count > 0)
         {
             SetCache(key, stations);
-            return new RadioStationQueryResult(stations, IsOfflineFallback: false);
+            return stations;
         }
 
-        // 所有镜像均不可达或返回空：无缝降级至内置离线精选电台库
+        // 所有镜像均不可达或返回空：降级至内置精选电台库
         Log.Warning("Radio-Browser mirrors unavailable; falling back to curated stations for category '{Category}'", key);
-        var curated = CuratedStationRegistry.GetCuratedStations(key);
-        return new RadioStationQueryResult(curated, IsOfflineFallback: true);
+        return CuratedStationRegistry.GetCuratedStations(key);
     }
 
-    public async Task<RadioStationQueryResult> SearchStationsAsync(
+    public async Task<IReadOnlyList<RadioStation>> SearchStationsAsync(
         string query,
         CancellationToken cancellationToken = default)
     {
@@ -101,7 +99,7 @@ public sealed class RadioBrowserClient : IRadioBrowserService, IDisposable
         if (_cache.TryGetValue(cacheKey, out var cached) &&
             DateTimeOffset.UtcNow - cached.CachedAt <= CacheDuration)
         {
-            return new RadioStationQueryResult(cached.Stations, IsOfflineFallback: false);
+            return cached.Stations;
         }
 
         var path = $"/json/stations/search?name={Uri.EscapeDataString(clean)}&limit=40&order=clickcount&reverse=true&hidebroken=true";
@@ -110,12 +108,11 @@ public sealed class RadioBrowserClient : IRadioBrowserService, IDisposable
         if (stations != null && stations.Count > 0)
         {
             SetCache(cacheKey, stations);
-            return new RadioStationQueryResult(stations, IsOfflineFallback: false);
+            return stations;
         }
 
-        // 搜索失败降级至离线精选库匹配
-        var curated = CuratedStationRegistry.SearchCuratedStations(clean);
-        return new RadioStationQueryResult(curated, IsOfflineFallback: true);
+        // 搜索失败降级至内置精选库匹配
+        return CuratedStationRegistry.SearchCuratedStations(clean);
     }
 
     public async Task<string?> ResolveStationUrlAsync(

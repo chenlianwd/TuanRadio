@@ -83,7 +83,7 @@ public class PlaylistViewModelRadioTests
             var (vm, _, _, radioMock) = CreateRadioVm(setupRadio: mock =>
             {
                 mock.Setup(x => x.GetStationsByCategoryAsync("lofi", false, It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new RadioStationQueryResult(new[] { station1, station2 }, IsOfflineFallback: false));
+                    .ReturnsAsync(new[] { station1, station2 });
             });
 
             Assert.Empty(vm.RadioStations);
@@ -127,7 +127,7 @@ public class PlaylistViewModelRadioTests
             var (vm, _, _, radioMock) = CreateRadioVm(setupRadio: mock =>
             {
                 mock.Setup(x => x.GetStationsByCategoryAsync("classical", false, It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new RadioStationQueryResult(new[] { classicalStation }, IsOfflineFallback: false));
+                    .ReturnsAsync(new[] { classicalStation });
             });
 
             var classicalCategory = vm.RadioCategories.FirstOrDefault(c => c.Key == "classical");
@@ -163,9 +163,9 @@ public class PlaylistViewModelRadioTests
             var (vm, _, _, radioMock) = CreateRadioVm(setupRadio: mock =>
             {
                 mock.Setup(x => x.SearchStationsAsync("BBC", It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new RadioStationQueryResult(new[] { station }, IsOfflineFallback: false));
+                    .ReturnsAsync(new[] { station });
                 mock.Setup(x => x.SearchStationsAsync("NonExistent", It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new RadioStationQueryResult(Array.Empty<RadioStation>(), IsOfflineFallback: false));
+                    .ReturnsAsync(Array.Empty<RadioStation>());
             });
 
             // 1. 有结果搜索
