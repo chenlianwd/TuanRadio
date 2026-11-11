@@ -1356,4 +1356,106 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Avalonia.Headless.XUnit.AvaloniaFact]
+    public void ThemeMode_Change_AppliesRequestedThemeVariantAndSyncsIsDarkMode()
+    {
+        // 锚定 _themeModeSub 的 Apply 链：模式切换必须落到 Application.RequestedThemeVariant
+        // 并双向同步 MWVM/SettingsVM 的 IsDarkMode（删订阅接线或漏设 variant 即红）
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var app = Avalonia.Application.Current!;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        try
+        {
+            vm.SettingsVM.SelectedThemeMode = ThemeModes.Light;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.Equal(Avalonia.Styling.ThemeVariant.Light, app.RequestedThemeVariant);
+            Assert.False(vm.IsDarkMode);
+            Assert.False(vm.SettingsVM.IsDarkMode);
+
+            vm.SettingsVM.SelectedThemeMode = ThemeModes.Dark;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.Equal(Avalonia.Styling.ThemeVariant.Dark, app.RequestedThemeVariant);
+            Assert.True(vm.IsDarkMode);
+            Assert.True(vm.SettingsVM.IsDarkMode);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public void ReadPersistedThemeMode_PrefersThemeMode_AndFallsBackToLegacyKey()
+    {
+        // 构造期预读（L1 启动闪变修复）：键优先级须与 SettingsViewModel.LoadAsync 一致
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var settingsFile = Path.Combine(dir, "settings.json");
+        try
+        {
+            Assert.Null(MainWindowViewModel.ReadPersistedThemeMode(settingsFile)); // 文件缺失
+
+            File.WriteAllText(settingsFile, """{"theme_mode": "light", "is_dark_mode": true}""");
+            Assert.Equal(ThemeModes.Light, MainWindowViewModel.ReadPersistedThemeMode(settingsFile));
+
+            File.WriteAllText(settingsFile, """{"is_dark_mode": false}""");
+            Assert.Equal(ThemeModes.Light, MainWindowViewModel.ReadPersistedThemeMode(settingsFile));
+
+            File.WriteAllText(settingsFile, """{"is_dark_mode": true}""");
+            Assert.Equal(ThemeModes.Dark, MainWindowViewModel.ReadPersistedThemeMode(settingsFile));
+
+            File.WriteAllText(settingsFile, """{"theme_mode": "bogus"}""");
+            Assert.Equal(ThemeModes.System, MainWindowViewModel.ReadPersistedThemeMode(settingsFile)); // 非法值归一化
+
+            File.WriteAllText(settingsFile, "{ not json");
+            Assert.Null(MainWindowViewModel.ReadPersistedThemeMode(settingsFile)); // 损坏文件静默回落
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Avalonia.Headless.XUnit.AvaloniaFact]
+    public void ThemeMode_System_FollowsActualThemeVariantChange_GuardedForExplicitModes()
+    {
+        // 锚定 ActualThemeVariantChanged 接线：跟随系统模式下系统深浅切换须传播到双 IsDarkMode；
+        // 显式 Dark/Light 模式下系统切换不得覆盖用户选择（删事件接线即红）
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var app = Avalonia.Application.Current!;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        try
+        {
+            vm.SettingsVM.SelectedThemeMode = ThemeModes.System;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            // 模拟系统切到浅色（headless 下 RequestedThemeVariant 直接驱动 ActualThemeVariant）
+            app.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.IsDarkMode);
+            Assert.False(vm.SettingsVM.IsDarkMode);
+
+            // 模拟系统切回深色
+            app.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.IsDarkMode);
+
+            // 用户显式深色后，系统再切浅色不得覆盖用户选择
+            vm.SettingsVM.SelectedThemeMode = ThemeModes.Dark;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            app.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.IsDarkMode);
+            Assert.Equal(ThemeModes.Dark, vm.SettingsVM.SelectedThemeMode);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

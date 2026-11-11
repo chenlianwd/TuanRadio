@@ -6,6 +6,7 @@ using AIRadio.Desktop.Services.Music;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reactive;
 using System.Reactive.Linq;
@@ -349,16 +350,20 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         UseDarkThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Dark; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Light; });
 
-        // Apply initial theme variant + sync RequestedThemeVariant on change (spec §5.4.2)
+        // Apply initial theme variant + sync RequestedThemeVariant on change (spec §5.4.2)。
+        // 窗口 Show 先于异步 LoadLocalStateAsync 完成：构造期同步预读持久化 theme_mode
+        // 先行应用正确变体，消除浅色/跟随系统用户启动先深色再纠正的闪变窗口；
+        // 预读失败或文件缺失静默回落默认 Dark，由后续加载统一纠正
+        var initialThemeMode = ReadPersistedThemeMode(settingsFile) ?? ThemeModes.Dark;
         if (Avalonia.Application.Current is { } app0)
         {
-            app0.RequestedThemeVariant = ThemeModes.ToThemeVariant(SettingsVM.SelectedThemeMode);
-            IsDarkMode = ThemeModes.ResolveIsDarkMode(app0, SettingsVM.SelectedThemeMode);
+            app0.RequestedThemeVariant = ThemeModes.ToThemeVariant(initialThemeMode);
+            IsDarkMode = ThemeModes.ResolveIsDarkMode(app0, initialThemeMode);
             app0.ActualThemeVariantChanged += OnActualThemeVariantChanged;
         }
         else
         {
-            IsDarkMode = ThemeModes.ResolveIsDarkMode(null, SettingsVM.SelectedThemeMode);
+            IsDarkMode = ThemeModes.ResolveIsDarkMode(null, initialThemeMode);
         }
         SettingsVM.IsDarkMode = IsDarkMode;
 
@@ -1739,6 +1744,35 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var isDark = app.ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
             IsDarkMode = isDark;
             SettingsVM.IsDarkMode = isDark;
+        }
+    }
+
+    /// <summary>
+    /// 构造期轻量预读持久化主题模式（键优先级与 SettingsViewModel.LoadAsync 一致：
+    /// theme_mode 优先，回落 legacy is_dark_mode）。仅用于窗口 Show 前应用正确主题变体，
+    /// 任何异常返回 null 交由后续全量加载纠正。
+    /// </summary>
+    internal static string? ReadPersistedThemeMode(string settingsFile)
+    {
+        try
+        {
+            if (!File.Exists(settingsFile))
+                return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(settingsFile));
+            if (doc.RootElement.TryGetProperty("theme_mode", out var modeProp) &&
+                modeProp.GetString() is { } mode)
+                return ThemeModes.Normalize(mode);
+            if (doc.RootElement.TryGetProperty("is_dark_mode", out var darkProp))
+            {
+                if (darkProp.ValueKind == System.Text.Json.JsonValueKind.True) return ThemeModes.Dark;
+                if (darkProp.ValueKind == System.Text.Json.JsonValueKind.False) return ThemeModes.Light;
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Theme mode pre-read failed for {File}; falling back to default", settingsFile);
+            return null;
         }
     }
 

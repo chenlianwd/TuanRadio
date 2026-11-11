@@ -114,6 +114,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private bool _loadingThemeMode;
     private bool _syncingThemeMode;
     private readonly IDisposable? _themeModeSub;
+    private readonly IDisposable? _isDarkModeSyncSub;
     private bool _loadingAccentPalette;
     private readonly IDisposable _accentPaletteSub;
     private bool _ytdlpCookieNoticeShown;
@@ -581,7 +582,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             });
         // 兼容单设 IsDarkMode 的旧调用路径（如单测或快捷指令）：
         // 仅在非跟随系统模式、且非主题模式同步期间生效，避免破坏跟随系统语义或循环倒灌
-        this.WhenAnyValue(x => x.IsDarkMode)
+        _isDarkModeSyncSub = this.WhenAnyValue(x => x.IsDarkMode)
             .Skip(1)
             .Subscribe(dark =>
             {
@@ -2550,6 +2551,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _openSubsonicQualitySub.Dispose();
         _musicSourcePolicySub.Dispose();
         _themeModeSub?.Dispose();
+        _isDarkModeSyncSub?.Dispose();
         _accentPaletteSub.Dispose();
         _weatherCitySearchSub.Dispose();
         _selectedLanguageSub.Dispose();
