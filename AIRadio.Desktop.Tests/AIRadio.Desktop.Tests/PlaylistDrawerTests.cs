@@ -180,6 +180,73 @@ public class PlaylistDrawerTests
     }
 
     [AvaloniaFact]
+    public void FavoritesTab_DualSubTabs_And_RadioStationsList_Wired()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel(out _);
+        Window? window = null;
+        var theme = new FluentTheme();
+        var app = Avalonia.Application.Current!;
+        app.Styles.Add(theme);
+        try
+        {
+            var song = new Track { SourceId = "kugou:a", Title = "Song A" };
+            var radioStation = new Track
+            {
+                Id = "radio-browser:st1",
+                SourceId = "radio-browser:st1",
+                Title = "Radio Station 1",
+                DeclaredCodec = "MP3",
+                DeclaredBitrateKbps = 128
+            };
+
+            vm.PlaylistVM.Tracks.Add(song);
+            vm.PlaylistVM.ToggleFavoriteCommand.Execute(song).Subscribe();
+            vm.PlaylistVM.ToggleFavoriteCommand.Execute(radioStation).Subscribe();
+
+            window = new MainWindow { DataContext = vm };
+            window.Show();
+            vm.IsLibraryOpen = true;
+            vm.PlaylistVM.TabIndex = 1; // 收藏页
+            Dispatcher.UIThread.RunJobs();
+
+            var drawer = window.FindDescendantOfType<PlaylistDrawer>()
+                ?? throw new InvalidOperationException("PlaylistDrawer not found");
+
+            // 1. 默认歌曲子标签，FavoritesList 渲染歌曲
+            var favoritesList = drawer.FindControl<ListBox>("FavoritesList")
+                ?? throw new InvalidOperationException("FavoritesList not found");
+            Assert.True(favoritesList.IsVisible);
+
+            // 2. 切换到电台子标签 (FavoriteSubTabIndex = 1)
+            vm.PlaylistVM.SetFavoriteSubTabCommand.Execute(1).Subscribe();
+            Dispatcher.UIThread.RunJobs();
+
+            var favoriteStationsList = drawer.FindControl<ListBox>("FavoriteStationsList")
+                ?? throw new InvalidOperationException("FavoriteStationsList not found");
+            Assert.True(favoriteStationsList.IsVisible);
+
+            var row = favoriteStationsList.GetRealizedContainers().OfType<ListBoxItem>()
+                .FirstOrDefault(item => ReferenceEquals(item.Content, radioStation))
+                ?? throw new InvalidOperationException("favorite radio station row not realized");
+
+            // 电台行内含有 ToggleFavoriteCommand（取消收藏）与 PlayFavoriteCommand（调频收听）
+            Assert.Contains(row.GetVisualDescendants().OfType<Button>(),
+                button => button.Command == vm.PlaylistVM.ToggleFavoriteCommand);
+            Assert.Contains(row.GetVisualDescendants().OfType<Button>(),
+                button => button.Command == vm.PlaylistVM.PlayFavoriteCommand);
+        }
+        finally
+        {
+            window?.Close();
+            app.Styles.Remove(theme);
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [AvaloniaFact]
     public void HeaderControls_FilterLocateClear_Wired()
     {
         var originalScheduler = RxApp.MainThreadScheduler;

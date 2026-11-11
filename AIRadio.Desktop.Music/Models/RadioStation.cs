@@ -44,12 +44,19 @@ public sealed class RadioStation : System.ComponentModel.INotifyPropertyChanged
             ? Tags
             : string.IsNullOrWhiteSpace(Tags) ? Country : $"{Country} · {Tags}";
 
-    public string DisplayQuality =>
-        Bitrate > 0 && !string.IsNullOrWhiteSpace(Codec)
-            ? $"{Codec.ToUpperInvariant()} {Bitrate}k"
-            : !string.IsNullOrWhiteSpace(Codec)
-                ? Codec.ToUpperInvariant()
-                : Bitrate > 0 ? $"{Bitrate}k" : "LIVE";
+    public string DisplayQuality
+    {
+        get
+        {
+            var hasCodec = !string.IsNullOrWhiteSpace(Codec) &&
+                           !Codec.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase);
+            if (hasCodec && Bitrate > 0)
+                return $"{Codec.ToUpperInvariant()} {Bitrate}k";
+            if (Bitrate > 0)
+                return $"{Bitrate}k";
+            return string.Empty;
+        }
+    }
 
     /// <summary>
     /// 将电台转换为播放列表与收藏夹通用的 Track 模型。
