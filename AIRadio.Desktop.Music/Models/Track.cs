@@ -50,6 +50,27 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public string? DeclaredCodec { get; set; }
     [System.Text.Json.Serialization.JsonIgnore]
     public int? DeclaredBitrateKbps { get; set; }
+    /// <summary>
+    /// 格式化音质徽标文本（如 "MP3 128k"、"AAC 64k"、"128k"）。
+    /// 当码率未知或小于等于 0 时返回空字符串，供 UI 绑定 IsVisible 平滑隐藏。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayQuality
+    {
+        get
+        {
+            if (!DeclaredBitrateKbps.HasValue || DeclaredBitrateKbps.Value <= 0)
+                return string.Empty;
+
+            var codec = DeclaredCodec?.Trim();
+            if (string.Equals(codec, "UNKNOWN", StringComparison.OrdinalIgnoreCase))
+                codec = null;
+
+            return string.IsNullOrEmpty(codec)
+                ? $"{DeclaredBitrateKbps.Value}k"
+                : $"{codec} {DeclaredBitrateKbps.Value}k";
+        }
+    }
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsPreviewStream { get; set; }
     /// <summary>

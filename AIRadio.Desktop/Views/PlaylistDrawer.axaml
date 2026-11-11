@@ -35,6 +35,25 @@
         <Style Selector="Border.library-row.playing TextBlock.track-title">
             <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
         </Style>
+        <Style Selector="Button.sub-tab">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_253D3D4A}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FF9B9BA8}"/>
+        </Style>
+        <Style Selector="Button.sub-tab:pointerover">
+            <Setter Property="Foreground" Value="{DynamicResource C_FFFFFFFF}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_667B7898}"/>
+        </Style>
+        <Style Selector="Button.sub-tab.active">
+            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="FontWeight" Value="700"/>
+        </Style>
     </UserControl.Styles>
 
     <Border IsVisible="{Binding IsLibraryOpen}"
@@ -168,21 +187,60 @@
                             IsEnabled="{Binding PlaylistVM.HasKugouPlaylistTracks}"
                             Command="{Binding PlaylistVM.ImportKugouPlaylistCommand}"/>
                 </Grid>
+                <!-- tab1 收藏顶栏 (二级分段 + 歌曲搜索与排序) -->
+                <StackPanel Grid.Row="1" Spacing="8"
+                            IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Classes="sub-tab"
+                                Classes.active="{Binding PlaylistVM.FavoriteSubTabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}"
+                                Content="{Binding PlaylistVM.FavoriteSongsTabTitle}"
+                                Command="{Binding PlaylistVM.SetFavoriteSubTabCommand}">
+                            <Button.CommandParameter>
+                                <x:Int32>0</x:Int32>
+                            </Button.CommandParameter>
+                        </Button>
+                        <Button Classes="sub-tab"
+                                Classes.active="{Binding PlaylistVM.FavoriteSubTabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}"
+                                Content="{Binding PlaylistVM.FavoriteStationsTabTitle}"
+                                Command="{Binding PlaylistVM.SetFavoriteSubTabCommand}">
+                            <Button.CommandParameter>
+                                <x:Int32>1</x:Int32>
+                            </Button.CommandParameter>
+                        </Button>
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6" Margin="0,0,10,0"
+                          IsVisible="{Binding PlaylistVM.IsFavoriteSongsSubTab}">
+                        <TextBox Text="{Binding PlaylistVM.FavoriteFilterText, Mode=TwoWay}"
+                                 Height="32" Padding="10,0" VerticalAlignment="Center" VerticalContentAlignment="Center"
+                                 Watermark="{DynamicResource S_FilterFavorites}"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding PlaylistVM.FavoriteSortOptions}"
+                                  SelectedItem="{Binding PlaylistVM.SelectedFavoriteSortOption, Mode=TwoWay}"
+                                  Width="110" Height="32" VerticalAlignment="Center">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate DataType="vm:FavoriteSortOption">
+                                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
                 <!-- tab5 网络电台流派与搜索栏 -->
-                <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6"
+                <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6" Margin="0,0,10,0"
                       IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=5}">
                     <ComboBox ItemsSource="{Binding PlaylistVM.RadioCategories}"
                               SelectedItem="{Binding PlaylistVM.SelectedRadioCategory, Mode=TwoWay}"
-                              Width="105">
+                              Width="105" Height="32" VerticalAlignment="Center">
                         <ComboBox.ItemTemplate>
                             <DataTemplate DataType="vm:RadioCategoryItem">
-                                <TextBlock Text="{Binding DisplayName}"/>
+                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/>
                             </DataTemplate>
                         </ComboBox.ItemTemplate>
                     </ComboBox>
                     <TextBox Grid.Column="1" Text="{Binding PlaylistVM.RadioSearchText, Mode=TwoWay}"
+                             Height="32" Padding="10,0" VerticalAlignment="Center" VerticalContentAlignment="Center"
                              Watermark="{DynamicResource S_RadioSearchWatermark}" KeyDown="OnRadioSearchKeyDown"/>
-                    <Button Grid.Column="2" Content="↻" Width="32" Height="28" Padding="0"
+                    <Button Grid.Column="2" Content="↻" Width="32" Height="32" Padding="0"
+                            VerticalAlignment="Center"
                             IsEnabled="{Binding PlaylistVM.IsRadioLoading, Converter={StaticResource InverseBoolConverter}}"
                             Command="{Binding PlaylistVM.RefreshRadioStationsCommand}"
                             ToolTip.Tip="{DynamicResource S_RefreshProgram}"
@@ -260,40 +318,102 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <ListBox x:Name="FavoritesList"
-                         ItemsSource="{Binding PlaylistVM.Favorites}"
-                         IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate DataType="models:Track">
-                            <Border Classes="library-row" Classes.playing="{Binding IsNowPlaying}">
-                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Title}" Classes="track-title" FontSize="13" FontWeight="700"
-                                                   FontFamily="Consolas, Microsoft YaHei UI"
-                                                   TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
-                                                   FontFamily="Consolas, Microsoft YaHei UI"
-                                                   Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Width="32" Height="28" Padding="0"
-                                            ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}"
-                                            Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.ToggleFavoriteCommand}"
-                                            CommandParameter="{Binding}">
-                                        <Panel>
-                                            <PathIcon Width="16" Height="16" IsVisible="{Binding !IsFavorite}"
-                                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
-                                            <PathIcon Width="16" Height="16" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsFavorite}"
-                                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
-                                        </Panel>
-                                    </Button>
-                                    <Button Grid.Column="2" Content="{DynamicResource S_Play}"
-                                            Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayFavoriteCommand}"
-                                            CommandParameter="{Binding}"/>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <!-- tab1 收藏内容区: 歌曲 / 电台双视图 -->
+                <Grid IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=1}">
+                    <!-- 歌曲子视图 -->
+                    <Grid IsVisible="{Binding PlaylistVM.IsFavoriteSongsSubTab}">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                    IsVisible="{Binding PlaylistVM.HasVisibleFavoriteTracks, Converter={StaticResource InverseBoolConverter}}">
+                            <TextBlock Text="{Binding PlaylistVM.FavoriteSongStatusMessage}" MaxWidth="320" TextAlignment="Center"
+                                       TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                        </StackPanel>
+                        <ListBox x:Name="FavoritesList"
+                                 ItemsSource="{Binding PlaylistVM.VisibleFavoriteTracks}"
+                                 IsVisible="{Binding PlaylistVM.HasVisibleFavoriteTracks}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:Track">
+                                    <Border Classes="library-row" Classes.playing="{Binding IsNowPlaying}">
+                                        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" Classes="track-title" FontSize="13" FontWeight="700"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding Duration, StringFormat={}{0:m\\:ss}}"
+                                                       FontSize="11" FontFamily="Consolas"
+                                                       Foreground="{DynamicResource C_FF8E8E9C}" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="2" Width="32" Height="28" Padding="0"
+                                                    ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.ToggleFavoriteCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Panel>
+                                                    <PathIcon Width="16" Height="16" IsVisible="{Binding !IsFavorite}"
+                                                          Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                    <PathIcon Width="16" Height="16" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsFavorite}"
+                                                          Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                </Panel>
+                                            </Button>
+                                            <Button Grid.Column="3" Content="{DynamicResource S_Play}"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayFavoriteCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+
+                    <!-- 电台子视图 -->
+                    <Grid IsVisible="{Binding PlaylistVM.IsFavoriteSongsSubTab, Converter={StaticResource InverseBoolConverter}}">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                    IsVisible="{Binding PlaylistVM.HasFavoriteStations, Converter={StaticResource InverseBoolConverter}}">
+                            <TextBlock Text="{Binding PlaylistVM.FavoriteStationStatusMessage}" MaxWidth="320" TextAlignment="Center"
+                                       TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                        </StackPanel>
+                        <ListBox x:Name="FavoriteStationsList"
+                                 ItemsSource="{Binding PlaylistVM.FavoriteStations}"
+                                 IsVisible="{Binding PlaylistVM.HasFavoriteStations}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="models:Track">
+                                    <Border Classes="library-row" Classes.playing="{Binding IsNowPlaying}">
+                                        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" Classes="track-title" FontSize="13" FontWeight="700"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
+                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                           Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <Border Grid.Column="1" Background="{DynamicResource C_2221ED76}" CornerRadius="3"
+                                                    Padding="6,1" VerticalAlignment="Center"
+                                                    IsVisible="{Binding DisplayQuality, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                <TextBlock Text="{Binding DisplayQuality}" FontSize="9" Foreground="{DynamicResource C_FFB9FFE8}"/>
+                                            </Border>
+                                            <Button Grid.Column="2" Width="32" Height="28" Padding="0"
+                                                    ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.ToggleFavoriteCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Panel>
+                                                    <PathIcon Width="16" Height="16" IsVisible="{Binding !IsFavorite}"
+                                                          Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                    <PathIcon Width="16" Height="16" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsFavorite}"
+                                                          Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                </Panel>
+                                            </Button>
+                                            <Button Grid.Column="3" Content="{DynamicResource S_TuneInStation}"
+                                                    Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayFavoriteCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
 
                 <ListBox x:Name="SearchResultsList"
                          ItemsSource="{Binding PlaylistVM.SearchResults}"

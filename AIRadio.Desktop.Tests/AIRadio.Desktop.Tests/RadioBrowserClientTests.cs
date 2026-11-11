@@ -359,6 +359,30 @@ public sealed class RadioBrowserClientTests
         Assert.Equal(new[] { "slow.invalid", "fast.invalid" }, visited);
     }
 
+    [Theory]
+    [InlineData("MP3", 128, "MP3 128k")]
+    [InlineData("AAC", 64, "AAC 64k")]
+    [InlineData("", 128, "128k")]
+    [InlineData("UNKNOWN", 128, "128k")]
+    [InlineData("unknown", 128, "128k")]
+    [InlineData("MP3", 0, "")]
+    [InlineData("UNKNOWN", 0, "")]
+    [InlineData("unknown", 0, "")]
+    [InlineData("", 0, "")]
+    public void RadioStation_DisplayQuality_SanitizesAndHidesRedundantBadges(string codec, int bitrate, string expected)
+    {
+        var station = new RadioStation
+        {
+            StationUuid = "u1",
+            Name = "Station",
+            StreamUrl = "http://example.com/stream",
+            Codec = codec,
+            Bitrate = bitrate
+        };
+
+        Assert.Equal(expected, station.DisplayQuality);
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

@@ -1,4 +1,4 @@
-using ReactiveUI;
+﻿using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -50,6 +50,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _selectedKugouPlaylistSub;
     private readonly IDisposable _kugouFilterSub;
     private readonly IDisposable _selectedSyncedPlaylistSub;
+    private readonly IDisposable _favoriteFilterSub;
+    private readonly IDisposable _favoriteSortSub;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _kugouGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
@@ -73,6 +75,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<RadioCategoryItem> RadioCategories { get; } = new();
     public ObservableCollection<RadioStation> RadioStations { get; } = new();
     public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
+    public ObservableCollection<Track> VisibleFavoriteTracks { get; } = new();
+    public ObservableCollection<Track> FavoriteStations { get; } = new();
+    public ObservableCollection<FavoriteSortOption> FavoriteSortOptions { get; } = new();
     /// <summary>主歌单多选结果（OneWayToSource 绑定 ListBox.SelectedItems，控件侧写入）。</summary>
     public ObservableCollection<Track> SelectedLibraryTracks { get; } = new();
     /// <summary>主列表内当前在播曲本体（宽松匹配落标）；列表无在播曲时为 null。定位按钮消费。</summary>
@@ -107,6 +112,18 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string RadioStatusMessage { get; set; } = string.Empty;
     [Reactive] public partial bool IsRadioLoading { get; set; }
     [Reactive] public partial bool HasRadioStations { get; set; }
+    [Reactive] public partial string FavoriteFilterText { get; set; } = string.Empty;
+    [Reactive] public partial FavoriteSortOption? SelectedFavoriteSortOption { get; set; }
+    [Reactive] public partial int FavoriteSubTabIndex { get; set; } // 0=歌曲, 1=电台
+    [Reactive] public partial bool IsFavoriteSongsSubTab { get; set; } = true;
+    [Reactive] public partial bool HasVisibleFavoriteTracks { get; set; }
+    [Reactive] public partial bool HasFavoriteStations { get; set; }
+    [Reactive] public partial string FavoriteSongStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial string FavoriteStationStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial string FavoriteSongsTabTitle { get; set; } = AppLanguage.T("歌曲 (0)", "Songs (0)");
+    [Reactive] public partial string FavoriteStationsTabTitle { get; set; } = AppLanguage.T("电台 (0)", "Radio (0)");
+
+    public ReactiveCommand<int, Unit> SetFavoriteSubTabCommand { get; }
 
     public ReactiveCommand<Unit, Unit> SearchRadioStationsCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshRadioStationsCommand { get; }
@@ -187,6 +204,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 track.IsFavorite = true;
                 if (!Favorites.Contains(track))
                     Favorites.Add(track);
+                ApplyFavoriteFilterAndSort();
                 added++;
             }
             if (added > 0)
@@ -346,6 +364,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 if (!Favorites.Contains(playlistTrack))
                     Favorites.Add(playlistTrack);
             }
+            ApplyFavoriteFilterAndSort();
             var stationInList = RadioStations.FirstOrDefault(s => (RadioStation.SourcePrefix + s.StationUuid) == playlistTrack.Id);
             if (stationInList != null)
                 stationInList.IsFavorite = playlistTrack.IsFavorite;
@@ -354,13 +373,20 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         PlayFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
-            // 收藏点播 = 收藏列表为播放上下文（同搜索点播语义）：从点击项起连播收藏，
-            // 曲目本身已在主歌单（收藏必然入列），不产生新的持久化
-            var favorites = Favorites.ToList();
-            var startIndex = favorites.IndexOf(track);
+            if (track.IsLiveStream)
+            {
+                _audioService.PlayTrack(track);
+                return;
+            }
+
+            var songsOnly = VisibleFavoriteTracks.Where(t => !t.IsLiveStream).ToList();
+            if (songsOnly.Count == 0)
+                songsOnly = Favorites.Where(t => !t.IsLiveStream).ToList();
+
+            var startIndex = songsOnly.IndexOf(track);
             if (startIndex < 0)
                 startIndex = 0;
-            _audioService.StartPlaybackContext(favorites, startIndex, shuffle: false,
+            _audioService.StartPlaybackContext(songsOnly, startIndex, shuffle: false,
                 AppLanguage.T("收藏", "Favorites"));
         });
 
@@ -415,8 +441,21 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         PlayRadioStationCommand = ReactiveCommand.Create<RadioStation>(PlayRadioStation);
         FavoriteRadioStationCommand = ReactiveCommand.Create<RadioStation>(FavoriteRadioStation);
 
+        SetFavoriteSubTabCommand = ReactiveCommand.Create<int>(idx => FavoriteSubTabIndex = idx);
+        this.WhenAnyValue(x => x.FavoriteSubTabIndex)
+            .Subscribe(idx => IsFavoriteSongsSubTab = idx == 0);
+
+        RebuildFavoriteSortOptions();
+
+        _favoriteFilterSub = this.WhenAnyValue(x => x.FavoriteFilterText)
+            .Throttle(TimeSpan.FromMilliseconds(120), RxApp.MainThreadScheduler)
+            .Subscribe(_ => ApplyFavoriteFilterAndSort());
+
+        _favoriteSortSub = this.WhenAnyValue(x => x.SelectedFavoriteSortOption)
+            .Subscribe(_ => ApplyFavoriteFilterAndSort());
+
         PopulateRadioCategories();
-        SelectedRadioCategory = RadioCategories.FirstOrDefault();
+        SelectedRadioCategory = RadioCategories.FirstOrDefault(c => c.Key == "lofi") ?? RadioCategories.FirstOrDefault();
         _currentCategoryKey = SelectedRadioCategory?.Key ?? "lofi";
 
         this.WhenAnyValue(x => x.SelectedRadioCategory)
@@ -454,6 +493,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             if (_localLibraryCount is { } count)
                 LocalLibraryStatus = FormatLocalLibraryCount(count);
             PopulateRadioCategories();
+            RebuildFavoriteSortOptions();
+            ApplyFavoriteFilterAndSort();
         };
         AppLanguage.Changed += _onLanguageChanged;
         _searchTextSub = this.WhenAnyValue(x => x.SearchText).Skip(1)
@@ -507,6 +548,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         finally
         {
             Tracks.CollectionChanged += OnTracksChanged;
+            ApplyFavoriteFilterAndSort();
         }
     }
 
@@ -574,6 +616,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
             Tracks.Clear();
             Favorites.Clear();
+        ApplyFavoriteFilterAndSort();
             SyncedPlaylists.Clear();
             // 旧实例全部换血：在播标记指向的实例即将失效，清除防幽灵高亮
             if (_nowPlayingListTrack != null)
@@ -690,6 +733,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         {
             _isLoading = false;
             Tracks.CollectionChanged += OnTracksChanged;
+            ApplyFavoriteFilterAndSort();
             if (loadCompleted && Volatile.Read(ref _disposed) == 0)
                 _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted); // save once after load completes
         }
@@ -1134,6 +1178,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 finally
                 {
                     Tracks.CollectionChanged += OnTracksChanged;
+            ApplyFavoriteFilterAndSort();
                 }
 
                 _audioService.AddTracks(imported);
@@ -1307,6 +1352,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         MutateWithoutAutosave(Tracks.Clear);
         // 收藏从属于播放列表：清空后重载时收藏本来就会随之消失，这里同步清理避免幽灵条目和脏持久化
         Favorites.Clear();
+        ApplyFavoriteFilterAndSort();
         _favoriteIds.Clear();
         SyncedPlaylists.Clear();
         SelectedSyncedPlaylist = null;
@@ -1693,6 +1739,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _kugouFilterSub.Dispose();
         _selectedSyncedPlaylistSub.Dispose();
         _searchTextSub.Dispose();
+        _favoriteFilterSub?.Dispose();
+        _favoriteSortSub?.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
         AppLanguage.Changed -= _onLanguageChanged;
     }
@@ -1701,6 +1749,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     {
         var selectedKey = SelectedRadioCategory?.Key ?? "lofi";
         RadioCategories.Clear();
+        RadioCategories.Add(new RadioCategoryItem("favorites", AppLanguage.T("★ 我的收藏", "★ My Favorites")));
         RadioCategories.Add(new RadioCategoryItem("lofi", AppLanguage.T("Lofi 低保真", "Lofi")));
         RadioCategories.Add(new RadioCategoryItem("jazz", AppLanguage.T("爵士", "Jazz")));
         RadioCategories.Add(new RadioCategoryItem("classical", AppLanguage.T("古典", "Classical")));
@@ -1724,6 +1773,33 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public async Task LoadRadioStationsByCategoryAsync(string category, bool force = false)
     {
         _currentCategoryKey = category;
+        if (string.Equals(category, "favorites", StringComparison.OrdinalIgnoreCase))
+        {
+            RadioStations.Clear();
+            var favoriteStationTracks = Favorites.Where(t => t.IsLiveStream).ToList();
+            foreach (var t in favoriteStationTracks)
+            {
+                var uuid = t.SourceId?.StartsWith(RadioStation.SourcePrefix, StringComparison.OrdinalIgnoreCase) == true
+                    ? t.SourceId[RadioStation.SourcePrefix.Length..]
+                    : t.Id;
+                RadioStations.Add(new RadioStation
+                {
+                    StationUuid = uuid,
+                    Name = t.Title,
+                    StreamUrl = t.FilePath ?? string.Empty,
+                    Tags = t.Artist ?? string.Empty,
+                    Codec = t.DeclaredCodec ?? "MP3",
+                    Bitrate = t.DeclaredBitrateKbps ?? 0,
+                    IsFavorite = true
+                });
+            }
+            HasRadioStations = RadioStations.Count > 0;
+            RadioStatusMessage = HasRadioStations
+                ? string.Empty
+                : AppLanguage.T("暂无收藏电台，可在其他流派中点击爱心收藏。", "No favorite radio stations yet. Favorite some stations first.");
+            return;
+        }
+
         if (_radioBrowserService == null)
         {
             RadioStatusMessage = AppLanguage.T("电台服务未初始化", "Radio service not initialized");
@@ -1824,11 +1900,107 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             AppLanguage.T("网络电台", "Internet Radio"));
     }
 
+    private void RebuildFavoriteSortOptions()
+    {
+        var currentKind = SelectedFavoriteSortOption?.Kind ?? FavoriteSortKind.DateAddedDesc;
+        FavoriteSortOptions.Clear();
+        FavoriteSortOptions.Add(new FavoriteSortOption(FavoriteSortKind.DateAddedDesc, AppLanguage.T("最新收藏", "Recently Added")));
+        FavoriteSortOptions.Add(new FavoriteSortOption(FavoriteSortKind.TitleAsc, AppLanguage.T("歌曲名 (A-Z)", "Title (A-Z)")));
+        FavoriteSortOptions.Add(new FavoriteSortOption(FavoriteSortKind.ArtistAsc, AppLanguage.T("歌手名 (A-Z)", "Artist (A-Z)")));
+        FavoriteSortOptions.Add(new FavoriteSortOption(FavoriteSortKind.DurationDesc, AppLanguage.T("时长从长到短", "Duration (Longest)")));
+        FavoriteSortOptions.Add(new FavoriteSortOption(FavoriteSortKind.DurationAsc, AppLanguage.T("时长从短到长", "Duration (Shortest)")));
+
+        SelectedFavoriteSortOption = FavoriteSortOptions.FirstOrDefault(o => o.Kind == currentKind)
+                                     ?? FavoriteSortOptions[0];
+    }
+
+    public void ApplyFavoriteFilterAndSort()
+    {
+        var songs = Favorites.Where(t => !t.IsLiveStream).ToList();
+        var stations = Favorites.Where(t => t.IsLiveStream).ToList();
+
+        FavoriteSongsTabTitle = $"{AppLanguage.T("歌曲", "Songs")} ({songs.Count})";
+        FavoriteStationsTabTitle = $"{AppLanguage.T("电台", "Radio")} ({stations.Count})";
+
+        var keyword = FavoriteFilterText.Trim();
+        IEnumerable<Track> songQuery = songs;
+        if (keyword.Length > 0)
+        {
+            songQuery = songQuery.Where(t =>
+                (!string.IsNullOrEmpty(t.Title) && t.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrEmpty(t.Artist) && t.Artist.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrEmpty(t.Album) && t.Album.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        var sortKind = SelectedFavoriteSortOption?.Kind ?? FavoriteSortKind.DateAddedDesc;
+        IEnumerable<Track> sortedSongs = sortKind switch
+        {
+            FavoriteSortKind.TitleAsc => songQuery.OrderBy(t => t.Title, StringComparer.CurrentCultureIgnoreCase),
+            FavoriteSortKind.ArtistAsc => songQuery.OrderBy(t => t.DisplayArtist, StringComparer.CurrentCultureIgnoreCase),
+            FavoriteSortKind.DurationDesc => songQuery.OrderByDescending(t => t.Duration),
+            FavoriteSortKind.DurationAsc => songQuery.OrderBy(t => t.Duration),
+            _ => songQuery.Reverse()
+        };
+
+        var filteredSongList = sortedSongs.ToList();
+        VisibleFavoriteTracks.Clear();
+        foreach (var track in filteredSongList)
+            VisibleFavoriteTracks.Add(track);
+
+        HasVisibleFavoriteTracks = VisibleFavoriteTracks.Count > 0;
+        if (songs.Count == 0)
+        {
+            FavoriteSongStatusMessage = AppLanguage.T("暂无收藏歌曲，在播放或搜索时点击爱心即可收藏。", "No favorite songs yet. Click the heart icon while playing or searching to add favorites.");
+        }
+        else if (VisibleFavoriteTracks.Count == 0)
+        {
+            FavoriteSongStatusMessage = AppLanguage.T("未找到匹配的收藏歌曲。", "No matching favorite songs found.");
+        }
+        else
+        {
+            FavoriteSongStatusMessage = string.Empty;
+        }
+
+        FavoriteStations.Clear();
+        foreach (var station in stations.AsEnumerable().Reverse())
+            FavoriteStations.Add(station);
+
+        HasFavoriteStations = FavoriteStations.Count > 0;
+        FavoriteStationStatusMessage = HasFavoriteStations
+            ? string.Empty
+            : AppLanguage.T("暂无收藏电台，可在网络电台(📻)中点击爱心收藏常用频道。", "No favorite radio stations yet. Click the heart icon in Internet Radio (📻) to favorite stations.");
+    }
+
     private void FavoriteRadioStation(RadioStation station)
     {
         var track = station.ToTrack();
         ToggleFavoriteCommand.Execute(track).Subscribe();
+        if (string.Equals(SelectedRadioCategory?.Key, "favorites", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = LoadRadioStationsByCategoryAsync("favorites");
+        }
     }
+}
+
+public enum FavoriteSortKind
+{
+    DateAddedDesc,
+    TitleAsc,
+    ArtistAsc,
+    DurationDesc,
+    DurationAsc
+}
+
+public sealed class FavoriteSortOption
+{
+    public FavoriteSortKind Kind { get; }
+    public string DisplayName { get; }
+    public FavoriteSortOption(FavoriteSortKind kind, string displayName)
+    {
+        Kind = kind;
+        DisplayName = displayName;
+    }
+    public override string ToString() => DisplayName;
 }
 
 public sealed class RadioCategoryItem
