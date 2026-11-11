@@ -9,6 +9,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reactive;
+using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -49,6 +50,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _languageTtsSub;
     private readonly IDisposable _speechMixSub;
     private readonly IDisposable _spectrumStyleSub;
+    private readonly ISleepTimerService _sleepTimerService;
+    private readonly IDisposable _sleepTimerSub;
+    private readonly IDisposable _sleepTimerCloseAppSub;
     private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
     private readonly Action _onLanguageChanged;
@@ -160,6 +164,22 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> CalmerRecommendationCommand { get; }
     public ReactiveCommand<Unit, Unit> EnergeticRecommendationCommand { get; }
     public ReactiveCommand<Unit, Unit> TellSongStoryCommand { get; }
+    [Reactive] public partial bool IsSleepTimerActive { get; private set; }
+    [Reactive] public partial string SleepTimerDisplayStatus { get; private set; } = string.Empty;
+    [Reactive] public partial string SleepTimerTooltip { get; private set; } = AppLanguage.Get("S_SleepTimer");
+    [Reactive] public partial SleepTimerMode SleepTimerCurrentMode { get; private set; } = SleepTimerMode.Disabled;
+    [Reactive] public partial int SleepTimerTargetMinutes { get; private set; }
+    [Reactive] public partial bool CanStopAfterCurrentTrack { get; private set; }
+    [Reactive] public partial string StopAfterCurrentTrackTooltip { get; private set; } = string.Empty;
+    [Reactive] public partial bool SleepTimerCloseAppOnExpiry { get; set; }
+    public bool IsSleepTimerOption0Selected => SleepTimerCurrentMode == SleepTimerMode.Disabled;
+    public bool IsSleepTimerOption15Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 15;
+    public bool IsSleepTimerOption30Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 30;
+    public bool IsSleepTimerOption45Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 45;
+    public bool IsSleepTimerOption60Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 60;
+    public bool IsSleepTimerOption90Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 90;
+    public bool IsSleepTimerOptionTrackEndSelected => SleepTimerCurrentMode == SleepTimerMode.EndOfTrack;
+    public ReactiveCommand<int, Unit> SetSleepTimerCommand { get; }
 
     public MainWindowViewModel(
         IAudioService audioService,
@@ -182,7 +202,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         AudiusProvider? audius = null,
         ITtsService? ttsService = null,
         IAppUpdateService? appUpdateService = null,
-        IRadioBrowserService? radioBrowserService = null)
+        IRadioBrowserService? radioBrowserService = null,
+        ISleepTimerService? sleepTimerService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -350,6 +371,45 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         UseDarkThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Dark; });
         UseLightThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Light; });
 
+        _sleepTimerService = sleepTimerService ?? new SleepTimerService(_audioService);
+
+        SetSleepTimerCommand = ReactiveCommand.Create<int>(minutes =>
+        {
+            if (minutes == 0)
+            {
+                _sleepTimerService.CancelTimer();
+            }
+            else if (minutes == -1)
+            {
+                _sleepTimerService.StartEndOfTrackTimer();
+            }
+            else if (minutes > 0)
+            {
+                _sleepTimerService.StartDurationTimer(TimeSpan.FromMinutes(minutes));
+            }
+        });
+
+        _sleepTimerService.RequestAppShutdown += OnSleepTimerRequestAppShutdown;
+
+        _sleepTimerSub = Observable.FromEventPattern<System.ComponentModel.PropertyChangedEventHandler, System.ComponentModel.PropertyChangedEventArgs>(
+                h => _sleepTimerService.PropertyChanged += h,
+                h => _sleepTimerService.PropertyChanged -= h)
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(_ => UpdateSleepTimerState());
+
+        _sleepTimerCloseAppSub = this.WhenAnyValue(x => x.SleepTimerCloseAppOnExpiry)
+            .Skip(1)
+            .Where(v => _sleepTimerService.CloseAppOnExpiry != v || SettingsVM.SleepTimerCloseApp != v)
+            .Subscribe(v =>
+            {
+                _sleepTimerService.CloseAppOnExpiry = v;
+                SettingsVM.SleepTimerCloseApp = v;
+                SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+            });
+
+        UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
+        UpdateSleepTimerState();
+
         // Apply initial theme variant + sync RequestedThemeVariant on change (spec §5.4.2)。
         // 窗口 Show 先于异步 LoadLocalStateAsync 完成：构造期同步预读持久化 theme_mode
         // 先行应用正确变体，消除浅色/跟随系统用户启动先深色再纠正的闪变窗口；
@@ -419,6 +479,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             RefreshLocalizedProgramText();
             WeatherVM.RebuildTooltips();
+            UpdateSleepTimerTooltip();
+            UpdateSleepTimerState();
+            UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
         };
         AppLanguage.Changed += _onLanguageChanged;
         RefreshLocalizedClockText();
@@ -450,6 +513,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 IsCurrentFavorite = track != null &&
                     (PlaylistVM.FindMatchingTrack(track) ?? track).IsFavorite;
                 HasCurrentTrack = track != null;
+                UpdateCanStopAfterCurrentTrack(track);
                 PushStationContext();
             });
 
@@ -1043,6 +1107,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Apply initial character
         SwitchCharacter(SelectedCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
+
+        _sleepTimerService.CloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
+        SleepTimerCloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
     }
 
     /// <summary>会话开场：账号状态刷新、欢迎语与开播推荐，依赖音源代理就绪。</summary>
@@ -1270,6 +1337,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (IsDisposed)
             return;
+
+        if (_sleepTimerService.CheckAndConsumeEndOfTrack())
+        {
+            Log.Information("Sleep timer: stopped playback after track ended");
+            return;
+        }
 
         if (Interlocked.Exchange(ref _autoRadioAdvancing, 1) == 1) return;
         if (_audioService.RepeatMode != "radio") { _autoRadioAdvancing = 0; return; }
@@ -1776,6 +1849,63 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void OnSleepTimerRequestAppShutdown()
+    {
+        RxApp.MainThreadScheduler.Schedule(() => RequestExitWindow?.Invoke());
+    }
+
+    private void UpdateSleepTimerState()
+    {
+        IsSleepTimerActive = _sleepTimerService.IsActive;
+        SleepTimerCurrentMode = _sleepTimerService.Mode;
+        SleepTimerDisplayStatus = _sleepTimerService.DisplayStatus;
+        if (_sleepTimerService.Mode == SleepTimerMode.Duration)
+        {
+            SleepTimerTargetMinutes = (int)Math.Round(_sleepTimerService.TargetDuration.TotalMinutes);
+        }
+        else
+        {
+            SleepTimerTargetMinutes = 0;
+        }
+
+        this.RaisePropertyChanged(nameof(IsSleepTimerOption0Selected));
+        this.RaisePropertyChanged(nameof(IsSleepTimerOption15Selected));
+        this.RaisePropertyChanged(nameof(IsSleepTimerOption30Selected));
+        this.RaisePropertyChanged(nameof(IsSleepTimerOption45Selected));
+        this.RaisePropertyChanged(nameof(IsSleepTimerOption60Selected));
+        this.RaisePropertyChanged(nameof(IsSleepTimerOption90Selected));
+        this.RaisePropertyChanged(nameof(IsSleepTimerOptionTrackEndSelected));
+
+        UpdateSleepTimerTooltip();
+    }
+
+    private void UpdateSleepTimerTooltip()
+    {
+        if (IsSleepTimerActive)
+        {
+            if (_sleepTimerService.Mode == SleepTimerMode.EndOfTrack)
+            {
+                SleepTimerTooltip = AppLanguage.T("睡眠定时：本曲播完后停止播放", "Sleep Timer: stops after current track");
+            }
+            else
+            {
+                SleepTimerTooltip = string.Format(AppLanguage.Get("S_SleepTimerRemainingTip"), SleepTimerDisplayStatus);
+            }
+        }
+        else
+        {
+            SleepTimerTooltip = AppLanguage.Get("S_SleepTimer");
+        }
+    }
+
+    private void UpdateCanStopAfterCurrentTrack(Track? track)
+    {
+        CanStopAfterCurrentTrack = track != null && !track.IsLiveStream;
+        StopAfterCurrentTrackTooltip = CanStopAfterCurrentTrack
+            ? AppLanguage.Get("S_SleepTimerEndOfTrack")
+            : AppLanguage.Get("S_SleepTimerLiveStreamDisabledTip");
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -1813,6 +1943,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (WeatherVM != null)
             WeatherVM.WeatherSnapshotChanged -= OnWeatherSnapshotChanged;
         WeatherVM?.Dispose();
+        _sleepTimerService.RequestAppShutdown -= OnSleepTimerRequestAppShutdown;
+        _sleepTimerSub?.Dispose();
+        _sleepTimerCloseAppSub?.Dispose();
+        _sleepTimerService?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();
         ChatVM?.Dispose();
