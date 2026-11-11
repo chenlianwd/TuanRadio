@@ -386,6 +386,11 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
+    private void OnSleepTimerOptionClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        SleepTimerButton?.Flyout?.Hide();
+    }
+
     public void Dispose()
     {
         _compactModeSub?.Dispose();

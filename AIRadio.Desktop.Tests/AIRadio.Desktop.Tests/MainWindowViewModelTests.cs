@@ -1458,4 +1458,105 @@ public class MainWindowViewModelTests
             RxApp.MainThreadScheduler = originalScheduler;
         }
     }
+
+    [Fact]
+    public void SleepTimer_CommandSetsDurationAndUpdatesState()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel(out _);
+        try
+        {
+            Assert.False(vm.IsSleepTimerActive);
+            Assert.True(vm.IsSleepTimerOption0Selected);
+            Assert.False(vm.IsSleepTimerOption30Selected);
+
+            // 设定 30 分钟
+            vm.SetSleepTimerCommand.Execute(30).Subscribe();
+
+            Assert.True(vm.IsSleepTimerActive);
+            Assert.Equal(SleepTimerMode.Duration, vm.SleepTimerCurrentMode);
+            Assert.Equal(30, vm.SleepTimerTargetMinutes);
+            Assert.True(vm.IsSleepTimerOption30Selected);
+            Assert.False(vm.IsSleepTimerOption0Selected);
+            Assert.Contains("30", vm.SleepTimerTooltip);
+
+            // 取消定时
+            vm.SetSleepTimerCommand.Execute(0).Subscribe();
+
+            Assert.False(vm.IsSleepTimerActive);
+            Assert.True(vm.IsSleepTimerOption0Selected);
+            Assert.False(vm.IsSleepTimerOption30Selected);
+
+            // 设定播完即止模式，并验证双语 Tooltip 语法地道性
+            AppLanguage.Apply("zh");
+            vm.SetSleepTimerCommand.Execute(-1).Subscribe();
+            Assert.True(vm.IsSleepTimerActive);
+            Assert.Equal(SleepTimerMode.EndOfTrack, vm.SleepTimerCurrentMode);
+            Assert.True(vm.IsSleepTimerOptionTrackEndSelected);
+            Assert.Equal("睡眠定时：本曲播完后停止播放", vm.SleepTimerTooltip);
+
+            AppLanguage.Apply("en");
+            Assert.Equal("Sleep Timer: stops after current track", vm.SleepTimerTooltip);
+
+            AppLanguage.Apply("zh");
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public void SleepTimer_EndOfTrack_DisabledForLiveStream()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var trackChanged = new Subject<Track?>();
+        var audioMock = new Mock<IAudioService>();
+        audioMock.SetupGet(a => a.TrackEnded).Returns(new Subject<Track?>());
+        audioMock.SetupGet(a => a.TrackChanged).Returns(trackChanged);
+        audioMock.SetupGet(a => a.StateChanged).Returns(new Subject<PlaybackState>());
+        audioMock.SetupGet(a => a.PositionChanged).Returns(new Subject<TimeSpan>());
+        audioMock.SetupGet(a => a.SpectrumData).Returns(new Subject<float[]>());
+        audioMock.SetupGet(a => a.TtsStateChanged).Returns(new Subject<bool>());
+        audioMock.SetupGet(a => a.TtsError).Returns(new Subject<string>());
+        audioMock.SetupGet(a => a.Playlist).Returns(new List<Track>().AsReadOnly());
+
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var vm = new MainWindowViewModel(
+            audioMock.Object,
+            new Mock<IDJService>().Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            Path.Combine(dir, "playlist.json"),
+            Path.Combine(dir, "settings.json"));
+        try
+        {
+            // 切换到普通曲目
+            var normalTrack = new Track { Title = "Normal", SourceId = "netease" };
+            audioMock.SetupGet(a => a.CurrentTrack).Returns(normalTrack);
+            trackChanged.OnNext(normalTrack);
+
+            Assert.True(vm.CanStopAfterCurrentTrack);
+            Assert.Contains(AppLanguage.Get("S_SleepTimerEndOfTrack"), vm.StopAfterCurrentTrackTooltip);
+
+            // 切换到网络电台直播流
+            var liveTrack = new Track { Title = "Live Radio", SourceId = "radio-browser:station-1" };
+            audioMock.SetupGet(a => a.CurrentTrack).Returns(liveTrack);
+            trackChanged.OnNext(liveTrack);
+
+            Assert.False(vm.CanStopAfterCurrentTrack);
+            Assert.Contains(AppLanguage.Get("S_SleepTimerLiveStreamDisabledTip"), vm.StopAfterCurrentTrackTooltip);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

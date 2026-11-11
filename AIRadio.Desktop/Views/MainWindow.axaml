@@ -71,6 +71,54 @@
         <Style Selector="TextBlock#HostNameText.speaking">
             <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
         </Style>
+
+        <!-- 睡眠定时按钮激活态：月牙图标点亮 AccentGreen 并发光 -->
+        <Style Selector="Button#SleepTimerButton Path">
+            <Setter Property="Fill" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="Opacity" Value="0.6"/>
+        </Style>
+        <Style Selector="Button#SleepTimerButton.active Path">
+            <Setter Property="Fill" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="Opacity" Value="1.0"/>
+        </Style>
+
+        <!-- 睡眠定时 Flyout 浮层样式 -->
+        <Style Selector="FlyoutPresenter.sleep-timer-flyout">
+            <Setter Property="Background" Value="{DynamicResource C_FC0E0E15}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_667B7898}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="10"/>
+            <Setter Property="MinWidth" Value="196"/>
+        </Style>
+
+        <!-- 睡眠定时选项按钮样式 -->
+        <Style Selector="Button.timer-opt">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="Button.timer-opt:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
+        </Style>
+        <Style Selector="Button.timer-opt.selected">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="FontWeight" Value="600"/>
+        </Style>
+        <Style Selector="Button.timer-opt.selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_10000000}"/>
+        </Style>
+        <Style Selector="Button.timer-opt:disabled">
+            <Setter Property="Opacity" Value="0.35"/>
+        </Style>
     </Window.Styles>
 
     <Grid x:Name="RootGrid" Background="{DynamicResource SurfaceRoot}" RowDefinitions="30,*">
@@ -141,6 +189,92 @@
                             <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding OpenSearchCommand}" ToolTip.Tip="{DynamicResource S_SearchTab}" AutomationProperties.Name="{DynamicResource S_SearchTab}">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
+                            </Button>
+                            <Button x:Name="SleepTimerButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
+                                    Classes.active="{Binding IsSleepTimerActive}"
+                                    ToolTip.Tip="{Binding SleepTimerTooltip}" AutomationProperties.Name="{DynamicResource S_SleepTimer}">
+                                <Path Width="14" Height="14" Stretch="Uniform"
+                                      Data="M12.3,2 A10,10 0 0,0 10.4,21.8 A10,10 0 0,0 19.9,15 A8,8 0 0,1 12.3,2 Z"/>
+                                <Button.Flyout>
+                                    <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard" FlyoutPresenterClasses="sleep-timer-flyout">
+                                        <StackPanel Width="196" Spacing="6">
+                                            <!-- 标题与剩余倒计时 -->
+                                            <DockPanel LastChildFill="True">
+                                                <TextBlock DockPanel.Dock="Left" Text="{DynamicResource S_SleepTimer}"
+                                                           FontWeight="600" FontSize="13" Foreground="{DynamicResource TitleText}" VerticalAlignment="Center"/>
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding SleepTimerDisplayStatus}"
+                                                           FontSize="12" FontWeight="600" Foreground="{DynamicResource AccentGreen}"
+                                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                           IsVisible="{Binding IsSleepTimerActive}"/>
+                                            </DockPanel>
+
+                                            <!-- 分隔线 -->
+                                            <Rectangle Height="1" Fill="#20FFFFFF" Margin="0,2,0,2"/>
+
+                                            <!-- 选项列表 -->
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOption0Selected}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>0</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimerOff}"/>
+                                            </Button>
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOption15Selected}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>15</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimer15m}"/>
+                                            </Button>
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOption30Selected}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>30</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimer30m}"/>
+                                            </Button>
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOption45Selected}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>45</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimer45m}"/>
+                                            </Button>
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOption60Selected}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>60</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimer60m}"/>
+                                            </Button>
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOption90Selected}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>90</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimer90m}"/>
+                                            </Button>
+                                            <Button Classes="timer-opt" Classes.selected="{Binding IsSleepTimerOptionTrackEndSelected}"
+                                                    IsEnabled="{Binding CanStopAfterCurrentTrack}"
+                                                    ToolTip.Tip="{Binding StopAfterCurrentTrackTooltip}"
+                                                    Command="{Binding SetSleepTimerCommand}" Click="OnSleepTimerOptionClicked">
+                                                <Button.CommandParameter>
+                                                    <x:Int32>-1</x:Int32>
+                                                </Button.CommandParameter>
+                                                <TextBlock Text="{DynamicResource S_SleepTimerEndOfTrack}"/>
+                                            </Button>
+
+                                            <!-- 分隔线 -->
+                                            <Rectangle Height="1" Fill="#20FFFFFF" Margin="0,2,0,2"/>
+
+                                            <!-- 到期退出应用勾选 -->
+                                            <CheckBox IsChecked="{Binding SleepTimerCloseAppOnExpiry, Mode=TwoWay}"
+                                                      Foreground="{DynamicResource C_FFEDEDF5}" FontSize="12" Margin="4,2,0,0">
+                                                <TextBlock Text="{DynamicResource S_SleepTimerCloseApp}" VerticalAlignment="Center"/>
+                                            </CheckBox>
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
                             </Button>
                             <Button x:Name="SettingsButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding ToggleSettingsCommand}" ToolTip.Tip="{DynamicResource S_Settings}" AutomationProperties.Name="{DynamicResource S_Settings}">

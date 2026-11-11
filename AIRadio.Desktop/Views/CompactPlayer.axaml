@@ -48,7 +48,8 @@
             <Grid x:Name="InfoRow" MinHeight="30" Background="Transparent"
                   ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto"
                   PointerPressed="OnDragAreaPressed" DoubleTapped="OnExpandDoubleTapped">
-                <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center">
+                <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center"
+                        ToolTip.Tip="{Binding SleepTimerTooltip}">
                     <Border.Background>
                         <MultiBinding Converter="{x:Static conv:RadioStateToBrushConverter.Instance}">
                             <Binding Path="CurrentState"/>
