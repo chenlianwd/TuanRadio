@@ -581,7 +581,9 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             if (_djService.LastChatFailure is { } chatFailure)
             {
                 // 弹性容灾：大模型服务故障（如网络抖动或本地服务离线）时，若具备明确点歌意图，尝试降级本地点歌挽救
-                if (TryParseSongRequest(text, out var fallbackQuery, out _, out var fallbackIsArtist, out var fbArtist, out var fbTitle))
+                // 与本地快速通道同构：bare title 弱命中必须过 confident 预检，防闲聊被误降级切歌
+                if (TryParseSongRequest(text, out var fallbackQuery, out var fallbackRequiresConfident, out var fallbackIsArtist, out var fbArtist, out var fbTitle) &&
+                    (!fallbackRequiresConfident || await HasConfidentSongMatchAsync(fallbackQuery)))
                 {
                     Log.Warning("LLM chat failed, falling back to local song request: {Query}", fallbackQuery);
                     var (fbFinalArtist, fbFinalTitle) = await VerifyArtistAndTitleWithSearchAsync(fallbackQuery, fallbackIsArtist, fbArtist, fbTitle);
@@ -616,10 +618,14 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             var parsed = ParseDjResponse(response);
             var command = parsed.Command;
 
-            // 虚假承诺自愈：大模型若在台词中承诺播放但漏带 <cmd> 控制块，从明确点歌意图中自愈补齐指令
+            // 虚假承诺自愈：大模型若在台词中承诺播放但漏带 <cmd> 控制块，从明确点歌意图中自愈补齐指令。
+            // 双门槛防误触：仅认显式动词命中（bare title 弱命中不自愈，防闲聊被强制切歌），
+            // 且台词不得含拒绝语义（LLM 已明确说"找不到/抱歉"时不得推翻其判断强制播放）
             if (string.IsNullOrWhiteSpace(command) &&
-                TryParseSongRequest(text, out var impliedQuery, out _, out var impliedIsArtist, out _, out _) &&
-                !string.IsNullOrWhiteSpace(impliedQuery))
+                TryParseSongRequest(text, out var impliedQuery, out var impliedRequiresConfident, out var impliedIsArtist, out _, out _) &&
+                !impliedRequiresConfident &&
+                !string.IsNullOrWhiteSpace(impliedQuery) &&
+                !LooksLikeRefusal(parsed.DisplayText))
             {
                 command = impliedIsArtist ? $"play_artist:{impliedQuery}" : $"play:{impliedQuery}";
                 Log.Information("Heuristically patched omitted play command for user request: {Command}", command);
@@ -1016,10 +1022,15 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             RegexOptions.IgnoreCase);
         if (!explicitMatch.Success)
         {
+            // 第二条无行首锚定：覆盖"能不能播放X"类句式。匹配起点若落在否定语境内
+            // （"不想听/不要听/别再放/停止播放 X"——否定词与动词间可夹再/想/要等修饰词），
+            // 判定否定意图不解析，防从否定词后截取出播放指令
             explicitMatch = Regex.Match(
                 normalized,
-                @"(?:播放|放一下|放下|放|听一下|听下|听|来一首|来首|点一首|点首|我想听|想听)\s+(?:一首|首)?\s*(?<query>.+)$",
+                @"(播放|放一下|放下|放|听一下|听下|听|来一首|来首|点一首|点首|我想听|想听)\s+(?:一首|首)?\s*(?<query>.+)$",
                 RegexOptions.IgnoreCase);
+            if (explicitMatch.Success && IsNegatedIntent(normalized[..explicitMatch.Index]))
+                return false;
         }
 
         if (explicitMatch.Success)
@@ -1129,15 +1140,18 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 if (normalizedTopTitle.Equals(rawCombined, StringComparison.OrdinalIgnoreCase) ||
                     normalizedTopTitle.Contains(rawCombined, StringComparison.OrdinalIgnoreCase))
                 {
-                    return (null, top.Title);
+                    return (null, StripArtistPrefixFromTitle(top.Title, top.Artist));
                 }
 
-                // 如果搜索结果的歌手匹配 candidateArtist，歌曲名匹配 candidateTitle，强化证实了歌手与歌名的有效性
+                // 如果搜索结果的歌手匹配 candidateArtist，歌曲名匹配 candidateTitle，强化证实了歌手与歌名的有效性。
+                // 空 Artist 门禁：任意串 Contains("") 恒真，top.Artist 缺失时不得视为"证实"
+                // （部分音源把 "歌手 - 歌名" 整串塞进 Title 而 Artist 留空，误证实会把歌手名包进书名号）
                 var normalizedTopArtist = NormalizeForMusicCompare(top.Artist);
-                if (normalizedTopArtist.Contains(NormalizeForMusicCompare(candidateArtist), StringComparison.OrdinalIgnoreCase) ||
-                    NormalizeForMusicCompare(candidateArtist).Contains(normalizedTopArtist, StringComparison.OrdinalIgnoreCase))
+                if (normalizedTopArtist.Length > 0 &&
+                    (normalizedTopArtist.Contains(NormalizeForMusicCompare(candidateArtist), StringComparison.OrdinalIgnoreCase) ||
+                     NormalizeForMusicCompare(candidateArtist).Contains(normalizedTopArtist, StringComparison.OrdinalIgnoreCase)))
                 {
-                    return (top.Artist, top.Title);
+                    return (top.Artist, StripArtistPrefixFromTitle(top.Title, top.Artist));
                 }
             }
         }
@@ -1151,6 +1165,25 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         }
 
         return (candidateArtist, candidateTitle);
+    }
+
+    /// <summary>
+    /// 剥离拼接格式标题（"歌手 - 歌名"/"歌手：歌名"）中的歌手前缀，防文案把歌手名包进书名号。
+    /// 仅在 artist 非空且 title 确以其开头并后随分隔符时剥离，否则原样返回。
+    /// </summary>
+    internal static string StripArtistPrefixFromTitle(string title, string? artist)
+    {
+        if (string.IsNullOrWhiteSpace(artist))
+            return title;
+
+        var prefix = artist.Trim();
+        if (prefix.Length == 0 || !title.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return title;
+
+        var rest = title[prefix.Length..].TrimStart();
+        if (rest.Length > 0 && " -—–:：·".IndexOf(rest[0]) >= 0)
+            return rest[1..].TrimStart();
+        return title;
     }
 
     private static string FormatLocalSongRequestDisplayText(
@@ -1220,6 +1253,35 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private static bool IsGenericMusicRequest(string text)
     {
         return Regex.IsMatch(text, @"^(歌|歌曲|音乐|一首歌|首歌|点歌)$", RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>
+    /// 判定动词前引导文本是否构成否定语境：从尾部剥去常见修饰词链（再/想/要/一下/给我等）
+    /// 后若以否定词收尾（"不想再/不要/别再/停止"），视为否定意图，不得截取出播放指令。
+    /// 单纯否定字眼不紧贴动词时不误伤："今天心情不好，想听 X"剥链后以"好"/标点收尾，仍为正向。
+    /// </summary>
+    private static bool IsNegatedIntent(string lead)
+    {
+        if (string.IsNullOrEmpty(lead))
+            return false;
+        var trimmed = Regex.Replace(lead, @"(再|想|要|一下|点|了|会|能|得|给|我|你|您)+$", "");
+        return Regex.IsMatch(trimmed, @"(不|别|莫|勿|没|停止)$");
+    }
+
+    /// <summary>
+    /// 台词是否为拒绝语义（找不到/无法播放等）。LLM 已明确拒绝或未找到曲目时，
+    /// 即使用户文本能解析出点歌意图，自愈逻辑也不得推翻其判断强制播放。
+    /// 只收高置信拒绝词："抱歉/版权/下架"在正向答应台词中共现率偏高（"抱歉让你久等，
+    /// 这就安排"/"版权方冷门但我找到了"），纳入会误拦真实承诺。
+    /// </summary>
+    internal static bool LooksLikeRefusal(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        return Regex.IsMatch(
+            text,
+            @"找不到|搜不到|没有找到|没能找到|没法|无法|暂时不|暂时没|不能播|sorry|cannot|can't|couldn't|unable|not available|no result",
+            RegexOptions.IgnoreCase);
     }
 
     private static bool IsConfidentMusicMatch(string query, OnlineTrack track)
@@ -1369,9 +1431,15 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             }
 
             var primaryTrack = SelectBestTrack(searchQuery, results, preferArtistMatch);
-            // 候选曲目级联解析：首选最佳匹配，其余候选歌曲按搜索顺序顺延兜底，防首选为 VIP 灰阶歌曲导致点歌中断
+            // 候选曲目级联解析：首选最佳匹配，其余候选按搜索顺序顺延兜底，防首选为 VIP 灰阶歌曲导致点歌中断。
+            // 上限 3 条 + 相关性粗筛：每条候选最坏一次 8s 解析请求（灰歌是业务结果不触发熔断），
+            // 全量顺延既拖慢响应（串行独占指令队列）又会播出与点歌无关的结果
+            const int MaxPlayableCandidates = 3;
             var candidates = new List<OnlineTrack> { primaryTrack };
-            candidates.AddRange(results.Where(r => !string.Equals(r.Id, primaryTrack.Id, StringComparison.Ordinal)));
+            candidates.AddRange(results
+                .Where(r => !string.Equals(r.Id, primaryTrack.Id, StringComparison.Ordinal))
+                .Where(r => IsConfidentMusicMatch(searchQuery, r))
+                .Take(MaxPlayableCandidates - 1));
 
             Track? playableTrack = null;
             foreach (var candidate in candidates)

@@ -2410,11 +2410,39 @@ public class SettingsViewModelTests
                 await vm.SaveUiStateCommand.Execute();
             }
 
+            // 锁定写键：文件必须落 theme_mode（防保存通道静默退化为仅写 is_dark_mode）
+            using (var doc = JsonDocument.Parse(await File.ReadAllTextAsync(settingsFile)))
+            {
+                Assert.Equal("light", doc.RootElement.GetProperty("theme_mode").GetString());
+            }
+
             using (var loaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
             {
                 await loaded.LoadAsync();
                 Assert.Equal(ThemeModes.Light, loaded.SelectedThemeMode);
                 Assert.False(loaded.IsDarkMode);
+            }
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task ThemeMode_LoadPrefersThemeModeOverLegacyDarkMode()
+    {
+        // theme_mode 是权威键：与 is_dark_mode 并存时必须压过 legacy 值（防读取通道
+        // 静默退化为仅读 is_dark_mode——双键保存下该退化会被兜底掩盖成恒绿）
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            await File.WriteAllTextAsync(settingsFile, """{"theme_mode": "light", "is_dark_mode": true}""");
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                Assert.Equal(ThemeModes.Light, vm.SelectedThemeMode);
+                Assert.False(vm.IsDarkMode);
             }
         }
         finally

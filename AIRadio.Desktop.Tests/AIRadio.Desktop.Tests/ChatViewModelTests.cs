@@ -671,6 +671,162 @@ public class ChatViewModelTests
         audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData("不想听 周杰伦的歌")]
+    [InlineData("不要听 周杰伦")]
+    [InlineData("别再放 周杰伦")]
+    [InlineData("不想再听 周杰伦")]
+    [InlineData("停止播放 周杰伦")]
+    public async Task SendMessage_WhenLlmConfigured_NegativeSentence_DoesNotSelfHealPlayCommand(string input)
+    {
+        // 否定意图防误触：用户明确表达否定（含"否定词+修饰词+动词"句式——不要听/别再放/
+        // 不想再听/停止播放），即使 LLM 回复漏 <cmd>，也不得从否定语境后截取出播放指令
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好的，那我们聊点别的吧[calm]");
+
+        vm.InputText = input;
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmConfigured_NegativeWordNotAdjacentToVerb_StillPlays()
+    {
+        // 否定判定不误伤：否定字眼不紧贴动词（"心情不好，想听 X"）时仍为正向请求，
+        // 剥修饰词链后以"好"/标点收尾、不得判为否定语境
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好的[happy]<cmd>{\"action\":\"play\",\"query\":\"周杰伦 晴天\"}</cmd>");
+        var matchTrack = new OnlineTrack { Id = "netease:sunny", Title = "晴天", Artist = "周杰伦" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sunny"))
+            .ReturnsAsync("http://example.com/sunny.mp3");
+
+        vm.InputText = "今天心情不好，想听 周杰伦";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmFails_NegatedGapSentence_DoesNotFallBackToPlay()
+    {
+        // 降级面否定句式全覆盖："否定词+修饰词+动词"（不要听）在 LLM 故障时同样不得降级播放
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fail");
+        djMock.SetupGet(x => x.LastChatFailure).Returns(new ApiFailureInfo(ApiFailureKind.Network, "网络错误", "detail", "hint"));
+
+        vm.InputText = "不要听 周杰伦";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenPositiveReplyContainsApology_StillSelfHealsPlayCommand()
+    {
+        // 拒绝词黑名单不误拦：LLM 正向答应但台词带礼貌用语（"抱歉让你久等，这就安排"）时，
+        // 自愈仍须生效——黑名单只收高置信拒绝词，"抱歉"裸词已移除
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("抱歉让你久等啦，这就给你安排[happy]");
+        var matchTrack = new OnlineTrack { Id = "netease:sparrow", Title = "麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { matchTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sparrow"))
+            .ReturnsAsync("http://example.com/sparrow.mp3");
+
+        vm.InputText = "播放李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmConfigured_CasualChatWithoutExplicitVerb_DoesNotSelfHeal()
+    {
+        // 闲聊防误触：无显式点歌动词的文本（bare title 弱命中）不得自愈切歌——
+        // 自愈仅认行首锚定 regex 的显式命中，confident 预检旁路已被堵死
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("辛苦啦，深呼吸一下，我陪你聊聊[happy]");
+
+        vm.InputText = "今天好累";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmRefusesInReply_DoesNotSelfHealPlayCommand()
+    {
+        // 拒绝语义防误触：LLM 已明确说找不到/抱歉时，不得自愈推翻其判断强制播放
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("抱歉，这首歌暂时找不到呢[apologetic]");
+
+        vm.InputText = "播放李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmFails_BareTitleWithoutConfidentMatch_DoesNotFallBackToPlay()
+    {
+        // 降级面预检：LLM 故障时 bare title 弱命中必须过 confident 预检。搜索有结果但与
+        // 查询不匹配（IsConfidentMusicMatch 不过）即不得降级切歌——若预检被绕过，该结果
+        // 会被宽松选曲播出（旧缺陷：降级点曾整体绕过预检）
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fail");
+        djMock.SetupGet(x => x.LastChatFailure).Returns(new ApiFailureInfo(ApiFailureKind.Network, "网络错误", "detail", "hint"));
+        var unrelatedTrack = new OnlineTrack { Id = "netease:sunny", Title = "晴天", Artist = "周杰伦" };
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { unrelatedTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:sunny"))
+            .ReturnsAsync("http://example.com/sunny.mp3");
+
+        vm.InputText = "不想听周杰伦的歌";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmFails_NegativeSentence_DoesNotFallBackToPlay()
+    {
+        // 降级面否定排除：带空格否定句在 LLM 故障时同样不得降级播放。注意该文本排除后
+        // 落入 bare title 弱命中，会先走 confident 预检搜索（合法行为），故只锚定不切播
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fail");
+        djMock.SetupGet(x => x.LastChatFailure).Returns(new ApiFailureInfo(ApiFailureKind.Network, "网络错误", "detail", "hint"));
+        searchMock.Setup(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack>());
+
+        vm.InputText = "不想听 周杰伦的歌";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+    }
+
     [Fact]
     public async Task SendMessage_WhenLlmNotConfigured_ArtistAndTitleSplitsGracefully()
     {
@@ -718,6 +874,72 @@ public class ChatViewModelTests
         Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("夏天的《风》"));
         // 验证：保留完整歌名书名号《夏天的风》
         Assert.Contains(vm.Messages, m => m.Content == "好，我来找《夏天的风》。");
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmNotConfigured_CombinedTitleMetadata_DoesNotWrapArtistInBookTitle()
+    {
+        // 部分音源把 "歌手 - 歌名" 整串塞进 Title 而 Artist 留空：空 Artist 曾致
+        // Contains("") 恒真误"证实"，把歌手名包进书名号；修复后空门禁拦下误证实、保留本地拆解结果
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+
+        var combinedTrack = new OnlineTrack { Id = "netease:combined", Title = "李荣浩 - 麻雀", Artist = "" };
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 3))
+            .ReturnsAsync(new List<OnlineTrack> { combinedTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:combined"))
+            .ReturnsAsync("http://example.com/combined.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        Assert.Contains(vm.Messages, m => m.Content == "好，我来找李荣浩的《麻雀》。");
+    }
+
+    [Fact]
+    public async Task SendMessage_WhenLlmNotConfigured_ArtistPrefixedTitle_StripsPrefixInDisplayText()
+    {
+        // 音源 Artist 正常但 Title 仍带 "歌手 - " 前缀：文案不得输出 "李荣浩的《李荣浩 - 麻雀》" 重复
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+
+        var prefixedTrack = new OnlineTrack { Id = "netease:prefixed", Title = "李荣浩 - 麻雀", Artist = "李荣浩" };
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 3))
+            .ReturnsAsync(new List<OnlineTrack> { prefixedTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:prefixed"))
+            .ReturnsAsync("http://example.com/prefixed.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        Assert.Contains(vm.Messages, m => m.Content == "好，我来找李荣浩的《麻雀》。");
+    }
+
+    [Fact]
+    public async Task PlaySongAsync_UnrelatedFallbackCandidates_AreNotCascaded()
+    {
+        // 级联相关性粗筛：首选灰歌时只顺延与搜索词相关的候选，
+        // 无关结果（同搜索返回但不匹配查询）不得被解析播放
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好的[happy]<cmd>{\"action\":\"play\",\"query\":\"李荣浩 麻雀\"}</cmd>");
+
+        var vipTrack = new OnlineTrack { Id = "netease:vip-sparrow", Title = "麻雀 (VIP)", Artist = "李荣浩" };
+        var unrelatedTrack = new OnlineTrack { Id = "netease:unrelated", Title = "告白气球", Artist = "周杰伦" };
+        searchMock.Setup(x => x.SearchAsync("李荣浩 麻雀", 5))
+            .ReturnsAsync(new List<OnlineTrack> { vipTrack, unrelatedTrack });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:vip-sparrow"))
+            .ReturnsAsync((string?)null);
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:unrelated"))
+            .ReturnsAsync("http://example.com/unrelated.mp3");
+
+        vm.InputText = "想听李荣浩的麻雀";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // 无关候选不被级联解析，最终如实提示无法播放
+        searchMock.Verify(x => x.GetPlayUrlAsync("netease:unrelated"), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
