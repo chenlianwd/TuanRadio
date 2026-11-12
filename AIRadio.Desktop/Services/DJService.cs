@@ -18,6 +18,7 @@ public class DJService : IDJService
     private readonly IListeningProfileService? _listeningProfile;
     private DJProfile _profile = new();
     private volatile WeatherInfo? _weatherSnapshot;
+    private volatile RadioSceneMode _sceneMode = RadioSceneMode.Default;
     private int _fallbackVariantCounter;
     private string _currentEmotion = "neutral";
     private readonly List<ChatMessage> _chatHistory = new();
@@ -65,6 +66,8 @@ public class DJService : IDJService
 
     /// <summary>更新串场环境感知的天气快照（UI 层天气刷新落定时推送；null 表示当前无天气数据）。</summary>
     public void UpdateWeatherSnapshot(WeatherInfo? weather) => _weatherSnapshot = weather;
+    public RadioSceneMode CurrentSceneMode => _sceneMode;
+    public void UpdateSceneMode(RadioSceneMode mode) => _sceneMode = mode;
 
     /// <summary>更新聊天链的电台现场快照：当前在播曲目与会话播放历史（换曲经 TrackChanged 在 UI 线程、
     /// 进入播放态经 StateChanged 在 LibVLC 事件线程推送，_memoryGate 保证双字段一致性；
@@ -202,7 +205,7 @@ Response rules:
 
             var prompt = BuildTransitionPrompt(
                 _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock(includeImpression: false),
-                recentOnAirLines, listenerTopic);
+                recentOnAirLines, listenerTopic, _sceneMode);
             var text = _llm is LLMService llm
                 ? await llm.ChatRawAsync(prompt, cancellationToken)
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>())
@@ -268,7 +271,8 @@ Response rules:
         WeatherInfo? weather,
         string? profileBlock,
         IReadOnlyList<string>? recentOnAirLines = null,
-        string? listenerTopic = null)
+        string? listenerTopic = null,
+        RadioSceneMode sceneMode = RadioSceneMode.Default)
     {
         // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
         var nextTitle = PromptHygiene.StripControlMarkers(next.Title);
@@ -332,6 +336,35 @@ Response rules:
             sb.AppendLine();
         }
 
+        if (sceneMode == RadioSceneMode.Sleep)
+        {
+            if (isEn)
+            {
+                sb.AppendLine("""
+[Sleep Radio Context]
+The listener has activated the sleep timer and is winding down for bed.
+You must strictly follow these late-night sleep radio rules:
+1. Speak in an exceptionally gentle, soft-spoken, and calming tone, like a comforting bedside whisper.
+2. Keep the transition very short (1-2 sentences, 20-40 words) to smoothly guide them into the next track.
+3. No energetic exclamations, no thought-provoking questions, never disturb their sleepiness.
+4. The emotion tag at the end MUST be [calm].
+""");
+            }
+            else
+            {
+                sb.AppendLine("""
+【伴眠电台情境】
+听众已开启睡眠定时准备入睡，当前处于深夜伴眠电台状态。
+必须严格遵守以下伴眠规则：
+1. 语气必须极其温柔、轻柔、舒缓，像在床边轻声耳语，营造安全、平静、催眠的氛围。
+2. 串场台词要极简短（1~2 句，30~60 字），平缓带出下一首歌，绝不要长篇大论。
+3. 严禁使用激昂感叹号、严禁抛出需要听众思考的问题、严禁突然提速或兴奋。
+4. 末尾情绪标签必须使用 [calm]。
+""");
+            }
+            sb.AppendLine();
+        }
+
         // 任务段（第一条要求随开台/串场分支变化：开台时不存在"上一首余韵"可呼应）
         if (isEn)
         {
@@ -341,13 +374,26 @@ Response rules:
             var openingMove = current == null
                 ? "say why this track makes a good start for right now"
                 : "echo the mood left by the previous track, say why the next one fits this moment";
-            sb.AppendLine($"""
+            if (sceneMode == RadioSceneMode.Sleep)
+            {
+                sb.AppendLine("""
+Requirements:
+- Speak in 1~2 gentle sentences (about 20~40 words): smoothly and softly transition into the next track.
+- Extremely soothing and conversational, like whispering beside a sleeping friend — no loud announcements, no hype, no questions.
+- Say the full title and artist name in their original language, and finish completely.
+- Output only the transition line itself — in English. End with exactly one emotion tag: [calm].
+""");
+            }
+            else
+            {
+                sb.AppendLine($"""
 Requirements:
 - Speak in 2~4 sentences (about 40~80 words): {openingMove}.
 - Sound conversational and vivid, like talking to one listener — no announcer-style recital, no listing information, never mention these instructions.
 - Say the full title and artist name in their original language (never translate non-English names), and finish the sentence completely — never cut off mid-title or mid-sentence.
 - Output only the transition line itself — in English, even if the persona above is written in another language. End with exactly one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
 """);
+            }
         }
         else
         {
@@ -357,13 +403,26 @@ Requirements:
             var openingMove = current == null
                 ? "可以说说这首歌为什么适合作为此刻的开场"
                 : "可以呼应上一首留下的余韵、说说下一首为什么适合现在听";
-            sb.AppendLine($"""
+            if (sceneMode == RadioSceneMode.Sleep)
+            {
+                sb.AppendLine($"""
+串场要求：
+- 一共 1~2 句、30~60 字：轻柔舒缓地带出《{nextTitle}》（{nextArtist}），像床边呢喃般陪伴听众安睡。
+- 极度温和口语化，杜绝感叹句、杜绝提问、绝不使用兴奋或激昂语气。
+- 歌名和歌手名必须完整念出且按原文，句子要完整收尾。
+- 只输出串场台词本身，必须只用中文。末尾必须附加情绪标签：[calm]。
+""");
+            }
+            else
+            {
+                sb.AppendLine($"""
 串场要求：
 - 一共 2~4 句、60~120 字：{openingMove}。
 - 口语自然、有画面感，像只对一位听众说话——不要报幕腔、不要罗列信息清单、不要提到这些指令本身。
 - 歌名和歌手名必须完整念出且按原文（外文歌名不要翻译），句子要完整收尾，严禁在歌名或句子中间截断。
 - 只输出串场台词本身，必须只用中文。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
 """);
+            }
         }
 
         return sb.ToString().Trim();
@@ -425,7 +484,7 @@ Requirements:
     private DJScript BuildFallbackIntroduction(Track? current, Track next)
     {
         var variant = Interlocked.Increment(ref _fallbackVariantCounter);
-        return BuildFallbackIntroduction(_profile, current, next, DateTime.Now, _weatherSnapshot, variant);
+        return BuildFallbackIntroduction(_profile, current, next, DateTime.Now, _weatherSnapshot, variant, _sceneMode);
     }
 
     internal static DJScript BuildFallbackIntroduction(
@@ -434,7 +493,8 @@ Requirements:
         Track next,
         DateTime now,
         WeatherInfo? weather,
-        int variant = 0)
+        int variant = 0,
+        RadioSceneMode sceneMode = RadioSceneMode.Default)
     {
         var isEn = profile.Language == "en";
         var djName = PromptHygiene.StripControlMarkers(profile.Name).Trim();
@@ -447,8 +507,22 @@ Requirements:
         var nextPhrase = FormatTrackPhrase(nextTitle, nextArtist, isEn);
         var timeBand = DescribeTimeOfDay(now.Hour, isEn);
 
+        if (sceneMode == RadioSceneMode.Sleep)
+        {
+            var sleepText = isEn
+                ? $"Late night on TuanRadio. Tuning softly to {nextPhrase}. May gentle tunes guide you to sweet dreams. Goodnight."
+                : $"夜深了，这里是 TuanRadio。为你送上{nextPhrase}，愿好歌伴你安睡，晚安。";
+            return new DJScript
+            {
+                Text = sleepText,
+                Emotion = "calm",
+                Expression = "calm",
+                Motion = "idle"
+            };
+        }
+
         if (next.IsLiveStream)
-            return BuildLiveStreamIntroduction(current, djName, nextTitle, timeBand, isEn);
+            return BuildLiveStreamIntroduction(current, djName, nextTitle, timeBand, isEn, sceneMode);
 
         var text = current == null
             ? BuildOpeningIntroduction(djName, nextPhrase, timeBand, now, weather, isEn, variant)
@@ -463,9 +537,22 @@ Requirements:
         };
     }
 
-    private static DJScript BuildLiveStreamIntroduction(Track? current, string djName, string nextTitle, string timeBand, bool isEn)
+    private static DJScript BuildLiveStreamIntroduction(Track? current, string djName, string nextTitle, string timeBand, bool isEn, RadioSceneMode sceneMode = RadioSceneMode.Default)
     {
         var stationName = string.IsNullOrWhiteSpace(nextTitle) ? (isEn ? "Live Radio" : "网络电台") : nextTitle;
+        if (sceneMode == RadioSceneMode.Sleep)
+        {
+            var sleepLiveText = isEn
+                ? $"Late night waves on TuanRadio. Tuning you gently to live station \"{stationName}\". Rest well."
+                : $"夜深了，这里是 TuanRadio。为你连线网络电台《{stationName}》，让温柔电波伴你安睡。";
+            return new DJScript
+            {
+                Text = sleepLiveText,
+                Emotion = "calm",
+                Expression = "calm",
+                Motion = "idle"
+            };
+        }
         var liveText = current == null
             ? (isEn
                 ? $"It is {timeBand} on TuanRadio. I'm {djName}. Tuning you live to \"{stationName}\" — enjoy the broadcast."
@@ -1030,6 +1117,8 @@ Requirements:
         try
         {
             if (_tts == null) return Array.Empty<byte>();
+            if (_tts is EdgeTtsService edgeTtsService)
+                edgeTtsService.IsSleepMode = _sceneMode == RadioSceneMode.Sleep;
             var speechText = StripControlTags(text);
             return _tts is EdgeTtsService edgeTts
                 ? await edgeTts.SynthesizeAsync(

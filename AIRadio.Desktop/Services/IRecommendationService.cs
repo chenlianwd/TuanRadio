@@ -16,6 +16,9 @@ public interface IRecommendationService
     IReadOnlyCollection<Track> RecentlyPlayed { get; }
     void RecordPlayedTrack(Track track);
 
+    /// <summary>当前设置的会话级氛围偏好（未设置时为 null）。</summary>
+    string? CurrentMoodBias { get; }
+
     /// <summary>设置会话级氛围偏好（如 calm/energetic），影响后续节目单的意图检测与搜索词生成。传 null 清除。</summary>
     string? SetMoodBias(string? mood);
 }

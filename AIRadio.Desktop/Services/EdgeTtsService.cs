@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
@@ -62,6 +62,7 @@ public class EdgeTtsService : ITtsService, IDisposable
     private readonly SemaphoreSlim _voiceCacheLock = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
     private int _disposed;
+    public bool IsSleepMode { get; set; }
 
     // Persistent WebSocket connection for TTS synthesis
     private ClientWebSocket? _ws;
@@ -234,7 +235,7 @@ public class EdgeTtsService : ITtsService, IDisposable
             await SendWebSocketMessageAsync(ws, configMsg, timeoutCts.Token);
 
             // Send SSML
-            var ssml = BuildSsml(text, voice, emotion, sourceVoiceId);
+            var ssml = BuildSsml(text, voice, emotion, sourceVoiceId, IsSleepMode);
             var ssmlMsg = BuildSsmlMessage(ssml);
             await SendWebSocketMessageAsync(ws, ssmlMsg, timeoutCts.Token);
 
@@ -331,7 +332,7 @@ public class EdgeTtsService : ITtsService, IDisposable
         return $"X-Timestamp:{timestamp}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{json}";
     }
 
-    internal static string BuildSsml(string text, string voice, string? emotion = null, string? sourceVoiceId = null)
+    internal static string BuildSsml(string text, string voice, string? emotion = null, string? sourceVoiceId = null, bool isSleepMode = false)
     {
         // Escape XML special characters
         var escaped = EscapeXml(text);
@@ -342,10 +343,19 @@ public class EdgeTtsService : ITtsService, IDisposable
         var (pitchHz, ratePct, volumePct) = ResolveEmotionProsody(emotion);
         var (basePitchHz, baseRatePct) = ResolveVoiceBaseline(sourceVoiceId);
 
+        // 伴眠模式韵律微调叠加：耳畔轻语（-1Hz, -6%, -5%）
+        var sleepPitchDelta = isSleepMode ? -1 : 0;
+        var sleepRateDelta = isSleepMode ? -6 : 0;
+        var sleepVolumeDelta = isSleepMode ? -5 : 0;
+
+        var finalPitch = Math.Clamp(basePitchHz + pitchHz + sleepPitchDelta, -10, 15);
+        var finalRate = Math.Clamp(baseRatePct + ratePct + sleepRateDelta, -25, 30);
+        var finalVolume = Math.Clamp(volumePct + sleepVolumeDelta, -20, 10);
+
         // xml:lang 跟随音色 locale（如 en-US-AriaNeural → en-US），英文音色不再声明成 zh-CN
         return $"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{ResolveLocale(voice)}'>" +
                $"<voice name='{voiceAttr}'>" +
-               $"<prosody pitch='{FormatSigned(basePitchHz + pitchHz)}Hz' rate='{FormatSigned(baseRatePct + ratePct)}%' volume='{FormatSigned(volumePct)}%'>" +
+               $"<prosody pitch='{FormatSigned(finalPitch)}Hz' rate='{FormatSigned(finalRate)}%' volume='{FormatSigned(finalVolume)}%'>" +
                $"{escaped}" +
                "</prosody></voice></speak>";
     }

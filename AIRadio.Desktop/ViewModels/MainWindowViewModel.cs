@@ -53,6 +53,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISleepTimerService _sleepTimerService;
     private readonly IDisposable _sleepTimerSub;
     private readonly IDisposable _sleepTimerCloseAppSub;
+    private readonly ISceneModeService _sceneModeService;
+    private readonly IDisposable _sceneModeSub;
+    private string? _preSleepMoodBias;
     private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
     private readonly Action _onLanguageChanged;
@@ -172,6 +175,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool CanStopAfterCurrentTrack { get; private set; }
     [Reactive] public partial string StopAfterCurrentTrackTooltip { get; private set; } = string.Empty;
     [Reactive] public partial bool SleepTimerCloseAppOnExpiry { get; set; }
+    [Reactive] public partial RadioSceneMode CurrentSceneMode { get; private set; } = RadioSceneMode.Default;
+    [Reactive] public partial bool IsSleepRadioMode { get; private set; }
     public bool IsSleepTimerOption0Selected => SleepTimerCurrentMode == SleepTimerMode.Disabled;
     public bool IsSleepTimerOption15Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 15;
     public bool IsSleepTimerOption30Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 30;
@@ -203,7 +208,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ITtsService? ttsService = null,
         IAppUpdateService? appUpdateService = null,
         IRadioBrowserService? radioBrowserService = null,
-        ISleepTimerService? sleepTimerService = null)
+        ISleepTimerService? sleepTimerService = null,
+        ISceneModeService? sceneModeService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -372,6 +378,30 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         UseLightThemeCommand = ReactiveCommand.Create(() => { SettingsVM.SelectedThemeMode = ThemeModes.Light; });
 
         _sleepTimerService = sleepTimerService ?? new SleepTimerService(_audioService);
+        _sceneModeService = sceneModeService ?? new SceneModeService(_sleepTimerService);
+
+        _sceneModeSub = _sceneModeService.ModeChanged
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(mode =>
+            {
+                var wasSleep = IsSleepRadioMode;
+                CurrentSceneMode = mode;
+                IsSleepRadioMode = mode == RadioSceneMode.Sleep;
+                _djService.UpdateSceneMode(mode);
+
+                if (!wasSleep && IsSleepRadioMode)
+                {
+                    _preSleepMoodBias = _recommendationService.CurrentMoodBias;
+                    _recommendationService.SetMoodBias("calm");
+                }
+                else if (wasSleep && !IsSleepRadioMode)
+                {
+                    _recommendationService.SetMoodBias(_preSleepMoodBias);
+                    _preSleepMoodBias = null;
+                }
+
+                UpdateSleepTimerTooltip();
+            });
 
         SetSleepTimerCommand = ReactiveCommand.Create<int>(minutes =>
         {
@@ -1395,10 +1425,32 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         bool stationOpening,
         int transitionsSinceLastSpeech,
         int? lastSpokenTimeBand,
-        int currentTimeBand)
-        => stationOpening
-           || (lastSpokenTimeBand is { } band && band != currentTimeBand)
-           || transitionsSinceLastSpeech >= TransitionSpeechInterval;
+        int currentTimeBand,
+        bool isSleepMode = false,
+        TimeSpan remainingTime = default,
+        TimeSpan targetDuration = default)
+    {
+        if (isSleepMode)
+        {
+            // 临界静默门限：min(3.0m, targetDuration * 0.2)，在临界时间内严格静默不打扰睡意
+            if (targetDuration > TimeSpan.Zero && remainingTime > TimeSpan.Zero)
+            {
+                var silenceThreshold = TimeSpan.FromMinutes(Math.Min(3.0, targetDuration.TotalMinutes * 0.2));
+                if (remainingTime <= silenceThreshold)
+                    return false;
+            }
+
+            // 伴眠模式降低开口频次（每 5 首开口一次）
+            const int sleepTransitionInterval = 5;
+            return stationOpening
+                   || (lastSpokenTimeBand is { } band && band != currentTimeBand)
+                   || transitionsSinceLastSpeech >= sleepTransitionInterval;
+        }
+
+        return stationOpening
+               || (lastSpokenTimeBand is { } prevBand && prevBand != currentTimeBand)
+               || transitionsSinceLastSpeech >= TransitionSpeechInterval;
+    }
 
     /// <summary>记录"本次开口"：清零静默计数并以当前时间带刷新跨时段判定基准。</summary>
     private void MarkTransitionSpoken()
@@ -1444,7 +1496,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 直接传给串场会伪造"刚刚放完《基线曲》"（83ec2f4 的第一首歌分支自此在生产接线）
         var speak = ShouldSpeakTransition(
             stationOpening, _transitionsSinceLastSpeech, _lastSpokenTimeBand,
-            DJService.GetTimeBand(DateTime.Now.Hour));
+            DJService.GetTimeBand(DateTime.Now.Hour),
+            IsSleepRadioMode,
+            _sleepTimerService.RemainingTime,
+            _sleepTimerService.TargetDuration);
         DJScript? script = speak
             ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, announceTarget, _lifetimeCts.Token)
             : null;
@@ -1505,7 +1560,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 两档看到同一状态，接力时不会重复计数）
         var speak = ShouldSpeakTransition(
             stationOpening, _transitionsSinceLastSpeech, _lastSpokenTimeBand,
-            DJService.GetTimeBand(DateTime.Now.Hour));
+            DJService.GetTimeBand(DateTime.Now.Hour),
+            IsSleepRadioMode,
+            _sleepTimerService.RemainingTime,
+            _sleepTimerService.TargetDuration);
         DJScript? script = speak
             ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, next, _lifetimeCts.Token)
             : null;
@@ -1946,6 +2004,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _sleepTimerService.RequestAppShutdown -= OnSleepTimerRequestAppShutdown;
         _sleepTimerSub?.Dispose();
         _sleepTimerCloseAppSub?.Dispose();
+        _sceneModeSub?.Dispose();
+        _sceneModeService?.Dispose();
         _sleepTimerService?.Dispose();
         SettingsVM.CharacterSettingsChanged -= _characterSettingsHandler;
         PlayerVM?.Dispose();

@@ -12,6 +12,9 @@ public interface IDJService
     Task<DJScript> GenerateTrackIntroductionAsync(Track? current, Track next);
     /// <summary>更新串场环境感知的天气快照（UI 层天气刷新落定时推送；null 表示当前无天气数据）。</summary>
     void UpdateWeatherSnapshot(WeatherInfo? weather);
+    /// <summary>更新电台场景模式（如伴眠模式、日常模式），影响串场台词语气、情绪标签与兜底脚本。</summary>
+    void UpdateSceneMode(RadioSceneMode mode);
+    RadioSceneMode CurrentSceneMode { get; }
     /// <summary>更新聊天链的电台现场快照：当前在播曲目与会话播放历史（换曲在 UI 线程、进入播放态在
     /// 播放器事件线程推送，服务内加锁保证一致；nowPlaying 传 null 表示电台空闲）。
     /// 聊天凭它接住"这首歌 / X 的版本"类指代。</summary>

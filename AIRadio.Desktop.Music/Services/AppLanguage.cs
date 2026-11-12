@@ -258,6 +258,9 @@ public static class AppLanguage
         ["S_SleepTimerCloseApp"] = "到期后退出应用",
         ["S_SleepTimerRemainingTip"] = "睡眠定时：还有 {0} 停播",
         ["S_SleepTimerLiveStreamDisabledTip"] = "网络电台直播流无固定时长",
+        ["S_SceneModeSleep"] = "伴眠电台",
+        ["S_SceneSleepStatus"] = "伴眠电台 · 晚安",
+        ["S_SleepDjGoodnight"] = "愿好歌伴你安睡，晚安。",
         ["S_Save"] = "保存设置",
     };
 
@@ -441,6 +444,9 @@ public static class AppLanguage
         ["S_SleepTimerCloseApp"] = "Close app when timer expires",
         ["S_SleepTimerRemainingTip"] = "Sleep Timer: stops in {0}",
         ["S_SleepTimerLiveStreamDisabledTip"] = "Not available for live radio streams",
+        ["S_SceneModeSleep"] = "Sleep Radio",
+        ["S_SceneSleepStatus"] = "Sleep Radio · Goodnight",
+        ["S_SleepDjGoodnight"] = "May gentle tunes guide you to sweet dreams. Goodnight.",
         ["S_Save"] = "Save settings",
     };
 }

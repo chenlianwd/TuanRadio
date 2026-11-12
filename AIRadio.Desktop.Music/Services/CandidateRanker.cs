@@ -70,6 +70,19 @@ public static class CandidateRanker
         return false;
     }
 
+    private static readonly Regex AgitatedRegex = new(
+        @"(?:rock|metal|punk|heavy metal|hardcore|dubstep|edm|dance remix|dj版|电音|摇滚|金属|朋克|重金属|硬核|嗨曲|暴躁|热血|夜店)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// 判断候选歌曲是否属于激昂、快节奏或重度金属/摇滚风格（伴眠与宁静模式下用于负向过滤）。
+    /// </summary>
+    public static bool IsAgitatedVersion(OnlineTrack candidate)
+    {
+        var candText = $"{candidate.Title} {candidate.Artist}";
+        return AgitatedRegex.IsMatch(candText);
+    }
+
     /// <summary>
     /// 对跨源播放回退候选进行综合评分（分数区间理论为 [-1.0, 1.0]）。
     /// </summary>

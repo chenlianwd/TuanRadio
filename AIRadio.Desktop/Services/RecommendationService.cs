@@ -108,7 +108,7 @@ public class RecommendationService : IRecommendationService
             foreach (var result in results)
             {
                 if (playableCount >= ProgramSize) break;
-                if (!IsEligibleCandidate(result, query, tracks, excluded))
+                if (!IsEligibleCandidate(result, query, tracks, excluded, context.Mood))
                     continue;
 
                 if (addedForQuery >= PerQueryLimit)
@@ -134,7 +134,7 @@ public class RecommendationService : IRecommendationService
             {
                 if (playableCount >= ProgramSize) break;
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!IsEligibleCandidate(result, query, tracks, excluded))
+                if (!IsEligibleCandidate(result, query, tracks, excluded, context.Mood))
                     continue;
 
                 if (await TryAddCandidateAsync(result, context, tracks, playableCount, cancellationToken))
@@ -167,11 +167,13 @@ public class RecommendationService : IRecommendationService
         OnlineTrack result,
         string query,
         IReadOnlyList<RecommendedTrack> tracks,
-        IEnumerable<Track> excluded)
+        IEnumerable<Track> excluded,
+        string? mood = null)
         => !IsExcluded(result, excluded) &&
            !tracks.Any(x => IsSameOnlineTrack(x.Track, result)) &&
            // 过滤伴奏/翻唱/电音DJ/加速版等非预期特殊版本
-           !CandidateRanker.IsUnwantedVersion(result, query);
+           !CandidateRanker.IsUnwantedVersion(result, query) &&
+           !(string.Equals(mood, "calm", StringComparison.OrdinalIgnoreCase) && CandidateRanker.IsAgitatedVersion(result));
 
     /// <summary>
     /// 解析并入单：可播入正式条目返回 true；不可播按既有契约登记占位展示条目返回 false。
@@ -293,6 +295,15 @@ public class RecommendationService : IRecommendationService
             const int historyLimit = 20;
             if (_recentlyPlayed.Count > historyLimit)
                 _recentlyPlayed.RemoveRange(0, _recentlyPlayed.Count - historyLimit);
+        }
+    }
+
+    public string? CurrentMoodBias
+    {
+        get
+        {
+            lock (_stateGate)
+                return _moodBias;
         }
     }
 
