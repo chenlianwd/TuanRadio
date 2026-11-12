@@ -363,14 +363,17 @@ public partial class MainWindow : Window, IDisposable
     // 线性趋近——有声抬向 1、句间停顿落回 0.55 基线，徽章随 DJ 真实音量呼吸而非常亮
     private async Task RunGlowAsync(Border badge, CancellationToken token)
     {
-        const float minOpacity = 0.55f;
+
         try
         {
             while (!token.IsCancellationRequested)
             {
+                var isSleep = _activeVm?.IsSleepRadioMode ?? false;
+                var minOpacity = isSleep ? 0.35f : 0.55f;
+                var maxOpacity = isSleep ? 0.70f : 1.0f;
                 var target = (float)Math.Sqrt(_ttsTargetLevel);
                 _glowCurrent += (target - _glowCurrent) * 0.35f;
-                badge.Opacity = minOpacity + (1 - minOpacity) * Math.Clamp(_glowCurrent, 0f, 1f);
+                badge.Opacity = minOpacity + (maxOpacity - minOpacity) * Math.Clamp(_glowCurrent, 0f, 1f);
                 await Task.Delay(33, token);
             }
         }
