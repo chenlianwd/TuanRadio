@@ -12,7 +12,7 @@
     <AssemblyName>AIRadio</AssemblyName>
     <Product>TuanRadio FM</Product>
     <Description>AI-powered personal radio station</Description>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <!-- 声明 RID 图使 packages.lock.json 恒含 win-x64 targets：日常无 RID restore 不回洗
          锁文件（发布与开发共用同一份超集锁文件） -->
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
