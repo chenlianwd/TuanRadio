@@ -41,6 +41,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable? _positionSampleSub;
     private readonly IDisposable _weatherCitySub;
     private readonly IDisposable _settingsOpenSub;
+    private readonly IDisposable _libraryOpenSub;
     private readonly IDisposable? _playbackRecoverySub;
     private readonly IDisposable _clockSub;
     private readonly IDisposable _darkModePersistSub;
@@ -94,6 +95,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     [Reactive] public partial bool IsSettingsOpen { get; set; }
     [Reactive] public partial bool IsLibraryOpen { get; set; }
+    [Reactive] public partial bool IsSearchOpen { get; set; }
     [Reactive] public partial bool IsCharacterPickerOpen { get; set; }
     [Reactive] public partial bool IsCloseConfirmOpen { get; set; }
     [Reactive] public partial bool CloseDialogIsTray { get; set; } = true;
@@ -146,6 +148,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> OpenPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenFavoritesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenSearchCommand { get; }
+    public ReactiveCommand<Unit, Unit> ToggleSearchCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenProgramCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenKugouPlaylistsCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenRadioStationsCommand { get; }
@@ -279,6 +282,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SettingsVM.IsYtdlpExpanded = false;
             });
 
+        // 搜索已独立成浮层：曲库打开时若 TabIndex 仍停在旧搜索页签 2（例如刚执行过 SearchAsync），自动复位到播放列表
+        _libraryOpenSub = this.WhenAnyValue(x => x.IsLibraryOpen)
+            .Where(open => open)
+            .Subscribe(_ =>
+            {
+                if (PlaylistVM.TabIndex == 2)
+                    PlaylistVM.TabIndex = 0;
+            });
+
         // 天气快照推给 DJ 串场的环境感知（时间/天气上下文，见 DJService.BuildTransitionPrompt）
         WeatherVM.WeatherSnapshotChanged += OnWeatherSnapshotChanged;
 
@@ -297,7 +309,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             audioSvc.SetNextCallback(GetNextTrackForAudioServiceAsync);
         }
 
-        ToggleSettingsCommand = ReactiveCommand.Create(() => { IsSettingsOpen = !IsSettingsOpen; });
+        ToggleSettingsCommand = ReactiveCommand.Create(() =>
+        {
+            var next = !IsSettingsOpen;
+            if (next)
+                CloseTransientOverlays();
+            IsSettingsOpen = next;
+        });
         ConfirmCloseDialogCommand = ReactiveCommand.Create(() =>
         {
             IsCloseConfirmOpen = false;
@@ -319,38 +337,43 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(tray => { if (tray && CloseDialogIsExit) CloseDialogIsExit = false; });
         this.WhenAnyValue(x => x.CloseDialogIsExit)
             .Subscribe(exit => { if (exit && CloseDialogIsTray) CloseDialogIsTray = false; });
-        ToggleLibraryCommand = ReactiveCommand.Create(() => { IsLibraryOpen = !IsLibraryOpen; });
-        OpenPlaylistCommand = ReactiveCommand.Create(() =>
+        ToggleLibraryCommand = ReactiveCommand.Create(() =>
         {
-            PlaylistVM.TabIndex = 0;
-            IsLibraryOpen = true;
+            var next = !IsLibraryOpen;
+            if (next)
+                CloseTransientOverlays();
+            IsLibraryOpen = next;
         });
-        OpenFavoritesCommand = ReactiveCommand.Create(() =>
+        OpenPlaylistCommand = ReactiveCommand.Create(() => OpenLibraryTab(0));
+        OpenFavoritesCommand = ReactiveCommand.Create(() => OpenLibraryTab(1));
+        OpenSearchCommand = ReactiveCommand.Create(OpenSearchOverlay);
+        ToggleSearchCommand = ReactiveCommand.Create(() =>
         {
-            PlaylistVM.TabIndex = 1;
-            IsLibraryOpen = true;
-        });
-        OpenSearchCommand = ReactiveCommand.Create(() =>
-        {
-            PlaylistVM.TabIndex = 2;
-            IsLibraryOpen = true;
+            if (IsSearchOpen)
+                IsSearchOpen = false;
+            else
+                OpenSearchOverlay();
         });
         OpenProgramCommand = ReactiveCommand.CreateFromTask(OpenProgramAsync);
         OpenKugouPlaylistsCommand = ReactiveCommand.CreateFromTask(async () =>
         {
-            PlaylistVM.TabIndex = 4;
-            IsLibraryOpen = true;
+            OpenLibraryTab(4);
             await PlaylistVM.LoadKugouPlaylistsAsync();
         });
         OpenRadioStationsCommand = ReactiveCommand.Create(() =>
         {
-            PlaylistVM.TabIndex = 5;
-            IsLibraryOpen = true;
+            OpenLibraryTab(5);
             _ = PlaylistVM.LoadInitialRadioStationsAsync();
         });
         RefreshProgramCommand = ReactiveCommand.CreateFromTask(() => LoadProgramAsync(force: true));
         PlayProgramTrackCommand = ReactiveCommand.Create<RecommendedTrack>(PlayProgramTrack);
-        ToggleCharacterPickerCommand = ReactiveCommand.Create(() => { IsCharacterPickerOpen = !IsCharacterPickerOpen; });
+        ToggleCharacterPickerCommand = ReactiveCommand.Create(() =>
+        {
+            var next = !IsCharacterPickerOpen;
+            if (next)
+                CloseTransientOverlays();
+            IsCharacterPickerOpen = next;
+        });
         ToggleThemeCommand = ReactiveCommand.Create(() =>
         {
             SettingsVM.SelectedThemeMode = SettingsVM.SelectedThemeMode switch
@@ -753,10 +776,22 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 心形点亮/熄灭（强调绿）即即时反馈，与 NOPE 切歌/SIM 重排这类"结果不可见"的动作不同
     }
 
+    private void OpenLibraryTab(int tabIndex)
+    {
+        CloseTransientOverlays();
+        PlaylistVM.TabIndex = tabIndex;
+        IsLibraryOpen = true;
+    }
+
+    private void OpenSearchOverlay()
+    {
+        CloseTransientOverlays();
+        IsSearchOpen = true;
+    }
+
     private async Task OpenProgramAsync()
     {
-        PlaylistVM.TabIndex = 3;
-        IsLibraryOpen = true;
+        OpenLibraryTab(3);
         if (!HasCurrentRadioProgram)
             await LoadProgramAsync(force: false);
     }
@@ -1199,11 +1234,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SettingsVM.SaveUiStateCommand.Execute().Subscribe();
     }
 
-    public void CloseOverlays()
+    private void CloseTransientOverlays()
     {
         IsSettingsOpen = false;
         IsLibraryOpen = false;
+        IsSearchOpen = false;
         IsCharacterPickerOpen = false;
+    }
+
+    public void CloseOverlays()
+    {
+        CloseTransientOverlays();
         IsCloseConfirmOpen = false;
     }
 
@@ -2008,6 +2049,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _clockSub?.Dispose();
         _weatherCitySub.Dispose();
         _settingsOpenSub.Dispose();
+        _libraryOpenSub.Dispose();
         if (WeatherVM != null)
             WeatherVM.WeatherSnapshotChanged -= OnWeatherSnapshotChanged;
         WeatherVM?.Dispose();

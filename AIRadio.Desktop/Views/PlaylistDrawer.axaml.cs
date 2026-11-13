@@ -10,7 +10,7 @@ using Avalonia.VisualTree;
 
 namespace AIRadio.Desktop.Views;
 
-/// <summary>库抽屉（播放列表/收藏/搜索 + 导入）。OnImportFiles 用 FilePickerHelper（spec §5.5）。</summary>
+/// <summary>库抽屉（播放列表/收藏/节目单/网络电台 + 导入）。OnImportFiles 用 FilePickerHelper（spec §5.5）。</summary>
 public partial class PlaylistDrawer : UserControl
 {
     /// <summary>行右键菜单的目标列表。</summary>
@@ -33,9 +33,8 @@ public partial class PlaylistDrawer : UserControl
     {
         InitializeComponent();
 
-        LibraryList.AddHandler(Control.ContextRequestedEvent, (_, e) => HandleRowContextRequested(e, PlaylistListKind.Library));
-        FavoritesList.AddHandler(Control.ContextRequestedEvent, (_, e) => HandleRowContextRequested(e, PlaylistListKind.Favorites));
-        SearchResultsList.AddHandler(Control.ContextRequestedEvent, (_, e) => HandleRowContextRequested(e, PlaylistListKind.Search));
+        AttachRowContextMenu(LibraryList, this, PlaylistListKind.Library);
+        AttachRowContextMenu(FavoritesList, this, PlaylistListKind.Favorites);
 
         LibraryList.AddHandler(InputElement.PointerPressedEvent, OnLibraryPointerPressed, RoutingStrategies.Tunnel);
         LibraryList.AddHandler(InputElement.PointerMovedEvent, OnLibraryPointerMoved, RoutingStrategies.Tunnel);
@@ -93,9 +92,14 @@ public partial class PlaylistDrawer : UserControl
         };
     }
 
-    private void HandleRowContextRequested(ContextRequestedEventArgs e, PlaylistListKind kind)
+    internal static void AttachRowContextMenu(ListBox list, Control host, PlaylistListKind kind)
     {
-        if (DataContext is not MainWindowViewModel vm) return;
+        list.AddHandler(Control.ContextRequestedEvent, (_, e) => HandleRowContextRequested(host, e, kind));
+    }
+
+    private static void HandleRowContextRequested(Control host, ContextRequestedEventArgs e, PlaylistListKind kind)
+    {
+        if (host.DataContext is not MainWindowViewModel vm) return;
         if (e.Source is not Visual source) return;
         var container = source.FindAncestorOfType<ListBoxItem>();
         if (container?.Content == null) return;
@@ -124,7 +128,7 @@ public partial class PlaylistDrawer : UserControl
             var captured = entry;
             var item = container.Content;
             var menuItem = new MenuItem { Header = captured.Header };
-            menuItem.Click += (_, _) => InvokeMenuAction(captured.Action, kind, item, vm);
+            menuItem.Click += (_, _) => InvokeMenuAction(host, captured.Action, kind, item, vm);
             menu.Items.Add(menuItem);
         }
 
@@ -132,7 +136,7 @@ public partial class PlaylistDrawer : UserControl
         menu.ShowAt(container, showAtPointer: true);
     }
 
-    private void InvokeMenuAction(PlaylistMenuAction action, PlaylistListKind kind, object item, MainWindowViewModel vm)
+    private static void InvokeMenuAction(Control host, PlaylistMenuAction action, PlaylistListKind kind, object item, MainWindowViewModel vm)
     {
         var track = item as Models.Track;
         var online = item as Services.OnlineTrack;
@@ -151,7 +155,7 @@ public partial class PlaylistDrawer : UserControl
                     vm.PlaylistVM.AddSearchToQueueCommand.Execute(online).Subscribe();
                 break;
             case PlaylistMenuAction.CopyInfo:
-                CopyTrackInfoToClipboard(kind, track, online, vm);
+                CopyTrackInfoToClipboard(host, kind, track, online, vm);
                 break;
             case PlaylistMenuAction.Remove:
                 if (track != null)
@@ -166,7 +170,7 @@ public partial class PlaylistDrawer : UserControl
         }
     }
 
-    private async void CopyTrackInfoToClipboard(PlaylistListKind kind, Models.Track? track, Services.OnlineTrack? online, MainWindowViewModel vm)
+    private static async void CopyTrackInfoToClipboard(Control host, PlaylistListKind kind, Models.Track? track, Services.OnlineTrack? online, MainWindowViewModel vm)
     {
         // async void 事件路径必须自捕获异常：剪贴板在无 topLevel/关闭竞态时抛出
         var title = track?.Title ?? online?.Title ?? string.Empty;
@@ -174,7 +178,7 @@ public partial class PlaylistDrawer : UserControl
         var text = ViewModels.PlaylistViewModel.FormatTrackInfo(title, artist);
         try
         {
-            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            var clipboard = TopLevel.GetTopLevel(host)?.Clipboard;
             if (clipboard != null)
                 await clipboard.SetTextAsync(text);
             if (kind == PlaylistListKind.Search)
@@ -378,12 +382,6 @@ public partial class PlaylistDrawer : UserControl
     {
         if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm)
             vm.PlaylistVM.SearchRadioStationsCommand.Execute(Unit.Default).Subscribe();
-    }
-
-    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm)
-            vm.PlaylistVM.SearchCommand.Execute(Unit.Default).Subscribe();
     }
 
     private async void OnImportFolder(object? sender, RoutedEventArgs e)

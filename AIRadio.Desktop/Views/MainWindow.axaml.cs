@@ -259,6 +259,7 @@ public partial class MainWindow : Window, IDisposable
             if (action == "tray" && prompted)
             {
                 e.Cancel = true;
+                vm.CloseOverlays();
                 Hide();
                 return;
             }
@@ -270,6 +271,7 @@ public partial class MainWindow : Window, IDisposable
             vm.CloseDialogIsTray = action != "exit";
             vm.CloseDialogIsExit = action == "exit";
             vm.CloseDialogRemember = !prompted;
+            vm.CloseOverlays();
             vm.IsCloseConfirmOpen = true;
             return;
         }

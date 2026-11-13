@@ -186,8 +186,8 @@
                             </StackPanel>
                         </Button>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
-                                    Command="{Binding OpenSearchCommand}" ToolTip.Tip="{DynamicResource S_SearchTab}" AutomationProperties.Name="{DynamicResource S_SearchTab}">
+                            <Button x:Name="SearchButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
+                                    Command="{Binding ToggleSearchCommand}" ToolTip.Tip="{DynamicResource S_SearchTab}" AutomationProperties.Name="{DynamicResource S_SearchTab}">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
                             </Button>
                             <Button x:Name="SleepTimerButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
@@ -306,12 +306,12 @@
             </Grid>
 
             <Border IsVisible="{Binding IsLibraryOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
-            <Border IsVisible="{Binding IsSettingsOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
-            <Border IsVisible="{Binding IsCharacterPickerOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
-            <Border IsVisible="{Binding IsCloseConfirmOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
-
             <local:PlaylistDrawer DataContext="{Binding}"/>
 
+            <Border IsVisible="{Binding IsSearchOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
+            <local:SearchDrawer DataContext="{Binding}"/>
+
+            <Border IsVisible="{Binding IsSettingsOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
             <!-- Settings overlay -->
             <Border IsVisible="{Binding IsSettingsOpen}"
                     Margin="56"
@@ -335,8 +335,10 @@
                 </Grid>
             </Border>
 
+            <Border IsVisible="{Binding IsCharacterPickerOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
             <local:CharacterPicker DataContext="{Binding}"/>
 
+            <Border IsVisible="{Binding IsCloseConfirmOpen}" Background="{DynamicResource C_01000000}" PointerPressed="OnDismissOverlayPressed"/>
             <!-- Close confirm dialog overlay -->
             <Border IsVisible="{Binding IsCloseConfirmOpen}"
                     HorizontalAlignment="Center" VerticalAlignment="Center"

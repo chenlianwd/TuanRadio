@@ -112,7 +112,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string KugouFilterText { get; set; } = string.Empty;
     [Reactive] public partial SyncedPlaylistInfo? SelectedSyncedPlaylist { get; set; }
     [Reactive] public partial bool HasSyncedPlaylists { get; set; }
-    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 2=搜索, 3=节目单, 4=酷狗歌单, 5=网络电台
+    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 3=节目单, 4=酷狗歌单, 5=网络电台
     [Reactive] public partial RadioCategoryItem? SelectedRadioCategory { get; set; }
     [Reactive] public partial string RadioSearchText { get; set; } = string.Empty;
     [Reactive] public partial string RadioStatusMessage { get; set; } = string.Empty;
@@ -170,7 +170,6 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> SearchCommand { get; }
     public ReactiveCommand<Unit, Unit> ShowPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> ShowFavoritesCommand { get; }
-    public ReactiveCommand<Unit, Unit> ShowSearchCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> PlayOnlineCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> AddOnlineCommand { get; }
     public ReactiveCommand<OnlineTrack, Unit> PlaySearchNextCommand { get; }
@@ -296,11 +295,6 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             TabIndex = 1;
         });
 
-        ShowSearchCommand = ReactiveCommand.Create(() =>
-        {
-            TabIndex = 2;
-        });
-
         SearchCommand = ReactiveCommand.CreateFromTask(SearchAsync);
         RefreshKugouPlaylistsCommand = ReactiveCommand.CreateFromTask(
             () => LoadKugouPlaylistsAsync(force: true));
@@ -364,7 +358,6 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 // 在播曲经此入库时 AddTracks 的合并不发 TrackChanged（仅歌单从空填充的
                 // 首次通知例外，与订阅重算幂等），补发一次标记确保落标（同 AddExternalTrack）
                 UpdateNowPlayingMarker(_audioService.CurrentTrack);
-                TabIndex = 0;
                 // 保存失败必须可见：与 ImportKugouPlaylistAsync 同口径，否则磁盘满/文件
                 // 被占用时用户看到"已添加"，重启后静默丢失
                 var saveSucceeded = await TrySaveAsync();
@@ -1503,7 +1496,6 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             {
                 SearchResults.Add(track);
             }
-            TabIndex = 2; // auto-switch to search results
             if (results.Count == 0 && _musicSearchService is Services.Music.IMusicSourceBroker broker)
             {
                 SetSearchStatus(() => AppLanguage.T(
