@@ -27,8 +27,14 @@ public sealed class RadioStation : System.ComponentModel.INotifyPropertyChanged
     }
 
     public const string SourcePrefix = "radio-browser:";
+    public const string CustomUuidPrefix = "custom-";
 
     public string StationUuid { get; init; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsCustom => StationUuid.StartsWith(CustomUuidPrefix, StringComparison.OrdinalIgnoreCase);
+
+    public static string CreateCustomUuid() => CustomUuidPrefix + Guid.NewGuid().ToString("N");
     public string Name { get; init; } = string.Empty;
     public string StreamUrl { get; init; } = string.Empty;
     public string Tags { get; init; } = string.Empty;
@@ -66,6 +72,21 @@ public sealed class RadioStation : System.ComponentModel.INotifyPropertyChanged
     public Track ToTrack()
     {
         var sourceId = SourcePrefix + StationUuid;
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["station_uuid"] = StationUuid,
+            ["stream_url"] = StreamUrl,
+            ["country"] = Country,
+            ["tags"] = Tags,
+            ["codec"] = Codec,
+            ["bitrate"] = Bitrate > 0 ? Bitrate.ToString(CultureInfo.InvariantCulture) : string.Empty,
+            ["is_live"] = "true"
+        };
+        if (IsCustom)
+        {
+            metadata["custom_station"] = "true";
+        }
+
         return new Track
         {
             Id = sourceId,
@@ -79,16 +100,7 @@ public sealed class RadioStation : System.ComponentModel.INotifyPropertyChanged
             DeclaredBitrateKbps = Bitrate > 0 ? Bitrate : null,
             IsFavorite = IsFavorite,
             ResolvedAtUtc = DateTimeOffset.UtcNow,
-            ProviderMetadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["station_uuid"] = StationUuid,
-                ["stream_url"] = StreamUrl,
-                ["country"] = Country,
-                ["tags"] = Tags,
-                ["codec"] = Codec,
-                ["bitrate"] = Bitrate > 0 ? Bitrate.ToString(CultureInfo.InvariantCulture) : string.Empty,
-                ["is_live"] = "true"
-            }
+            ProviderMetadata = metadata
         };
     }
 }

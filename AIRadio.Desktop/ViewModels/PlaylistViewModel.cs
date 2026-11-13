@@ -25,6 +25,11 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IKugouPlaylistService? _kugouPlaylistService;
     private readonly LocalLibraryProvider? _localLibrary;
     private readonly IRadioBrowserService? _radioBrowserService;
+    private readonly ICustomRadioStorage? _customRadioStorage;
+    private readonly IRadioStreamProbeService? _radioStreamProbeService;
+    private readonly IPlaylistFileParser? _playlistFileParser;
+    private IReadOnlyList<RadioStation> _customStationsCache = [];
+    private bool _customStationsCacheLoaded;
     private string _currentCategoryKey = "lofi";
     private readonly string _playlistDir;
     private readonly string _playlistFile;
@@ -112,6 +117,23 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string RadioStatusMessage { get; set; } = string.Empty;
     [Reactive] public partial bool IsRadioLoading { get; set; }
     [Reactive] public partial bool HasRadioStations { get; set; }
+
+    // 自定义电台内嵌添加/编辑/导入面板状态（独立生命周期，不受分类切换与语言重置影响）
+    [Reactive] public partial bool IsCustomStationPanelOpen { get; set; }
+    [Reactive] public partial bool IsCustomImportMode { get; set; }
+    [Reactive] public partial bool IsEditingCustomStation { get; set; }
+    [Reactive] public partial string? EditingCustomStationUuid { get; set; }
+    [Reactive] public partial string CustomStationUrl { get; set; } = string.Empty;
+    [Reactive] public partial string CustomStationName { get; set; } = string.Empty;
+    [Reactive] public partial string CustomStationTags { get; set; } = string.Empty;
+    [Reactive] public partial string CustomStationCodec { get; set; } = "MP3";
+    [Reactive] public partial string CustomStationBitrateText { get; set; } = string.Empty;
+    [Reactive] public partial bool IsProbingStream { get; set; }
+    [Reactive] public partial string ProbeStatusText { get; set; } = string.Empty;
+    [Reactive] public partial bool ProbeIsWarning { get; set; }
+    [Reactive] public partial string ImportSummaryText { get; set; } = string.Empty;
+    [Reactive] public partial bool HasImportPreview { get; set; }
+    public ObservableCollection<RadioStation> ImportPreviewStations { get; } = new();
     [Reactive] public partial string FavoriteFilterText { get; set; } = string.Empty;
     [Reactive] public partial FavoriteSortOption? SelectedFavoriteSortOption { get; set; }
     [Reactive] public partial int FavoriteSubTabIndex { get; set; } // 0=歌曲, 1=电台
@@ -129,6 +151,16 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> RefreshRadioStationsCommand { get; }
     public ReactiveCommand<RadioStation, Unit> PlayRadioStationCommand { get; }
     public ReactiveCommand<RadioStation, Unit> FavoriteRadioStationCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenAddCustomStationCommand { get; }
+    public ReactiveCommand<Unit, Unit> CloseCustomStationPanelCommand { get; }
+    public ReactiveCommand<Unit, Unit> SwitchToManualAddModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> SwitchToFileImportModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ProbeCustomStreamCommand { get; }
+    public ReactiveCommand<Unit, Unit> SaveCustomStationOnlyCommand { get; }
+    public ReactiveCommand<Unit, Unit> SaveAndPlayCustomStationCommand { get; }
+    public ReactiveCommand<Unit, Unit> ConfirmImportCustomStationsCommand { get; }
+    public ReactiveCommand<RadioStation, Unit> EditCustomStationCommand { get; }
+    public ReactiveCommand<RadioStation, Unit> DeleteCustomStationCommand { get; }
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> RemoveSelectedTracksCommand { get; }
@@ -163,13 +195,19 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         Func<string, string, Task>? writeAllTextAsync = null,
         IKugouPlaylistService? kugouPlaylistService = null,
         LocalLibraryProvider? localLibrary = null,
-        IRadioBrowserService? radioBrowserService = null)
+        IRadioBrowserService? radioBrowserService = null,
+        ICustomRadioStorage? customRadioStorage = null,
+        IRadioStreamProbeService? radioStreamProbeService = null,
+        IPlaylistFileParser? playlistFileParser = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
         _kugouPlaylistService = kugouPlaylistService;
         _localLibrary = localLibrary;
         _radioBrowserService = radioBrowserService;
+        _customRadioStorage = customRadioStorage;
+        _radioStreamProbeService = radioStreamProbeService;
+        _playlistFileParser = playlistFileParser;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
         _customWriter = writeAllTextAsync != null;
@@ -348,7 +386,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
             var playlistTrack = FindMatchingTrack(track) ?? track;
-            if (!Tracks.Contains(playlistTrack))
+            if (!playlistTrack.IsLiveStream && !Tracks.Contains(playlistTrack))
                 Tracks.Add(playlistTrack);
 
             if (_favoriteIds.Contains(playlistTrack.Id))
@@ -440,6 +478,16 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         });
         PlayRadioStationCommand = ReactiveCommand.Create<RadioStation>(PlayRadioStation);
         FavoriteRadioStationCommand = ReactiveCommand.Create<RadioStation>(FavoriteRadioStation);
+        OpenAddCustomStationCommand = ReactiveCommand.Create(OpenAddCustomStationPanel);
+        CloseCustomStationPanelCommand = ReactiveCommand.Create(CloseCustomStationPanel);
+        SwitchToManualAddModeCommand = ReactiveCommand.Create(() => { IsCustomImportMode = false; });
+        SwitchToFileImportModeCommand = ReactiveCommand.Create(() => { IsCustomImportMode = true; });
+        ProbeCustomStreamCommand = ReactiveCommand.CreateFromTask(ProbeCustomStreamAsync);
+        SaveCustomStationOnlyCommand = ReactiveCommand.CreateFromTask(() => SaveCustomStationAsync(playAfterSave: false));
+        SaveAndPlayCustomStationCommand = ReactiveCommand.CreateFromTask(() => SaveCustomStationAsync(playAfterSave: true));
+        ConfirmImportCustomStationsCommand = ReactiveCommand.CreateFromTask(ConfirmImportCustomStationsAsync);
+        EditCustomStationCommand = ReactiveCommand.Create<RadioStation>(OpenEditCustomStationPanel);
+        DeleteCustomStationCommand = ReactiveCommand.CreateFromTask<RadioStation>(DeleteCustomStationAsync);
 
         SetFavoriteSubTabCommand = ReactiveCommand.Create<int>(idx => FavoriteSubTabIndex = idx);
         this.WhenAnyValue(x => x.FavoriteSubTabIndex)
@@ -1750,6 +1798,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         var selectedKey = SelectedRadioCategory?.Key ?? "lofi";
         RadioCategories.Clear();
         RadioCategories.Add(new RadioCategoryItem("favorites", AppLanguage.T("★ 我的收藏", "★ My Favorites")));
+        RadioCategories.Add(new RadioCategoryItem("custom", AppLanguage.Get("S_CustomRadioCategory")));
         RadioCategories.Add(new RadioCategoryItem("lofi", AppLanguage.T("Lofi 低保真", "Lofi")));
         RadioCategories.Add(new RadioCategoryItem("jazz", AppLanguage.T("爵士", "Jazz")));
         RadioCategories.Add(new RadioCategoryItem("classical", AppLanguage.T("古典", "Classical")));
@@ -1797,6 +1846,12 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             RadioStatusMessage = HasRadioStations
                 ? string.Empty
                 : AppLanguage.T("暂无收藏电台，可在其他流派中点击爱心收藏。", "No favorite radio stations yet. Favorite some stations first.");
+            return;
+        }
+
+        if (string.Equals(category, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            await LoadCustomStationsIntoListAsync();
             return;
         }
 
@@ -1848,16 +1903,40 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (_radioBrowserService == null)
+        // 确保自定义电台缓存已加载，便于搜索置顶聚合
+        if (_customRadioStorage != null && !_customStationsCacheLoaded)
+        {
+            _customStationsCache = await _customRadioStorage.LoadStationsAsync(_lifetimeCts.Token);
+            _customStationsCacheLoaded = true;
+        }
+
+        var matchedCustom = _customStationsCache
+            .Where(s => s.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                        s.Tags.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (string.Equals(SelectedRadioCategory?.Key, "custom", StringComparison.OrdinalIgnoreCase) || _radioBrowserService == null)
+        {
+            RadioStations.Clear();
+            foreach (var s in matchedCustom)
+            {
+                s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
+                RadioStations.Add(s);
+            }
+            HasRadioStations = RadioStations.Count > 0;
+            RadioStatusMessage = HasRadioStations
+                ? string.Empty
+                : AppLanguage.T($"未找到与“{query}”相关的自定义电台", $"No custom stations found for \"{query}\"");
             return;
+        }
 
         IsRadioLoading = true;
         RadioStatusMessage = AppLanguage.T($"正在搜索“{query}”...", $"Searching for \"{query}\"...");
         try
         {
-            var stations = await _radioBrowserService.SearchStationsAsync(query, _lifetimeCts.Token);
+            var remoteStations = await _radioBrowserService.SearchStationsAsync(query, _lifetimeCts.Token);
             RadioStations.Clear();
-            foreach (var s in stations)
+            foreach (var s in matchedCustom.Concat(remoteStations))
             {
                 s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
                 RadioStations.Add(s);
@@ -1879,6 +1958,371 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         finally
         {
             IsRadioLoading = false;
+        }
+    }
+
+    private async Task LoadCustomStationsIntoListAsync()
+    {
+        if (_customRadioStorage == null)
+        {
+            RadioStations.Clear();
+            HasRadioStations = false;
+            RadioStatusMessage = AppLanguage.Get("S_NoCustomStations");
+            return;
+        }
+
+        IsRadioLoading = true;
+        try
+        {
+            var stations = await _customRadioStorage.LoadStationsAsync(_lifetimeCts.Token);
+            _customStationsCache = stations;
+            _customStationsCacheLoaded = true;
+            RadioStations.Clear();
+            foreach (var s in stations)
+            {
+                s.IsFavorite = _favoriteIds.Contains(RadioStation.SourcePrefix + s.StationUuid);
+                RadioStations.Add(s);
+            }
+            HasRadioStations = RadioStations.Count > 0;
+            RadioStatusMessage = HasRadioStations
+                ? string.Empty
+                : AppLanguage.Get("S_NoCustomStations");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load custom radio stations");
+            RadioStations.Clear();
+            HasRadioStations = false;
+            RadioStatusMessage = AppLanguage.Get("S_NoCustomStations");
+        }
+        finally
+        {
+            IsRadioLoading = false;
+        }
+    }
+
+    private void OpenAddCustomStationPanel()
+    {
+        IsEditingCustomStation = false;
+        EditingCustomStationUuid = null;
+        IsCustomImportMode = false;
+        CustomStationUrl = string.Empty;
+        CustomStationName = string.Empty;
+        CustomStationTags = string.Empty;
+        CustomStationCodec = "MP3";
+        CustomStationBitrateText = string.Empty;
+        ProbeStatusText = string.Empty;
+        ProbeIsWarning = false;
+        ImportPreviewStations.Clear();
+        HasImportPreview = false;
+        ImportSummaryText = string.Empty;
+        IsCustomStationPanelOpen = true;
+    }
+
+    private void OpenEditCustomStationPanel(RadioStation? station)
+    {
+        if (station == null || !station.IsCustom)
+            return;
+
+        IsEditingCustomStation = true;
+        EditingCustomStationUuid = station.StationUuid;
+        IsCustomImportMode = false;
+        CustomStationUrl = station.StreamUrl;
+        CustomStationName = station.Name;
+        CustomStationTags = station.Tags;
+        CustomStationCodec = string.IsNullOrWhiteSpace(station.Codec) ? "MP3" : station.Codec;
+        CustomStationBitrateText = station.Bitrate > 0
+            ? station.Bitrate.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : string.Empty;
+        ProbeStatusText = string.Empty;
+        ProbeIsWarning = false;
+        IsCustomStationPanelOpen = true;
+    }
+
+    private void CloseCustomStationPanel()
+    {
+        IsCustomStationPanelOpen = false;
+        IsEditingCustomStation = false;
+        EditingCustomStationUuid = null;
+        ProbeStatusText = string.Empty;
+        ProbeIsWarning = false;
+        ImportPreviewStations.Clear();
+        HasImportPreview = false;
+        ImportSummaryText = string.Empty;
+    }
+
+    public async Task ProbeCustomStreamAsync()
+    {
+        var url = CustomStationUrl.Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            ProbeIsWarning = true;
+            ProbeStatusText = AppLanguage.T("请输入流地址后再探测", "Enter a stream URL first");
+            return;
+        }
+
+        if (_radioStreamProbeService == null)
+        {
+            ProbeIsWarning = true;
+            ProbeStatusText = AppLanguage.T("探测服务不可用", "Probe service unavailable");
+            return;
+        }
+
+        IsProbingStream = true;
+        ProbeIsWarning = false;
+        ProbeStatusText = AppLanguage.Get("S_Probing");
+        try
+        {
+            var result = await _radioStreamProbeService.ProbeAsync(url, _lifetimeCts.Token);
+            if (!string.IsNullOrWhiteSpace(result.Codec))
+                CustomStationCodec = result.Codec;
+            if (result.BitrateKbps is > 0)
+                CustomStationBitrateText = result.BitrateKbps.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (string.IsNullOrWhiteSpace(CustomStationName) && !string.IsNullOrWhiteSpace(result.StationName))
+                CustomStationName = result.StationName;
+            if (string.IsNullOrWhiteSpace(CustomStationTags) && !string.IsNullOrWhiteSpace(result.Tags))
+                CustomStationTags = result.Tags;
+
+            if (result.Success)
+            {
+                if (result.LooksLikeStaticFile)
+                {
+                    ProbeIsWarning = true;
+                    ProbeStatusText = AppLanguage.T(
+                        "⚠ 探测到固定大小音频文件，可能非 24/7 直播流",
+                        "⚠ Static audio file detected; may not be a 24/7 live stream");
+                }
+                else
+                {
+                    ProbeIsWarning = false;
+                    var quality = result.BitrateKbps is > 0
+                        ? $"{result.Codec ?? "STREAM"} {result.BitrateKbps}k"
+                        : (result.Codec ?? "STREAM");
+                    ProbeStatusText = AppLanguage.T($"✓ 探测成功 · {quality}", $"✓ Probe OK · {quality}");
+                }
+            }
+            else
+            {
+                ProbeIsWarning = true;
+                ProbeStatusText = $"⚠ {result.ErrorMessage ?? AppLanguage.T("探测失败，仍可手动保存", "Probe failed; you can still save manually")}";
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "ProbeCustomStreamAsync error");
+            ProbeIsWarning = true;
+            ProbeStatusText = AppLanguage.T("⚠ 探测失败，仍可手动保存", "⚠ Probe failed; you can still save manually");
+        }
+        finally
+        {
+            IsProbingStream = false;
+        }
+    }
+
+    public async Task SaveCustomStationAsync(bool playAfterSave)
+    {
+        var url = CustomStationUrl.Trim();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            ProbeIsWarning = true;
+            ProbeStatusText = AppLanguage.T("请输入有效的 http:// 或 https:// 流地址", "Enter a valid http:// or https:// stream URL");
+            return;
+        }
+
+        if (!await MediaUriPolicy.ValidateCustomRadioAsync(uri, _lifetimeCts.Token))
+        {
+            ProbeIsWarning = true;
+            ProbeStatusText = AppLanguage.T("该地址被安全策略拒绝（禁止本机回环或受限地址）", "Address blocked by security policy");
+            return;
+        }
+
+        var name = CustomStationName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            name = uri.Host;
+
+        var tags = CustomStationTags.Trim();
+        var codec = string.IsNullOrWhiteSpace(CustomStationCodec)
+            ? (RadioStreamProbeService.InferCodecFromUrl(uri) ?? "MP3")
+            : CustomStationCodec.Trim().ToUpperInvariant();
+        var bitrate = int.TryParse(CustomStationBitrateText.Trim(), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsedBitrate) && parsedBitrate > 0
+            ? Math.Min(parsedBitrate, 9999)
+            : 0;
+
+        if (_customRadioStorage == null)
+            return;
+
+        RadioStation savedStation;
+        if (IsEditingCustomStation && !string.IsNullOrWhiteSpace(EditingCustomStationUuid))
+        {
+            var existing = _customStationsCache.FirstOrDefault(s =>
+                string.Equals(s.StationUuid, EditingCustomStationUuid, StringComparison.OrdinalIgnoreCase));
+            savedStation = new RadioStation
+            {
+                StationUuid = EditingCustomStationUuid,
+                Name = name,
+                StreamUrl = uri.AbsoluteUri,
+                Tags = string.IsNullOrWhiteSpace(tags) ? "Custom" : tags,
+                Codec = codec,
+                Bitrate = bitrate,
+                IsFavorite = existing?.IsFavorite ?? _favoriteIds.Contains(RadioStation.SourcePrefix + EditingCustomStationUuid)
+            };
+
+            await _customRadioStorage.UpdateStationAsync(savedStation, _lifetimeCts.Token);
+
+            // 四级级联更新：同步收藏夹持久化实体
+            var sourceId = RadioStation.SourcePrefix + savedStation.StationUuid;
+            var favTrack = Favorites.FirstOrDefault(t => string.Equals(t.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+            if (favTrack != null)
+            {
+                favTrack.Title = savedStation.Name;
+                favTrack.Artist = savedStation.DisplayCountryAndTags;
+                favTrack.FilePath = savedStation.StreamUrl;
+                favTrack.DeclaredCodec = savedStation.Codec;
+                favTrack.DeclaredBitrateKbps = savedStation.Bitrate > 0 ? savedStation.Bitrate : null;
+                favTrack.ProviderMetadata["stream_url"] = savedStation.StreamUrl;
+                favTrack.ProviderMetadata["tags"] = savedStation.Tags;
+                favTrack.ProviderMetadata["codec"] = savedStation.Codec;
+                favTrack.ProviderMetadata["bitrate"] = savedStation.Bitrate > 0
+                    ? savedStation.Bitrate.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : string.Empty;
+                ApplyFavoriteFilterAndSort();
+                _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+            }
+        }
+        else
+        {
+            savedStation = new RadioStation
+            {
+                StationUuid = RadioStation.CreateCustomUuid(),
+                Name = name,
+                StreamUrl = uri.AbsoluteUri,
+                Tags = string.IsNullOrWhiteSpace(tags) ? "Custom" : tags,
+                Codec = codec,
+                Bitrate = bitrate
+            };
+
+            var added = await _customRadioStorage.AddStationAsync(savedStation, _lifetimeCts.Token);
+            if (!added)
+            {
+                ProbeIsWarning = true;
+                ProbeStatusText = AppLanguage.T("该电台地址已存在于自定义列表中", "This stream URL already exists");
+                return;
+            }
+        }
+
+        CloseCustomStationPanel();
+
+        var customCategory = RadioCategories.FirstOrDefault(c => string.Equals(c.Key, "custom", StringComparison.OrdinalIgnoreCase));
+        if (customCategory != null && !string.Equals(SelectedRadioCategory?.Key, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            _currentCategoryKey = "custom";
+            RadioSearchText = string.Empty;
+            SelectedRadioCategory = customCategory;
+        }
+        await LoadCustomStationsIntoListAsync();
+
+        if (playAfterSave)
+        {
+            PlayRadioStation(savedStation);
+        }
+    }
+
+    public async Task DeleteCustomStationAsync(RadioStation? station)
+    {
+        if (station == null || !station.IsCustom || _customRadioStorage == null)
+            return;
+
+        await _customRadioStorage.RemoveStationAsync(station.StationUuid, _lifetimeCts.Token);
+
+        // 级联删除收藏夹关联项
+        var sourceId = RadioStation.SourcePrefix + station.StationUuid;
+        if (_favoriteIds.Remove(sourceId))
+        {
+            var favTrack = Favorites.FirstOrDefault(t => string.Equals(t.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+            if (favTrack != null)
+                Favorites.Remove(favTrack);
+            ApplyFavoriteFilterAndSort();
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+        // 若曾意外残留于主歌单，一并移除
+        var libraryTrack = Tracks.FirstOrDefault(t => string.Equals(t.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (libraryTrack != null)
+        {
+            RemoveTrackCore(libraryTrack);
+            _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+        RadioStations.Remove(station);
+        _customStationsCache = _customStationsCache
+            .Where(s => !string.Equals(s.StationUuid, station.StationUuid, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        HasRadioStations = RadioStations.Count > 0;
+        if (!HasRadioStations && string.Equals(SelectedRadioCategory?.Key, "custom", StringComparison.OrdinalIgnoreCase))
+            RadioStatusMessage = AppLanguage.Get("S_NoCustomStations");
+    }
+
+    public async Task LoadImportPlaylistFileAsync(string filePath)
+    {
+        if (_playlistFileParser == null || string.IsNullOrWhiteSpace(filePath))
+            return;
+
+        var result = await _playlistFileParser.ParseFileAsync(filePath, _lifetimeCts.Token);
+        ImportPreviewStations.Clear();
+        foreach (var s in result.Stations)
+            ImportPreviewStations.Add(s);
+
+        HasImportPreview = ImportPreviewStations.Count > 0;
+        if (result.Stations.Count == 0)
+        {
+            ImportSummaryText = AppLanguage.T("未在文件中识别到有效的 http/https 电台流", "No valid http/https streams found in file");
+        }
+        else if (result.WasTruncated)
+        {
+            ImportSummaryText = AppLanguage.T(
+                $"已识别 {result.Stations.Count} 个电台（超限已截断，跳过 {result.SkippedCount} 个无效项）",
+                $"Found {result.Stations.Count} station(s) (truncated at limit, skipped {result.SkippedCount})");
+        }
+        else
+        {
+            ImportSummaryText = AppLanguage.T(
+                $"已识别 {result.Stations.Count} 个有效电台（跳过 {result.SkippedCount} 个无效/重复项）",
+                $"Found {result.Stations.Count} valid station(s) (skipped {result.SkippedCount})");
+        }
+    }
+
+    public async Task ConfirmImportCustomStationsAsync()
+    {
+        if (_customRadioStorage == null || ImportPreviewStations.Count == 0)
+            return;
+
+        var importedCount = await _customRadioStorage.AddStationsAsync(ImportPreviewStations.ToList(), _lifetimeCts.Token);
+        CloseCustomStationPanel();
+
+        var customCategory = RadioCategories.FirstOrDefault(c => string.Equals(c.Key, "custom", StringComparison.OrdinalIgnoreCase));
+        if (customCategory != null && !string.Equals(SelectedRadioCategory?.Key, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            _currentCategoryKey = "custom";
+            RadioSearchText = string.Empty;
+            SelectedRadioCategory = customCategory;
+        }
+        await LoadCustomStationsIntoListAsync();
+
+        if (importedCount > 0)
+        {
+            RadioStatusMessage = string.Empty;
+        }
+        else
+        {
+            RadioStatusMessage = AppLanguage.T("导入的电台均已存在，未新增重复项", "All stations already exist; no duplicates added");
         }
     }
 

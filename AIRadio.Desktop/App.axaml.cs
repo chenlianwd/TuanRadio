@@ -355,6 +355,10 @@ public partial class App : Application
                 beforeRestart: PrepareForUpdateRestart));
         services.AddSingleton<IRadioBrowserService>(sp =>
             new RadioBrowserClient(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<ICustomRadioStorage>(_ => new CustomRadioStorage());
+        services.AddSingleton<IRadioStreamProbeService>(sp =>
+            new RadioStreamProbeService(sp.GetRequiredService<System.Net.Http.HttpClient>()));
+        services.AddSingleton<IPlaylistFileParser>(_ => new PlaylistFileParser());
         services.AddSingleton<ISleepTimerService, SleepTimerService>();
         // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
         services.AddSingleton(sp => new MainWindowViewModel(
@@ -378,7 +382,10 @@ public partial class App : Application
             ttsService: sp.GetRequiredService<ITtsService>(),
             appUpdateService: sp.GetRequiredService<IAppUpdateService>(),
             radioBrowserService: sp.GetRequiredService<IRadioBrowserService>(),
-            sleepTimerService: sp.GetRequiredService<ISleepTimerService>()));
+            sleepTimerService: sp.GetRequiredService<ISleepTimerService>(),
+            customRadioStorage: sp.GetRequiredService<ICustomRadioStorage>(),
+            radioStreamProbeService: sp.GetRequiredService<IRadioStreamProbeService>(),
+            playlistFileParser: sp.GetRequiredService<IPlaylistFileParser>()));
     }
 
     private void PrepareForUpdateRestart()

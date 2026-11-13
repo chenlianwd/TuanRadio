@@ -209,7 +209,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IAppUpdateService? appUpdateService = null,
         IRadioBrowserService? radioBrowserService = null,
         ISleepTimerService? sleepTimerService = null,
-        ISceneModeService? sceneModeService = null)
+        ISceneModeService? sceneModeService = null,
+        ICustomRadioStorage? customRadioStorage = null,
+        IRadioStreamProbeService? radioStreamProbeService = null,
+        IPlaylistFileParser? playlistFileParser = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -235,7 +238,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             playlistFile,
             kugouPlaylistService: kugouPlaylistService,
             localLibrary: localLibrary,
-            radioBrowserService: radioBrowserService);
+            radioBrowserService: radioBrowserService,
+            customRadioStorage: customRadioStorage,
+            radioStreamProbeService: radioStreamProbeService,
+            playlistFileParser: playlistFileParser);
         if (musicSearchService is IMusicSourceBroker broker)
             _playbackPreflight = new PlaybackPreflightService(_audioService, broker, accountStore, openSubsonic);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
@@ -646,7 +652,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrWhiteSpace(streamUrl) && _radioBrowserService != null)
             {
                 var stationUuid = sourceId.Substring(RadioStation.SourcePrefix.Length);
-                streamUrl = await _radioBrowserService.ResolveStationUrlAsync(stationUuid, cancellationToken);
+                if (!stationUuid.StartsWith(RadioStation.CustomUuidPrefix, StringComparison.OrdinalIgnoreCase))
+                    streamUrl = await _radioBrowserService.ResolveStationUrlAsync(stationUuid, cancellationToken);
             }
 
             return string.IsNullOrWhiteSpace(streamUrl)

@@ -26,6 +26,54 @@ public static class MediaUriPolicy
         CancellationToken cancellationToken)
         => ValidateAsync(scope, uri, ResolveHostAddressesAsync, cancellationToken);
 
+    /// <summary>
+    /// 校验用户自定义电台流地址：支持公网及局域网私网（NAS/自建 Icecast），
+    /// 仍严格拦截本机回环（127/8, ::1）、链路本地/云元数据（169.254/16）、组播及未指定地址。
+    /// </summary>
+    public static Task<bool> ValidateCustomRadioAsync(
+        Uri uri,
+        CancellationToken cancellationToken)
+        => ValidateCustomRadioAsync(uri, ResolveHostAddressesAsync, cancellationToken);
+
+    internal static async Task<bool> ValidateCustomRadioAsync(
+        Uri uri,
+        Func<string, CancellationToken, Task<IPAddress[]>> resolve,
+        CancellationToken cancellationToken)
+    {
+        if (uri == null || !uri.IsAbsoluteUri)
+            return false;
+        if (!string.IsNullOrEmpty(uri.UserInfo))
+            return false;
+        if (!IsHttpScheme(uri))
+            return false;
+
+        var host = uri.Host;
+        if (string.IsNullOrEmpty(host))
+            return false;
+
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (IPAddress.TryParse(host, out var literal))
+            return !IsHighRiskSystemAddress(literal);
+
+        IPAddress[] addresses;
+        try
+        {
+            addresses = await resolve(host, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        return addresses is { Length: > 0 } && addresses.All(a => !IsHighRiskSystemAddress(a));
+    }
+
     /// <summary>测试注入点：以固定地址解析器替代真实 DNS（单测零联网）。</summary>
     internal static Task<bool> ValidateAsync(
         ProviderNetworkScope scope,
@@ -100,6 +148,16 @@ public static class MediaUriPolicy
     /// （含 IPv4 映射/兼容地址解包）。全部按字节判定，不依赖 IPAddress 的 Is* 属性面。
     /// </summary>
     internal static bool IsForbiddenAddress(IPAddress address)
+        => IsRestrictedAddress(address, allowPrivateNetwork: false);
+
+    /// <summary>
+    /// 自定义电台高危地址判定：放行局域网私网（10/8、172.16/12、192.168/16、fc00::/7），
+    /// 仍拦截回环（127/8、::1）、未指定、链路本地（169.254/16）、组播及保留段。
+    /// </summary>
+    internal static bool IsHighRiskSystemAddress(IPAddress address)
+        => IsRestrictedAddress(address, allowPrivateNetwork: true);
+
+    private static bool IsRestrictedAddress(IPAddress address, bool allowPrivateNetwork)
     {
         // IPv4-mapped（::ffff:a.b.c.d）与已弃用的 IPv4-compatible（::a.b.c.d）解包后按 IPv4 判定
         if (address.AddressFamily == AddressFamily.InterNetworkV6)
@@ -120,22 +178,33 @@ public static class MediaUriPolicy
         var bytes = address.GetAddressBytes();
         if (bytes.Length == 4)
         {
-            return bytes[0] == 0 ||                                    // 0.0.0.0/8 未指定
-                   bytes[0] == 127 ||                                  // 127/8 回环段（Windows 整段路由本机，只封 127.0.0.1 会留绕过面）
-                   bytes[0] == 10 ||                                   // 10/8 RFC1918
-                   (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || // 172.16/12 RFC1918
-                   bytes[0] == 192 && bytes[1] == 168 ||               // 192.168/16 RFC1918
-                   bytes[0] == 169 && bytes[1] == 254 ||               // 169.254/16 链路本地+云元数据
-                   (bytes[0] & 0xF0) == 0xE0 ||                        // 224/4 组播
-                   (bytes[0] & 0xF0) == 0xF0;                          // 240/4 保留段（含受限广播 255.255.255.255）
+            if (bytes[0] == 0 ||
+                bytes[0] == 127 ||
+                bytes[0] == 169 && bytes[1] == 254 ||
+                (bytes[0] & 0xF0) == 0xE0 ||
+                (bytes[0] & 0xF0) == 0xF0)
+                return true;
+
+            if (!allowPrivateNetwork &&
+                (bytes[0] == 10 ||
+                 (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                 (bytes[0] == 192 && bytes[1] == 168)))
+                return true;
+
+            return false;
         }
 
         if (bytes.Length == 16)
         {
-            return bytes[0] == 0xFF ||                                 // ff00::/8 组播
-                   (bytes[0] & 0xFE) == 0xFC ||                        // fc00::/7 唯一本地
-                   (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80) ||  // fe80::/10 链路本地
-                   (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0xC0);    // fec0::/10 站点本地（已弃用仍拒）
+            if (bytes[0] == 0xFF ||
+                (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80) ||
+                (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0xC0))
+                return true;
+
+            if (!allowPrivateNetwork && (bytes[0] & 0xFE) == 0xFC)
+                return true;
+
+            return false;
         }
 
         // 未知地址族：fail-closed
