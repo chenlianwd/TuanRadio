@@ -48,7 +48,7 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 - **聊天交互区与状态栏（Chat & Status Bar）**：
   - **AI DJ 对话**：与当前主播文字交互、点歌或倾诉心情。
   - **语音点歌**：**按住麦克风离线语音点歌**（本地 Whisper 模型推理 + 绑定 LLM 拼音/同音纠错，自动归一化为歌名触发多源搜索）。
-  - **广播状态栏**：由统一电台状态机驱动，实时呈现广播生命周期指示灯（`ON AIR`、`CONNECTED`、`IDLE`、`PLANNING`、`SEARCHING`、`SPEAKING`、`PLAYING` 等）。
+  - **广播状态栏**：由统一电台状态机驱动，实时呈现广播生命周期指示灯（`ON AIR`、`CURATING`、`SEARCHING`、`SPEAKING`、`ERROR`），支持电台睡眠定时与深夜伴眠场景模式。
 
 ---
 
@@ -69,7 +69,8 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 ## 功能亮点
 
 - 🎙️ **AI DJ 双模交互**：文字畅聊或按住麦克风离线语音点歌（Whisper 本地识别 + LLM 同音纠错）；自动曲目串场与 SongStory 现曲讲述，全部经 Edge TTS 高质量多音色播报（完全免费，零 API 账单）；主播角色（名称/声音/人设）可自由定制。
-- 📻 **复古电台拟物视听美学**：纯数学算法程序化合成调频静电杂音与台呼（零外部音频体积）、WASAPI 回环硬件采集 1024 点真实 FFT 频谱驱动星空与舞台、时钟/歌词双模无缝切换、紧凑迷你摸鱼卡片（带迷你动态歌词与独立置顶记忆）。
+- 📻 **复古电台拟物视听美学与伴眠体验**：纯数学算法程序化合成调频静电杂音与台呼（零外部音频体积）、WASAPI 回环硬件采集 1024 点真实 FFT 频谱驱动星空与舞台、时钟/歌词双模无缝切换、紧凑迷你摸鱼卡片（带迷你动态歌词与独立置顶记忆）、最小化至系统托盘，以及睡眠定时渐弱淡出与深夜伴眠 AI DJ 柔声模式。
+- 🌍 **全球网络电台与自定义流导入**：集成全球开源网络电台与 8 大离线精选流派保底库，支持单流 URL 手动录入（含 ICY 流可用性探测与局域网自建电台直连）及 M3U/M3U8/PLS 批量列表导入与收藏隔离。
 - 🧠 **长期口味画像与防茧房推荐**：Radio Mode 自动续播按收听意图生成会话节目单（3~5 首候选及推荐理由）；长期收听画像（歌手亲和度 30 天半衰期、Dislike 黑名单、LLM 口味摘要与性格印象）同时注入推荐与 DJ 对话双链路，并强制引入探索方向防止茧房。
 - 🔀 **高可用多音源自愈中枢（Broker）**：本地曲库、OpenSubsonic 私有云、Audius 开放曲库开箱即用，完整构建另含网易云、酷狗与 YouTube；候选经标题/歌手/时长/源优先级四维排重打分；播放队列前瞻 3 首预检解析，播放 URL 失效或返回试听截断时自动跨源重搜自愈。
 - 💎 **真声音质透明呈现**：播放区实时显示音质品级（标准/高清/无损），实际音频编码、码率、采样率与声道悬停 ToolTip 可见，以 LibVLC 解析底层在播流为准、音源声明值兜底；试听截断流有专门徽标标记。
@@ -89,7 +90,7 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 > **运行环境与系统说明**：
 > - 最低系统要求：Windows 10 2004（内部版本 19041）及以上，x64。
 > - 应用未购买商用数字签名，首次运行如遇 SmartScreen「Windows 已保护你的电脑」：点击「更多信息」→「仍要运行」。
-> - 首次运行按需联网下载：网易/酷狗音源所需的 Node.js 运行时（约 30MB，来自 nodejs.org，经官方 SHASUMS256 校验）；「按住说话」语音识别首次使用时下载 Whisper 模型（约 140MB，来自 huggingface.co——该域名在部分网络不可达，下载失败仅影响语音点歌，可手动获取 `ggml-base.bin` 放到 `%LOCALAPPDATA%\AIRadio\models\ggml-base.bin`）。
+> - 首次运行按需联网下载：「按住说话」语音识别首次使用时下载 Whisper 模型（约 140MB，来自 huggingface.co——该域名在部分网络不可达，下载失败仅影响语音点歌，可手动获取 `ggml-base.bin` 放到 `%LOCALAPPDATA%\AIRadio\models\ggml-base.bin`）；正式发布包已内置经 SHA256 校验的 Node.js 运行时（`runtime/node/node.exe`），网易/酷狗代理开箱即用无需额外联网下载。
 
 ---
 
@@ -99,7 +100,7 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 
 - Windows 10/11，.NET 10 SDK
 - 本地与在线播放、搜索、频谱等基础功能**不依赖 LLM**；AI DJ 对话、串场、歌曲故事与节目单意图推荐需在设置页配置任一 LLM 提供商
-- Node.js **非必需**：完整构建自动探测 PATH 与常见安装目录，缺失时可自动下载便携版（按官方 SHASUMS256 校验）；也可用核心构建完全跳过
+- Node.js **非必需**：完整源码构建会自动探测 PATH 与常见安装目录中的 Node.js（也可用核心构建完全跳过）；应用运行时在缺失代理运行时可按需自动下载便携版并作 SHA256 校验，而官方打包版本已内置校验好的运行时。
 
 ### 构建与测试
 
@@ -108,7 +109,7 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
 dotnet run --project AIRadio.Desktop\AIRadio.Desktop.csproj
 
-# 运行自动化测试套件（1100+ 测试）
+# 运行自动化测试套件（1300+ 测试）
 dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```
 
@@ -145,10 +146,10 @@ AIRadio.Desktop/            宿主应用（Avalonia 11.3.9 + ReactiveUI + Velopa
   server/ server-kugou/     网易 / 酷狗 Node.js 代理进程与补丁基线
 AIRadio.Desktop.Music/      音乐领域独立类库（宿主单向引用，命名空间保持稳定）
   Models/                   Track、Album 等核心实体
-  Services/Music/           Contracts（抽象契约）、Broker（中枢聚合与策略编排）、
+  Services/Music/           Contracts（抽象契约）、Broker（中枢聚合、策略编排与解析缓存）、
                             Providers（本地/OpenSubsonic/Audius）、Adapters（流媒体适配）、
-                            Playback（MediaUriPolicy 安全白名单/重定向复检/解析缓存）
-AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1133+ 测试用例）
+                            Playback（MediaUriPolicy 安全白名单与重定向复检）
+AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1300+ 测试用例）
 tools/                      tools/publish.ps1 自动化出包流水线、品牌图标导出脚本与实机截图工具
 ```
 

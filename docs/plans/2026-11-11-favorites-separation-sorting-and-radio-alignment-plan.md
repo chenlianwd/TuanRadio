@@ -1,7 +1,7 @@
 # 收藏体系演进（电台与歌曲分流、即时搜索与多维排序）与网络电台界面对齐设计方案
 
 - **日期**：2026-11-11
-- **状态**：已完成三轮深度对抗性审查定稿 / 阶段 1 已落地 / 阶段 2、3 待确认实施
+- **状态**：已实施（2026-11-11 提交 `5744a4a` 并推送至 `master`；已完成 3 轮深度对抗性审查）
 - **涉及模块**：
   - `AIRadio.Desktop/Views/PlaylistDrawer.axaml`
   - `AIRadio.Desktop.Music/Models/RadioStation.cs`
