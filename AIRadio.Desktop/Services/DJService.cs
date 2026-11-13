@@ -507,6 +507,9 @@ Requirements:
         var nextPhrase = FormatTrackPhrase(nextTitle, nextArtist, isEn);
         var timeBand = DescribeTimeOfDay(now.Hour, isEn);
 
+        if (next.IsLiveStream)
+            return BuildLiveStreamIntroduction(current, djName, nextTitle, timeBand, isEn, sceneMode);
+
         if (sceneMode == RadioSceneMode.Sleep)
         {
             var sleepText = isEn
@@ -520,9 +523,6 @@ Requirements:
                 Motion = "idle"
             };
         }
-
-        if (next.IsLiveStream)
-            return BuildLiveStreamIntroduction(current, djName, nextTitle, timeBand, isEn, sceneMode);
 
         var text = current == null
             ? BuildOpeningIntroduction(djName, nextPhrase, timeBand, now, weather, isEn, variant)

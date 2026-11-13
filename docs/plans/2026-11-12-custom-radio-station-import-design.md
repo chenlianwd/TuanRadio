@@ -2,7 +2,7 @@
 
 > **文件路径**：`docs/plans/2026-11-12-custom-radio-station-import-design.md`  
 > **创建日期**：2026-11-12  
-> **状态**：方案草案（待用户确认与对抗性审查）  
+> **状态**：已实施（2026-11-13 提交 `097d668` 并推送至 `master`）  
 > **设计目标**：在已交付的全球网络电台（Radio Browser）与本地收藏体系基础上，构建开放、安全、轻量、高可用的**自定义网络电台导入与管理系统**。支持单流 URL 手动录入、实时 ICY 流可用性探测与元数据自动嗅探、M3U/M3U8/PLS 批量列表导入、自定义流派分类及全生命周期编辑与删除，实现与 LibVLC 播放引擎、ICY 实时元数据更新、收藏夹及伴眠模式的端到端无缝贯通。
 
 ---
@@ -247,3 +247,20 @@ public interface IRadioStreamProbeService
 4. **阶段 4：对抗性审查、测试覆盖与构建核验**
    - 补充 UI 交互与端到端联动测试；
    - 全量编译与 Release 标准/裁剪双变体校验，确保 0 警告 0 错误。
+
+---
+
+## 8. 审查修订与实施落地说明（2026-11-13）
+
+本方案在实施前经过多轮方案审查，并在实现后完成两轮代码复审与全量测试/双变体构建核验（提交 `097d668`），相对初稿的主要演进与确认点如下：
+
+1. **网络与安全策略边界（`MediaUriPolicy.ValidateCustomRadioAsync` / `PlaybackPreflightService`）**：
+   - 自定义电台在探测与预检阶段复用并扩展初始 URI 校验，允许局域网私网 IP（满足自建内网电台场景），继续严格拦截回环地址（loopback）、link-local 及云元数据地址（注：轻量探测客户端与 LibVLC 播放阶段未接逐跳重定向复检）。
+2. **UI 形态调整（`PlaylistDrawer.axaml`）**：
+   - 将原稿中的弹出式 `Flyout` 调整为“网络电台”抽屉内嵌式添加/编辑/导入面板，同时支持行内编辑（Edit）与删除、列表搜索置顶聚合，避免弹出浮层与主抽屉焦点及文件选择器冲突。
+3. **收藏与列表级联同步（`PlaylistViewModel`）**：
+   - 补齐自定义电台编辑与删除时的多层级联同步（持久化存储、收藏集合/文件、`RadioStations` 缓存与列表），保障电台收藏夹同步更新且不污染主单曲播放列表；`RadioStation.ToTrack()` 携带 `custom_station=true` 元数据标识（注：仅“保存并收听”触发立即切播，单纯编辑或删除不主动中断当前在播曲目）。
+4. **流探测预警与静态文件容错（`RadioStreamProbeService` / `PlaylistFileParser`）**：
+   - 对非直播静态音频地址及特定兼容格式提供容错预警样式，同时保持直播流探测响应头读取（`ResponseHeadersRead`）安全快捷。
+5. **测试覆盖**：
+   - 新增 `CustomRadioStorageTests`、`StreamProbeServiceTests`、`PlaylistFileParserTests`、`PlaylistViewModelCustomRadioTests` 四个测试集并并入全量回归。
