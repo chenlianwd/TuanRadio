@@ -219,7 +219,7 @@ public class PlaylistViewModelTests
     public void ShowPlaylistCommand_SetsTabIndexToZero()
     {
         var (vm, _, _) = CreateVm();
-        vm.TabIndex = 2;
+        vm.TabIndex = 1;
         vm.ShowPlaylistCommand.Execute().Subscribe();
         Assert.Equal(0, vm.TabIndex);
     }
@@ -230,14 +230,6 @@ public class PlaylistViewModelTests
         var (vm, _, _) = CreateVm();
         vm.ShowFavoritesCommand.Execute().Subscribe();
         Assert.Equal(1, vm.TabIndex);
-    }
-
-    [Fact]
-    public void ShowSearchCommand_SetsTabIndexToTwo()
-    {
-        var (vm, _, _) = CreateVm();
-        vm.ShowSearchCommand.Execute().Subscribe();
-        Assert.Equal(2, vm.TabIndex);
     }
 
     [Fact]
@@ -789,11 +781,13 @@ public class PlaylistViewModelTests
             .ReturnsAsync("http://example.com/track1.mp3");
 
         var onlineTrack = new OnlineTrack { Id = "track1", Title = "Online Song", Artist = "Artist" };
+        vm.TabIndex = 1;
 
         await vm.AddOnlineCommand.Execute(onlineTrack);
 
         Assert.Single(vm.Tracks);
         Assert.Equal("Online Song", vm.Tracks[0].Title);
+        Assert.Equal(1, vm.TabIndex); // 独立搜索加曲不应破坏曲库当前页签
         audioMock.Verify(x => x.AddTracks(It.IsAny<IEnumerable<Track>>()), Times.Once);
     }
 
@@ -809,12 +803,13 @@ public class PlaylistViewModelTests
         searchMock.Setup(x => x.SearchAsync("test", 20, It.IsAny<System.Threading.CancellationToken>()))
             .ReturnsAsync(results);
 
+        vm.TabIndex = 1;
         vm.SearchText = "test";
         // IObservable 可直接 await 首个结果：命令异步完成即断言，替代固定 Sleep
         await vm.SearchCommand.Execute();
 
         Assert.Equal(2, vm.SearchResults.Count);
-        Assert.Equal(2, vm.TabIndex); // auto-switches to search tab
+        Assert.Equal(1, vm.TabIndex); // 搜索已解耦为独立浮层，不得篡改曲库页签
     }
 
     [Fact]

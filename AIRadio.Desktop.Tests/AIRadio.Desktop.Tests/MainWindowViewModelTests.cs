@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reactive.Concurrency;
+using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -1557,6 +1558,104 @@ public class MainWindowViewModelTests
         {
             vm.Dispose();
             RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task OpenSearchAndToggleLibrary_AreDecoupledAndMutuallyExclusive()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var audio = CreateAudioMock(new List<Track>(), () => null);
+        var searchMock = new Mock<IMusicSearchService>();
+        searchMock.Setup(s => s.SearchAsync("lofi", 20, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<OnlineTrack> { new() { Id = "1", Title = "Lofi Beat" } });
+        var dir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var vm = new MainWindowViewModel(
+            audio.Object,
+            new Mock<IDJService>().Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            searchMock.Object,
+            new Mock<ISttService>().Object,
+            Path.Combine(dir, "playlist.json"),
+            Path.Combine(dir, "settings.json"));
+        try
+        {
+            // 先切到收藏页再点搜索：搜索抽屉独立打开，不覆盖曲库页签
+            vm.OpenFavoritesCommand.Execute().Subscribe();
+            Assert.True(vm.IsLibraryOpen);
+            Assert.False(vm.IsSearchOpen);
+            Assert.Equal(1, vm.PlaylistVM.TabIndex);
+
+            vm.OpenSearchCommand.Execute().Subscribe();
+            Assert.True(vm.IsSearchOpen);
+            Assert.False(vm.IsLibraryOpen);
+            Assert.Equal(1, vm.PlaylistVM.TabIndex);
+
+            // 执行真实搜索后关闭搜索再点菜单/曲库按钮：保留用户之前的收藏页签，不被重置到播放列表或搜索页
+            vm.PlaylistVM.SearchText = "lofi";
+            await vm.PlaylistVM.SearchCommand.Execute();
+            Assert.Equal(1, vm.PlaylistVM.TabIndex);
+
+            vm.CloseOverlays();
+            Assert.False(vm.IsSearchOpen);
+            Assert.False(vm.IsLibraryOpen);
+
+            vm.ToggleLibraryCommand.Execute().Subscribe();
+            Assert.True(vm.IsLibraryOpen);
+            Assert.False(vm.IsSearchOpen);
+            Assert.Equal(1, vm.PlaylistVM.TabIndex);
+
+            // ToggleSearchCommand 开关与曲库/设置/主播选择互相排斥
+            vm.ToggleSearchCommand.Execute().Subscribe();
+            Assert.True(vm.IsSearchOpen);
+            Assert.False(vm.IsLibraryOpen);
+
+            vm.ToggleSettingsCommand.Execute().Subscribe();
+            Assert.True(vm.IsSettingsOpen);
+            Assert.False(vm.IsSearchOpen);
+
+            vm.ToggleCharacterPickerCommand.Execute().Subscribe();
+            Assert.True(vm.IsCharacterPickerOpen);
+            Assert.False(vm.IsSettingsOpen);
+            Assert.False(vm.IsSearchOpen);
+
+            vm.ToggleSearchCommand.Execute().Subscribe();
+            Assert.True(vm.IsSearchOpen);
+            Assert.False(vm.IsCharacterPickerOpen);
+
+            vm.ToggleSearchCommand.Execute().Subscribe();
+            Assert.False(vm.IsSearchOpen);
+
+            // 即使外部误置 TabIndex = 2，打开曲库也会兜底复位到播放列表 0
+            vm.PlaylistVM.TabIndex = 2;
+            vm.ToggleLibraryCommand.Execute().Subscribe();
+            Assert.True(vm.IsLibraryOpen);
+            Assert.Equal(0, vm.PlaylistVM.TabIndex);
+
+            // 从搜索直切其他曲库页签入口也会关闭搜索
+            vm.OpenSearchCommand.Execute().Subscribe();
+            Assert.True(vm.IsSearchOpen);
+            vm.OpenRadioStationsCommand.Execute().Subscribe();
+            Assert.False(vm.IsSearchOpen);
+            Assert.True(vm.IsLibraryOpen);
+            Assert.Equal(5, vm.PlaylistVM.TabIndex);
+
+            // 进入简洁模式应一并关闭独立搜索浮层
+            vm.OpenSearchCommand.Execute().Subscribe();
+            Assert.True(vm.IsSearchOpen);
+            vm.ToggleCompactModeCommand.Execute().Subscribe();
+            Assert.True(vm.IsCompactMode);
+            Assert.False(vm.IsSearchOpen);
+            Assert.False(vm.IsLibraryOpen);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
         }
     }
 }

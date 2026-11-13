@@ -1,0 +1,74 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:AIRadio.Desktop.ViewModels"
+             xmlns:services="using:AIRadio.Desktop.Services"
+             xmlns:conv="using:AIRadio.Desktop.Converters"
+             x:Class="AIRadio.Desktop.Views.SearchDrawer"
+             x:DataType="vm:MainWindowViewModel">
+    <UserControl.Resources>
+        <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
+    </UserControl.Resources>
+
+    <Border x:Name="DrawerRoot"
+            IsVisible="{Binding IsSearchOpen}"
+            KeyboardNavigation.TabNavigation="Cycle"
+            Width="455" HorizontalAlignment="Right" Margin="0,72,18,34"
+            Background="{DynamicResource C_FC0E0E15}" BorderBrush="{DynamicResource C_667B7898}" BorderThickness="1"
+            CornerRadius="12" Padding="16">
+        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="{DynamicResource S_SearchTab}" FontSize="18" FontWeight="700"
+                           FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Width="32" Height="28" Padding="0"
+                        Command="{Binding ToggleSearchCommand}" ToolTip.Tip="{DynamicResource S_CloseSearch}"
+                        AutomationProperties.Name="{DynamicResource S_CloseSearch}">
+                    <Path Width="14" Height="14" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M18,6 L6,18 M6,6 L18,18"/>
+                </Button>
+            </Grid>
+
+            <StackPanel Grid.Row="1" Spacing="8">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox x:Name="SearchInput"
+                             Text="{Binding PlaylistVM.SearchText, Mode=TwoWay}"
+                             Watermark="{DynamicResource S_SearchWatermark}" KeyDown="OnSearchKeyDown"/>
+                    <Button Grid.Column="1" Content="{Binding PlaylistVM.SearchButtonText}"
+                            IsEnabled="{Binding PlaylistVM.IsSearching, Converter={StaticResource InverseBoolConverter}}"
+                            Command="{Binding PlaylistVM.SearchCommand}"/>
+                </Grid>
+                <TextBlock Text="{Binding PlaylistVM.SearchStatusMessage}"
+                           IsVisible="{Binding PlaylistVM.SearchStatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
+                           FontSize="11" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <ListBox Grid.Row="2" x:Name="SearchResultsList"
+                     ItemsSource="{Binding PlaylistVM.SearchResults}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="services:OnlineTrack">
+                        <Border Background="{DynamicResource C_CC202126}" BorderBrush="{DynamicResource C_253D3D4A}"
+                                BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="700"
+                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                               Foreground="{DynamicResource C_FFFFFFFF}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding DisplayArtist}" FontSize="11"
+                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                               Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding DisplaySource}" FontSize="10"
+                                               Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="{DynamicResource S_Play}"
+                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayOnlineCommand}"
+                                        CommandParameter="{Binding}"/>
+                                <Button Grid.Column="2" Content="{DynamicResource S_Add}"
+                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.AddOnlineCommand}"
+                                        CommandParameter="{Binding}"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+    </Border>
+</UserControl>
