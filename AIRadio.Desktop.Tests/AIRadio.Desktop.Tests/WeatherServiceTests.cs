@@ -210,6 +210,183 @@ public class WeatherServiceTests
         Assert.Null(await service.GetWeatherAsync("不存在的城市xyz", null, null, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task GetWeatherAsync_CacheKeyIsolatesLanguages_ReQueriesOnLanguageChange()
+    {
+        AppLanguage.Apply("zh");
+        try
+        {
+            var handler = new RoutingHandler(new Dictionary<string, Func<string>>
+            {
+                ["geocoding-api.open-meteo.com/v1/search"] = () => AppLanguage.Current == "en"
+                    ? "{\"results\":[{\"name\":\"Chengdu\",\"latitude\":30.67,\"longitude\":104.07}]}"
+                    : "{\"results\":[{\"name\":\"成都\",\"latitude\":30.67,\"longitude\":104.07}]}",
+                ["api.open-meteo.com/v1/forecast"] =
+                    () => "{\"current\":{\"weather_code\":2,\"temperature_2m\":18.0}}",
+            });
+            using var client = new HttpClient(handler);
+            var service = new WeatherService(client);
+
+            var zhWeather = await service.GetWeatherAsync("成都", null, null, CancellationToken.None);
+            Assert.NotNull(zhWeather);
+            Assert.Equal("成都", zhWeather.LocationName);
+            Assert.Equal(2, handler.Requests.Count);
+
+            AppLanguage.Apply("en");
+            var enWeather = await service.GetWeatherAsync("Chengdu", null, null, CancellationToken.None);
+            Assert.NotNull(enWeather);
+            Assert.Equal("Chengdu", enWeather.LocationName);
+            Assert.Equal(4, handler.Requests.Count);
+
+            // 同城市同坐标在 en 下再次请求也必须与 zh 缓存键隔离
+            var enCoords = await service.GetWeatherAsync("Chengdu", 30.67, 104.07, CancellationToken.None);
+            Assert.NotNull(enCoords);
+            Assert.Equal("Chengdu", enCoords.LocationName);
+            AppLanguage.Apply("zh");
+            var zhCoords = await service.GetWeatherAsync("成都", 30.67, 104.07, CancellationToken.None);
+            Assert.NotNull(zhCoords);
+            Assert.Equal("成都", zhCoords.LocationName);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_CoordsWithEmptyCity_UsesLocalizedCurrentLocationFallback()
+    {
+        AppLanguage.Apply("en");
+        try
+        {
+            var handler = new RoutingHandler(new Dictionary<string, Func<string>>
+            {
+                ["api.open-meteo.com/v1/forecast"] =
+                    () => "{\"current\":{\"weather_code\":0,\"temperature_2m\":20.0}}",
+            });
+            using var client = new HttpClient(handler);
+            var service = new WeatherService(client);
+
+            var enWeather = await service.GetWeatherAsync("  ", 30.67, 104.07, CancellationToken.None);
+            Assert.NotNull(enWeather);
+            Assert.Equal("Current location", enWeather.LocationName);
+
+            AppLanguage.Apply("zh");
+            var zhWeather = await service.GetWeatherAsync("  ", 30.67, 104.07, CancellationToken.None);
+            Assert.NotNull(zhWeather);
+            Assert.Equal("当前位置", zhWeather.LocationName);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public async Task LocateByIpAsync_SendsLanguageQueryParam()
+    {
+        AppLanguage.Apply("en");
+        try
+        {
+            var handler = new RoutingHandler(new Dictionary<string, Func<string>>
+            {
+                ["ip-api.com/json"] =
+                    () => "{\"status\":\"success\",\"lat\":30.67,\"lon\":104.07,\"city\":\"Chengdu\",\"regionName\":\"Sichuan\",\"country\":\"China\"}",
+            });
+            using var client = new HttpClient(handler);
+            var service = new WeatherService(client);
+
+            var enPlace = await service.LocateByIpAsync(CancellationToken.None);
+            Assert.NotNull(enPlace);
+            Assert.Contains("lang=en", handler.Requests[0]);
+
+            AppLanguage.Apply("zh");
+            var zhPlace = await service.LocateByIpAsync(CancellationToken.None);
+            Assert.NotNull(zhPlace);
+            Assert.Contains("lang=zh-CN", handler.Requests[1]);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public async Task SearchPlacesAsync_ChineseQueryInEnglishMode_FallsBackToZhAndResolvesViaGet()
+    {
+        AppLanguage.Apply("en");
+        try
+        {
+            using var client = new HttpClient(new LambdaHandler(url =>
+            {
+                if (url.Contains("v1/search") && url.Contains("language=en"))
+                    return "{\"generationtime_ms\":0.15}";
+                if (url.Contains("v1/search") && url.Contains("language=zh"))
+                    return "{\"results\":[{\"id\":1815286,\"name\":\"成都\",\"latitude\":30.66667,\"longitude\":104.06667,\"admin1\":\"四川\",\"country\":\"中国\"}]}";
+                if (url.Contains("v1/get") && url.Contains("id=1815286") && url.Contains("language=en"))
+                    return "{\"id\":1815286,\"name\":\"Chengdu\",\"latitude\":30.66667,\"longitude\":104.06667,\"admin1\":\"Sichuan\",\"country\":\"China\"}";
+                return "{}";
+            }));
+            var service = new WeatherService(client);
+
+            var places = await service.SearchPlacesAsync("成都", CancellationToken.None);
+
+            Assert.NotNull(places);
+            var place = Assert.Single(places);
+            Assert.Equal("Chengdu", place.Name);
+            Assert.Equal("Sichuan", place.Admin);
+            Assert.Equal("China", place.Country);
+            Assert.Equal(30.66667, place.Latitude, 4);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_SameCoordsDifferentCityName_DoesNotReturnStaleCachedName()
+    {
+        AppLanguage.Apply("en");
+        try
+        {
+            var handler = new RoutingHandler(new Dictionary<string, Func<string>>
+            {
+                ["api.open-meteo.com/v1/forecast"] =
+                    () => "{\"current\":{\"weather_code\":3,\"temperature_2m\":17.0}}",
+            });
+            using var client = new HttpClient(handler);
+            var service = new WeatherService(client);
+
+            var initial = await service.GetWeatherAsync("成都", 30.67, 104.07, CancellationToken.None);
+            Assert.NotNull(initial);
+            Assert.Equal("成都", initial.LocationName);
+
+            var relocalized = await service.GetWeatherAsync("Chengdu", 30.67, 104.07, CancellationToken.None);
+            Assert.NotNull(relocalized);
+            Assert.Equal("Chengdu", relocalized.LocationName);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+        }
+    }
+
+    private sealed class LambdaHandler : HttpMessageHandler
+    {
+        private readonly Func<string, string> _respond;
+        public LambdaHandler(Func<string, string> respond) => _respond = respond;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = _respond(request.RequestUri?.AbsoluteUri ?? string.Empty);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            });
+        }
+    }
+
     [Theory]
     [InlineData(0, WeatherKind.Sunny)]
     [InlineData(2, WeatherKind.Cloudy)]

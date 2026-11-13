@@ -1324,4 +1324,55 @@ public class PlaylistViewModelTests
         Assert.Equal("晴天", PlaylistViewModel.FormatTrackInfo("晴天", ""));
         Assert.Equal("晴天", PlaylistViewModel.FormatTrackInfo("晴天", null));
     }
+
+    [Fact]
+    public async Task LanguageChange_RefreshesFavoritesAndRadioAndLibraryStatuses()
+    {
+        var (vm, _, _) = CreateVm();
+        var favOnlyTrack = new Track
+        {
+            Id = "radio-fav-1",
+            SourceId = "radio:fav-1",
+            Title = "Lofi Radio",
+            Artist = string.Empty,
+            Album = string.Empty,
+            Playability = TrackPlayability.Failed
+        };
+        var changedProps = new List<string?>();
+        favOnlyTrack.PropertyChanged += OnTrackChanged;
+        try
+        {
+            vm.Tracks.Add(new Track { Id = "t1", Title = "Demo", Artist = "Tester" });
+            vm.Favorites.Add(favOnlyTrack);
+            Assert.Equal("未知艺术家", favOnlyTrack.DisplayArtist);
+
+            // 触发电台收藏空状态和本地歌单清空状态
+            var favCategory = vm.RadioCategories.First(c => c.Key == "favorites");
+            vm.Favorites.Remove(favOnlyTrack);
+            vm.SelectedRadioCategory = favCategory;
+            await WaitUntilAsync(() => vm.RadioStatusMessage.Contains("暂无收藏电台"));
+            vm.Favorites.Add(favOnlyTrack);
+
+            vm.ClearPlaylistCommand.Execute().Subscribe();
+            Assert.Contains("5 秒内再次点击确认", vm.LocalLibraryStatus);
+
+            AppLanguage.Apply("en");
+
+            Assert.Contains(nameof(Track.DisplayArtist), changedProps);
+            Assert.Contains(nameof(Track.DisplayAlbum), changedProps);
+            Assert.Contains(nameof(Track.PlayabilityText), changedProps);
+            Assert.DoesNotContain(favOnlyTrack.DisplayArtist, c => c is >= '\u4e00' and <= '\u9fff');
+            Assert.DoesNotContain(vm.RadioStatusMessage, c => c is >= '\u4e00' and <= '\u9fff');
+            Assert.DoesNotContain(vm.LocalLibraryStatus, c => c is >= '\u4e00' and <= '\u9fff');
+        }
+        finally
+        {
+            favOnlyTrack.PropertyChanged -= OnTrackChanged;
+            AppLanguage.Apply("zh");
+            vm.Dispose();
+        }
+
+        void OnTrackChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+            => changedProps.Add(e.PropertyName);
+    }
 }

@@ -515,6 +515,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             RefreshLocalizedProgramText();
             WeatherVM.RebuildTooltips();
+            // IP 自动定位（城市留空）时不会触发 WeatherCity 变更；切换语言后按新语言重取定位城市名
+            if (string.IsNullOrWhiteSpace(SettingsVM.WeatherCity))
+                _ = WeatherVM.RefreshWeatherAsync(SettingsVM.WeatherCity, SettingsVM.WeatherLatitude, SettingsVM.WeatherLongitude);
             UpdateSleepTimerTooltip();
             UpdateSleepTimerState();
             UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
