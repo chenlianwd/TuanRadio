@@ -391,7 +391,13 @@ public partial class MainWindow : Window, IDisposable
 
     private void OnSleepTimerOptionClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        SleepTimerButton?.Flyout?.Hide();
+        // Button.OnClick 先触发 Click 事件再执行 Command；若同步 Hide() 会拆离 Flyout
+        // 导致 Button.Command 绑定失效而跳过 SetSleepTimerCommand。推迟到当前点击管线结束后收起。
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (SleepTimerButton?.Flyout is { IsOpen: true } flyout)
+                flyout.Hide();
+        });
     }
 
     public void Dispose()

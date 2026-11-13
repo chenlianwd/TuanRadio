@@ -267,11 +267,19 @@
                                             <!-- 分隔线 -->
                                             <Rectangle Height="1" Fill="#20FFFFFF" Margin="0,2,0,2"/>
 
-                                            <!-- 到期退出应用勾选 -->
-                                            <CheckBox IsChecked="{Binding SleepTimerCloseAppOnExpiry, Mode=TwoWay}"
-                                                      Foreground="{DynamicResource C_FFEDEDF5}" FontSize="12" Margin="4,2,0,0">
-                                                <TextBlock Text="{DynamicResource S_SleepTimerCloseApp}" VerticalAlignment="Center"/>
-                                            </CheckBox>
+                                            <!-- 定时结束后动作说明与退出应用勾选 -->
+                                            <StackPanel Spacing="2" Margin="4,2,0,0">
+                                                <CheckBox IsChecked="{Binding SleepTimerCloseAppOnExpiry, Mode=TwoWay}"
+                                                          Foreground="{DynamicResource C_FFEDEDF5}" FontSize="12"
+                                                          ToolTip.Tip="{DynamicResource S_SleepTimerCloseAppHint}">
+                                                    <TextBlock Text="{DynamicResource S_SleepTimerCloseApp}" VerticalAlignment="Center"/>
+                                                </CheckBox>
+                                                <TextBlock Text="{DynamicResource S_SleepTimerCloseAppHint}"
+                                                           FontSize="10"
+                                                           Foreground="{DynamicResource C_FF9B9BA8}"
+                                                           Margin="24,0,0,0"
+                                                           TextWrapping="Wrap"/>
+                                            </StackPanel>
                                         </StackPanel>
                                     </Flyout>
                                 </Button.Flyout>
