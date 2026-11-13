@@ -419,4 +419,45 @@ public partial class PlaylistDrawer : UserControl
                 vm.PlaylistVM.LocalLibraryStatus = Services.AppLanguage.T("本地曲库重扫失败", "Local library rescan failed");
         }
     }
+
+    private async void OnChoosePlaylistFileClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is not MainWindowViewModel vm)
+                return;
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel == null)
+                return;
+
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = Services.AppLanguage.Get("S_ImportPlaylistFile"),
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new Avalonia.Platform.Storage.FilePickerFileType("Radio Playlists (*.m3u, *.m3u8, *.pls)")
+                    {
+                        Patterns = ["*.m3u", "*.m3u8", "*.pls"]
+                    },
+                    Avalonia.Platform.Storage.FilePickerFileTypes.All
+                ]
+            });
+
+            var file = files.Count > 0 ? files[0] : null;
+            var localPath = file?.Path.LocalPath;
+            if (!string.IsNullOrWhiteSpace(localPath))
+                await vm.PlaylistVM.LoadImportPlaylistFileAsync(localPath);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Choose playlist file failed");
+        }
+    }
+
+    private void OnCustomUrlKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm && !vm.PlaylistVM.IsProbingStream)
+            vm.PlaylistVM.ProbeCustomStreamCommand.Execute(Unit.Default).Subscribe();
+    }
 }

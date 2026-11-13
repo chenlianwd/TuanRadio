@@ -128,7 +128,12 @@ public sealed class PlaybackPreflightService : IDisposable
                     : track.FilePath;
                 if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
                 {
-                    var isValid = await MediaUriPolicy.ValidateAsync(ProviderNetworkScope.PublicInternet, uri, cancellationToken);
+                    var isCustom =
+                        (track.SourceId?.StartsWith(RadioStation.SourcePrefix + RadioStation.CustomUuidPrefix, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                        (track.ProviderMetadata.TryGetValue("custom_station", out var cs) && string.Equals(cs, "true", StringComparison.OrdinalIgnoreCase));
+                    var isValid = isCustom
+                        ? await MediaUriPolicy.ValidateCustomRadioAsync(uri, cancellationToken)
+                        : await MediaUriPolicy.ValidateAsync(ProviderNetworkScope.PublicInternet, uri, cancellationToken);
                     failure = isValid ? PlaybackFailureKind.None : PlaybackFailureKind.SourceUnavailable;
                 }
                 else

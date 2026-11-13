@@ -54,6 +54,12 @@
             <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
             <Setter Property="FontWeight" Value="700"/>
         </Style>
+        <Style Selector="TextBlock.probe-status">
+            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+        </Style>
+        <Style Selector="TextBlock.probe-status.warning">
+            <Setter Property="Foreground" Value="{DynamicResource StateSearchingColor}"/>
+        </Style>
     </UserControl.Styles>
 
     <Border IsVisible="{Binding IsLibraryOpen}"
@@ -225,11 +231,11 @@
                     </Grid>
                 </StackPanel>
                 <!-- tab5 网络电台流派与搜索栏 -->
-                <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6" Margin="0,0,10,0"
+                <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="6" Margin="0,0,10,0"
                       IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=5}">
                     <ComboBox ItemsSource="{Binding PlaylistVM.RadioCategories}"
                               SelectedItem="{Binding PlaylistVM.SelectedRadioCategory, Mode=TwoWay}"
-                              Width="105" Height="32" VerticalAlignment="Center">
+                              Width="112" Height="32" VerticalAlignment="Center">
                         <ComboBox.ItemTemplate>
                             <DataTemplate DataType="vm:RadioCategoryItem">
                                 <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/>
@@ -245,6 +251,11 @@
                             Command="{Binding PlaylistVM.RefreshRadioStationsCommand}"
                             ToolTip.Tip="{DynamicResource S_RefreshProgram}"
                             AutomationProperties.Name="{DynamicResource S_RefreshProgram}"/>
+                    <Button Grid.Column="3" Content="+" Width="32" Height="32" Padding="0"
+                            VerticalAlignment="Center" FontSize="16" FontWeight="600"
+                            Command="{Binding PlaylistVM.OpenAddCustomStationCommand}"
+                            ToolTip.Tip="{DynamicResource S_AddRadioStation}"
+                            AutomationProperties.Name="{DynamicResource S_AddRadioStation}"/>
                 </Grid>
                 <TextBlock Grid.Row="2" Text="{Binding PlaylistVM.SearchStatusMessage}"
                            IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=2}"
@@ -554,50 +565,197 @@
                             </ListBox>
                         </Grid>
                         <!-- tab5 网络电台列表 -->
-                        <Grid IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=5}">
-                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                                        IsVisible="{Binding PlaylistVM.HasRadioStations, Converter={StaticResource InverseBoolConverter}}">
-                                <TextBlock Text="{Binding PlaylistVM.RadioStatusMessage}" MaxWidth="320" TextAlignment="Center"
-                                           TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
-                            </StackPanel>
-                            <ListBox ItemsSource="{Binding PlaylistVM.RadioStations}"
-                                     IsVisible="{Binding PlaylistVM.HasRadioStations}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="models:RadioStation">
-                                        <Border Classes="library-row">
-                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Name}" Classes="track-title" FontSize="13" FontWeight="700"
-                                                               FontFamily="Consolas, Microsoft YaHei UI"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding DisplayCountryAndTags}" FontSize="11"
-                                                               FontFamily="Consolas, Microsoft YaHei UI"
-                                                               Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
-                                                </StackPanel>
-                                                <Border Grid.Column="1" Background="{DynamicResource C_2221ED76}" CornerRadius="3"
-                                                        Padding="6,1" VerticalAlignment="Center"
-                                                        IsVisible="{Binding DisplayQuality, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                                    <TextBlock Text="{Binding DisplayQuality}" FontSize="9" Foreground="{DynamicResource C_FFB9FFE8}"/>
-                                                </Border>
-                                                <Button Grid.Column="2" Width="32" Height="28" Padding="0"
-                                                        ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}"
-                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.FavoriteRadioStationCommand}"
-                                                        CommandParameter="{Binding}">
-                                                    <Panel>
-                                                        <PathIcon Width="16" Height="16" IsVisible="{Binding !IsFavorite}"
-                                                              Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
-                                                        <PathIcon Width="16" Height="16" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsFavorite}"
-                                                              Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
-                                                    </Panel>
-                                                </Button>
-                                                <Button Grid.Column="3" Content="{DynamicResource S_TuneInStation}"
-                                                        Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayRadioStationCommand}"
-                                                        CommandParameter="{Binding}"/>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                        <Grid RowDefinitions="Auto,*" IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=5}">
+                            <!-- 内嵌添加/编辑/导入自定义电台卡片（彻底避免 Flyout 弹出文件选择器时失焦闪退） -->
+                            <Border Grid.Row="0" Margin="0,0,0,8" Padding="12" CornerRadius="8"
+                                    Background="{DynamicResource C_CC202126}"
+                                    BorderBrush="{DynamicResource C_667B7898}" BorderThickness="1"
+                                    IsVisible="{Binding PlaylistVM.IsCustomStationPanelOpen}">
+                                <StackPanel Spacing="8">
+                                    <!-- 顶部模式切换（非编辑模式显示） -->
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                                    IsVisible="{Binding !PlaylistVM.IsEditingCustomStation}">
+                                            <Button Content="{DynamicResource S_TabManualAdd}" Classes="sub-tab"
+                                                    Classes.active="{Binding !PlaylistVM.IsCustomImportMode}"
+                                                    Command="{Binding PlaylistVM.SwitchToManualAddModeCommand}"/>
+                                            <Button Content="{DynamicResource S_TabFileImport}" Classes="sub-tab"
+                                                    Classes.active="{Binding PlaylistVM.IsCustomImportMode}"
+                                                    Command="{Binding PlaylistVM.SwitchToFileImportModeCommand}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{DynamicResource S_EditRadioStation}" FontSize="12" FontWeight="700"
+                                                   Foreground="{DynamicResource C_FFFFFFFF}"
+                                                   VerticalAlignment="Center"
+                                                   IsVisible="{Binding PlaylistVM.IsEditingCustomStation}"/>
+                                        <Button Grid.Column="1" Content="✕" Width="26" Height="26" Padding="0" FontSize="11"
+                                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                ToolTip.Tip="{DynamicResource S_Cancel}"
+                                                AutomationProperties.Name="{DynamicResource S_Cancel}"
+                                                Command="{Binding PlaylistVM.CloseCustomStationPanelCommand}"/>
+                                    </Grid>
+
+                                    <!-- 手动添加/编辑视图 -->
+                                    <StackPanel Spacing="6" IsVisible="{Binding !PlaylistVM.IsCustomImportMode}">
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                            <TextBox Text="{Binding PlaylistVM.CustomStationUrl, Mode=TwoWay}"
+                                                     Height="30" Padding="8,0" FontSize="12" VerticalContentAlignment="Center"
+                                                     Watermark="{DynamicResource S_StreamUrlPlaceholder}"
+                                                     KeyDown="OnCustomUrlKeyDown"/>
+                                            <Button Grid.Column="1" Content="{DynamicResource S_ProbeStream}"
+                                                    Height="30" Padding="10,0" FontSize="11"
+                                                    IsEnabled="{Binding !PlaylistVM.IsProbingStream}"
+                                                    Command="{Binding PlaylistVM.ProbeCustomStreamCommand}"/>
+                                        </Grid>
+
+                                        <TextBlock Text="{Binding PlaylistVM.ProbeStatusText}" FontSize="11" TextWrapping="Wrap"
+                                                   Classes="probe-status"
+                                                   Classes.warning="{Binding PlaylistVM.ProbeIsWarning}"
+                                                   IsVisible="{Binding PlaylistVM.ProbeStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                                        <TextBox Text="{Binding PlaylistVM.CustomStationName, Mode=TwoWay}"
+                                                 Height="30" Padding="8,0" FontSize="12" VerticalContentAlignment="Center"
+                                                 Watermark="{DynamicResource S_StationNamePlaceholder}"/>
+
+                                        <Grid ColumnDefinitions="*,80,70" ColumnSpacing="6">
+                                            <TextBox Text="{Binding PlaylistVM.CustomStationTags, Mode=TwoWay}"
+                                                     Height="30" Padding="8,0" FontSize="12" VerticalContentAlignment="Center"
+                                                     Watermark="{DynamicResource S_StationTagsPlaceholder}"/>
+                                            <TextBox Grid.Column="1" Text="{Binding PlaylistVM.CustomStationCodec, Mode=TwoWay}"
+                                                     Height="30" Padding="8,0" FontSize="11" VerticalContentAlignment="Center"
+                                                     Watermark="MP3"/>
+                                            <TextBox Grid.Column="2" Text="{Binding PlaylistVM.CustomStationBitrateText, Mode=TwoWay}"
+                                                     Height="30" Padding="8,0" FontSize="11" VerticalContentAlignment="Center"
+                                                     Watermark="kbps"/>
+                                        </Grid>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,4,0,0">
+                                            <Button Content="{DynamicResource S_Cancel}" Padding="10,5" FontSize="11"
+                                                    Command="{Binding PlaylistVM.CloseCustomStationPanelCommand}"/>
+                                            <Button Content="{DynamicResource S_SaveOnly}" Padding="10,5" FontSize="11"
+                                                    Command="{Binding PlaylistVM.SaveCustomStationOnlyCommand}"/>
+                                            <Button Content="{DynamicResource S_SaveAndPlay}" Padding="12,5" FontSize="11" FontWeight="600"
+                                                    Background="{DynamicResource C_2221ED76}"
+                                                    BorderBrush="{DynamicResource AccentGreen}" BorderThickness="1"
+                                                    Foreground="{DynamicResource AccentGreen}"
+                                                    Command="{Binding PlaylistVM.SaveAndPlayCustomStationCommand}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- 从文件导入视图 -->
+                                    <StackPanel Spacing="8" IsVisible="{Binding PlaylistVM.IsCustomImportMode}">
+                                        <Button Content="{DynamicResource S_ChoosePlaylistFile}"
+                                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                                Padding="12,10" FontSize="12"
+                                                Click="OnChoosePlaylistFileClick"/>
+
+                                        <TextBlock Text="{Binding PlaylistVM.ImportSummaryText}" FontSize="11" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource C_FF9B9BA8}"
+                                                   IsVisible="{Binding PlaylistVM.ImportSummaryText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                                        <ListBox ItemsSource="{Binding PlaylistVM.ImportPreviewStations}"
+                                                 MaxHeight="130"
+                                                 IsVisible="{Binding PlaylistVM.HasImportPreview}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate DataType="models:RadioStation">
+                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6" Margin="2">
+                                                        <TextBlock Text="{Binding Name}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Codec}" FontSize="10" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
+                                            <Button Content="{DynamicResource S_Cancel}" Padding="10,5" FontSize="11"
+                                                    Command="{Binding PlaylistVM.CloseCustomStationPanelCommand}"/>
+                                            <Button Content="{DynamicResource S_ImportAll}" Padding="12,5" FontSize="11" FontWeight="600"
+                                                    Background="{DynamicResource C_2221ED76}"
+                                                    BorderBrush="{DynamicResource AccentGreen}" BorderThickness="1"
+                                                    Foreground="{DynamicResource AccentGreen}"
+                                                    IsEnabled="{Binding PlaylistVM.HasImportPreview}"
+                                                    Command="{Binding PlaylistVM.ConfirmImportCustomStationsCommand}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Grid.Row="1">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                            IsVisible="{Binding PlaylistVM.HasRadioStations, Converter={StaticResource InverseBoolConverter}}">
+                                    <TextBlock Text="{Binding PlaylistVM.RadioStatusMessage}" MaxWidth="320" TextAlignment="Center"
+                                               TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                                </StackPanel>
+                                <ListBox ItemsSource="{Binding PlaylistVM.RadioStations}"
+                                         IsVisible="{Binding PlaylistVM.HasRadioStations}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="models:RadioStation">
+                                            <Border Classes="library-row">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="{DynamicResource S_TuneInStation}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayRadioStationCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                        <MenuItem Header="{DynamicResource S_Favorite}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.FavoriteRadioStationCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                        <Separator IsVisible="{Binding IsCustom}"/>
+                                                        <MenuItem Header="{DynamicResource S_EditRadioStation}"
+                                                                  IsVisible="{Binding IsCustom}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.EditCustomStationCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                        <MenuItem Header="{DynamicResource S_DeleteRadioStation}"
+                                                                  IsVisible="{Binding IsCustom}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.DeleteCustomStationCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="6">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Name}" Classes="track-title" FontSize="13" FontWeight="700"
+                                                                   FontFamily="Consolas, Microsoft YaHei UI"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DisplayCountryAndTags}" FontSize="11"
+                                                                   FontFamily="Consolas, Microsoft YaHei UI"
+                                                                   Foreground="{DynamicResource C_FF9B9BA8}" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="1" Background="{DynamicResource C_2221ED76}" CornerRadius="3"
+                                                            Padding="6,1" VerticalAlignment="Center"
+                                                            IsVisible="{Binding DisplayQuality, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                        <TextBlock Text="{Binding DisplayQuality}" FontSize="9" Foreground="{DynamicResource C_FFB9FFE8}"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
+                                                                IsVisible="{Binding IsCustom}">
+                                                        <Button Content="✎" Width="26" Height="26" Padding="0" FontSize="11"
+                                                                ToolTip.Tip="{DynamicResource S_EditRadioStation}"
+                                                                AutomationProperties.Name="{DynamicResource S_EditRadioStation}"
+                                                                Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.EditCustomStationCommand}"
+                                                                CommandParameter="{Binding}"/>
+                                                        <Button Content="✕" Width="26" Height="26" Padding="0" FontSize="11"
+                                                                ToolTip.Tip="{DynamicResource S_DeleteRadioStation}"
+                                                                AutomationProperties.Name="{DynamicResource S_DeleteRadioStation}"
+                                                                Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.DeleteCustomStationCommand}"
+                                                                CommandParameter="{Binding}"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="3" Width="32" Height="28" Padding="0"
+                                                            ToolTip.Tip="{DynamicResource S_Favorite}" AutomationProperties.Name="{DynamicResource S_Favorite}"
+                                                            Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.FavoriteRadioStationCommand}"
+                                                            CommandParameter="{Binding}">
+                                                        <Panel>
+                                                            <PathIcon Width="16" Height="16" IsVisible="{Binding !IsFavorite}"
+                                                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                            <PathIcon Width="16" Height="16" Foreground="{DynamicResource C_FF56F5C4}" IsVisible="{Binding IsFavorite}"
+                                                                  Data="M20.8,4.6 C18.9,2.9 16,3.1 14.3,5 L12,7.3 L9.7,5 C8,3.1 5.1,2.9 3.2,4.6 C1.1,6.5 1,9.8 3,11.8 L12,21 L21,11.8 C23,9.8 22.9,6.5 20.8,4.6 Z"/>
+                                                        </Panel>
+                                                    </Button>
+                                                    <Button Grid.Column="4" Content="{DynamicResource S_TuneInStation}"
+                                                            Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayRadioStationCommand}"
+                                                            CommandParameter="{Binding}"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
                         </Grid>
                     </Grid>
                 </Grid>
