@@ -299,4 +299,89 @@ public sealed class SettingsWeatherCityTests
             File.Delete(settingsFile);
         }
     }
+
+    [Fact]
+    public async Task LanguageSwitch_RelocalizesConfirmedWeatherCity_AndPreservesCoords()
+    {
+        AppLanguage.Apply("zh");
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var weather = new FakeWeatherService
+            {
+                SearchHandler = _ => Task.FromResult<IReadOnlyList<GeoPlace>?>(AppLanguage.Current == "en"
+                    ? new[] { new GeoPlace("Chengdu", "Sichuan", "China", 30.67, 104.07) }
+                    : new[] { Chengdu })
+            };
+            using var vm = CreateVm(weather, settingsFile);
+            vm.SelectWeatherCityCommand.Execute(Chengdu).Subscribe();
+            Assert.Equal("成都", vm.WeatherCity);
+
+            vm.SelectedLanguage = "en";
+            // 等待异步重查 + 300ms 联想节流窗口均安全收束
+            await Task.Delay(500);
+
+            Assert.Equal("Chengdu", vm.WeatherCity);
+            Assert.Equal(30.67, vm.WeatherLatitude);
+            Assert.Equal(104.07, vm.WeatherLongitude);
+            Assert.Empty(vm.WeatherCitySuggestions);
+
+            // 验证切换回中文后也能再本地化回成都
+            vm.SelectedLanguage = "zh";
+            await Task.Delay(500);
+
+            Assert.Equal("成都", vm.WeatherCity);
+            Assert.Equal(30.67, vm.WeatherLatitude);
+            Assert.Equal(104.07, vm.WeatherLongitude);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            if (File.Exists(settingsFile))
+                File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_InEnglishModeWithChineseWeatherCity_RelocalizesToEnglish()
+    {
+        AppLanguage.Apply("zh");
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            await File.WriteAllTextAsync(settingsFile, """
+                {
+                  "language": "en",
+                  "weather_city": "成都",
+                  "weather_latitude": 30.67,
+                  "weather_longitude": 104.07
+                }
+                """);
+            var weather = new FakeWeatherService
+            {
+                SearchHandler = async _ =>
+                {
+                    // 模拟真实网络耗时大于 300ms 输入节流窗口，确认节流自检不会作废语言本地化重查
+                    await Task.Delay(400);
+                    return new[] { new GeoPlace("Chengdu", "Sichuan", "China", 30.67, 104.07) };
+                }
+            };
+            using var vm = CreateVm(weather, settingsFile);
+
+            await vm.LoadAsync();
+            await Task.Delay(900);
+
+            Assert.Equal("en", AppLanguage.Current);
+            Assert.Equal("Chengdu", vm.WeatherCity);
+            Assert.Equal(30.67, vm.WeatherLatitude);
+            Assert.Equal(104.07, vm.WeatherLongitude);
+            Assert.Empty(vm.WeatherCitySuggestions);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            if (File.Exists(settingsFile))
+                File.Delete(settingsFile);
+        }
+    }
 }

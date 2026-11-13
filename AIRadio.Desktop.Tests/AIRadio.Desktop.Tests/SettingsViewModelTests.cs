@@ -1478,6 +1478,31 @@ public class SettingsViewModelTests
     }
 
     [Fact]
+    public void ProfileCard_EnglishLanguage_UsesEnglishCommaSeparator()
+    {
+        AppLanguage.Apply("zh");
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.GetSnapshot()).Returns(CreatePopulatedSnapshot());
+        var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile(),
+            listeningProfile: profile.Object);
+        try
+        {
+            vm.ShowProfileTabCommand.Execute().Subscribe();
+            Assert.Equal("周杰伦、林俊杰", vm.ProfileTopArtistsText);
+
+            vm.SelectedLanguage = "en";
+
+            Assert.Equal("周杰伦, 林俊杰", vm.ProfileTopArtistsText);
+            Assert.Equal("周杰伦 ×32, 林俊杰", vm.ProfileTopArtistsDetail);
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
     public void ProfileCard_DataWithoutDigest_ShowsCardWithPlaceholderState()
     {
         // 已过冷启动有歌手/黑名单数据但 digest 未生成（LLM 未配置/归纳中/退避中）：

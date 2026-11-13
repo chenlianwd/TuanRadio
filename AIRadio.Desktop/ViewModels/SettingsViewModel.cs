@@ -91,8 +91,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     // 不弹联想不清坐标；改写为不同文本才触发搜索（节流回调晚于程序赋值，
     // 标志位拦不住，只能按内容判断）
     private string? _selectedWeatherPlaceName;
+    // 语言切换/启动本地化改写 WeatherCity 时的一次性抑制值（非确认态也避免 300ms 节流回调清除坐标或弹联想）
+    private string? _suppressedWeatherSearchText;
     // 联想请求代次：迟到的旧结果不覆盖新一轮输入
     private int _weatherSearchEpoch;
+    // 语言本地化重查代次：不受 confirmed-city 节流自检干扰，只在用户清空/改输/再次切换语言/点选时作废
+    private int _weatherRelocalizeEpoch;
     private Func<string>? _audiusStatusFactory;
     private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
@@ -132,6 +136,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private Func<string>? _neteaseAccountStatusFactory;
     private Func<string>? _kugouAccountStatusFactory;
     private Func<string>? _updateStatusFactory;
+    private Func<string>? _voicePreviewStatusFactory;
     private readonly IAppUpdateService _appUpdate;
     private readonly Action<string> _openExternalUrl;
     private AppUpdateCheckResult? _pendingUpdate;
@@ -646,10 +651,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             RefreshUpdateTexts();
             if (_updateStatusFactory != null)
                 UpdateStatusText = _updateStatusFactory();
+            if (_voicePreviewStatusFactory != null)
+                VoicePreviewStatus = _voicePreviewStatusFactory();
             if (IsYtdlpCookieNoticeVisible && SelectedYtdlpBrowser is { Id.Length: > 0 } browser)
                 YtdlpCookieNotice = BuildYtdlpCookieNotice(browser.Id);
             RebuildLocalizedOptionLists();
             foreach (var option in MusicProviders) option.RefreshLanguage();
+            _ = RelocalizeWeatherCityAsync(onlyWhenScriptMismatches: false);
         };
         AppLanguage.Changed += _onLanguageChanged;
 
@@ -1198,6 +1206,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             // 云端 Key 从凭据槽回填晚到时由 ApiKey 触发源自动重拉）
             _ = RefreshLocalModelsAsync();
 
+            // 若磁盘保存的天气城市名与当前界面语言文字不匹配（例如英文界面下仍保存着"成都"），按当前语言异步刷新显示名
+            _ = RelocalizeWeatherCityAsync(onlyWhenScriptMismatches: true);
+
             // 必须是 try 的最后一条语句：加载流程完整跑完才放行保存；中途任何异常都会
             // 跳过本语句，让 SaveAsync 的加载守卫把停留在半加载/全默认态的 VM 挡在写盘
             // 之外。盘上文件缺失/损坏读到 null 也算跑完（损坏时无数据可保）；已知缺口：
@@ -1315,7 +1326,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         {
             // 清空回到 IP 自动定位；bump 代次作废在途搜索，防迟到结果在清空后弹候选
             _ = Interlocked.Increment(ref _weatherSearchEpoch);
+            _ = Interlocked.Increment(ref _weatherRelocalizeEpoch);
             _selectedWeatherPlaceName = null;
+            _suppressedWeatherSearchText = null;
             WeatherLatitude = null;
             WeatherLongitude = null;
             return;
@@ -1323,9 +1336,20 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         // 加载/点选/定位落定的标准名原样保留：确认态不弹联想；同样作废在途搜索
         if (string.Equals(query, _selectedWeatherPlaceName, StringComparison.Ordinal))
         {
+            _suppressedWeatherSearchText = null;
             _ = Interlocked.Increment(ref _weatherSearchEpoch);
             return;
         }
+        // 语言自动本地化改写（未确认自由文本场景）：跳过一次联想与清坐标，仅消费本轮赋值
+        if (!string.IsNullOrEmpty(_suppressedWeatherSearchText) &&
+            string.Equals(query, _suppressedWeatherSearchText, StringComparison.Ordinal))
+        {
+            _suppressedWeatherSearchText = null;
+            _ = Interlocked.Increment(ref _weatherSearchEpoch);
+            return;
+        }
+        _suppressedWeatherSearchText = null;
+        _ = Interlocked.Increment(ref _weatherRelocalizeEpoch);
 
         // 改写为不同文本：坐标作废（自由文本经 geocoding 解析），由用户点选候选升级回坐标直取
         WeatherLatitude = null;
@@ -1397,6 +1421,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     private void ApplyWeatherPlace(GeoPlace place)
     {
+        _ = Interlocked.Increment(ref _weatherRelocalizeEpoch);
+        _suppressedWeatherSearchText = null;
         WeatherCity = place.Name;
         _selectedWeatherPlaceName = place.Name;
         WeatherLatitude = place.Latitude;
@@ -1405,6 +1431,99 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         WeatherCityNoMatch = false;
         WeatherCitySearchFailed = false;
         _ = SaveUiStateCommand.Execute().Subscribe();
+    }
+
+    /// <summary>
+    /// 语言切换或启动加载后按当前界面语言刷新已配置的城市显示名（例如 "成都" ↔ "Chengdu"）：
+    /// 保留原有经纬度并抑制联想弹窗；查询失败或无匹配时保持原值不动。
+    /// </summary>
+    internal async Task RelocalizeWeatherCityAsync(bool onlyWhenScriptMismatches)
+    {
+        if (_disposed != 0)
+            return;
+        var currentCity = WeatherCity?.Trim();
+        if (string.IsNullOrEmpty(currentCity))
+            return;
+
+        var targetLang = AppLanguage.Current == "en" ? "en" : "zh";
+        if (onlyWhenScriptMismatches)
+        {
+            var hasCjk = ContainsCjk(currentCity);
+            if ((targetLang == "en" && !hasCjk) || (targetLang == "zh" && hasCjk))
+                return;
+        }
+
+        if (string.Equals(currentCity, "当前位置", StringComparison.Ordinal) ||
+            string.Equals(currentCity, "Current location", StringComparison.OrdinalIgnoreCase))
+        {
+            var fallback = AppLanguage.T("当前位置", "Current location");
+            if (!string.Equals(currentCity, fallback, StringComparison.Ordinal))
+                ApplyRelocalizedWeatherCity(currentCity, fallback);
+            return;
+        }
+
+        var relocalizeEpoch = Interlocked.Increment(ref _weatherRelocalizeEpoch);
+        IReadOnlyList<GeoPlace>? places;
+        try
+        {
+            places = await _weather.SearchPlacesAsync(currentCity, _lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Debug(ex, "Weather city relocalization failed");
+            return;
+        }
+
+        if (_disposed != 0 ||
+            places == null ||
+            places.Count == 0 ||
+            !string.Equals(WeatherCity?.Trim(), currentCity, StringComparison.Ordinal) ||
+            !string.Equals(AppLanguage.Current == "en" ? "en" : "zh", targetLang, StringComparison.Ordinal) ||
+            relocalizeEpoch != Volatile.Read(ref _weatherRelocalizeEpoch))
+        {
+            return;
+        }
+
+        GeoPlace? matched = null;
+        if (WeatherLatitude is { } lat && WeatherLongitude is { } lon)
+        {
+            matched = places
+                .Select(p => (Place: p, DistSq: (p.Latitude - lat) * (p.Latitude - lat) + (p.Longitude - lon) * (p.Longitude - lon)))
+                .Where(x => x.DistSq <= 1.0)
+                .OrderBy(x => x.DistSq)
+                .Select(x => x.Place)
+                .FirstOrDefault();
+        }
+        matched ??= places[0];
+
+        var localizedName = matched.Name?.Trim();
+        if (string.IsNullOrEmpty(localizedName) || string.Equals(localizedName, currentCity, StringComparison.Ordinal))
+            return;
+
+        ApplyRelocalizedWeatherCity(currentCity, localizedName);
+    }
+
+    private void ApplyRelocalizedWeatherCity(string previousCity, string localizedName)
+    {
+        if (string.Equals(_selectedWeatherPlaceName, previousCity, StringComparison.Ordinal))
+            _selectedWeatherPlaceName = localizedName;
+        else
+            _suppressedWeatherSearchText = localizedName;
+        WeatherCity = localizedName;
+    }
+
+    private static bool ContainsCjk(string text)
+    {
+        foreach (var ch in text)
+        {
+            if (ch is >= '\u4e00' and <= '\u9fff')
+                return true;
+        }
+        return false;
     }
 
     private void SetAudiusStatus(Func<string> factory)
@@ -1417,6 +1536,18 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         _openSubsonicStatusFactory = factory;
         OpenSubsonicStatus = factory();
+    }
+
+    private void SetVoicePreviewStatus(Func<string> factory)
+    {
+        _voicePreviewStatusFactory = factory;
+        VoicePreviewStatus = factory();
+    }
+
+    private void ClearVoicePreviewStatus()
+    {
+        _voicePreviewStatusFactory = null;
+        VoicePreviewStatus = string.Empty;
     }
 
     /// <summary>
@@ -1561,12 +1692,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ProfileHasImpressionTraits = impressionTraits.Count > 0;
         ProfileImpressionTraitItems = impressionTraits;
 
+        var artistSeparator = AppLanguage.T("、", ", ");
         ProfileHasTopArtists = hasTopArtists;
-        ProfileTopArtistsText = string.Join("、", snapshot.TopArtists.Take(5).Select(a => a.Artist));
-        ProfileTopArtistsDetail = string.Join("、", snapshot.TopArtists.Take(5)
+        ProfileTopArtistsText = string.Join(artistSeparator, snapshot.TopArtists.Take(5).Select(a => a.Artist));
+        ProfileTopArtistsDetail = string.Join(artistSeparator, snapshot.TopArtists.Take(5)
             .Select(a => a.PlayCount > 0 ? $"{a.Artist} ×{a.PlayCount}" : a.Artist));
         ProfileHasAvoidArtists = snapshot.AvoidArtists.Count > 0;
-        ProfileAvoidArtistsText = string.Join("、", snapshot.AvoidArtists.Select(a => a.Artist));
+        ProfileAvoidArtistsText = string.Join(artistSeparator, snapshot.AvoidArtists.Select(a => a.Artist));
         ProfileHasBlacklist = hasBlacklist;
         // 黑名单条目必有非空歌手（构建条件），空标题（合法黑名单键）显示歌手即可
         ProfileBlacklistItems = snapshot.DislikeBlacklist
@@ -1828,7 +1960,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         if (voice == null || _tts == null || _audio == null)
             return;
 
-        VoicePreviewStatus = string.Empty;
+        ClearVoicePreviewStatus();
         try
         {
             IsPreviewingVoice = true;
@@ -1838,9 +1970,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             var audio = await _tts.SynthesizeAsync(GetVoicePreviewText(voice.Id), voice.Id, "neutral", cts.Token);
             if (audio.Length <= 0)
             {
-                VoicePreviewStatus = AppLanguage.T(
+                SetVoicePreviewStatus(() => AppLanguage.T(
                     "试听失败：语音服务没有返回音频。",
-                    "Preview failed: the voice service returned no audio.");
+                    "Preview failed: the voice service returned no audio."));
             }
             else
             {
@@ -1858,19 +1990,26 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     errorSub.Dispose();
                 }
                 if (playbackError != null)
+                {
+                    ClearVoicePreviewStatus();
                     VoicePreviewStatus = playbackError;
+                }
             }
         }
         catch (OperationCanceledException)
         {
-            VoicePreviewStatus = AppLanguage.T(
+            SetVoicePreviewStatus(() => AppLanguage.T(
                 "试听超时或已取消，请稍后重试。",
-                "Preview timed out or was canceled; try again later.");
+                "Preview timed out or was canceled; try again later."));
         }
         catch (Exception ex)
         {
-            var failure = ApiFailureLocalization.ForCurrentLanguage(ApiFailureInfo.FromException(ex));
-            VoicePreviewStatus = AppLanguage.T($"试听失败：{failure.Title}", $"Preview failed: {failure.Title}");
+            var failureInfo = ApiFailureInfo.FromException(ex);
+            SetVoicePreviewStatus(() =>
+            {
+                var failure = ApiFailureLocalization.ForCurrentLanguage(failureInfo);
+                return AppLanguage.T($"试听失败：{failure.Title}", $"Preview failed: {failure.Title}");
+            });
         }
         finally
         {

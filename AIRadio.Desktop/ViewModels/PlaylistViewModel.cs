@@ -1,4 +1,4 @@
-﻿using ReactiveUI;
+using ReactiveUI;
 using ReactiveUI.SourceGenerators;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -51,7 +51,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private long _searchGeneration;
     private Func<string>? _searchStatusFactory;
     private Func<string>? _kugouStatusFactory;
-    private int? _localLibraryCount;
+    private Func<string>? _localLibraryStatusFactory;
+    private Func<string>? _radioStatusFactory;
     private readonly IDisposable _selectedKugouPlaylistSub;
     private readonly IDisposable _kugouFilterSub;
     private readonly IDisposable _selectedSyncedPlaylistSub;
@@ -228,7 +229,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             ApplyLibraryPlaylistFilter();
             SelectedLibraryTracks.Clear();
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
-            LocalLibraryStatus = AppLanguage.T($"已移除 {selected.Count} 首。", $"Removed {selected.Count} track(s).");
+            var removedCount = selected.Count;
         });
 
         FavoriteSelectedTracksCommand = ReactiveCommand.Create(() =>
@@ -247,9 +248,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             }
             if (added > 0)
                 _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
-            LocalLibraryStatus = added > 0
-                ? AppLanguage.T($"已收藏 {added} 首。", $"Favorited {added} track(s).")
-                : AppLanguage.T("所选歌曲都已在收藏中。", "All selected tracks are already favorites.");
+            var addedCount = added;
+            SetLocalLibraryStatus(addedCount > 0
+                ? () => AppLanguage.T($"已收藏 {addedCount} 首。", $"Favorited {addedCount} track(s).")
+                : () => AppLanguage.T("所选歌曲都已在收藏中。", "All selected tracks are already favorites."));
         });
 
         // 清空为破坏性操作（连带清收藏与同步歌单映射）：5 秒内再点一次确认，
@@ -267,9 +269,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             }
 
             ClearPlaylistButtonText = AppLanguage.T("再次点击确认", "Click again to confirm");
-            LocalLibraryStatus = AppLanguage.T(
+            SetLocalLibraryStatus(() => AppLanguage.T(
                 "将清空歌单、收藏与同步歌单，5 秒内再次点击确认。",
-                "This clears the playlist, favorites and synced playlists. Click again within 5 seconds to confirm.");
+                "This clears the playlist, favorites and synced playlists. Click again within 5 seconds to confirm."));
             var version = Interlocked.Increment(ref _clearPlaylistArmVersion);
             // Timer 用默认调度器（测试环境 MainThreadScheduler 可能是 Immediate，dueTime 会被忽略），
             // 回调再切回 UI 线程；版本号防 stale 解除
@@ -439,12 +441,14 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         PlayTrackNextCommand = ReactiveCommand.Create<Track>(track =>
         {
             _audioService.PlayNextInQueue(track);
-            LocalLibraryStatus = AppLanguage.T($"《{track.Title}》将在下一首播放。", $"\"{track.Title}\" will play next.");
+            var nextTitle = track.Title;
+            SetLocalLibraryStatus(() => AppLanguage.T($"《{nextTitle}》将在下一首播放。", $"\"{nextTitle}\" will play next."));
         });
         EnqueueTrackCommand = ReactiveCommand.Create<Track>(track =>
         {
             _audioService.AddToQueue(track);
-            LocalLibraryStatus = AppLanguage.T($"已将《{track.Title}》加入队列末尾。", $"Added \"{track.Title}\" to the end of the queue.");
+            var queuedTitle = track.Title;
+            SetLocalLibraryStatus(() => AppLanguage.T($"已将《{queuedTitle}》加入队列末尾。", $"Added \"{queuedTitle}\" to the end of the queue."));
         });
 
         // 在播标记：TrackChanged 可能从 LibVLC 事件线程触发，必须编组回 UI 线程再改 UI 态
@@ -525,6 +529,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         {
             foreach (var track in Tracks)
                 track.RefreshLocalization();
+            foreach (var track in Favorites)
+                track.RefreshLocalization();
             // OnlineTrack 无 INPC：搜索结果与酷狗曲目列表按新语言重绑（语言切换是低频操作）
             RebindOnlineTracks(SearchResults);
             RebindOnlineTracks(FilteredKugouPlaylistTracks);
@@ -538,8 +544,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             ClearPlaylistButtonText = Volatile.Read(ref _clearPlaylistArmed) == 1
                 ? AppLanguage.T("再次点击确认", "Click again to confirm")
                 : AppLanguage.T("清空歌单", "Clear playlist");
-            if (_localLibraryCount is { } count)
-                LocalLibraryStatus = FormatLocalLibraryCount(count);
+            if (_localLibraryStatusFactory != null)
+                LocalLibraryStatus = _localLibraryStatusFactory();
+            if (_radioStatusFactory != null)
+                RadioStatusMessage = _radioStatusFactory();
             PopulateRadioCategories();
             RebuildFavoriteSortOptions();
             ApplyFavoriteFilterAndSort();
@@ -1407,7 +1415,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         HasSyncedPlaylists = false;
         SelectedLibraryTracks.Clear();
         ApplyLibraryPlaylistFilter();
-        LocalLibraryStatus = AppLanguage.T("已清空歌单。", "Playlist cleared.");
+        SetLocalLibraryStatus(() => AppLanguage.T("已清空歌单。", "Playlist cleared."));
         _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
     }
 
@@ -1586,14 +1594,61 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             : AppLanguage.T($"找到 {totalCount} 个结果。{perSource}", $"Found {totalCount} result(s). {perSource}");
     }
 
-    internal static string FormatSourceStatus(Services.SourceSearchStatus status) => status.Status switch
+    internal static string FormatSourceStatus(Services.SourceSearchStatus status)
     {
-        "ok" => string.IsNullOrEmpty(status.Note)
-            ? AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}成功{status.Count}条", $"{AppLanguage.MusicSourceName(status.Name)}: {status.Count} result(s)")
-            : AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}搜到{status.Count}条({status.Note})", $"{AppLanguage.MusicSourceName(status.Name)}: {status.Count} results ({status.Note})"),
-        "timeout" => AppLanguage.T($"{AppLanguage.MusicSourceName(status.Name)}超时", $"{AppLanguage.MusicSourceName(status.Name)} timed out"),
-        _ => FormatFailedSourceStatus(status)
-    };
+        var name = AppLanguage.MusicSourceName(status.Name);
+        return status.Status switch
+        {
+            "ok" => LocalizeSourceDetail(status.Note) is { Length: > 0 } note
+                ? AppLanguage.T($"{name}搜到{status.Count}条({note})", $"{name}: {status.Count} results ({note})")
+                : AppLanguage.T($"{name}成功{status.Count}条", $"{name}: {status.Count} result(s)"),
+            "timeout" => AppLanguage.T($"{name}超时", $"{name} timed out"),
+            "disabled" => LocalizeSourceDetail(status.Note ?? status.Error) is { Length: > 0 } reason
+                ? AppLanguage.T($"{name}已停用（{reason}）", $"{name} disabled ({reason})")
+                : AppLanguage.T($"{name}已停用", $"{name} disabled"),
+            _ => FormatFailedSourceStatus(status)
+        };
+    }
+
+    private static string? LocalizeSourceDetail(string? detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+            return detail;
+        return detail switch
+        {
+            "已在设置中停用" or "Disabled in settings"
+                => AppLanguage.T("已在设置中停用", "Disabled in settings"),
+            "尚未配置服务器" or "Server not configured"
+                => AppLanguage.T("尚未配置服务器", "Server not configured"),
+            "可播性检查超时，已跳过" or "playability check timed out, skipped"
+                => AppLanguage.T("可播性检查超时，已跳过", "playability check timed out, skipped"),
+            "试听或失效片段，已过滤" or "preview or stale clips only, filtered"
+                => AppLanguage.T("试听或失效片段，已过滤", "preview or stale clips only, filtered"),
+            _ when TryExtractCircuitSeconds(detail, out var seconds)
+                => AppLanguage.T($"连续接口故障，暂停请求 {seconds} 秒", $"circuit open for {seconds}s after repeated transport failures"),
+            _ => detail
+        };
+    }
+
+    private static bool TryExtractCircuitSeconds(string detail, out string seconds)
+    {
+        const string zhPrefix = "连续接口故障，暂停请求 ";
+        const string zhSuffix = " 秒";
+        if (detail.StartsWith(zhPrefix, StringComparison.Ordinal) && detail.EndsWith(zhSuffix, StringComparison.Ordinal))
+        {
+            seconds = detail[zhPrefix.Length..^zhSuffix.Length];
+            return seconds.Length > 0;
+        }
+        const string enPrefix = "circuit open for ";
+        const string enSuffix = "s after repeated transport failures";
+        if (detail.StartsWith(enPrefix, StringComparison.Ordinal) && detail.EndsWith(enSuffix, StringComparison.Ordinal))
+        {
+            seconds = detail[enPrefix.Length..^enSuffix.Length];
+            return seconds.Length > 0;
+        }
+        seconds = string.Empty;
+        return false;
+    }
 
     /// <summary>
     /// failed 状态按结构化分类渲染用户可读文案与恢复建议；
@@ -1718,8 +1773,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             await Task.WhenAll(save, index);
             if (_localLibrary != null)
             {
-                _localLibraryCount = index.Result;
-                LocalLibraryStatus = FormatLocalLibraryCount(index.Result);
+                var count = index.Result;
+                SetLocalLibraryStatus(() => FormatLocalLibraryCount(count));
             }
         }
         finally { IsLocalLibraryScanning = false; }
@@ -1752,8 +1807,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         try
         {
             var count = await _localLibrary.AddFolderAsync(folder, cancellationToken);
-            _localLibraryCount = count;
-            LocalLibraryStatus = FormatLocalLibraryCount(count);
+            SetLocalLibraryStatus(() => FormatLocalLibraryCount(count));
         }
         finally { IsLocalLibraryScanning = false; }
     }
@@ -1765,10 +1819,27 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         try
         {
             var count = await _localLibrary.RescanAsync(cancellationToken);
-            _localLibraryCount = count;
-            LocalLibraryStatus = FormatLocalLibraryCount(count);
+            SetLocalLibraryStatus(() => FormatLocalLibraryCount(count));
         }
         finally { IsLocalLibraryScanning = false; }
+    }
+
+    private void SetLocalLibraryStatus(Func<string> factory)
+    {
+        _localLibraryStatusFactory = factory;
+        LocalLibraryStatus = factory();
+    }
+
+    private void SetRadioStatus(Func<string> factory)
+    {
+        _radioStatusFactory = factory;
+        RadioStatusMessage = factory();
+    }
+
+    private void ClearRadioStatus()
+    {
+        _radioStatusFactory = null;
+        RadioStatusMessage = string.Empty;
     }
 
     private static string FormatLocalLibraryCount(int count)
@@ -1843,9 +1914,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 });
             }
             HasRadioStations = RadioStations.Count > 0;
-            RadioStatusMessage = HasRadioStations
-                ? string.Empty
-                : AppLanguage.T("暂无收藏电台，可在其他流派中点击爱心收藏。", "No favorite radio stations yet. Favorite some stations first.");
+            if (HasRadioStations)
+                ClearRadioStatus();
+            else
+                SetRadioStatus(() => AppLanguage.T("暂无收藏电台，可在其他流派中点击爱心收藏。", "No favorite radio stations yet. Favorite some stations first."));
             return;
         }
 
@@ -1857,13 +1929,13 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         if (_radioBrowserService == null)
         {
-            RadioStatusMessage = AppLanguage.T("电台服务未初始化", "Radio service not initialized");
+            SetRadioStatus(() => AppLanguage.T("电台服务未初始化", "Radio service not initialized"));
             HasRadioStations = false;
             return;
         }
 
         IsRadioLoading = true;
-        RadioStatusMessage = AppLanguage.T("正在连接全球电台网络...", "Connecting to global radio network...");
+        SetRadioStatus(() => AppLanguage.T("正在连接全球电台网络...", "Connecting to global radio network..."));
         try
         {
             var stations = await _radioBrowserService.GetStationsByCategoryAsync(category, forceRefresh: force, _lifetimeCts.Token);
@@ -1874,9 +1946,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 RadioStations.Add(s);
             }
             HasRadioStations = RadioStations.Count > 0;
-            RadioStatusMessage = HasRadioStations
-                ? string.Empty
-                : AppLanguage.T("暂无可用电台", "No stations available");
+            if (HasRadioStations)
+                ClearRadioStatus();
+            else
+                SetRadioStatus(() => AppLanguage.T("暂无可用电台", "No stations available"));
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -1884,7 +1957,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load radio stations for category {Category}", category);
-            RadioStatusMessage = AppLanguage.T("电台加载失败，请检查网络后重试", "Failed to load stations; check network and retry");
+            SetRadioStatus(() => AppLanguage.T("电台加载失败，请检查网络后重试", "Failed to load stations; check network and retry"));
             HasRadioStations = false;
         }
         finally
@@ -1924,14 +1997,15 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 RadioStations.Add(s);
             }
             HasRadioStations = RadioStations.Count > 0;
-            RadioStatusMessage = HasRadioStations
-                ? string.Empty
-                : AppLanguage.T($"未找到与“{query}”相关的自定义电台", $"No custom stations found for \"{query}\"");
+            if (HasRadioStations)
+                ClearRadioStatus();
+            else
+                SetRadioStatus(() => AppLanguage.T($"未找到与“{query}”相关的自定义电台", $"No custom stations found for \"{query}\""));
             return;
         }
 
         IsRadioLoading = true;
-        RadioStatusMessage = AppLanguage.T($"正在搜索“{query}”...", $"Searching for \"{query}\"...");
+        SetRadioStatus(() => AppLanguage.T($"正在搜索“{query}”...", $"Searching for \"{query}\"..."));
         try
         {
             var remoteStations = await _radioBrowserService.SearchStationsAsync(query, _lifetimeCts.Token);
@@ -1942,9 +2016,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 RadioStations.Add(s);
             }
             HasRadioStations = RadioStations.Count > 0;
-            RadioStatusMessage = HasRadioStations
-                ? string.Empty
-                : AppLanguage.T($"未找到与“{query}”相关的电台", $"No stations found for \"{query}\"");
+            if (HasRadioStations)
+                ClearRadioStatus();
+            else
+                SetRadioStatus(() => AppLanguage.T($"未找到与“{query}”相关的电台", $"No stations found for \"{query}\""));
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -1952,7 +2027,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to search radio stations for {Query}", query);
-            RadioStatusMessage = AppLanguage.T("搜索失败，请重试", "Search failed; try again");
+            SetRadioStatus(() => AppLanguage.T("搜索失败，请重试", "Search failed; try again"));
             HasRadioStations = false;
         }
         finally
@@ -1967,7 +2042,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         {
             RadioStations.Clear();
             HasRadioStations = false;
-            RadioStatusMessage = AppLanguage.Get("S_NoCustomStations");
+            SetRadioStatus(() => AppLanguage.Get("S_NoCustomStations"));
             return;
         }
 
@@ -1984,9 +2059,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 RadioStations.Add(s);
             }
             HasRadioStations = RadioStations.Count > 0;
-            RadioStatusMessage = HasRadioStations
-                ? string.Empty
-                : AppLanguage.Get("S_NoCustomStations");
+            if (HasRadioStations)
+                ClearRadioStatus();
+            else
+                SetRadioStatus(() => AppLanguage.Get("S_NoCustomStations"));
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -1996,7 +2072,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             Log.Warning(ex, "Failed to load custom radio stations");
             RadioStations.Clear();
             HasRadioStations = false;
-            RadioStatusMessage = AppLanguage.Get("S_NoCustomStations");
+            SetRadioStatus(() => AppLanguage.Get("S_NoCustomStations"));
         }
         finally
         {
@@ -2267,7 +2343,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             .ToList();
         HasRadioStations = RadioStations.Count > 0;
         if (!HasRadioStations && string.Equals(SelectedRadioCategory?.Key, "custom", StringComparison.OrdinalIgnoreCase))
-            RadioStatusMessage = AppLanguage.Get("S_NoCustomStations");
+            SetRadioStatus(() => AppLanguage.Get("S_NoCustomStations"));
     }
 
     public async Task LoadImportPlaylistFileAsync(string filePath)
@@ -2318,11 +2394,11 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         if (importedCount > 0)
         {
-            RadioStatusMessage = string.Empty;
+            ClearRadioStatus();
         }
         else
         {
-            RadioStatusMessage = AppLanguage.T("导入的电台均已存在，未新增重复项", "All stations already exist; no duplicates added");
+            SetRadioStatus(() => AppLanguage.T("导入的电台均已存在，未新增重复项", "All stations already exist; no duplicates added"));
         }
     }
 

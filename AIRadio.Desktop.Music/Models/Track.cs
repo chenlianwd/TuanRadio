@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.Music;
 
@@ -378,17 +380,49 @@ public class DJScript
     public TimeSpan Duration { get; set; }
 }
 
-public class CharacterProfile
+public class CharacterProfile : INotifyPropertyChanged
 {
+    private string _description = "";
+    private string _personalityPrompt = "";
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public string Id { get; set; } = "";
     public string DisplayName { get; set; } = "";
-    public string Description { get; set; } = "";
+
+    public string Description
+    {
+        get => _description;
+        set
+        {
+            if (string.Equals(_description, value, StringComparison.Ordinal))
+                return;
+            _description = value;
+            OnPropertyChanged();
+        }
+    }
+
     public string VoiceId { get; set; } = "";
-    public string PersonalityPrompt { get; set; } = "";
+
+    public string PersonalityPrompt
+    {
+        get => _personalityPrompt;
+        set
+        {
+            if (string.Equals(_personalityPrompt, value, StringComparison.Ordinal))
+                return;
+            _personalityPrompt = value;
+            OnPropertyChanged();
+        }
+    }
+
     internal string DescriptionZh { get; set; } = "";
     internal string DescriptionEn { get; set; } = "";
     internal string PersonalityPromptZh { get; set; } = "";
     internal string PersonalityPromptEn { get; set; } = "";
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
     public static readonly List<CharacterProfile> Presets = new()
     {

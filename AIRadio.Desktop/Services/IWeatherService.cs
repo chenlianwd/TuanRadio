@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -77,10 +78,12 @@ public sealed class WeatherService : IWeatherService
 
     public async Task<WeatherInfo?> GetWeatherAsync(string? city, double? latitude, double? longitude, CancellationToken cancellationToken)
     {
+        var lang = AppLanguage.Current == "en" ? "en" : "zh";
         var hasCoords = latitude is not null && longitude is not null;
+        var cityKey = string.IsNullOrWhiteSpace(city) ? "$auto" : city.Trim();
         var key = hasCoords
-            ? $"geo:{latitude!.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)},{longitude!.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}"
-            : string.IsNullOrWhiteSpace(city) ? "$auto" : city.Trim();
+            ? $"{lang}|geo:{latitude!.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)},{longitude!.Value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}|{cityKey}"
+            : $"{lang}|{cityKey}";
         lock (_cacheGate)
         {
             if (_cached != null && _cacheKey == key && DateTime.Now - _cachedAt < CacheTtl)
@@ -114,7 +117,7 @@ public sealed class WeatherService : IWeatherService
                 // 已选地点自带坐标（设置页候选点选/定位落定）：跳过 geocoding 直取
                 lat = latitude.Value;
                 lon = longitude.Value;
-                locationName = string.IsNullOrWhiteSpace(city) ? "当前位置" : city.Trim();
+                locationName = string.IsNullOrWhiteSpace(city) ? AppLanguage.T("当前位置", "Current location") : city.Trim();
             }
             else if (!string.IsNullOrWhiteSpace(city))
             {
@@ -170,37 +173,54 @@ public sealed class WeatherService : IWeatherService
         return (first.Latitude, first.Longitude, first.Name);
     }
 
-    /// <summary>按名称搜索地点候选；查询语言跟随界面语言；null=网络/解析失败，空列表=无匹配。</summary>
+    /// <summary>按名称搜索地点候选；查询语言跟随界面语言，当前语言无结果时跨语言回查并通过 id 取目标语言译名；null=网络/解析失败，空列表=无匹配。</summary>
     public async Task<IReadOnlyList<GeoPlace>?> SearchPlacesAsync(string query, CancellationToken cancellationToken)
+    {
+        var apiLang = AppLanguage.Current == "en" ? "en" : "zh";
+        var primary = await SearchPlacesRawAsync(query, apiLang, cancellationToken);
+        if (primary == null)
+            return null;
+        if (primary.Count > 0)
+            return primary.Select(x => x.Place).ToList();
+
+        // Open-Meteo v1/search 的 language 参数会过滤对应语种索引（例如 language=en 时查 "成都" 返回空）；
+        // 用另一语种检索拿到 GeoNames id，再调 v1/get?id=...&language={apiLang} 取回目标语言地名。
+        var fallbackLang = apiLang == "en" ? "zh" : "en";
+        var fallback = await SearchPlacesRawAsync(query, fallbackLang, cancellationToken);
+        if (fallback is not { Count: > 0 })
+            return Array.Empty<GeoPlace>();
+
+        var resolved = await Task.WhenAll(fallback.Select(async item =>
+        {
+            if (item.Id is { } id)
+            {
+                var localized = await GetPlaceByIdAsync(id, query, apiLang, cancellationToken);
+                if (localized != null)
+                    return localized;
+            }
+            return item.Place;
+        }));
+        return resolved;
+    }
+
+    private async Task<List<(int? Id, GeoPlace Place)>?> SearchPlacesRawAsync(string query, string apiLang, CancellationToken cancellationToken)
     {
         try
         {
-            var language = AppLanguage.Current == "en" ? "en" : "zh";
-            var url = $"https://geocoding-api.open-meteo.com/v1/search?name={Uri.EscapeDataString(query)}&count=5&language={language}";
+            var url = $"https://geocoding-api.open-meteo.com/v1/search?name={Uri.EscapeDataString(query)}&count=5&language={apiLang}";
             using var response = await _http.GetAsync(url, cancellationToken);
             response.EnsureSuccessStatusCode();
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
             if (!doc.RootElement.TryGetProperty("results", out var results) ||
                 results.ValueKind != JsonValueKind.Array)
-                return Array.Empty<GeoPlace>();
+                return new List<(int? Id, GeoPlace Place)>();
 
-            var places = new List<GeoPlace>();
+            var places = new List<(int? Id, GeoPlace Place)>();
             foreach (var item in results.EnumerateArray())
             {
-                if (!item.TryGetProperty("latitude", out var lat) || lat.ValueKind != JsonValueKind.Number ||
-                    !item.TryGetProperty("longitude", out var lon) || lon.ValueKind != JsonValueKind.Number)
+                if (ParseGeoPlace(item, query) is not { } parsed)
                     continue;
-                var name = item.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String
-                    ? nameEl.GetString() ?? query
-                    : query;
-                // admin1 是省/州，admin2 是市（与 name 大概率重复），取 admin1 + country 区分重名城市
-                var admin = item.TryGetProperty("admin1", out var adminEl) && adminEl.ValueKind == JsonValueKind.String
-                    ? adminEl.GetString() ?? string.Empty
-                    : string.Empty;
-                var country = item.TryGetProperty("country", out var countryEl) && countryEl.ValueKind == JsonValueKind.String
-                    ? countryEl.GetString() ?? string.Empty
-                    : string.Empty;
-                places.Add(new GeoPlace(name, admin, country, lat.GetDouble(), lon.GetDouble()));
+                places.Add(parsed);
             }
             return places;
         }
@@ -210,9 +230,51 @@ public sealed class WeatherService : IWeatherService
         }
         catch (Exception ex)
         {
-            Serilog.Log.Debug(ex, "Place search failed for {Query}", query);
+            Serilog.Log.Debug(ex, "Place search failed for {Query} ({Language})", query, apiLang);
             return null;
         }
+    }
+
+    private async Task<GeoPlace?> GetPlaceByIdAsync(int id, string fallbackQuery, string apiLang, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var url = $"https://geocoding-api.open-meteo.com/v1/get?id={id}&language={apiLang}";
+            using var response = await _http.GetAsync(url, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            return ParseGeoPlace(doc.RootElement, fallbackQuery)?.Place;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Place lookup failed for id {Id} ({Language})", id, apiLang);
+            return null;
+        }
+    }
+
+    private static (int? Id, GeoPlace Place)? ParseGeoPlace(JsonElement item, string fallbackName)
+    {
+        if (!item.TryGetProperty("latitude", out var lat) || lat.ValueKind != JsonValueKind.Number ||
+            !item.TryGetProperty("longitude", out var lon) || lon.ValueKind != JsonValueKind.Number)
+            return null;
+        int? id = item.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var idVal)
+            ? idVal
+            : null;
+        var name = item.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String
+            ? nameEl.GetString() ?? fallbackName
+            : fallbackName;
+        // admin1 是省/州，admin2 是市（与 name 大概率重复），取 admin1 + country 区分重名城市
+        var admin = item.TryGetProperty("admin1", out var adminEl) && adminEl.ValueKind == JsonValueKind.String
+            ? adminEl.GetString() ?? string.Empty
+            : string.Empty;
+        var country = item.TryGetProperty("country", out var countryEl) && countryEl.ValueKind == JsonValueKind.String
+            ? countryEl.GetString() ?? string.Empty
+            : string.Empty;
+        return (id, new GeoPlace(name, admin, country, lat.GetDouble(), lon.GetDouble()));
     }
 
     /// <summary>按网络 IP 粗定位（ip-api，城市粒度）；失败返回 null。</summary>
@@ -221,7 +283,8 @@ public sealed class WeatherService : IWeatherService
         // 明文 HTTP 是上游限制的明知取舍：ip-api 免费版仅支持 HTTP（HTTPS 需付费），
         // 暴露面为经未加密信道返回的 lat/lon/城市名（仅天气展示定位，无凭据）；
         // 中间人最多篡改天气定位的展示，不影响其余任何链路。
-        var url = "http://ip-api.com/json?fields=status,lat,lon,city,regionName,country";
+        var lang = AppLanguage.Current == "en" ? "en" : "zh-CN";
+        var url = $"http://ip-api.com/json?fields=status,lat,lon,city,regionName,country&lang={lang}";
         using var response = await _http.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -237,7 +300,7 @@ public sealed class WeatherService : IWeatherService
             : string.Empty;
         var city = GetString("city");
         return new GeoPlace(
-            string.IsNullOrWhiteSpace(city) ? "当前位置" : city,
+            string.IsNullOrWhiteSpace(city) ? AppLanguage.T("当前位置", "Current location") : city,
             GetString("regionName"),
             GetString("country"),
             lat.GetDouble(),
