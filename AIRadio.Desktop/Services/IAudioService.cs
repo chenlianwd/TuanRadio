@@ -21,6 +21,8 @@ public interface IAudioService
     IObservable<PlaybackState> StateChanged { get; }
     IObservable<TimeSpan> PositionChanged { get; }
     IObservable<Track?> TrackEnded { get; }
+    /// <summary>任意曲目（含队列上下文内非末集）真正自然播放结束时发射，供播客完播标记等消费。</summary>
+    IObservable<Track?> NaturalTrackCompleted => System.Reactive.Linq.Observable.Empty<Track?>();
     IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices { get; }
     IObservable<TrackMediaInfo> TrackMediaInfo { get; }
     IObservable<string?> LiveMetadataChanged => System.Reactive.Linq.Observable.Empty<string?>();

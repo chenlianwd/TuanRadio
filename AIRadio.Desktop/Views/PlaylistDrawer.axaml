@@ -128,6 +128,13 @@
                         <Path Width="14" Height="14" Stretch="Uniform" StrokeThickness="2"
                               Data="M12,12 A2,2 0 1,0 12,16 A2,2 0 1,0 12,12 M12,16 L12,22 M8.5,9.5 A5,5 0 0,0 8.5,18.5 M15.5,9.5 A5,5 0 0,1 15.5,18.5 M5.5,6.5 A9,9 0 0,0 5.5,21.5 M18.5,6.5 A9,9 0 0,1 18.5,21.5"/>
                     </Button>
+                    <Button x:Name="PodcastTabButton" Classes="drawer-tab"
+                            Classes.active="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=6}"
+                            Width="32" Height="28" Padding="0" Command="{Binding OpenPodcastsCommand}"
+                            ToolTip.Tip="{DynamicResource S_PodcastTab}" AutomationProperties.Name="{DynamicResource S_PodcastTab}">
+                        <Path Width="14" Height="14" Stretch="Uniform" StrokeThickness="2"
+                              Data="M12,2 A3,3 0 0,1 15,5 L15,11 A3,3 0 0,1 9,11 L9,5 A3,3 0 0,1 12,2 Z M5,10 A7,7 0 0,0 19,10 M12,17 L12,22 M8,22 L16,22"/>
+                    </Button>
                     <Button Classes="drawer-tab"
                             Classes.active="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}"
                             Width="32" Height="28" Padding="0" Command="{Binding OpenKugouPlaylistsCommand}"
@@ -279,6 +286,42 @@
                             ToolTip.Tip="{DynamicResource S_AddRadioStation}"
                             AutomationProperties.Name="{DynamicResource S_AddRadioStation}"/>
                 </Grid>
+                <!-- tab6 播客订阅选择与单集过滤栏 -->
+                <StackPanel Grid.Row="1" Spacing="8" Margin="0,0,10,0"
+                            IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=6}">
+                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
+                        <ComboBox x:Name="PodcastFeedComboBox"
+                                  ItemsSource="{Binding PlaylistVM.PodcastFeeds}"
+                                  SelectedItem="{Binding PlaylistVM.SelectedPodcastFeed, Mode=TwoWay}"
+                                  HorizontalAlignment="Stretch" Height="32" VerticalAlignment="Center">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate DataType="models:PodcastFeed">
+                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button Grid.Column="1" Content="↻" Width="32" Height="32" Padding="0"
+                                VerticalAlignment="Center"
+                                IsEnabled="{Binding PlaylistVM.IsPodcastLoading, Converter={StaticResource InverseBoolConverter}}"
+                                Command="{Binding PlaylistVM.RefreshPodcastCommand}"
+                                ToolTip.Tip="{DynamicResource S_PodcastRefresh}"
+                                AutomationProperties.Name="{DynamicResource S_PodcastRefresh}"/>
+                        <Button Grid.Column="2" Content="+" Width="32" Height="32" Padding="0"
+                                VerticalAlignment="Center" FontSize="16" FontWeight="600"
+                                Command="{Binding PlaylistVM.OpenPodcastSubscribeCommand}"
+                                ToolTip.Tip="{DynamicResource S_PodcastSubscribe}"
+                                AutomationProperties.Name="{DynamicResource S_PodcastSubscribe}"/>
+                        <Button Grid.Column="3" Content="✕" Width="32" Height="32" Padding="0"
+                                VerticalAlignment="Center" FontSize="11"
+                                IsEnabled="{Binding PlaylistVM.HasPodcastFeeds}"
+                                Command="{Binding PlaylistVM.UnsubscribePodcastCommand}"
+                                ToolTip.Tip="{DynamicResource S_PodcastUnsubscribe}"
+                                AutomationProperties.Name="{DynamicResource S_PodcastUnsubscribe}"/>
+                    </Grid>
+                    <TextBox Text="{Binding PlaylistVM.PodcastFilterText, Mode=TwoWay}"
+                             Height="30" Padding="10,0" FontSize="12" VerticalContentAlignment="Center"
+                             Watermark="{DynamicResource S_PodcastSearchWatermark}"/>
+                </StackPanel>
                 <TextBlock Grid.Row="3" Text="{Binding PlaylistVM.KugouStatusMessage}"
                            IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=4}"
                            Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
@@ -739,6 +782,105 @@
                                                             Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayRadioStationCommand}"
                                                             CommandParameter="{Binding}"/>
                                                 </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </Grid>
+                        <!-- tab6 播客订阅与单集列表 -->
+                        <Grid RowDefinitions="Auto,*" IsVisible="{Binding PlaylistVM.TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=6}">
+                            <Border Grid.Row="0" Margin="0,0,0,8" Padding="12" CornerRadius="8"
+                                    Background="{DynamicResource C_CC202126}"
+                                    BorderBrush="{DynamicResource C_667B7898}" BorderThickness="1"
+                                    IsVisible="{Binding PlaylistVM.IsPodcastSubscribeOpen}">
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <TextBlock Text="{DynamicResource S_PodcastSubscribe}" FontSize="12" FontWeight="700"
+                                                   Foreground="{DynamicResource C_FFFFFFFF}" VerticalAlignment="Center"/>
+                                        <Button Grid.Column="1" Content="✕" Width="26" Height="26" Padding="0" FontSize="11"
+                                                Command="{Binding PlaylistVM.ClosePodcastSubscribeCommand}"
+                                                ToolTip.Tip="{DynamicResource S_Cancel}"
+                                                AutomationProperties.Name="{DynamicResource S_Cancel}"/>
+                                    </Grid>
+                                    <TextBox x:Name="PodcastRssUrlTextBox"
+                                             Text="{Binding PlaylistVM.PodcastRssUrlInput, Mode=TwoWay}"
+                                             Height="30" Padding="8,0" FontSize="12" VerticalContentAlignment="Center"
+                                             Watermark="{DynamicResource S_PodcastRssWatermark}"
+                                             KeyDown="OnPodcastRssUrlKeyDown"/>
+                                    <TextBlock Text="{Binding PlaylistVM.PodcastSubscribeError}" FontSize="11" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource StateErrorColor}"
+                                               IsVisible="{Binding PlaylistVM.PodcastSubscribeError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
+                                        <Button Content="{DynamicResource S_Cancel}" Padding="10,5" FontSize="11"
+                                                Command="{Binding PlaylistVM.ClosePodcastSubscribeCommand}"/>
+                                        <Button Content="{DynamicResource S_PodcastSubscribeAndLoad}" Padding="12,5" FontSize="11" FontWeight="600"
+                                                Background="{DynamicResource C_2221ED76}"
+                                                BorderBrush="{DynamicResource AccentGreen}" BorderThickness="1"
+                                                Foreground="{DynamicResource AccentGreen}"
+                                                IsEnabled="{Binding !PlaylistVM.IsSubscribingPodcast}"
+                                                Command="{Binding PlaylistVM.SubscribePodcastCommand}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Grid.Row="1">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                            IsVisible="{Binding PlaylistVM.HasPodcastEpisodes, Converter={StaticResource InverseBoolConverter}}">
+                                    <TextBlock Text="{Binding PlaylistVM.PodcastStatusMessage}" MaxWidth="320" TextAlignment="Center"
+                                               TextWrapping="Wrap" Foreground="{DynamicResource C_FF9B9BA8}"/>
+                                </StackPanel>
+                                <ListBox x:Name="PodcastEpisodesList"
+                                         ItemsSource="{Binding PlaylistVM.PodcastEpisodes}"
+                                         IsVisible="{Binding PlaylistVM.HasPodcastEpisodes}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="models:PodcastEpisode">
+                                            <Border Classes="library-row">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="{DynamicResource S_PodcastPlayEpisode}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayPodcastEpisodeCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                        <MenuItem Header="{DynamicResource S_PodcastPlayFromStart}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayPodcastFromStartCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                        <MenuItem Header="{DynamicResource S_PodcastAiDigest}"
+                                                                  Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.DigestPodcastEpisodeCommand}"
+                                                                  CommandParameter="{Binding}"/>
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <StackPanel Spacing="6">
+                                                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{Binding Title}" Classes="track-title" FontSize="13" FontWeight="700"
+                                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                <TextBlock Text="{Binding DisplayMeta}" FontSize="10"
+                                                                           FontFamily="Consolas, Microsoft YaHei UI"
+                                                                           Foreground="{DynamicResource C_FF9B9BA8}"/>
+                                                                <Border Background="{DynamicResource C_2221ED76}" CornerRadius="3" Padding="5,1"
+                                                                        IsVisible="{Binding HasProgressBadge}">
+                                                                    <TextBlock Text="{Binding DisplayProgressBadge}" FontSize="9"
+                                                                               Foreground="{DynamicResource C_FFB9FFE8}"/>
+                                                                </Border>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                        <Button Grid.Column="1" Height="28" Padding="8,0" FontSize="11"
+                                                                Content="{Binding DigestButtonText}"
+                                                                IsEnabled="{Binding !IsDigesting}"
+                                                                Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.DigestPodcastEpisodeCommand}"
+                                                                CommandParameter="{Binding}"/>
+                                                        <Button Grid.Column="2" Height="28" Padding="10,0" FontSize="11"
+                                                                Content="{DynamicResource S_PodcastPlayEpisode}"
+                                                                Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).PlaylistVM.PlayPodcastEpisodeCommand}"
+                                                                CommandParameter="{Binding}"/>
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding ShortSummary}" FontSize="11"
+                                                               Foreground="{DynamicResource C_FF9B9BA8}"
+                                                               MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                                               IsVisible="{Binding ShortSummary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                                </StackPanel>
                                             </Border>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>

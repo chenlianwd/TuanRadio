@@ -98,6 +98,15 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
         (ProviderMetadata.TryGetValue("is_live", out var flag) &&
          string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// 是否为播客 RSS 长音频单集（支持 Seek 与断点续播，跳过歌词抓取、歌曲画像与跨源搜歌回退）。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPodcastEpisode =>
+        (SourceId?.StartsWith(PodcastFeed.SourcePrefix, StringComparison.OrdinalIgnoreCase) ?? false) ||
+        (ProviderMetadata.TryGetValue("is_podcast", out var flag) &&
+         string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase));
+
     [System.Text.Json.Serialization.JsonIgnore]
     public TrackPlayability Playability
     {

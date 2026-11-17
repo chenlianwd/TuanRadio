@@ -161,7 +161,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
 
     public void NotifyPlaybackStarted(Track track)
     {
-        if (track == null || track.IsLiveStream) return;
+        if (track == null || track.IsLiveStream || track.IsPodcastEpisode) return;
         var key = BuildIdentityKey(track);
         if (key == null) return;
         lock (_gate)
@@ -194,7 +194,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
 
     public void NotifyPlaybackEndedNaturally(Track track)
     {
-        if (track == null || track.IsLiveStream) return;
+        if (track == null || track.IsLiveStream || track.IsPodcastEpisode) return;
         lock (_gate)
         {
             if (!CanIngestLocked())
@@ -217,7 +217,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
 
     public void NotifyPositionSampled(Track track, TimeSpan position)
     {
-        if (track == null || track.IsLiveStream) return;
+        if (track == null || track.IsLiveStream || track.IsPodcastEpisode) return;
         var key = BuildIdentityKey(track);
         if (key == null) return;
         lock (_gate)

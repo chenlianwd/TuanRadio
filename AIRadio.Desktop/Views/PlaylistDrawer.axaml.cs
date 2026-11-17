@@ -458,4 +458,10 @@ public partial class PlaylistDrawer : UserControl
         if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm && !vm.PlaylistVM.IsProbingStream)
             vm.PlaylistVM.ProbeCustomStreamCommand.Execute(Unit.Default).Subscribe();
     }
+
+    private void OnPodcastRssUrlKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm && !vm.PlaylistVM.IsSubscribingPodcast)
+            vm.PlaylistVM.SubscribePodcastCommand.Execute(Unit.Default).Subscribe();
+    }
 }
