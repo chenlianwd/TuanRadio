@@ -690,9 +690,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                             var durationMs = current.Duration > TimeSpan.Zero
                                 ? (long)current.Duration.TotalMilliseconds
                                 : 0L;
-                            current.ProviderMetadata["resume_ms"] = posMs.ToString(CultureInfo.InvariantCulture);
+                            lock (current.ProviderMetadata)
+                            {
+                                current.ProviderMetadata["resume_ms"] = posMs.ToString(CultureInfo.InvariantCulture);
+                            }
                             _ = _podcastStorage.UpdateEpisodeProgressAsync(
-                                epKey, posMs, durationMs, isCompleted: false, flushImmediately: false);
+                                epKey, posMs, durationMs, isCompleted: false, flushImmediately: false, _lifetimeCts.Token);
                             RxApp.MainThreadScheduler.Schedule(() =>
                                 PlaylistVM.SyncPodcastEpisodeProgress(epKey, posMs, isCompleted: false));
                         }
@@ -734,7 +737,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         InitializeWebRemote(webRemoteService);
     }
 
-    private async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
+    internal async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
         Track track,
         bool requireAlternative,
         CancellationToken cancellationToken)
@@ -765,6 +768,29 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             return string.IsNullOrWhiteSpace(streamUrl)
                 ? null
                 : new TrackUrlResolution(streamUrl, sourceId, track.ProviderMetadata);
+        }
+        if (track.IsPodcastEpisode ||
+            sourceId.StartsWith(PodcastFeed.SourcePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            if (requireAlternative)
+                return null;
+
+            string? audioUrl = null;
+            if (track.ProviderMetadata.TryGetValue("audio_url", out var au) && !string.IsNullOrWhiteSpace(au))
+                audioUrl = au;
+            else if (!string.IsNullOrWhiteSpace(track.FilePath) &&
+                     (track.FilePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                      track.FilePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                audioUrl = track.FilePath;
+
+            if (string.IsNullOrWhiteSpace(audioUrl) ||
+                !Uri.TryCreate(audioUrl, UriKind.Absolute, out var audioUri) ||
+                !await MediaUriPolicy.ValidateCustomRadioAsync(audioUri, cancellationToken))
+            {
+                return null;
+            }
+
+            return new TrackUrlResolution(audioUrl, sourceId, track.ProviderMetadata);
         }
         if (_musicSearchService is not IMusicSourceBroker multi)
         {
@@ -818,9 +844,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private void ToggleCurrentFavorite()
     {
         var current = _audioService.CurrentTrack;
-        if (current == null) return;
+        if (current == null || current.IsPodcastEpisode) return;
 
-        if (!PlaylistVM.Tracks.Contains(current))
+        if (!current.IsLiveStream && !PlaylistVM.Tracks.Contains(current))
             PlaylistVM.AddExternalTrack(current);
 
         PlaylistVM.ToggleFavoriteCommand.Execute(current).Subscribe();
@@ -1063,9 +1089,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        track.ProviderMetadata["resume_ms"] = "0";
+        lock (track.ProviderMetadata)
+        {
+            track.ProviderMetadata["resume_ms"] = "0";
+        }
         _ = _podcastStorage?.UpdateEpisodeProgressAsync(
-            epKey, 0, (long)track.Duration.TotalMilliseconds, isCompleted: true, flushImmediately: true);
+            epKey, 0, (long)track.Duration.TotalMilliseconds, isCompleted: true, flushImmediately: true, _lifetimeCts.Token);
         PlaylistVM.SyncPodcastEpisodeProgress(epKey, 0, isCompleted: true);
     }
 

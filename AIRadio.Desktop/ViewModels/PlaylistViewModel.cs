@@ -414,6 +414,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         ToggleFavoriteCommand = ReactiveCommand.Create<Track>(track =>
         {
+            if (track == null || track.IsPodcastEpisode)
+                return;
+
             var playlistTrack = FindMatchingTrack(track) ?? track;
             if (!playlistTrack.IsLiveStream && !Tracks.Contains(playlistTrack))
                 Tracks.Add(playlistTrack);
@@ -2743,8 +2746,26 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var tracks = PodcastEpisodes.Select(ep => ep.ToTrack(startFromBeginning: fromStart && ReferenceEquals(ep, episode))).ToList();
-        var startIndex = PodcastEpisodes.IndexOf(episode);
+        var snapshot = PodcastEpisodes.ToList();
+        var validated = await Task.WhenAll(snapshot.Select(async ep =>
+        {
+            if (ReferenceEquals(ep, episode))
+                return (Episode: ep, Allowed: true);
+            if (!Uri.TryCreate(ep.AudioUrl, UriKind.Absolute, out var epUri))
+                return (Episode: ep, Allowed: false);
+            try
+            {
+                return (Episode: ep, Allowed: await _podcastAudioUriValidator(epUri, _lifetimeCts.Token));
+            }
+            catch
+            {
+                return (Episode: ep, Allowed: false);
+            }
+        }));
+
+        var safeEpisodes = validated.Where(x => x.Allowed).Select(x => x.Episode).ToList();
+        var tracks = safeEpisodes.Select(ep => ep.ToTrack(startFromBeginning: fromStart && ReferenceEquals(ep, episode))).ToList();
+        var startIndex = safeEpisodes.IndexOf(episode);
         if (startIndex < 0)
         {
             tracks = [episode.ToTrack(startFromBeginning: fromStart)];

@@ -165,7 +165,6 @@ public partial class MainWindowViewModel
         {
             _syncingWebRemoteSetting = false;
         }
-        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
         await ApplyWebRemoteSettingsAsync(next, SettingsVM.WebRemotePort);
     }
 
@@ -240,6 +239,8 @@ public partial class MainWindowViewModel
             SettingsVM.WebRemoteEnabled = false;
             _syncingWebRemoteSetting = false;
         }
+        if (ok)
+            UpdateWebRemoteSnapshot(immediate: false, force: true);
         RefreshWebRemoteUiState();
     }
 
@@ -290,8 +291,11 @@ public partial class MainWindowViewModel
             WebRemoteCopyButtonText = AppLanguage.Get("S_WebRemoteCopyUrl");
     }
 
-    private void UpdateWebRemoteSnapshot(bool immediate)
+    private void UpdateWebRemoteSnapshot(bool immediate, bool force = false)
     {
+        if (!force && _webRemoteService is not { IsRunning: true })
+            return;
+
         var currentTrack = _audioService.CurrentTrack;
         var hasTrack = currentTrack != null;
         var lyricLines = (LyricsVM.Lines ?? Array.Empty<LyricLine>())
@@ -393,6 +397,8 @@ public partial class MainWindowViewModel
                 return WebRemoteCommandResult.Success();
 
             case "toggle_favorite":
+                if (_audioService.CurrentTrack is { IsPodcastEpisode: true })
+                    return WebRemoteCommandResult.Fail("podcast_favorite_unsupported");
                 ToggleCurrentFavoriteCommand.Execute().Subscribe();
                 return WebRemoteCommandResult.Success();
 
@@ -441,6 +447,8 @@ public partial class MainWindowViewModel
                 switch (cmd.Text?.Trim().ToLowerInvariant())
                 {
                     case "like":
+                        if (_audioService.CurrentTrack is { IsPodcastEpisode: true })
+                            return WebRemoteCommandResult.Fail("podcast_favorite_unsupported");
                         if (_audioService.CurrentTrack != null && !IsCurrentFavorite)
                             ToggleCurrentFavoriteCommand.Execute().Subscribe();
                         return WebRemoteCommandResult.Success();

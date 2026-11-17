@@ -307,6 +307,85 @@ public class PodcastPlaybackAndDigestTests
         await playlistVm.PlayPodcastEpisodeAsync(evilEp);
         audioMock.Verify(x => x.StartPlaybackContext(
             It.IsAny<IEnumerable<Track>>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<string>()), Times.Never);
+
+        // 播放合法单集时，同列表内不安全 URL 单集应从连播上下文过滤掉
+        playlistVm.PodcastEpisodes.Add(publicEp);
+        playlistVm.PodcastEpisodes.Add(evilEp);
+        await playlistVm.PlayPodcastEpisodeAsync(publicEp);
+        audioMock.Verify(x => x.StartPlaybackContext(
+            It.Is<IEnumerable<Track>>(q => q.Count() == 1 && q.First().Title == "Public Ep"),
+            0,
+            false,
+            It.IsAny<string>()), Times.Once);
         try { File.Delete(tempPlaylistFile); } catch { }
+    }
+
+    [Fact]
+    public async Task PodcastFavorite_IsIsolatedFromSongPlaylistAndProfile_AndRetryResolvesAudioUrl()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var tempDir = Path.Combine(Path.GetTempPath(), "AIRadio.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        var ep = new PodcastEpisode
+        {
+            EpisodeKey = "pod-retry-1",
+            FeedUrl = "https://93.184.216.34/rss.xml",
+            FeedTitle = "Tech Cast",
+            Title = "Episode Retry",
+            AudioUrl = "https://93.184.216.34/audio.mp3"
+        };
+        var track = ep.ToTrack();
+
+        var audioMock = new Mock<IAudioService>();
+        audioMock.SetupGet(x => x.TrackEnded).Returns(Observable.Never<Track?>());
+        audioMock.SetupGet(x => x.TrackChanged).Returns(Observable.Never<Track?>());
+        audioMock.SetupGet(x => x.StateChanged).Returns(Observable.Never<PlaybackState>());
+        audioMock.SetupGet(x => x.PositionChanged).Returns(Observable.Never<TimeSpan>());
+        audioMock.SetupGet(x => x.SpectrumData).Returns(Observable.Never<float[]>());
+        audioMock.SetupGet(x => x.TtsStateChanged).Returns(Observable.Never<bool>());
+        audioMock.SetupGet(x => x.TtsError).Returns(Observable.Never<string>());
+        audioMock.SetupGet(x => x.Playlist).Returns(Array.Empty<Track>());
+        audioMock.SetupGet(x => x.CurrentTrack).Returns(track);
+
+        var brokerMock = new Mock<IMusicSourceBroker>();
+        brokerMock.Setup(x => x.GetProviderDescriptors()).Returns(Array.Empty<MusicProviderDescriptor>());
+        var recMock = new Mock<IRecommendationService>();
+
+        var vm = new MainWindowViewModel(
+            audioMock.Object,
+            new Mock<IDJService>().Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            brokerMock.Object,
+            new Mock<ISttService>().Object,
+            Path.Combine(tempDir, "playlist.json"),
+            Path.Combine(tempDir, "settings.json"),
+            recommendationService: recMock.Object);
+
+        try
+        {
+            // 1. 红心收藏不将播客塞入主歌单/收藏/音乐反馈
+            vm.ToggleCurrentFavoriteCommand.Execute().Subscribe();
+            vm.PlaylistVM.ToggleFavoriteCommand.Execute(track).Subscribe();
+            Assert.Empty(vm.PlaylistVM.Tracks);
+            Assert.Empty(vm.PlaylistVM.Favorites);
+            Assert.False(vm.IsCurrentFavorite);
+            recMock.Verify(x => x.RecordFeedback(It.IsAny<UserMusicFeedback>()), Times.Never);
+
+            // 2. 播客断流重试直接解析 audio_url，不走音乐源 Broker
+            var resolved = await vm.ResolveTrackUrlAsync(track, requireAlternative: false, CancellationToken.None);
+            Assert.NotNull(resolved);
+            Assert.Equal("https://93.184.216.34/audio.mp3", resolved!.Url);
+            Assert.Null(await vm.ResolveTrackUrlAsync(track, requireAlternative: true, CancellationToken.None));
+            brokerMock.Verify(x => x.ResolveTrackAsync(It.IsAny<OnlineTrack>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
     }
 }

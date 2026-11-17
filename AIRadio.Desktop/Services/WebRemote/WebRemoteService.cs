@@ -613,6 +613,7 @@ public sealed class WebRemoteService : IWebRemoteService
         {
             if (!transferOwnershipToWs)
             {
+                try { tcp.Client.Shutdown(SocketShutdown.Send); } catch { }
                 try { stream?.Dispose(); } catch { }
                 try { tcp.Dispose(); } catch { }
             }
@@ -622,8 +623,20 @@ public sealed class WebRemoteService : IWebRemoteService
     private async Task RunWebSocketSessionAsync(TcpClient tcp, NetworkStream stream, WebSocket ws, CancellationToken ct)
     {
         var client = new WsClient(ws, stream);
-        if (!_clients.TryAdd(client.Id, client))
+        var added = _clients.Count < MaxClients && _clients.TryAdd(client.Id, client);
+        if (added && _clients.Count > MaxClients)
         {
+            _clients.TryRemove(client.Id, out _);
+            added = false;
+        }
+        if (!added)
+        {
+            try
+            {
+                using var closeCts = new CancellationTokenSource(500);
+                await ws.CloseAsync(WebSocketCloseStatus.PolicyViolation, "too_many_clients", closeCts.Token);
+            }
+            catch { }
             client.Dispose();
             tcp.Dispose();
             return;

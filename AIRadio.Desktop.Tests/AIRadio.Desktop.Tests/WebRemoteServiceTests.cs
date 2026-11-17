@@ -30,7 +30,7 @@ public class WebRemoteServiceTests
         server.ConfigureHandlers(() => snapshot, _ => Task.FromResult(WebRemoteCommandResult.Success()));
         Assert.True(await server.StartAsync(0, secret, IPAddress.Loopback));
 
-        using var http = new HttpClient();
+        using var http = CreateLocalHttpClient();
         var resp = await http.GetAsync($"http://127.0.0.1:{server.Port}/");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Contains("no-store", resp.Headers.CacheControl?.ToString(), StringComparison.OrdinalIgnoreCase);
@@ -61,7 +61,7 @@ public class WebRemoteServiceTests
 
         Assert.True(await server.StartAsync(0, token, IPAddress.Loopback));
         var baseUrl = $"http://127.0.0.1:{server.Port}";
-        using var http = new HttpClient();
+        using var http = CreateLocalHttpClient();
 
         // 未带令牌 -> 401
         var unauthState = await http.GetAsync($"{baseUrl}/api/state");
@@ -169,7 +169,7 @@ public class WebRemoteServiceTests
         Assert.Equal(WebSocketMessageType.Close, closeFrame.MessageType);
         Assert.Equal((WebSocketCloseStatus)4001, closeFrame.CloseStatus);
 
-        using var http = new HttpClient();
+        using var http = CreateLocalHttpClient();
         var oldReq = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{server.Port}/api/state");
         oldReq.Headers.Add("X-Remote-Token", initialToken);
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(oldReq)).StatusCode);
@@ -229,7 +229,7 @@ public class WebRemoteServiceTests
         Assert.True(await server.StartAsync(0, token, IPAddress.Loopback));
 
         var baseUrl = $"http://127.0.0.1:{server.Port}";
-        using var http = new HttpClient();
+        using var http = CreateLocalHttpClient();
 
         // 畸形 %ZZ 查询转义应稳定返回 401
         var malformedResp = await http.GetAsync($"{baseUrl}/api/state?token=%ZZ");
@@ -245,6 +245,9 @@ public class WebRemoteServiceTests
         var oversizedResp = await http.SendAsync(oversizedReq);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversizedResp.StatusCode);
     }
+
+    private static HttpClient CreateLocalHttpClient()
+        => new(new SocketsHttpHandler { UseProxy = false });
 
     private static async Task<string> ReceiveTextAsync(ClientWebSocket ws)
     {
