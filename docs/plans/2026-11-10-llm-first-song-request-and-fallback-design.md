@@ -1,7 +1,7 @@
 # LLM 优先智能点歌与未配置优雅降级设计方案
 
 日期：2026-11-10  
-状态：设计中（待用户评审）  
+状态：已实施（2026-11-10 提交 `ace8011` / `ad64365` 并推送至 `master`）  
 关联问题：聊天框输入“想听李荣浩的麻雀”被本地正则生硬包裹为《李荣浩的麻雀》且绕过大模型  
 涉及模块：`AIRadio.Desktop/ViewModels/ChatViewModel.cs`, `AIRadio.Desktop/Services/IDJService.cs`, `AIRadio.Desktop/Services/DJService.cs`, `AIRadio.Desktop.Tests/ChatViewModelTests.cs`
 

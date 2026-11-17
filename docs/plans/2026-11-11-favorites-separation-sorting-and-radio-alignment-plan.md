@@ -147,7 +147,7 @@ flowchart TD
 
 ---
 
-### 5.2 第二步（计划实施）：收藏歌曲即时搜索与多维排序
+### 5.2 第二步（已实施）：收藏歌曲即时搜索与多维排序
 
 1. **ViewModel 契约（`PlaylistViewModel.cs`）**：
    - 新增 `FavoriteFilterText`（string，双向绑定）；
@@ -170,7 +170,7 @@ flowchart TD
 
 ---
 
-### 5.3 第三步（计划实施）：电台与歌曲收藏彻底解耦分流
+### 5.3 第三步（已实施）：电台与歌曲收藏彻底解耦分流
 
 1. **双集合解耦与连播安全（`PlaylistViewModel.cs`）**：
    - 内存维护 `FavoriteTracks`（纯单曲集合）与 `FavoriteStations`（电台集合）；
