@@ -34,7 +34,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISttService _sttService;
     private readonly IListeningProfileService? _listeningProfile;
     private readonly IRadioBrowserService? _radioBrowserService;
+    private readonly IPodcastStorage? _podcastStorage;
+    private CancellationTokenSource? _podcastDigestCts;
+    private string? _activePodcastEpisodeKey;
     private readonly IDisposable _trackEndedSub;
+    private readonly IDisposable _naturalTrackCompletedSub;
     private readonly IDisposable _trackChangedSub;
     private readonly IDisposable? _profileTrackChangedSub;
     private readonly IDisposable _playbackHistorySub;
@@ -152,6 +156,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> OpenProgramCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenKugouPlaylistsCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenRadioStationsCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenPodcastsCommand { get; }
     public ReactiveCommand<Unit, Unit> RefreshProgramCommand { get; }
     public ReactiveCommand<RecommendedTrack, Unit> PlayProgramTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleCharacterPickerCommand { get; }
@@ -218,7 +223,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ISceneModeService? sceneModeService = null,
         ICustomRadioStorage? customRadioStorage = null,
         IRadioStreamProbeService? radioStreamProbeService = null,
-        IPlaylistFileParser? playlistFileParser = null)
+        IPlaylistFileParser? playlistFileParser = null,
+        IPodcastRssService? podcastRssService = null,
+        IPodcastStorage? podcastStorage = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -230,6 +237,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _kugouVerification = kugouVerification;
         _localLibrary = localLibrary;
         _radioBrowserService = radioBrowserService;
+        _podcastStorage = podcastStorage;
         _listeningProfile = listeningProfile;
 
         SelectedCharacter = Characters[0];
@@ -247,7 +255,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             radioBrowserService: radioBrowserService,
             customRadioStorage: customRadioStorage,
             radioStreamProbeService: radioStreamProbeService,
-            playlistFileParser: playlistFileParser);
+            playlistFileParser: playlistFileParser,
+            podcastRssService: podcastRssService,
+            podcastStorage: podcastStorage);
+        PlaylistVM.PodcastDigestRequested += OnPodcastDigestRequested;
         if (musicSearchService is IMusicSourceBroker broker)
             _playbackPreflight = new PlaybackPreflightService(_audioService, broker, accountStore, openSubsonic);
         ChatVM = new ChatViewModel(_djService, _audioService, musicSearchService, sttService,
@@ -367,6 +378,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             OpenLibraryTab(5);
             _ = PlaylistVM.LoadInitialRadioStationsAsync();
+        });
+        OpenPodcastsCommand = ReactiveCommand.Create(() =>
+        {
+            OpenLibraryTab(6);
+            _ = PlaylistVM.LoadInitialPodcastsAsync();
         });
         RefreshProgramCommand = ReactiveCommand.CreateFromTask(() => LoadProgramAsync(force: true));
         PlayProgramTrackCommand = ReactiveCommand.Create<RecommendedTrack>(PlayProgramTrack);
@@ -583,8 +599,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (current == null) return;
                 // 自然播完先结算画像（Completed + 清除跳过待判态），再走自动续播
+                MarkPodcastEpisodeCompleted(current);
                 _listeningProfile?.NotifyPlaybackEndedNaturally(current);
                 _ = HandleAutoRadioTrackEndedAsync(current);
+            });
+
+        _naturalTrackCompletedSub = (_audioService.NaturalTrackCompleted ?? Observable.Empty<Track?>())
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(completed =>
+            {
+                if (completed != null)
+                    MarkPodcastEpisodeCompleted(completed);
             });
 
         _trackChangedSub = _audioService.TrackChanged
@@ -597,6 +622,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     (PlaylistVM.FindMatchingTrack(track) ?? track).IsFavorite;
                 HasCurrentTrack = track != null;
                 UpdateCanStopAfterCurrentTrack(track);
+                var nextPodcastKey = track is { IsPodcastEpisode: true } &&
+                                     track.ProviderMetadata.TryGetValue("episode_key", out var epKey)
+                    ? epKey
+                    : null;
+                if (_activePodcastEpisodeKey != null &&
+                    !string.Equals(_activePodcastEpisodeKey, nextPodcastKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    _ = _podcastStorage?.FlushAsync();
+                }
+                _activePodcastEpisodeKey = nextPodcastKey;
                 PushStationContext();
             });
 
@@ -615,31 +650,50 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 var current = _audioService.CurrentTrack;
                 if (state == PlaybackState.Playing)
                 {
-                    if (current != null)
-                    {
+                    if (current != null && !current.IsLiveStream && !current.IsPodcastEpisode)
                         _recommendationService.RecordPlayedTrack(current);
+                    if (current != null)
                         _listeningProfile?.NotifyPlaybackStarted(current);
-                    }
                     // 播放历史刚更新（RecordPlayedTrack），现场快照同步刷新
                     PushStationContext();
                 }
-                else if (state == PlaybackState.Paused)
+                else if (state == PlaybackState.Paused || state == PlaybackState.Stopped)
                 {
-                    // 暂停后再切歌不算跳过（前曲非播放态）；不响应 Stopped：
-                    // 在线曲目的换曲主路径会先短暂 Stopped 再 TrackChanged
-                    _listeningProfile?.NotifyPlaybackPaused();
+                    if (state == PlaybackState.Paused)
+                        _listeningProfile?.NotifyPlaybackPaused();
+                    if (current is { IsPodcastEpisode: true })
+                        _ = _podcastStorage?.FlushAsync();
                 }
             });
 
-        // 跳过判定用的进度样本：样本与曲目身份绑定（500ms 粒度，仅缓存一个数值）
-        _positionSampleSub = _listeningProfile == null
+        // 跳过判定用的进度样本与播客断点进度同步：均按曲目身份绑定
+        _positionSampleSub = (_listeningProfile == null && _podcastStorage == null)
             ? null
             : _audioService.PositionChanged
                 .Subscribe(position =>
                 {
                     var current = _audioService.CurrentTrack;
-                    if (current != null)
-                        _listeningProfile.NotifyPositionSampled(current, position);
+                    if (current == null)
+                        return;
+
+                    _listeningProfile?.NotifyPositionSampled(current, position);
+                    if (_podcastStorage != null &&
+                        current.IsPodcastEpisode &&
+                        current.ProviderMetadata.TryGetValue("episode_key", out var epKey))
+                    {
+                        var posMs = (long)position.TotalMilliseconds;
+                        if (posMs > 0)
+                        {
+                            var durationMs = current.Duration > TimeSpan.Zero
+                                ? (long)current.Duration.TotalMilliseconds
+                                : 0L;
+                            current.ProviderMetadata["resume_ms"] = posMs.ToString(CultureInfo.InvariantCulture);
+                            _ = _podcastStorage.UpdateEpisodeProgressAsync(
+                                epKey, posMs, durationMs, isCompleted: false, flushImmediately: false);
+                            RxApp.MainThreadScheduler.Schedule(() =>
+                                PlaylistVM.SyncPodcastEpisodeProgress(epKey, posMs, isCompleted: false));
+                        }
+                    }
                 });
 
         _playbackRecoverySub = _audioService.PlaybackRecoveryNotices?
@@ -994,6 +1048,69 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         var joined = string.Join(" ", story.Lines.Select(l => l.Text));
         ChatVM.AddAssistantMessage(joined);
         await SpeakDjTextAsync(joined);
+    }
+
+    private void MarkPodcastEpisodeCompleted(Track track)
+    {
+        if (!track.IsPodcastEpisode ||
+            !track.ProviderMetadata.TryGetValue("episode_key", out var epKey))
+        {
+            return;
+        }
+
+        track.ProviderMetadata["resume_ms"] = "0";
+        _ = _podcastStorage?.UpdateEpisodeProgressAsync(
+            epKey, 0, (long)track.Duration.TotalMilliseconds, isCompleted: true, flushImmediately: true);
+        PlaylistVM.SyncPodcastEpisodeProgress(epKey, 0, isCompleted: true);
+    }
+
+    private void OnPodcastDigestRequested(PodcastEpisode episode)
+        => _ = DigestPodcastEpisodeAsync(episode);
+
+    internal async Task DigestPodcastEpisodeAsync(PodcastEpisode episode)
+    {
+        if (IsDisposed || episode == null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(episode.Summary))
+        {
+            ChatVM.AddAssistantMessage(AppLanguage.Get("S_PodcastNoShownotes"));
+            return;
+        }
+
+        _podcastDigestCts?.Cancel();
+        _podcastDigestCts?.Dispose();
+        var digestCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        _podcastDigestCts = digestCts;
+
+        episode.IsDigesting = true;
+        try
+        {
+            var script = await _djService.GeneratePodcastDigestAsync(episode, digestCts.Token);
+            if (IsDisposed || digestCts.IsCancellationRequested)
+                return;
+
+            if (string.IsNullOrWhiteSpace(script.Text))
+            {
+                ChatVM.AddAssistantMessage(AppLanguage.Get("S_PodcastNoShownotes"));
+                return;
+            }
+
+            ChatVM.AddAssistantMessage(script.Text);
+            DjVisualCue?.Invoke(script.Expression, script.Motion);
+            await SpeakDjTextAsync(script.Text);
+        }
+        catch (OperationCanceledException) when (digestCts.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Podcast digest failed for {Title}", episode.Title);
+        }
+        finally
+        {
+            episode.IsDigesting = false;
+        }
     }
 
     private void RecordCurrentTrackFeedback(MusicFeedbackAction action)
@@ -2053,17 +2170,22 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             return;
 
         _lifetimeCts.Cancel();
+        _podcastDigestCts?.Cancel();
+        _podcastDigestCts?.Dispose();
+        PlaylistVM.PodcastDigestRequested -= OnPodcastDigestRequested;
+        _positionSampleSub?.Dispose();
+        _trackEndedSub?.Dispose();
+        _naturalTrackCompletedSub?.Dispose();
+        _podcastStorage?.FlushBlocking();
         if (_kugouVerification != null)
             _kugouVerification.ChallengeDetected -= OnKugouChallengeDetected;
         // AudioService 已在 App.OnShutdownRequested 第一步先行释放（DI 容器
         // 随后的再次释放是幂等空转）。这里不能在 Avalonia 关闭线程同步 Stop
         // NAudio，否则设备线程异常时会再次把窗口关闭卡住。
-        _trackEndedSub?.Dispose();
         _trackChangedSub?.Dispose();
         _playbackPreflight?.Dispose();
         _profileTrackChangedSub?.Dispose();
         _playbackHistorySub?.Dispose();
-        _positionSampleSub?.Dispose();
         _playbackRecoverySub?.Dispose();
         _darkModePersistSub?.Dispose();
         _themeModeSub?.Dispose();

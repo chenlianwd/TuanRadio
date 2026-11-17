@@ -89,7 +89,7 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (track.IsLiveStream)
+        if (track.IsLiveStream || track.IsPodcastEpisode)
         {
             SetStatus(StatusKind.NoLyrics);
             return;

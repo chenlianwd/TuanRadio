@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -45,6 +46,7 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<PlaybackState> _stateChangedSubject = new();
     private readonly Subject<TimeSpan> _positionChangedSubject = new();
     private readonly Subject<Track?> _trackEndedSubject = new();
+    private readonly Subject<Track?> _naturalTrackCompletedSubject = new();
     private readonly Subject<string> _ttsErrorSubject = new();
     private readonly Subject<PlaybackRecoveryNotice> _playbackRecoverySubject = new();
     private readonly Subject<TrackMediaInfo> _trackMediaInfoSubject = new();
@@ -213,6 +215,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<PlaybackState> StateChanged => _stateChangedSubject.AsObservable();
     public IObservable<TimeSpan> PositionChanged => _positionChangedSubject.AsObservable();
     public IObservable<Track?> TrackEnded => _trackEndedSubject.AsObservable();
+    public IObservable<Track?> NaturalTrackCompleted => _naturalTrackCompletedSubject.AsObservable();
     public IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices => _playbackRecoverySubject.AsObservable();
     public IObservable<TrackMediaInfo> TrackMediaInfo => _trackMediaInfoSubject.AsObservable();
     public IObservable<string?> LiveMetadataChanged => _liveMetadataSubject.AsObservable();
@@ -513,6 +516,7 @@ public class AudioService : IAudioService, IDisposable
         _stateChangedSubject.Dispose();
         _positionChangedSubject.Dispose();
         _trackEndedSubject.Dispose();
+        _naturalTrackCompletedSubject.Dispose();
         _playbackRecoverySubject.Dispose();
         _trackMediaInfoSubject.Dispose();
         _liveMetadataSubject.Dispose();
@@ -607,6 +611,8 @@ public class AudioService : IAudioService, IDisposable
             // CurrentCount 是瞬时快照，够用于此判定
             if (!IsCurrentPlaybackIntent(endReachedIntentVersion) && _nextGate.CurrentCount == 0)
                 return;
+
+            _naturalTrackCompletedSubject.OnNext(CurrentTrack);
 
             if (_repeatMode == "single" && CurrentTrack != null)
                 PlayTrack(_currentIndex);
@@ -861,6 +867,8 @@ public class AudioService : IAudioService, IDisposable
             var positionMs = Math.Max(0, (long)position.TotalMilliseconds);
             if (TryPlayerOperation(() => _player.Time = positionMs))
                 Interlocked.Exchange(ref _lastPositionMs, positionMs);
+                if (CurrentTrack is { IsPodcastEpisode: true } podTrack)
+                    podTrack.ProviderMetadata["resume_ms"] = positionMs.ToString(CultureInfo.InvariantCulture);
         }
     }
 
@@ -1474,7 +1482,7 @@ public class AudioService : IAudioService, IDisposable
                 // to get a fresh link, but still play immediately with the current URL.
                 // Only skip if the URL looks like a local file path; freshly resolved
                 // tracks (ResolvedAtUtc within window) skip the redundant background resolve.
-                if (isOnlineUrl && !track.IsLiveStream && !IsRecentlyResolved(track))
+                if (isOnlineUrl && !track.IsLiveStream && !track.IsPodcastEpisode && !IsRecentlyResolved(track))
                 {
                     _ = RefreshTrackUrlAsync(track, requestId);
                 }
@@ -1511,6 +1519,12 @@ public class AudioService : IAudioService, IDisposable
                     // 音源声明的播放头（UA 可靠投递/Cookie 通道/Referer 尽力，见 MediaHttpOptions）
                     foreach (var headerOption in MediaHttpOptions.Build(track.PlaybackHeaders))
                         newMedia.AddOption(headerOption);
+                }
+
+                if (TryBuildPodcastStartTimeOption(track, out var resumeMs, out var startTimeOption))
+                {
+                    newMedia.AddOption(startTimeOption);
+                    Interlocked.Exchange(ref _lastPositionMs, resumeMs);
                 }
 
                 if (track.IsLiveStream && isUrl)
@@ -1692,10 +1706,33 @@ public class AudioService : IAudioService, IDisposable
         return true;
     }
 
+    internal static bool TryBuildPodcastStartTimeOption(Track track, out long resumeMs, out string option)
+    {
+        resumeMs = 0;
+        option = string.Empty;
+        if (!track.IsPodcastEpisode)
+            return false;
+
+        if (!track.ProviderMetadata.TryGetValue("resume_ms", out var raw) ||
+            !long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ||
+            parsed <= 3000)
+        {
+            return false;
+        }
+
+        // 若记录的断点已非常接近已知总时长尾部，直接从头播放以免瞬时触发 EndReached
+        if (track.Duration > TimeSpan.Zero && parsed >= (long)track.Duration.TotalMilliseconds - 5000)
+            return false;
+
+        resumeMs = parsed;
+        option = $":start-time={(parsed / 1000.0).ToString("0.###", CultureInfo.InvariantCulture)}";
+        return true;
+    }
+
     internal static EarlyEndRecoveryAction GetRecoveryActionForTrack(Track track, int completedRecoveryCount)
     {
         var action = GetEarlyEndRecoveryAction(completedRecoveryCount);
-        if (track.IsLiveStream && action == EarlyEndRecoveryAction.TryAlternativeSource)
+        if ((track.IsLiveStream || track.IsPodcastEpisode) && action == EarlyEndRecoveryAction.TryAlternativeSource)
             return EarlyEndRecoveryAction.Advance;
         return action;
     }
@@ -2291,6 +2328,8 @@ public class AudioService : IAudioService, IDisposable
             if (pos != Interlocked.Read(ref _lastPositionMs))
             {
                 Interlocked.Exchange(ref _lastPositionMs, pos);
+                if (CurrentTrack is { IsPodcastEpisode: true } podTrack)
+                    podTrack.ProviderMetadata["resume_ms"] = pos.ToString(CultureInfo.InvariantCulture);
                 _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(pos));
             }
 

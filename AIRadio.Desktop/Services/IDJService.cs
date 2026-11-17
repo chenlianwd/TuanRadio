@@ -23,6 +23,9 @@ public interface IDJService
     /// 与串场词共用队列：聊天链凭它记得自己说过什么，串场链凭它防复读。</summary>
     void RememberOnAirLine(string? text);
     Task<SongStory> GenerateSongStoryAsync(Track track);
+    /// <summary>生成播客单集一分钟速读（默认回退为空脚本以便未实现 mock 安全兼容）。</summary>
+    Task<DJScript> GeneratePodcastDigestAsync(PodcastEpisode episode, CancellationToken cancellationToken = default)
+        => Task.FromResult(new DJScript { Emotion = "neutral", Expression = "neutral", Motion = "idle" });
     Task<SongStory> GenerateSongStoryAsync(Track track, CancellationToken cancellationToken)
         => GenerateSongStoryAsync(track);
     Task<Track?> RecommendNextTrackAsync(Track? current);

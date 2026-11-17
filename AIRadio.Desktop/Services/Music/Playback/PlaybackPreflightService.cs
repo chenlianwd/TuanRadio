@@ -141,6 +141,21 @@ public sealed class PlaybackPreflightService : IDisposable
                     failure = PlaybackFailureKind.NotFound;
                 }
             }
+            else if (track.IsPodcastEpisode)
+            {
+                var audioUrl = track.ProviderMetadata.TryGetValue("audio_url", out var au) && !string.IsNullOrWhiteSpace(au)
+                    ? au
+                    : track.FilePath;
+                if (Uri.TryCreate(audioUrl, UriKind.Absolute, out var uri))
+                {
+                    var isValid = await MediaUriPolicy.ValidateCustomRadioAsync(uri, cancellationToken);
+                    failure = isValid ? PlaybackFailureKind.None : PlaybackFailureKind.SourceUnavailable;
+                }
+                else
+                {
+                    failure = PlaybackFailureKind.NotFound;
+                }
+            }
             else if (string.IsNullOrWhiteSpace(track.SourceId))
                 failure = File.Exists(track.FilePath) ? PlaybackFailureKind.None : PlaybackFailureKind.NotFound;
             else

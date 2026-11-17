@@ -28,6 +28,14 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly ICustomRadioStorage? _customRadioStorage;
     private readonly IRadioStreamProbeService? _radioStreamProbeService;
     private readonly IPlaylistFileParser? _playlistFileParser;
+    private readonly IPodcastRssService? _podcastRssService;
+    private readonly IPodcastStorage? _podcastStorage;
+    private Func<Uri, CancellationToken, Task<bool>> _podcastAudioUriValidator = MediaUriPolicy.ValidateCustomRadioAsync;
+    private List<PodcastEpisode> _allPodcastEpisodes = new();
+    private bool _podcastFeedsLoaded;
+    private bool _suppressPodcastSelectionLoad;
+    private long _podcastLoadGeneration;
+    private Func<string>? _podcastStatusFactory;
     private IReadOnlyList<RadioStation> _customStationsCache = [];
     private bool _customStationsCacheLoaded;
     private string _currentCategoryKey = "lofi";
@@ -58,6 +66,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _selectedSyncedPlaylistSub;
     private readonly IDisposable _favoriteFilterSub;
     private readonly IDisposable _favoriteSortSub;
+    private readonly IDisposable _podcastFilterSub;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly SemaphoreSlim _kugouGate = new(1, 1);
     private readonly HashSet<string> _favoriteIds = new();
@@ -80,6 +89,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<SyncedPlaylistInfo> SyncedPlaylists { get; } = new();
     public ObservableCollection<RadioCategoryItem> RadioCategories { get; } = new();
     public ObservableCollection<RadioStation> RadioStations { get; } = new();
+    public ObservableCollection<PodcastFeed> PodcastFeeds { get; } = new();
+    public ObservableCollection<PodcastEpisode> PodcastEpisodes { get; } = new();
+    public event Action<PodcastEpisode>? PodcastDigestRequested;
     public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
     public ObservableCollection<Track> VisibleFavoriteTracks { get; } = new();
     public ObservableCollection<Track> FavoriteStations { get; } = new();
@@ -112,7 +124,17 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string KugouFilterText { get; set; } = string.Empty;
     [Reactive] public partial SyncedPlaylistInfo? SelectedSyncedPlaylist { get; set; }
     [Reactive] public partial bool HasSyncedPlaylists { get; set; }
-    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 3=节目单, 4=酷狗歌单, 5=网络电台
+    [Reactive] public partial int TabIndex { get; set; } // 0=列表, 1=收藏, 3=节目单, 4=酷狗歌单, 5=网络电台, 6=播客
+    [Reactive] public partial PodcastFeed? SelectedPodcastFeed { get; set; }
+    [Reactive] public partial string PodcastFilterText { get; set; } = string.Empty;
+    [Reactive] public partial bool IsPodcastLoading { get; set; }
+    [Reactive] public partial bool HasPodcastEpisodes { get; set; }
+    [Reactive] public partial bool HasPodcastFeeds { get; set; }
+    [Reactive] public partial string PodcastStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial bool IsPodcastSubscribeOpen { get; set; }
+    [Reactive] public partial string PodcastRssUrlInput { get; set; } = string.Empty;
+    [Reactive] public partial string PodcastSubscribeError { get; set; } = string.Empty;
+    [Reactive] public partial bool IsSubscribingPodcast { get; set; }
     [Reactive] public partial RadioCategoryItem? SelectedRadioCategory { get; set; }
     [Reactive] public partial string RadioSearchText { get; set; } = string.Empty;
     [Reactive] public partial string RadioStatusMessage { get; set; } = string.Empty;
@@ -162,6 +184,14 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ConfirmImportCustomStationsCommand { get; }
     public ReactiveCommand<RadioStation, Unit> EditCustomStationCommand { get; }
     public ReactiveCommand<RadioStation, Unit> DeleteCustomStationCommand { get; }
+    public ReactiveCommand<Unit, Unit> RefreshPodcastCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenPodcastSubscribeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClosePodcastSubscribeCommand { get; }
+    public ReactiveCommand<Unit, Unit> SubscribePodcastCommand { get; }
+    public ReactiveCommand<Unit, Unit> UnsubscribePodcastCommand { get; }
+    public ReactiveCommand<PodcastEpisode, Unit> PlayPodcastEpisodeCommand { get; }
+    public ReactiveCommand<PodcastEpisode, Unit> PlayPodcastFromStartCommand { get; }
+    public ReactiveCommand<PodcastEpisode, Unit> DigestPodcastEpisodeCommand { get; }
 
     public ReactiveCommand<Track, Unit> RemoveTrackCommand { get; }
     public ReactiveCommand<Unit, Unit> RemoveSelectedTracksCommand { get; }
@@ -198,7 +228,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         IRadioBrowserService? radioBrowserService = null,
         ICustomRadioStorage? customRadioStorage = null,
         IRadioStreamProbeService? radioStreamProbeService = null,
-        IPlaylistFileParser? playlistFileParser = null)
+        IPlaylistFileParser? playlistFileParser = null,
+        IPodcastRssService? podcastRssService = null,
+        IPodcastStorage? podcastStorage = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
@@ -208,6 +240,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _customRadioStorage = customRadioStorage;
         _radioStreamProbeService = radioStreamProbeService;
         _playlistFileParser = playlistFileParser;
+        _podcastRssService = podcastRssService;
+        _podcastStorage = podcastStorage;
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
         _customWriter = writeAllTextAsync != null;
@@ -485,6 +519,15 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         ConfirmImportCustomStationsCommand = ReactiveCommand.CreateFromTask(ConfirmImportCustomStationsAsync);
         EditCustomStationCommand = ReactiveCommand.Create<RadioStation>(OpenEditCustomStationPanel);
         DeleteCustomStationCommand = ReactiveCommand.CreateFromTask<RadioStation>(DeleteCustomStationAsync);
+        RefreshPodcastCommand = ReactiveCommand.CreateFromTask(() =>
+            SelectedPodcastFeed != null ? LoadPodcastEpisodesAsync(SelectedPodcastFeed, forceRefresh: true) : LoadInitialPodcastsAsync());
+        OpenPodcastSubscribeCommand = ReactiveCommand.Create(OpenPodcastSubscribePanel);
+        ClosePodcastSubscribeCommand = ReactiveCommand.Create(ClosePodcastSubscribePanel);
+        SubscribePodcastCommand = ReactiveCommand.CreateFromTask(SubscribePodcastAsync);
+        UnsubscribePodcastCommand = ReactiveCommand.CreateFromTask(UnsubscribeCurrentPodcastAsync);
+        PlayPodcastEpisodeCommand = ReactiveCommand.CreateFromTask<PodcastEpisode>(ep => PlayPodcastEpisodeAsync(ep, fromStart: false));
+        PlayPodcastFromStartCommand = ReactiveCommand.CreateFromTask<PodcastEpisode>(ep => PlayPodcastEpisodeAsync(ep, fromStart: true));
+        DigestPodcastEpisodeCommand = ReactiveCommand.Create<PodcastEpisode>(ep => PodcastDigestRequested?.Invoke(ep));
 
         SetFavoriteSubTabCommand = ReactiveCommand.Create<int>(idx => FavoriteSubTabIndex = idx);
         this.WhenAnyValue(x => x.FavoriteSubTabIndex)
@@ -498,6 +541,18 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         _favoriteSortSub = this.WhenAnyValue(x => x.SelectedFavoriteSortOption)
             .Subscribe(_ => ApplyFavoriteFilterAndSort());
+
+        _podcastFilterSub = this.WhenAnyValue(x => x.PodcastFilterText)
+            .Throttle(TimeSpan.FromMilliseconds(120), RxApp.MainThreadScheduler)
+            .Subscribe(_ => ApplyPodcastFilter());
+
+        this.WhenAnyValue(x => x.SelectedPodcastFeed)
+            .Subscribe(feed =>
+            {
+                if (_suppressPodcastSelectionLoad || feed == null)
+                    return;
+                _ = LoadPodcastEpisodesAsync(feed);
+            });
 
         PopulateRadioCategories();
         SelectedRadioCategory = RadioCategories.FirstOrDefault(c => c.Key == "lofi") ?? RadioCategories.FirstOrDefault();
@@ -541,6 +596,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 LocalLibraryStatus = _localLibraryStatusFactory();
             if (_radioStatusFactory != null)
                 RadioStatusMessage = _radioStatusFactory();
+            if (_podcastStatusFactory != null)
+                PodcastStatusMessage = _podcastStatusFactory();
+            foreach (var episode in _allPodcastEpisodes)
+                episode.RefreshLocalization();
             PopulateRadioCategories();
             RebuildFavoriteSortOptions();
             ApplyFavoriteFilterAndSort();
@@ -1852,6 +1911,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _searchTextSub.Dispose();
         _favoriteFilterSub?.Dispose();
         _favoriteSortSub?.Dispose();
+        _podcastFilterSub.Dispose();
         Tracks.CollectionChanged -= OnTracksChanged;
         AppLanguage.Changed -= _onLanguageChanged;
     }
@@ -2412,6 +2472,313 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             AppLanguage.T("网络电台", "Internet Radio"));
     }
 
+    public async Task LoadInitialPodcastsAsync()
+    {
+        if (_podcastFeedsLoaded && PodcastFeeds.Count > 0)
+            return;
+
+        if (_podcastStorage == null)
+        {
+            PodcastFeeds.Clear();
+            HasPodcastFeeds = false;
+            SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyFeeds"));
+            return;
+        }
+
+        var feeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
+        _podcastFeedsLoaded = true;
+        _suppressPodcastSelectionLoad = true;
+        try
+        {
+            PodcastFeeds.Clear();
+            foreach (var feed in feeds)
+                PodcastFeeds.Add(feed);
+            HasPodcastFeeds = PodcastFeeds.Count > 0;
+            SelectedPodcastFeed = PodcastFeeds.FirstOrDefault();
+        }
+        finally
+        {
+            _suppressPodcastSelectionLoad = false;
+        }
+
+        if (SelectedPodcastFeed != null)
+        {
+            await LoadPodcastEpisodesAsync(SelectedPodcastFeed);
+        }
+        else
+        {
+            _allPodcastEpisodes.Clear();
+            PodcastEpisodes.Clear();
+            HasPodcastEpisodes = false;
+            SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyFeeds"));
+        }
+    }
+
+    public async Task LoadPodcastEpisodesAsync(PodcastFeed feed, bool forceRefresh = false)
+    {
+        if (_podcastRssService == null)
+        {
+            HasPodcastEpisodes = false;
+            SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyEpisodes"));
+            return;
+        }
+
+        var gen = Interlocked.Increment(ref _podcastLoadGeneration);
+        IsPodcastLoading = true;
+        SetPodcastStatus(() => AppLanguage.Get("S_PodcastLoading"));
+        try
+        {
+            var result = await _podcastRssService.FetchFeedAsync(feed.RssUrl, forceRefresh, _lifetimeCts.Token);
+            if (gen != Volatile.Read(ref _podcastLoadGeneration) || Volatile.Read(ref _disposed) != 0)
+                return;
+
+            if (!result.IsSuccess)
+            {
+                _allPodcastEpisodes.Clear();
+                PodcastEpisodes.Clear();
+                HasPodcastEpisodes = false;
+                var err = result.ErrorMessage;
+                SetPodcastStatus(() => string.IsNullOrWhiteSpace(err) ? AppLanguage.Get("S_PodcastEmptyEpisodes") : err);
+                return;
+            }
+
+            if (_podcastStorage != null)
+            {
+                foreach (var ep in result.Episodes)
+                {
+                    var progress = await _podcastStorage.GetEpisodeProgressAsync(ep.EpisodeKey, _lifetimeCts.Token);
+                    if (progress != null)
+                    {
+                        ep.ResumePositionMs = progress.PositionMs;
+                        ep.IsCompleted = progress.IsCompleted;
+                    }
+                }
+            }
+
+            if (gen != Volatile.Read(ref _podcastLoadGeneration) || Volatile.Read(ref _disposed) != 0)
+                return;
+
+            _allPodcastEpisodes = result.Episodes.ToList();
+            ApplyPodcastFilter();
+            if (HasPodcastEpisodes)
+                ClearPodcastStatus();
+            else
+                SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyEpisodes"));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load podcast episodes for {Url}", feed.RssUrl);
+            _allPodcastEpisodes.Clear();
+            PodcastEpisodes.Clear();
+            HasPodcastEpisodes = false;
+            SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyEpisodes"));
+        }
+        finally
+        {
+            if (gen == Volatile.Read(ref _podcastLoadGeneration))
+                IsPodcastLoading = false;
+        }
+    }
+
+    private void OpenPodcastSubscribePanel()
+    {
+        PodcastRssUrlInput = string.Empty;
+        PodcastSubscribeError = string.Empty;
+        IsPodcastSubscribeOpen = true;
+    }
+
+    private void ClosePodcastSubscribePanel()
+    {
+        IsPodcastSubscribeOpen = false;
+        PodcastSubscribeError = string.Empty;
+    }
+
+    public async Task SubscribePodcastAsync()
+    {
+        if (_podcastRssService == null || _podcastStorage == null)
+            return;
+
+        var url = PodcastRssUrlInput.Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            PodcastSubscribeError = AppLanguage.Get("S_PodcastInvalidUrl");
+            return;
+        }
+
+        IsSubscribingPodcast = true;
+        PodcastSubscribeError = string.Empty;
+        try
+        {
+            var result = await _podcastRssService.FetchFeedAsync(url, forceRefresh: true, _lifetimeCts.Token);
+            if (!result.IsSuccess || result.Feed == null)
+            {
+                PodcastSubscribeError = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? AppLanguage.Get("S_PodcastInvalidUrl")
+                    : result.ErrorMessage;
+                return;
+            }
+
+            await _podcastStorage.AddOrUpdateFeedAsync(result.Feed, _lifetimeCts.Token);
+            var feeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
+            _podcastFeedsLoaded = true;
+
+            _suppressPodcastSelectionLoad = true;
+            try
+            {
+                PodcastFeeds.Clear();
+                foreach (var f in feeds)
+                    PodcastFeeds.Add(f);
+                HasPodcastFeeds = PodcastFeeds.Count > 0;
+                SelectedPodcastFeed = PodcastFeeds.FirstOrDefault(f =>
+                    string.Equals(f.RssUrl, result.Feed.RssUrl, StringComparison.OrdinalIgnoreCase))
+                    ?? PodcastFeeds.FirstOrDefault();
+            }
+            finally
+            {
+                _suppressPodcastSelectionLoad = false;
+            }
+
+            foreach (var ep in result.Episodes)
+            {
+                var progress = await _podcastStorage.GetEpisodeProgressAsync(ep.EpisodeKey, _lifetimeCts.Token);
+                if (progress != null)
+                {
+                    ep.ResumePositionMs = progress.PositionMs;
+                    ep.IsCompleted = progress.IsCompleted;
+                }
+            }
+
+            _allPodcastEpisodes = result.Episodes.ToList();
+            ApplyPodcastFilter();
+            if (HasPodcastEpisodes)
+                ClearPodcastStatus();
+            else
+                SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyEpisodes"));
+            IsPodcastSubscribeOpen = false;
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Subscribe podcast failed for {Url}", url);
+            PodcastSubscribeError = AppLanguage.Get("S_PodcastInvalidUrl");
+        }
+        finally
+        {
+            IsSubscribingPodcast = false;
+        }
+    }
+
+    public async Task UnsubscribeCurrentPodcastAsync()
+    {
+        if (_podcastStorage == null || SelectedPodcastFeed == null)
+            return;
+
+        var removedUrl = SelectedPodcastFeed.RssUrl;
+        await _podcastStorage.RemoveFeedAsync(removedUrl, _lifetimeCts.Token);
+        var feeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
+
+        _suppressPodcastSelectionLoad = true;
+        try
+        {
+            PodcastFeeds.Clear();
+            foreach (var f in feeds)
+                PodcastFeeds.Add(f);
+            HasPodcastFeeds = PodcastFeeds.Count > 0;
+            SelectedPodcastFeed = PodcastFeeds.FirstOrDefault();
+        }
+        finally
+        {
+            _suppressPodcastSelectionLoad = false;
+        }
+
+        if (SelectedPodcastFeed != null)
+        {
+            await LoadPodcastEpisodesAsync(SelectedPodcastFeed);
+        }
+        else
+        {
+            _allPodcastEpisodes.Clear();
+            PodcastEpisodes.Clear();
+            HasPodcastEpisodes = false;
+            SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyFeeds"));
+        }
+    }
+
+    private void ApplyPodcastFilter()
+    {
+        var keyword = PodcastFilterText.Trim();
+        var filtered = string.IsNullOrEmpty(keyword)
+            ? _allPodcastEpisodes
+            : _allPodcastEpisodes.Where(ep =>
+                (!string.IsNullOrEmpty(ep.Title) && ep.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrEmpty(ep.Summary) && ep.Summary.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
+
+        PodcastEpisodes.Clear();
+        foreach (var ep in filtered)
+            PodcastEpisodes.Add(ep);
+        HasPodcastEpisodes = PodcastEpisodes.Count > 0;
+        if (!HasPodcastEpisodes && !IsPodcastLoading && HasPodcastFeeds)
+            SetPodcastStatus(() => AppLanguage.Get("S_PodcastEmptyEpisodes"));
+        else if (HasPodcastEpisodes)
+            ClearPodcastStatus();
+    }
+
+    internal void SetPodcastAudioUriValidatorForTests(Func<Uri, CancellationToken, Task<bool>> validator)
+        => _podcastAudioUriValidator = validator ?? MediaUriPolicy.ValidateCustomRadioAsync;
+
+    public async Task PlayPodcastEpisodeAsync(PodcastEpisode episode, bool fromStart = false)
+    {
+        if (episode == null)
+            return;
+
+        if (!Uri.TryCreate(episode.AudioUrl, UriKind.Absolute, out var audioUri) ||
+            !await _podcastAudioUriValidator(audioUri, _lifetimeCts.Token))
+        {
+            SetPodcastStatus(() => AppLanguage.T("播客音频地址被安全策略拒绝", "Podcast audio URL blocked by security policy"));
+            return;
+        }
+
+        var tracks = PodcastEpisodes.Select(ep => ep.ToTrack(startFromBeginning: fromStart && ReferenceEquals(ep, episode))).ToList();
+        var startIndex = PodcastEpisodes.IndexOf(episode);
+        if (startIndex < 0)
+        {
+            tracks = [episode.ToTrack(startFromBeginning: fromStart)];
+            startIndex = 0;
+        }
+
+        _audioService.StartPlaybackContext(tracks, startIndex, shuffle: false,
+            AppLanguage.T("播客节目", "Podcast"));
+    }
+
+    public void SyncPodcastEpisodeProgress(string episodeKey, long positionMs, bool isCompleted)
+    {
+        var match = _allPodcastEpisodes.FirstOrDefault(ep =>
+            string.Equals(ep.EpisodeKey, episodeKey, StringComparison.OrdinalIgnoreCase));
+        if (match == null)
+            return;
+
+        match.IsCompleted = isCompleted;
+        match.ResumePositionMs = isCompleted ? 0 : positionMs;
+    }
+
+    private void SetPodcastStatus(Func<string> factory)
+    {
+        _podcastStatusFactory = factory;
+        PodcastStatusMessage = factory();
+    }
+
+    private void ClearPodcastStatus()
+    {
+        _podcastStatusFactory = null;
+        PodcastStatusMessage = string.Empty;
+    }
+
+
     private void RebuildFavoriteSortOptions()
     {
         var currentKind = SelectedFavoriteSortOption?.Kind ?? FavoriteSortKind.DateAddedDesc;
@@ -2428,7 +2795,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
     public void ApplyFavoriteFilterAndSort()
     {
-        var songs = Favorites.Where(t => !t.IsLiveStream).ToList();
+        var songs = Favorites.Where(t => !t.IsLiveStream && !t.IsPodcastEpisode).ToList();
         var stations = Favorites.Where(t => t.IsLiveStream).ToList();
 
         FavoriteSongsTabTitle = $"{AppLanguage.T("歌曲", "Songs")} ({songs.Count})";
