@@ -180,6 +180,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool SleepTimerCloseAppOnExpiry { get; set; }
     [Reactive] public partial RadioSceneMode CurrentSceneMode { get; private set; } = RadioSceneMode.Default;
     [Reactive] public partial bool IsSleepRadioMode { get; private set; }
+    [Reactive] public partial bool IsFocusRadioMode { get; private set; }
+    [Reactive] public partial string FocusModeTooltip { get; private set; } = AppLanguage.Get("S_FocusModeTooltipOff");
+    public ReactiveCommand<Unit, Unit> ToggleFocusModeCommand { get; }
     public bool IsSleepTimerOption0Selected => SleepTimerCurrentMode == SleepTimerMode.Disabled;
     public bool IsSleepTimerOption15Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 15;
     public bool IsSleepTimerOption30Selected => SleepTimerCurrentMode == SleepTimerMode.Duration && SleepTimerTargetMinutes == 30;
@@ -413,24 +416,40 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(mode =>
             {
-                var wasSleep = IsSleepRadioMode;
+                var prevMode = CurrentSceneMode;
                 CurrentSceneMode = mode;
                 IsSleepRadioMode = mode == RadioSceneMode.Sleep;
+                IsFocusRadioMode = mode == RadioSceneMode.Focus;
                 _djService.UpdateSceneMode(mode);
+                _recommendationService.UpdateSceneMode(mode);
 
-                if (!wasSleep && IsSleepRadioMode)
+                if (prevMode == RadioSceneMode.Default && mode != RadioSceneMode.Default)
                 {
                     _preSleepMoodBias = _recommendationService.CurrentMoodBias;
+                }
+
+                if (mode == RadioSceneMode.Sleep)
+                {
                     _recommendationService.SetMoodBias("calm");
                 }
-                else if (wasSleep && !IsSleepRadioMode)
+                else if (mode == RadioSceneMode.Focus)
+                {
+                    _recommendationService.SetMoodBias("focus");
+                }
+                else if (prevMode != RadioSceneMode.Default && mode == RadioSceneMode.Default)
                 {
                     _recommendationService.SetMoodBias(_preSleepMoodBias);
                     _preSleepMoodBias = null;
                 }
 
                 UpdateSleepTimerTooltip();
+                UpdateFocusModeTooltip();
             });
+
+        ToggleFocusModeCommand = ReactiveCommand.Create(() =>
+        {
+            _sceneModeService.SetManualMode(IsFocusRadioMode ? null : RadioSceneMode.Focus);
+        });
 
         SetSleepTimerCommand = ReactiveCommand.Create<int>(minutes =>
         {
@@ -468,6 +487,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
         UpdateSleepTimerState();
+        UpdateFocusModeTooltip();
 
         // Apply initial theme variant + sync RequestedThemeVariant on change (spec §5.4.2)。
         // 窗口 Show 先于异步 LoadLocalStateAsync 完成：构造期同步预读持久化 theme_mode
@@ -542,6 +562,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrWhiteSpace(SettingsVM.WeatherCity))
                 _ = WeatherVM.RefreshWeatherAsync(SettingsVM.WeatherCity, SettingsVM.WeatherLatitude, SettingsVM.WeatherLongitude);
             UpdateSleepTimerTooltip();
+            UpdateFocusModeTooltip();
             UpdateSleepTimerState();
             UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
         };
@@ -1479,8 +1500,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         int currentTimeBand,
         bool isSleepMode = false,
         TimeSpan remainingTime = default,
-        TimeSpan targetDuration = default)
+        TimeSpan targetDuration = default,
+        RadioSceneMode sceneMode = RadioSceneMode.Default)
     {
+        if (sceneMode == RadioSceneMode.Focus)
+            return stationOpening;
+
         if (isSleepMode)
         {
             // 临界静默门限：min(3.0m, targetDuration * 0.2)，在临界时间内严格静默不打扰睡意
@@ -1550,7 +1575,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             DJService.GetTimeBand(DateTime.Now.Hour),
             IsSleepRadioMode,
             _sleepTimerService.RemainingTime,
-            _sleepTimerService.TargetDuration);
+            _sleepTimerService.TargetDuration,
+            sceneMode: CurrentSceneMode);
         DJScript? script = speak
             ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, announceTarget, _lifetimeCts.Token)
             : null;
@@ -1614,7 +1640,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             DJService.GetTimeBand(DateTime.Now.Hour),
             IsSleepRadioMode,
             _sleepTimerService.RemainingTime,
-            _sleepTimerService.TargetDuration);
+            _sleepTimerService.TargetDuration,
+            sceneMode: CurrentSceneMode);
         DJScript? script = speak
             ? await GenerateTrackIntroductionAsync(stationOpening ? null : current, next, _lifetimeCts.Token)
             : null;
@@ -2005,6 +2032,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             SleepTimerTooltip = AppLanguage.Get("S_SleepTimer");
         }
+    }
+
+    private void UpdateFocusModeTooltip()
+    {
+        FocusModeTooltip = AppLanguage.Get(IsFocusRadioMode ? "S_FocusModeTooltipOn" : "S_FocusModeTooltipOff");
     }
 
     private void UpdateCanStopAfterCurrentTrack(Track? track)

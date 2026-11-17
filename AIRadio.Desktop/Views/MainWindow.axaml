@@ -82,6 +82,16 @@
             <Setter Property="Opacity" Value="1.0"/>
         </Style>
 
+        <!-- 专注模式按钮激活态：同心靶心描边点亮 AccentGreen -->
+        <Style Selector="Button#FocusModeButton Path">
+            <Setter Property="Stroke" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="Opacity" Value="0.6"/>
+        </Style>
+        <Style Selector="Button#FocusModeButton.active Path">
+            <Setter Property="Stroke" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="Opacity" Value="1.0"/>
+        </Style>
+
         <!-- 睡眠定时 Flyout 浮层样式 -->
         <Style Selector="FlyoutPresenter.sleep-timer-flyout">
             <Setter Property="Background" Value="{DynamicResource C_FC0E0E15}"/>
@@ -189,6 +199,13 @@
                             <Button x:Name="SearchButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Command="{Binding ToggleSearchCommand}" ToolTip.Tip="{DynamicResource S_SearchTab}" AutomationProperties.Name="{DynamicResource S_SearchTab}">
                                 <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M10,18 C14.4,18 18,14.4 18,10 C18,5.6 14.4,2 10,2 C5.6,2 2,5.6 2,10 C2,14.4 5.6,18 10,18 M16,16 L22,22"/>
+                            </Button>
+                            <Button x:Name="FocusModeButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
+                                    Classes.active="{Binding IsFocusRadioMode}"
+                                    Command="{Binding ToggleFocusModeCommand}"
+                                    ToolTip.Tip="{Binding FocusModeTooltip}" AutomationProperties.Name="{DynamicResource S_SceneModeFocus}">
+                                <Path Width="14" Height="14" Stretch="Uniform" StrokeThickness="1.8"
+                                      Data="M12,2 A10,10 0 1,0 12,22 A10,10 0 1,0 12,2 M12,8 A4,4 0 1,0 12,16 A4,4 0 1,0 12,8"/>
                             </Button>
                             <Button x:Name="SleepTimerButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
                                     Classes.active="{Binding IsSleepTimerActive}"

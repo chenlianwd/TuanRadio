@@ -12,6 +12,9 @@ public interface ISceneModeService : INotifyPropertyChanged, IDisposable
     /// <summary>是否处于伴眠电台模式（快捷只读属性）。</summary>
     bool IsSleepMode { get; }
 
+    /// <summary>是否处于专注电台模式（快捷只读属性）。</summary>
+    bool IsFocusMode { get; }
+
     /// <summary>场景模式变化的可观察流（严格在 UI 线程发射）。</summary>
     IObservable<RadioSceneMode> ModeChanged { get; }
 

@@ -18,6 +18,10 @@ public static class CandidateRanker
         @"(?i)(?:伴奏|纯音乐|卡拉\s*ok|karaoke|instrumental|\binst\b|\boff\s*vocal\b|\bminus\s*one\b)",
         RegexOptions.Compiled);
 
+    private static readonly Regex KaraokeBackingRegex = new(
+        @"(?i)(?:伴奏|卡拉\s*ok|karaoke|\binst\b|\boff\s*vocal\b|\bminus\s*one\b)",
+        RegexOptions.Compiled);
+
     private static readonly Regex CoverRegex = new(
         @"(?i)(?:翻唱版?|cover\s*by\b|[(\[【]\s*(?:cover|翻唱)[^)\]】]*[)\]】]|[\s\-_/]+(?:cover|翻唱)$)",
         RegexOptions.Compiled);
@@ -39,6 +43,9 @@ public static class CandidateRanker
     public static bool HasInstrumentalTag(string? text)
         => !string.IsNullOrWhiteSpace(text) && InstrumentalRegex.IsMatch(text);
 
+    public static bool HasKaraokeBackingTag(string? text)
+        => !string.IsNullOrWhiteSpace(text) && KaraokeBackingRegex.IsMatch(text);
+
     public static bool HasCoverTag(string? text)
         => !string.IsNullOrWhiteSpace(text) && CoverRegex.IsMatch(text);
 
@@ -54,14 +61,23 @@ public static class CandidateRanker
     /// <summary>
     /// 判断候选歌曲是否属于非预期的特殊版本（伴奏/翻唱/电音DJ/加速等）。
     /// 若 referenceText（目标曲目名或搜索词）未主动包含对应标签，则视为非预期版本。
+    /// 当 <paramref name="allowPureInstrumental"/> 为 true（如专注模式）时，仅拦截卡拉OK伴奏，放行纯音乐/Instrumental。
     /// </summary>
-    public static bool IsUnwantedVersion(OnlineTrack candidate, string? referenceText = null)
+    public static bool IsUnwantedVersion(OnlineTrack candidate, string? referenceText = null, bool allowPureInstrumental = false)
     {
         var target = referenceText ?? string.Empty;
         var candText = $"{candidate.Title} {candidate.Artist}";
 
-        if (!HasInstrumentalTag(target) && HasInstrumentalTag(candText))
+        if (allowPureInstrumental)
+        {
+            if (!HasKaraokeBackingTag(target) && HasKaraokeBackingTag(candText))
+                return true;
+        }
+        else if (!HasInstrumentalTag(target) && HasInstrumentalTag(candText))
+        {
             return true;
+        }
+
         if (!HasCoverTag(target) && HasCoverTag(candText))
             return true;
         if (!HasRemixTag(target) && HasRemixTag(candText))
@@ -127,10 +143,12 @@ public static class CandidateRanker
     }
 
     /// <summary>
-    /// 对搜索结果单项进行评分。
+    /// 对搜索结果单项进行评分。当 <paramref name="allowPureInstrumental"/> 为 true（专注模式等）时，
+    /// 仅对卡拉OK伴奏施加 -0.70 负向惩罚，放行纯音乐/Instrumental。
     /// </summary>
     public static double ScoreSearchResult(OnlineTrack candidate, string query,
-        MusicSourcePolicy policy = MusicSourcePolicy.Coverage)
+        MusicSourcePolicy policy = MusicSourcePolicy.Coverage,
+        bool allowPureInstrumental = false)
     {
         if (string.IsNullOrWhiteSpace(query))
             return 0.5;
@@ -157,8 +175,15 @@ public static class CandidateRanker
         var baseScore = (0.50 * titleSim) + (0.35 * artistSim) + (0.15 * sourceScore);
 
         var penalty = 0.0;
-        if (!HasInstrumentalTag(query) && HasInstrumentalTag(candFull))
+        if (allowPureInstrumental)
+        {
+            if (!HasKaraokeBackingTag(query) && HasKaraokeBackingTag(candFull))
+                penalty += 0.70;
+        }
+        else if (!HasInstrumentalTag(query) && HasInstrumentalTag(candFull))
+        {
             penalty += 0.70;
+        }
         if (!HasCoverTag(query) && HasCoverTag(candFull))
             penalty += 0.60;
         if (!HasRemixTag(query) && HasRemixTag(candFull))
@@ -192,10 +217,11 @@ public static class CandidateRanker
     public static IReadOnlyList<OnlineTrack> RankSearchResults(
         IEnumerable<OnlineTrack> candidates,
         string query,
-        MusicSourcePolicy policy = MusicSourcePolicy.Coverage)
+        MusicSourcePolicy policy = MusicSourcePolicy.Coverage,
+        bool allowPureInstrumental = false)
     {
         return candidates
-            .Select(c => (Track: c, Score: ScoreSearchResult(c, query, policy)))
+            .Select(c => (Track: c, Score: ScoreSearchResult(c, query, policy, allowPureInstrumental)))
             .OrderByDescending(x => x.Score)
             .Select(x => x.Track)
             .ToList();

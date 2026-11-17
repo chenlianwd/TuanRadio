@@ -18,6 +18,7 @@ public sealed class SceneModeService : ReactiveObject, ISceneModeService
 
     private RadioSceneMode? _manualMode;
     private RadioSceneMode _currentMode = RadioSceneMode.Default;
+    private bool _wasSleepTimerActive;
     private bool _isDisposed;
 
     public SceneModeService(
@@ -26,14 +27,24 @@ public sealed class SceneModeService : ReactiveObject, ISceneModeService
     {
         _sleepTimer = sleepTimer ?? throw new ArgumentNullException(nameof(sleepTimer));
         _uiScheduler = uiScheduler ?? RxApp.MainThreadScheduler;
+        _wasSleepTimerActive = _sleepTimer.IsActive;
 
-        // 订阅睡眠定时器属性变化（IsActive 驱动伴眠模式）
+        // 订阅睡眠定时器属性变化（IsActive 驱动伴眠模式；新开启睡眠定时时自动接管专注模式）
         Observable.FromEventPattern<PropertyChangedEventHandler, PropertyChangedEventArgs>(
                 h => _sleepTimer.PropertyChanged += h,
                 h => _sleepTimer.PropertyChanged -= h)
             .Where(e => string.IsNullOrEmpty(e.EventArgs.PropertyName) || e.EventArgs.PropertyName == nameof(ISleepTimerService.IsActive))
             .ObserveOn(_uiScheduler)
-            .Subscribe(_ => EvaluateMode())
+            .Subscribe(_ =>
+            {
+                var isActiveNow = _sleepTimer.IsActive;
+                if (!_wasSleepTimerActive && isActiveNow && _manualMode == RadioSceneMode.Focus)
+                {
+                    _manualMode = null;
+                }
+                _wasSleepTimerActive = isActiveNow;
+                EvaluateMode();
+            })
             .DisposeWith(_disposables);
 
         EvaluateMode();
@@ -48,12 +59,15 @@ public sealed class SceneModeService : ReactiveObject, ISceneModeService
             {
                 this.RaiseAndSetIfChanged(ref _currentMode, value);
                 this.RaisePropertyChanged(nameof(IsSleepMode));
+                this.RaisePropertyChanged(nameof(IsFocusMode));
                 _modeChangedSubject.OnNext(value);
             }
         }
     }
 
     public bool IsSleepMode => CurrentMode == RadioSceneMode.Sleep;
+
+    public bool IsFocusMode => CurrentMode == RadioSceneMode.Focus;
 
     public IObservable<RadioSceneMode> ModeChanged => _modeChangedSubject.AsObservable();
 

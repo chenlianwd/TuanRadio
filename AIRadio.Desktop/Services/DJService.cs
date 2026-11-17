@@ -364,6 +364,34 @@ You must strictly follow these late-night sleep radio rules:
             }
             sb.AppendLine();
         }
+        else if (sceneMode == RadioSceneMode.Focus)
+        {
+            if (isEn)
+            {
+                sb.AppendLine("""
+[Focus Radio Context]
+The listener has enabled Focus Mode for deep work or study and needs minimal cognitive interruption.
+You must strictly follow these focus radio rules:
+1. Speak in a calm, composed, and understated tone without chatter.
+2. Keep it very brief (1-2 sentences, 15-35 words) and introduce the track directly.
+3. Do not ask questions, do not make small talk, and never break their concentration.
+4. The emotion tag at the end MUST be [calm].
+""");
+            }
+            else
+            {
+                sb.AppendLine("""
+【专注电台情境】
+听众已开启专注模式（工作/学习心流状态），需要尽量减少语言干扰。
+必须严格遵守以下专注电台规则：
+1. 语气保持沉稳、克制、平和，不喧宾夺主。
+2. 台词极度简练（1~2 句，25~50 字），直接带出音乐，绝不展开闲聊。
+3. 严禁提问或寒暄，尽量降低对专注力的认知打扰。
+4. 末尾情绪标签必须使用 [calm]。
+""");
+            }
+            sb.AppendLine();
+        }
 
         // 任务段（第一条要求随开台/串场分支变化：开台时不存在"上一首余韵"可呼应）
         if (isEn)
@@ -382,6 +410,16 @@ Requirements:
 - Extremely soothing and conversational, like whispering beside a sleeping friend — no loud announcements, no hype, no questions.
 - Say the full title and artist name in their original language, and finish completely.
 - Output only the transition line itself — in English. End with exactly one emotion tag: [calm].
+""");
+            }
+            else if (sceneMode == RadioSceneMode.Focus)
+            {
+                sb.AppendLine("""
+Requirements:
+- Speak in 1~2 concise, calm sentences (about 15~35 words): cleanly cue up the track with zero small talk or questions.
+- Understated and steady — protect the listener's deep focus.
+- Say the full title and artist name in their original language, and finish completely.
+- Output only the introduction line itself — in English. End with exactly one emotion tag: [calm].
 """);
             }
             else
@@ -411,6 +449,16 @@ Requirements:
 - 极度温和口语化，杜绝感叹句、杜绝提问、绝不使用兴奋或激昂语气。
 - 歌名和歌手名必须完整念出且按原文，句子要完整收尾。
 - 只输出串场台词本身，必须只用中文。末尾必须附加情绪标签：[calm]。
+""");
+            }
+            else if (sceneMode == RadioSceneMode.Focus)
+            {
+                sb.AppendLine($"""
+串场要求：
+- 一共 1~2 句、25~50 字：沉稳简练地引出《{nextTitle}》（{nextArtist}），不闲聊、不提问，避免打断听众专注心流。
+- 克制平和、点到为止，不要报幕腔、不要兴奋喊麦。
+- 歌名和歌手名必须完整念出且按原文，句子要完整收尾。
+- 只输出台词本身，必须只用中文。末尾必须附加情绪标签：[calm]。
 """);
             }
             else
@@ -524,6 +572,20 @@ Requirements:
             };
         }
 
+        if (sceneMode == RadioSceneMode.Focus)
+        {
+            var focusText = isEn
+                ? $"TuanRadio Focus Mode. Playing {nextPhrase} to keep you in the flow."
+                : $"这里是 TuanRadio 专注电台。为你送上{nextPhrase}，陪你专注此刻、进入心流。";
+            return new DJScript
+            {
+                Text = focusText,
+                Emotion = "calm",
+                Expression = "calm",
+                Motion = "idle"
+            };
+        }
+
         var text = current == null
             ? BuildOpeningIntroduction(djName, nextPhrase, timeBand, now, weather, isEn, variant)
             : BuildTransitionIntroduction(djName, nextPhrase, timeBand, current, weather, isEn, variant);
@@ -548,6 +610,19 @@ Requirements:
             return new DJScript
             {
                 Text = sleepLiveText,
+                Emotion = "calm",
+                Expression = "calm",
+                Motion = "idle"
+            };
+        }
+        if (sceneMode == RadioSceneMode.Focus)
+        {
+            var focusLiveText = isEn
+                ? $"TuanRadio Focus Mode. Tuning to live station \"{stationName}\" for deep focus."
+                : $"这里是 TuanRadio 专注电台。为你连线网络电台《{stationName}》，让纯粹电波伴你专注心流。";
+            return new DJScript
+            {
+                Text = focusLiveText,
                 Emotion = "calm",
                 Expression = "calm",
                 Motion = "idle"

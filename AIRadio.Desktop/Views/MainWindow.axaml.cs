@@ -370,9 +370,9 @@ public partial class MainWindow : Window, IDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                var isSleep = _activeVm?.IsSleepRadioMode ?? false;
-                var minOpacity = isSleep ? 0.35f : 0.55f;
-                var maxOpacity = isSleep ? 0.70f : 1.0f;
+                var isLowGlowScene = (_activeVm?.IsSleepRadioMode ?? false) || (_activeVm?.IsFocusRadioMode ?? false);
+                var minOpacity = isLowGlowScene ? 0.35f : 0.55f;
+                var maxOpacity = isLowGlowScene ? 0.70f : 1.0f;
                 var target = (float)Math.Sqrt(_ttsTargetLevel);
                 _glowCurrent += (target - _glowCurrent) * 0.35f;
                 badge.Opacity = minOpacity + (maxOpacity - minOpacity) * Math.Clamp(_glowCurrent, 0f, 1f);

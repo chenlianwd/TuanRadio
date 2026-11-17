@@ -255,4 +255,21 @@ public class CandidateRankerTests
         Assert.True(withAigcQuery > plainQuery + 0.4,
             $"查询主动含 AIGC 艺人时不应惩罚（{withAigcQuery} vs {plainQuery}）");
     }
+
+    [Fact]
+    public void FocusInstrumentalScoring_ExemptsPureInstrumental_WhileStillBlockingInstBacking()
+    {
+        var pureZh = MakeTrack("夜的钢琴曲 (纯音乐)", "石进");
+        var instBacking = MakeTrack("晴天 (Inst.)", "周杰伦");
+
+        // 默认排序对无词搜索词的纯音乐施加 -0.70 惩罚；专注排序放行纯音乐，但仍对 (Inst.) 伴奏施罚
+        var defaultPureScore = CandidateRanker.ScoreSearchResult(pureZh, "石进 夜的钢琴曲");
+        var focusPureScore = CandidateRanker.ScoreSearchResult(pureZh, "石进 夜的钢琴曲", allowPureInstrumental: true);
+        Assert.True(focusPureScore > defaultPureScore + 0.5,
+            $"allowPureInstrumental=true 时不应扣除纯音乐 -0.70 分（{focusPureScore} vs {defaultPureScore}）");
+
+        Assert.True(CandidateRanker.IsUnwantedVersion(instBacking, "晴天", allowPureInstrumental: true));
+        var focusInstScore = CandidateRanker.ScoreSearchResult(instBacking, "周杰伦 晴天", allowPureInstrumental: true);
+        Assert.True(focusInstScore < 0.3, $"(Inst.) 伴奏在专注模式下仍应吃满 -0.70 扣分，实得 {focusInstScore}");
+    }
 }

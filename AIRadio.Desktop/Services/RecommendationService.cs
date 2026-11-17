@@ -20,6 +20,7 @@ public class RecommendationService : IRecommendationService
     private readonly SemaphoreSlim _programGate = new(1, 1);
     private readonly object _stateGate = new();
     private string? _moodBias;
+    private RadioSceneMode _sceneMode = RadioSceneMode.Default;
 
     // 节目单容量与单搜索词入单上限：单个搜索词（往往锚当前在播歌手）最多占 2 席，
     // 其余候选顺延；全部词消费完仍不满时再全局回填
@@ -83,16 +84,25 @@ public class RecommendationService : IRecommendationService
         CancellationToken cancellationToken)
     {
         string? moodBias;
+        RadioSceneMode sceneMode;
         lock (_stateGate)
+        {
             moodBias = _moodBias;
+            sceneMode = _sceneMode;
+        }
 
         // 口味摘要后台刷新：内部自带水位/退避/全异常内吞，当次节目单仍用旧摘要
         if (_profile != null)
             _ = _profile.RefreshDigestAsync(cancellationToken);
 
-        var context = BuildContext(moodBias, request);
+        var context = BuildContext(moodBias, sceneMode, request);
+        var allowPureInstrumental = sceneMode == RadioSceneMode.Focus ||
+                                    string.Equals(context.Mood, "focus", StringComparison.OrdinalIgnoreCase);
+        var filterAgitated = sceneMode is RadioSceneMode.Focus or RadioSceneMode.Sleep ||
+                             string.Equals(context.Mood, "calm", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(context.Mood, "focus", StringComparison.OrdinalIgnoreCase);
         var profileSnapshot = GetUsableProfileSnapshot();
-        var queries = await GenerateQueriesAsync(request, context, moodBias, profileSnapshot, cancellationToken);
+        var queries = await GenerateQueriesAsync(request, context, moodBias, sceneMode, profileSnapshot, cancellationToken);
         var excluded = BuildExcludedTracks(request);
 
         var tracks = new List<RecommendedTrack>();
@@ -103,12 +113,12 @@ public class RecommendationService : IRecommendationService
             if (playableCount >= ProgramSize) break;
 
             cancellationToken.ThrowIfCancellationRequested();
-            var results = await SearchMusicAsync(query, 8, cancellationToken);
+            var results = await SearchMusicAsync(query, 8, allowPureInstrumental, cancellationToken);
             var addedForQuery = 0;
             foreach (var result in results)
             {
                 if (playableCount >= ProgramSize) break;
-                if (!IsEligibleCandidate(result, query, tracks, excluded, context.Mood))
+                if (!IsEligibleCandidate(result, query, tracks, excluded, allowPureInstrumental, filterAgitated))
                     continue;
 
                 if (addedForQuery >= PerQueryLimit)
@@ -134,7 +144,7 @@ public class RecommendationService : IRecommendationService
             {
                 if (playableCount >= ProgramSize) break;
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!IsEligibleCandidate(result, query, tracks, excluded, context.Mood))
+                if (!IsEligibleCandidate(result, query, tracks, excluded, allowPureInstrumental, filterAgitated))
                     continue;
 
                 if (await TryAddCandidateAsync(result, context, tracks, playableCount, cancellationToken))
@@ -168,12 +178,13 @@ public class RecommendationService : IRecommendationService
         string query,
         IReadOnlyList<RecommendedTrack> tracks,
         IEnumerable<Track> excluded,
-        string? mood = null)
+        bool allowPureInstrumental,
+        bool filterAgitated)
         => !IsExcluded(result, excluded) &&
            !tracks.Any(x => IsSameOnlineTrack(x.Track, result)) &&
            // 过滤伴奏/翻唱/电音DJ/加速版等非预期特殊版本
-           !CandidateRanker.IsUnwantedVersion(result, query) &&
-           !(string.Equals(mood, "calm", StringComparison.OrdinalIgnoreCase) && CandidateRanker.IsAgitatedVersion(result));
+           !CandidateRanker.IsUnwantedVersion(result, query, allowPureInstrumental: allowPureInstrumental) &&
+           !(filterAgitated && CandidateRanker.IsAgitatedVersion(result));
 
     /// <summary>
     /// 解析并入单：可播入正式条目返回 true；不可播按既有契约登记占位展示条目返回 false。
@@ -298,6 +309,26 @@ public class RecommendationService : IRecommendationService
         }
     }
 
+    public RadioSceneMode CurrentSceneMode
+    {
+        get
+        {
+            lock (_stateGate)
+                return _sceneMode;
+        }
+    }
+
+    public void UpdateSceneMode(RadioSceneMode mode)
+    {
+        lock (_stateGate)
+        {
+            if (_sceneMode == mode)
+                return;
+            _sceneMode = mode;
+            CurrentProgram = null;
+        }
+    }
+
     public string? CurrentMoodBias
     {
         get
@@ -342,6 +373,7 @@ public class RecommendationService : IRecommendationService
         if (value.Contains("calm") || value.Contains("安静") || value.Contains("放松") || value.Contains("温柔")) return "calm";
         if (value.Contains("energy") || value.Contains("energetic") || value.Contains("燃") || value.Contains("热血") || value.Contains("兴奋")) return "energetic";
         if (value.Contains("sad") || value.Contains("emo") || value.Contains("难过")) return "sad";
+        if (value.Contains("focus") || value.Contains("专注") || value.Contains("心流") || value.Contains("学习") || value.Contains("工作")) return "focus";
         // 其它短词当作自由氛围提示进搜索词生成，不覆盖结构化 mood
         return value.Length <= 12 ? value : null;
     }
@@ -406,11 +438,12 @@ public class RecommendationService : IRecommendationService
         RecommendationRequest request,
         ListeningContext context,
         string? moodBias,
+        RadioSceneMode sceneMode,
         ListenerProfileSnapshot? profileSnapshot,
         CancellationToken cancellationToken)
     {
         var recentHistory = BuildRecentHistory(request);
-        var fallback = BuildFallbackQueries(request, context, recentHistory, profileSnapshot);
+        var fallback = BuildFallbackQueries(request, context, sceneMode, recentHistory, profileSnapshot);
         // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
         // 直接走本地兜底关键词，避免把提示文案当搜索词发给音源
         if (_llm is LLMService llmService && !llmService.IsConfigured())
@@ -418,7 +451,11 @@ public class RecommendationService : IRecommendationService
         try
         {
             var userIntent = GetLocalizedUserIntent(request.UserIntentKey, request.UserIntent);
-            var moodHint = string.IsNullOrWhiteSpace(moodBias)
+            var moodHint = (sceneMode == RadioSceneMode.Focus || string.Equals(moodBias, "focus", StringComparison.OrdinalIgnoreCase))
+                ? AppLanguage.T(
+                    "\n专注模式选曲偏好：优先纯音乐、器乐、Lo-Fi、钢琴曲或轻爵士，避开嘈杂摇滚与密集说唱。",
+                    "\nFocus mode preference: prioritize instrumental, ambient, Lo-Fi, piano, or soft jazz; avoid loud rock and dense rap.")
+                : string.IsNullOrWhiteSpace(moodBias)
                 ? string.Empty
                 : AppLanguage.T($"\n氛围偏好：{moodBias}", $"\nMood preference: {moodBias}");
             // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
@@ -522,17 +559,19 @@ public class RecommendationService : IRecommendationService
         return ("其中至少 1 个关键词尝试听众画像之外的相近新方向。", zhContext);
     }
 
-    private static ListeningContext BuildContext(string? moodBias, RecommendationRequest request)
+    private static ListeningContext BuildContext(string? moodBias, RadioSceneMode sceneMode, RecommendationRequest request)
     {
         var text = request.UserIntent ?? string.Empty;
         // 结构化氛围（calm/energetic/sad）优先用会话级 bias；自由词 bias 只进搜索提示，不占结构化 mood
-        var mood = moodBias is "calm" or "energetic" or "sad" ? moodBias : DetectMood(text);
+        var mood = moodBias is "calm" or "energetic" or "sad" or "focus"
+            ? moodBias
+            : (sceneMode == RadioSceneMode.Focus ? "focus" : DetectMood(text));
         return new ListeningContext
         {
             UserIntent = text,
             UserIntentKey = request.UserIntentKey,
             Mood = mood,
-            Scene = DetectScene(text),
+            Scene = (sceneMode == RadioSceneMode.Focus || mood == "focus") ? "focus" : DetectScene(text),
             TimeOfDay = DateTime.Now.Hour switch
             {
                 >= 5 and < 12 => "morning",
@@ -561,6 +600,7 @@ public class RecommendationService : IRecommendationService
     private static List<string> BuildFallbackQueries(
         RecommendationRequest request,
         ListeningContext context,
+        RadioSceneMode sceneMode,
         IReadOnlyCollection<Track> recentHistory,
         ListenerProfileSnapshot? profileSnapshot)
     {
@@ -602,13 +642,19 @@ public class RecommendationService : IRecommendationService
                 queries.Add(query);
         }
 
-        queries.Add(context.Mood switch
+        var effectiveMood = sceneMode == RadioSceneMode.Focus ? "focus" : context.Mood;
+        var moodQuery = effectiveMood switch
         {
             "calm" => AppLanguage.T("安静 氛围", "calm ambient"),
+            "focus" => AppLanguage.T("纯音乐 专注 轻音乐", "lofi instrumental focus"),
             "energetic" => AppLanguage.T("摇滚 热血", "energetic rock"),
             "sad" => AppLanguage.T("emo 治愈", "reflective emo"),
             _ => AppLanguage.T("华语 流行", "popular music")
-        });
+        };
+        if (effectiveMood == "focus")
+            queries.Insert(0, moodQuery);
+        else
+            queries.Add(moodQuery);
         return queries.Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToList();
     }
 
@@ -772,9 +818,12 @@ public class RecommendationService : IRecommendationService
     private Task<List<OnlineTrack>> SearchMusicAsync(
         string query,
         int limit,
+        bool allowPureInstrumental,
         CancellationToken cancellationToken)
         => _musicSearch is Music.IMusicSourceBroker multi
-            ? multi.SearchAsync(query, limit, MusicSearchIntent.Automatic, cancellationToken)
+            ? (allowPureInstrumental
+                ? multi.SearchAsync(query, limit, MusicSearchIntent.Automatic, allowPureInstrumental: true, cancellationToken)
+                : multi.SearchAsync(query, limit, MusicSearchIntent.Automatic, cancellationToken))
             : _musicSearch.SearchAsync(query, limit)
                 .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
 
