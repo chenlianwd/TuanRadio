@@ -33,6 +33,33 @@ public class QrCodeGeneratorTests
 
         // ISO/IEC 18004 固定暗块 (4*V + 9, 8)
         Assert.True(matrix[4 * version + 9, 8]);
+
+        // ISO/IEC 18004 格式信息双副本须一致且通过 BCH(15,5) 校验（ECC M = 0b00）
+        var copy1 = 0;
+        for (var i = 0; i <= 5; i++)
+            if (matrix[i, 8]) copy1 |= 1 << i;
+        if (matrix[7, 8]) copy1 |= 1 << 6;
+        if (matrix[8, 8]) copy1 |= 1 << 7;
+        if (matrix[8, 7]) copy1 |= 1 << 8;
+        for (var i = 9; i < 15; i++)
+            if (matrix[8, 14 - i]) copy1 |= 1 << i;
+
+        var copy2 = 0;
+        for (var i = 0; i < 8; i++)
+            if (matrix[8, size - 1 - i]) copy2 |= 1 << i;
+        for (var i = 8; i < 15; i++)
+            if (matrix[size - 15 + i, 8]) copy2 |= 1 << i;
+
+        Assert.Equal(copy1, copy2);
+
+        var unmasked = copy1 ^ 0x5412;
+        var eccLevel = (unmasked >> 13) & 0b11;
+        Assert.Equal(0b00, eccLevel); // Level M
+        var data = (unmasked >> 10) & 0b11111;
+        var rem = data;
+        for (var i = 0; i < 10; i++)
+            rem = (rem << 1) ^ (((rem >> 9) & 1) * 0x537);
+        Assert.Equal(((data << 10) | rem), unmasked);
     }
 
     [Fact]

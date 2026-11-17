@@ -218,6 +218,21 @@ public class WebRemoteViewModelTests
             Assert.False(liveSeekRes.Ok);
             Assert.Equal("live_stream_not_seekable", liveSeekRes.Message);
 
+            // 播客不支持收藏与音乐 Like 反馈
+            currentTrackSubj.OnNext(new Track
+            {
+                Id = "podcast:ep-1",
+                SourceId = "podcast:ep-1",
+                Title = "Podcast Ep 1",
+                FilePath = "https://cdn.example.com/ep1.mp3"
+            });
+            var podFavRes = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "toggle_favorite" });
+            Assert.False(podFavRes.Ok);
+            Assert.Equal("podcast_favorite_unsupported", podFavRes.Message);
+            var podLikeRes = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "feedback", Text = "like" });
+            Assert.False(podLikeRes.Ok);
+            Assert.Equal("podcast_favorite_unsupported", podLikeRes.Message);
+
             // 再次点击关闭遥控
             await vm.ToggleWebRemoteCommand!.Execute();
             Assert.False(vm.IsWebRemoteRunning);

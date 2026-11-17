@@ -866,9 +866,16 @@ public class AudioService : IAudioService, IDisposable
         {
             var positionMs = Math.Max(0, (long)position.TotalMilliseconds);
             if (TryPlayerOperation(() => _player.Time = positionMs))
+            {
                 Interlocked.Exchange(ref _lastPositionMs, positionMs);
                 if (CurrentTrack is { IsPodcastEpisode: true } podTrack)
-                    podTrack.ProviderMetadata["resume_ms"] = positionMs.ToString(CultureInfo.InvariantCulture);
+                {
+                    lock (podTrack.ProviderMetadata)
+                    {
+                        podTrack.ProviderMetadata["resume_ms"] = positionMs.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+            }
         }
     }
 
@@ -1713,8 +1720,13 @@ public class AudioService : IAudioService, IDisposable
         if (!track.IsPodcastEpisode)
             return false;
 
-        if (!track.ProviderMetadata.TryGetValue("resume_ms", out var raw) ||
-            !long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ||
+        string? raw;
+        lock (track.ProviderMetadata)
+        {
+            if (!track.ProviderMetadata.TryGetValue("resume_ms", out raw))
+                return false;
+        }
+        if (!long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ||
             parsed <= 3000)
         {
             return false;
@@ -2329,7 +2341,12 @@ public class AudioService : IAudioService, IDisposable
             {
                 Interlocked.Exchange(ref _lastPositionMs, pos);
                 if (CurrentTrack is { IsPodcastEpisode: true } podTrack)
-                    podTrack.ProviderMetadata["resume_ms"] = pos.ToString(CultureInfo.InvariantCulture);
+                {
+                    lock (podTrack.ProviderMetadata)
+                    {
+                        podTrack.ProviderMetadata["resume_ms"] = pos.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
                 _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(pos));
             }
 

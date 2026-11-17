@@ -82,6 +82,9 @@ public class PodcastRssServiceTests
         var ep2 = result.Episodes[1];
         Assert.Equal(TimeSpan.FromSeconds(2720), ep2.Duration);
         Assert.Equal("AAC", ep2.Codec);
+
+        // 普通数学/符号比较中的尖括号不应被误认为 HTML 标签删除
+        Assert.Equal("a < b > c", PodcastRssService.StripHtml("&lt;p&gt;a &lt; b &gt; c&lt;/p&gt;"));
     }
 
     [Fact]

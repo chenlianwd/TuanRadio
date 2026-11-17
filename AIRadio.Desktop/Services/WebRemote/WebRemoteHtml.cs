@@ -123,6 +123,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 }
 .ctrl-btn.ghost { background: transparent; color: var(--muted); font-size: 12px; height: 34px; min-width: 42px; }
 .ctrl-btn.ghost.active { color: var(--accent); border-color: var(--accent); }
+.ctrl-btn:disabled { opacity: .4; cursor: default; }
 .ctrl-btn:active { transform: scale(.96); }
 .vol-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .vol-label { font-size: 11px; color: var(--muted); width: 34px; text-align: right; font-family: ui-monospace, Consolas, monospace; }
@@ -538,8 +539,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
   let lastChatSig = "";
   function renderChat(s) {
     const msgs = s.messages || [];
-    const tail = msgs.length ? msgs[msgs.length - 1].text : "";
-    const sig = msgs.length + ":" + tail + ":" + s.language;
+    const sig = s.language + "|" + msgs.map(m => (m.role || "") + "|" + (m.timestamp || "") + "|" + (m.author || "") + "|" + (m.text || "")).join("\n");
     if (sig === lastChatSig) return;
     lastChatSig = sig;
     const list = el("chatList");

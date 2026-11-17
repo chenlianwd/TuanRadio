@@ -34,7 +34,7 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
     private static readonly XNamespace ContentNs = "http://purl.org/rss/1.0/modules/content/";
     private static readonly XNamespace AtomNs = "http://www.w3.org/2005/Atom";
 
-    private static readonly Regex HtmlTagRegex = new(@"<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex HtmlTagRegex = new(@"<[a-zA-Z/!?][^>]*>", RegexOptions.Compiled);
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
     private static readonly string[] AudioExtensions = [".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"];
 

@@ -157,12 +157,16 @@ public sealed class PodcastStorage : IPodcastStorage, IDisposable
         bool flushImmediately = false,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(episodeKey))
+        if (Volatile.Read(ref _disposed) != 0 || string.IsNullOrWhiteSpace(episodeKey))
             return;
 
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        var acquired = false;
         try
         {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            acquired = true;
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
             var store = await EnsureLoadedCoreAsync(ct).ConfigureAwait(false);
             var effectivePos = isCompleted ? 0L : Math.Max(0, positionMs);
             store.Progress[episodeKey] = new PodcastEpisodeProgress(
@@ -180,9 +184,15 @@ public sealed class PodcastStorage : IPodcastStorage, IDisposable
                 await SaveStoreCoreAsync(store, ct).ConfigureAwait(false);
             }
         }
+        catch (ObjectDisposedException)
+        {
+        }
         finally
         {
-            _gate.Release();
+            if (acquired)
+            {
+                try { _gate.Release(); } catch (ObjectDisposedException) { }
+            }
         }
     }
 
