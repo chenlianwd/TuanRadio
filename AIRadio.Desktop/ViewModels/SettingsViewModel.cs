@@ -125,6 +125,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _selectedLanguageSub;
     private bool _loadingCloseAction;
     private readonly IDisposable _closeActionSub;
+    private bool _loadingWebRemote;
+    private readonly IDisposable _webRemoteToggleSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
     private string? _lastCharacterSignature;
@@ -203,6 +205,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool StartInCompactMode { get; set; }
     [Reactive] public partial bool ShowLyricsInStage { get; set; }
     [Reactive] public partial bool ListenerProfileEnabled { get; set; } = true;
+    [Reactive] public partial bool WebRemoteEnabled { get; set; }
+    [Reactive] public partial int WebRemotePort { get; set; } = Services.WebRemote.LanAddressResolver.DefaultPort;
+    [Reactive] public partial string WebRemotePortText { get; set; } = "37260";
+    [Reactive] public partial string WebRemoteToken { get; set; } = string.Empty;
     // 天气城市：留空时按 IP 自动定位（见 WeatherService）
     [Reactive] public partial string WeatherCity { get; set; } = string.Empty;
     /// <summary>已选地点纬度：点选候选/定位写入，手输城市名清空（回退 geocoding）。</summary>
@@ -497,6 +503,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_listeningProfile != null)
                     _listeningProfile.Enabled = enabled;
                 RefreshProfileCard();
+                _ = SaveUiStateCommand.Execute().Subscribe();
+            });
+        _webRemoteToggleSub = this.WhenAnyValue(x => x.WebRemoteEnabled)
+            .Skip(1)
+            .Subscribe(enabled =>
+            {
+                if (_loadingWebRemote)
+                    return;
+                _ = enabled;
                 _ = SaveUiStateCommand.Execute().Subscribe();
             });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
@@ -1049,6 +1064,18 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     _loadingProfileToggle = false;
                 }
 
+                _loadingWebRemote = true;
+                if (root.TryGetProperty("web_remote_enabled", out var webRemoteEnabled))
+                    WebRemoteEnabled = webRemoteEnabled.GetBoolean();
+                if (root.TryGetProperty("web_remote_port", out var webRemotePort) && webRemotePort.TryGetInt32(out var wrPort))
+                {
+                    WebRemotePort = Math.Clamp(wrPort, 1024, 65535);
+                    WebRemotePortText = WebRemotePort.ToString();
+                }
+                if (root.TryGetProperty("web_remote_token", out var webRemoteToken))
+                    WebRemoteToken = webRemoteToken.GetString() ?? string.Empty;
+                _loadingWebRemote = false;
+
                 if (root.TryGetProperty("weather_city", out var weatherCity))
                 {
                     WeatherCity = weatherCity.GetString() ?? string.Empty;
@@ -1111,6 +1138,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             }
 
             RebuildMusicProviders(savedMusicOrder, disabledMusicProviders);
+
+            if (string.IsNullOrWhiteSpace(WebRemoteToken))
+                WebRemoteToken = Services.WebRemote.LanAddressResolver.GenerateAccessToken();
 
             // 画像开关初值在设置加载完成后同步给服务（主窗口加载路径也会再同步一次）
             if (_listeningProfile != null)
@@ -2519,6 +2549,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             var characterSettingsChanged = characterSignature != _lastCharacterSignature;
             _lastCharacterSignature = characterSignature;
 
+            if (int.TryParse(WebRemotePortText?.Trim(), out var parsedPort) && parsedPort >= 1024 && parsedPort <= 65535)
+                WebRemotePort = parsedPort;
+            else
+                WebRemotePortText = WebRemotePort.ToString();
+            if (string.IsNullOrWhiteSpace(WebRemoteToken))
+                WebRemoteToken = Services.WebRemote.LanAddressResolver.GenerateAccessToken();
+
             var settingsData = new
             {
                 llm_provider = providerToWrite,
@@ -2540,6 +2577,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 start_in_compact_mode = StartInCompactMode,
                 show_lyrics_in_stage = ShowLyricsInStage,
                 listener_profile_enabled = ListenerProfileEnabled,
+                web_remote_enabled = WebRemoteEnabled,
+                web_remote_port = WebRemotePort,
+                web_remote_token = WebRemoteToken,
                 weather_city = WeatherCity,
                 weather_latitude = WeatherLatitude,
                 weather_longitude = WeatherLongitude,
@@ -2700,6 +2740,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _weatherCitySearchSub.Dispose();
         _selectedLanguageSub.Dispose();
         _closeActionSub.Dispose();
+        _webRemoteToggleSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
         _llmProfileSwapSub.Dispose();

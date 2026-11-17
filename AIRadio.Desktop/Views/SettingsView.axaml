@@ -471,6 +471,42 @@
                             </DockPanel>
                         </StackPanel>
 
+                        <!-- 局域网 Web 遥控：使用 DockPanel 避免影响外观页 6 行 Grid 对齐审计 -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{DynamicResource S_WebRemoteTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                            <DockPanel>
+                                <ToggleSwitch DockPanel.Dock="Right" IsChecked="{Binding WebRemoteEnabled, Mode=TwoWay}"
+                                              OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"/>
+                                <TextBlock Text="{DynamicResource S_WebRemoteEnable}" Foreground="{DynamicResource C_FFEDEDF5}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <DockPanel>
+                                <TextBox x:Name="WebRemotePortBox" DockPanel.Dock="Right" Width="110"
+                                         Text="{Binding WebRemotePortText, Mode=TwoWay}" HorizontalAlignment="Right"/>
+                                <TextBlock Text="{DynamicResource S_WebRemotePort}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <TextBlock Text="{DynamicResource S_WebRemotePortHint}" Foreground="{DynamicResource C_FF666666}" FontSize="11"
+                                       TextWrapping="Wrap"/>
+                            <TextBlock x:Name="SettingsWebRemoteStatus"
+                                       Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).WebRemoteStatusText}"
+                                       Foreground="{DynamicResource C_FFB3B3B3}" FontSize="11" TextWrapping="Wrap"/>
+                            <StackPanel Spacing="6"
+                                        IsVisible="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).IsWebRemoteRunning}">
+                                <SelectableTextBlock Text="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).WebRemoteUrl}"
+                                                     Foreground="{DynamicResource AccentGreen}" FontSize="11" FontFamily="Consolas"
+                                                     TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).CopyWebRemoteUrlCommand}"
+                                            Content="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).WebRemoteCopyButtonText}"
+                                            Padding="12,5" FontSize="11"/>
+                                    <Button Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).RefreshWebRemoteTokenCommand}"
+                                            Content="{DynamicResource S_WebRemoteRefreshToken}"
+                                            Padding="12,5" FontSize="11"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+
                         <!-- 版本与更新：平铺行布局（标签 C_FFB3B3B3 + 辅助提示 C_FF666666 在页面底上对比度 4.82 达标） -->
                         <StackPanel Spacing="6">
                             <TextBlock Text="{DynamicResource S_UpdateSectionTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>

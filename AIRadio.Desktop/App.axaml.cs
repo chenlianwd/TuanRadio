@@ -361,6 +361,7 @@ public partial class App : Application
         services.AddSingleton<IPlaylistFileParser>(_ => new PlaylistFileParser());
         services.AddSingleton<IPodcastRssService>(_ => new PodcastRssService());
         services.AddSingleton<IPodcastStorage>(_ => new PodcastStorage());
+        services.AddSingleton<Services.WebRemote.IWebRemoteService>(_ => new Services.WebRemote.WebRemoteService());
         services.AddSingleton<ISleepTimerService, SleepTimerService>();
         // 真实用户数据路径只在这里落定；测试构造 MainWindowViewModel 必须显式传临时路径（编译期强制）
         services.AddSingleton(sp => new MainWindowViewModel(
@@ -389,7 +390,8 @@ public partial class App : Application
             radioStreamProbeService: sp.GetRequiredService<IRadioStreamProbeService>(),
             playlistFileParser: sp.GetRequiredService<IPlaylistFileParser>(),
             podcastRssService: sp.GetRequiredService<IPodcastRssService>(),
-            podcastStorage: sp.GetRequiredService<IPodcastStorage>()));
+            podcastStorage: sp.GetRequiredService<IPodcastStorage>(),
+            webRemoteService: sp.GetRequiredService<Services.WebRemote.IWebRemoteService>()));
     }
 
     private void PrepareForUpdateRestart()

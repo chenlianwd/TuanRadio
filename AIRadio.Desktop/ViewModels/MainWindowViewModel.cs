@@ -225,7 +225,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IRadioStreamProbeService? radioStreamProbeService = null,
         IPlaylistFileParser? playlistFileParser = null,
         IPodcastRssService? podcastRssService = null,
-        IPodcastStorage? podcastStorage = null)
+        IPodcastStorage? podcastStorage = null,
+        Services.WebRemote.IWebRemoteService? webRemoteService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -581,6 +582,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             UpdateFocusModeTooltip();
             UpdateSleepTimerState();
             UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
+            RefreshWebRemoteUiState();
+            UpdateWebRemoteSnapshot(immediate: true);
         };
         AppLanguage.Changed += _onLanguageChanged;
         RefreshLocalizedClockText();
@@ -727,6 +730,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 Now = DateTimeOffset.Now;
                 RefreshLocalizedClockText();
             });
+
+        InitializeWebRemote(webRemoteService);
     }
 
     private async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
@@ -1323,6 +1328,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         _sleepTimerService.CloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
         SleepTimerCloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
+        await RestoreWebRemoteAfterLoadAsync(cancellationToken);
     }
 
     /// <summary>会话开场：账号状态刷新、欢迎语与开播推荐，依赖音源代理就绪。</summary>
@@ -2172,6 +2178,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _lifetimeCts.Cancel();
         _podcastDigestCts?.Cancel();
         _podcastDigestCts?.Dispose();
+        DisposeWebRemote();
         PlaylistVM.PodcastDigestRequested -= OnPodcastDigestRequested;
         _positionSampleSub?.Dispose();
         _trackEndedSub?.Dispose();

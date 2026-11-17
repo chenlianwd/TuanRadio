@@ -402,6 +402,15 @@ public partial class MainWindow : Window, IDisposable
         });
     }
 
+    private void OnWebRemoteSettingsClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (WebRemoteButton?.Flyout is { IsOpen: true } flyout)
+                flyout.Hide();
+        });
+    }
+
     public void Dispose()
     {
         _compactModeSub?.Dispose();
