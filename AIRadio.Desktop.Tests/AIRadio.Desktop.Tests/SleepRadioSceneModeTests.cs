@@ -1,11 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
+using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.ViewModels;
+using AIRadio.Desktop.Views;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless.XUnit;
+using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 using Moq;
 using ReactiveUI;
 using Xunit;
@@ -400,10 +408,348 @@ public class SleepRadioSceneModeTests
             AppLanguage.Apply("zh");
             Assert.Equal("伴眠电台", AppLanguage.Get("S_SceneModeSleep"));
             Assert.Equal("伴眠电台 · 晚安", AppLanguage.Get("S_SceneSleepStatus"));
+            Assert.Equal("专注模式", AppLanguage.Get("S_SceneModeFocus"));
+            Assert.Equal("专注电台 · 心流免打扰", AppLanguage.Get("S_SceneFocusStatus"));
+            Assert.NotEmpty(AppLanguage.Get("S_FocusModeTooltipOff"));
+            Assert.NotEmpty(AppLanguage.Get("S_FocusModeTooltipOn"));
+
+            AppLanguage.Apply("en");
+            Assert.Equal("Focus Mode", AppLanguage.Get("S_SceneModeFocus"));
+            Assert.Equal("Focus Radio · Do Not Disturb", AppLanguage.Get("S_SceneFocusStatus"));
+            Assert.NotEmpty(AppLanguage.Get("S_FocusModeTooltipOff"));
+            Assert.NotEmpty(AppLanguage.Get("S_FocusModeTooltipOn"));
         }
         finally
         {
             AppLanguage.Apply(originalLanguage);
+        }
+    }
+
+    [Fact]
+    public void FocusMode_ToggleCommand_ActivatesAndRestoresMoodBias()
+    {
+        using var harness = new SleepSceneHarness();
+
+        harness.RecommendationService.SetMoodBias("energetic");
+        Assert.Equal("energetic", harness.RecommendationService.CurrentMoodBias);
+        Assert.False(harness.ViewModel.IsFocusRadioMode);
+        Assert.False(harness.SceneService.IsFocusMode);
+
+        // 开启专注模式 -> 切换为 Focus，锁定 focus 氛围，通知 DJ
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Focus, harness.ViewModel.CurrentSceneMode);
+        Assert.True(harness.ViewModel.IsFocusRadioMode);
+        Assert.True(harness.SceneService.IsFocusMode);
+        Assert.False(harness.ViewModel.IsSleepRadioMode);
+        Assert.Equal("focus", harness.RecommendationService.CurrentMoodBias);
+        harness.DjMock.Verify(x => x.UpdateSceneMode(RadioSceneMode.Focus), Times.Once);
+
+        // 再次点击退出专注模式 -> 原子复原原氛围 energetic
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Default, harness.ViewModel.CurrentSceneMode);
+        Assert.False(harness.ViewModel.IsFocusRadioMode);
+        Assert.False(harness.SceneService.IsFocusMode);
+        Assert.Equal("energetic", harness.RecommendationService.CurrentMoodBias);
+        harness.DjMock.Verify(x => x.UpdateSceneMode(RadioSceneMode.Default), Times.Once);
+    }
+
+    [Fact]
+    public void FocusAndSleepMode_CrossTransitions_PreserveOriginalMoodBias()
+    {
+        using var harness = new SleepSceneHarness();
+
+        // 1. Default("energetic") -> Focus("focus") -> 启动睡眠定时自动切 Sleep("calm") -> 取消回到 Default("energetic")
+        harness.RecommendationService.SetMoodBias("energetic");
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Focus, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("focus", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.SetSleepTimerCommand.Execute(30).Subscribe();
+        Assert.Equal(RadioSceneMode.Sleep, harness.ViewModel.CurrentSceneMode);
+        Assert.True(harness.ViewModel.IsSleepRadioMode);
+        Assert.False(harness.ViewModel.IsFocusRadioMode);
+        Assert.Equal("calm", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.SetSleepTimerCommand.Execute(0).Subscribe();
+        Assert.Equal(RadioSceneMode.Default, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("energetic", harness.RecommendationService.CurrentMoodBias);
+
+        // 2. Default("warm") -> Sleep("calm") -> 手动开启 Focus("focus") -> 取消睡眠定时后再关 Focus -> 回到 Default("warm")
+        harness.RecommendationService.SetMoodBias("warm");
+        harness.ViewModel.SetSleepTimerCommand.Execute(15).Subscribe();
+        Assert.Equal(RadioSceneMode.Sleep, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("calm", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Focus, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("focus", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.SetSleepTimerCommand.Execute(0).Subscribe();
+        Assert.Equal(RadioSceneMode.Focus, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("focus", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Default, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("warm", harness.RecommendationService.CurrentMoodBias);
+
+        // 3. Default("lofi") -> Sleep("calm") -> 手动切 Focus("focus") -> 定时仍激活时先关 Focus 应回到 Sleep("calm") -> 关定时恢复 "lofi"
+        harness.RecommendationService.SetMoodBias("lofi");
+        harness.ViewModel.SetSleepTimerCommand.Execute(20).Subscribe();
+        Assert.Equal(RadioSceneMode.Sleep, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("calm", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Focus, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("focus", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.ToggleFocusModeCommand.Execute().Subscribe();
+        Assert.Equal(RadioSceneMode.Sleep, harness.ViewModel.CurrentSceneMode);
+        Assert.True(harness.ViewModel.IsSleepRadioMode);
+        Assert.False(harness.ViewModel.IsFocusRadioMode);
+        Assert.Equal("calm", harness.RecommendationService.CurrentMoodBias);
+
+        harness.ViewModel.SetSleepTimerCommand.Execute(0).Subscribe();
+        Assert.Equal(RadioSceneMode.Default, harness.ViewModel.CurrentSceneMode);
+        Assert.Equal("lofi", harness.RecommendationService.CurrentMoodBias);
+    }
+
+    [Theory]
+    [InlineData(true, 0, null, 0, true)]    // 开台首曲允许简短致意
+    [InlineData(false, 0, 0, 0, false)]     // 曲间静默
+    [InlineData(false, 10, 0, 0, false)]    // 超过默认/伴眠间隔仍静默
+    [InlineData(false, 0, 0, 1, false)]     // 跨时间带在专注模式下同样静默免打扰
+    public void ShouldSpeakTransition_FocusMode_SilencesAllMidSessionTransitions_AllowsStationOpening(
+        bool stationOpening,
+        int transitionsSinceLastSpeech,
+        int? lastSpokenTimeBand,
+        int currentTimeBand,
+        bool expectedSpeak)
+    {
+        var speak = MainWindowViewModel.ShouldSpeakTransition(
+            stationOpening: stationOpening,
+            transitionsSinceLastSpeech: transitionsSinceLastSpeech,
+            lastSpokenTimeBand: lastSpokenTimeBand,
+            currentTimeBand: currentTimeBand,
+            isSleepMode: false,
+            remainingTime: default,
+            targetDuration: default,
+            sceneMode: RadioSceneMode.Focus);
+
+        Assert.Equal(expectedSpeak, speak);
+    }
+
+    [Fact]
+    public void BuildTransitionPrompt_InjectsFocusContext_InChineseAndEnglish()
+    {
+        var zhProfile = new DJProfile { Name = "小音", Language = "zh" };
+        var enProfile = new DJProfile { Name = "Lumen", Language = "en" };
+        var current = MakeTrack("1", "Track A", "Artist A");
+        var next = MakeTrack("2", "River Flows in You", "Yiruma");
+
+        var zhPrompt = DJService.BuildTransitionPrompt(
+            zhProfile, current, next, DateTime.Now, null, null,
+            recentOnAirLines: null, listenerTopic: null,
+            sceneMode: RadioSceneMode.Focus);
+        Assert.Contains("【专注电台情境】", zhPrompt);
+        Assert.Contains("严禁提问或寒暄", zhPrompt);
+        Assert.Contains("[calm]", zhPrompt);
+
+        var enPrompt = DJService.BuildTransitionPrompt(
+            enProfile, current, next, DateTime.Now, null, null,
+            recentOnAirLines: null, listenerTopic: null,
+            sceneMode: RadioSceneMode.Focus);
+        Assert.Contains("[Focus Radio Context]", enPrompt);
+        Assert.Contains("minimal cognitive interruption", enPrompt);
+        Assert.Contains("[calm]", enPrompt);
+    }
+
+    [Fact]
+    public void FallbackIntroduction_Uses_FocusCopyAndCalmEmotion_UnderFocusMode()
+    {
+        var zhProfile = new DJProfile { Name = "小音", Language = "zh" };
+        var enProfile = new DJProfile { Name = "Lumen", Language = "en" };
+        var track = MakeTrack("1", "River Flows in You", "Yiruma");
+        var liveStation = MakeTrack("radio-1", "Lofi Girl Radio", "Lofi Beats", isLive: true);
+
+        var zhTrackScript = DJService.BuildFallbackIntroduction(
+            zhProfile, current: null, next: track, DateTime.Now, weather: null, variant: 0,
+            sceneMode: RadioSceneMode.Focus);
+        Assert.Equal("calm", zhTrackScript.Emotion);
+        Assert.Equal("calm", zhTrackScript.Expression);
+        Assert.Equal("idle", zhTrackScript.Motion);
+        Assert.Contains("专注电台", zhTrackScript.Text);
+
+        var enTrackScript = DJService.BuildFallbackIntroduction(
+            enProfile, current: null, next: track, DateTime.Now, weather: null, variant: 0,
+            sceneMode: RadioSceneMode.Focus);
+        Assert.Equal("calm", enTrackScript.Emotion);
+        Assert.Equal("idle", enTrackScript.Motion);
+        Assert.Contains("Focus Mode", enTrackScript.Text);
+
+        var zhLiveScript = DJService.BuildFallbackIntroduction(
+            zhProfile, current: null, next: liveStation, DateTime.Now, weather: null, variant: 0,
+            sceneMode: RadioSceneMode.Focus);
+        Assert.Equal("calm", zhLiveScript.Emotion);
+        Assert.Equal("idle", zhLiveScript.Motion);
+        Assert.Contains("专注电台", zhLiveScript.Text);
+        Assert.Contains("Lofi Girl Radio", zhLiveScript.Text);
+
+        var enLiveScript = DJService.BuildFallbackIntroduction(
+            enProfile, current: null, next: liveStation, DateTime.Now, weather: null, variant: 0,
+            sceneMode: RadioSceneMode.Focus);
+        Assert.Equal("calm", enLiveScript.Emotion);
+        Assert.Equal("idle", enLiveScript.Motion);
+        Assert.Contains("Focus Mode", enLiveScript.Text);
+        Assert.Contains("Lofi Girl Radio", enLiveScript.Text);
+    }
+
+    [Fact]
+    public async Task CandidateRanker_AllowsPureInstrumental_InFocusMode_WhileBlockingKaraokeAndAgitated()
+    {
+        var pureZh = new OnlineTrack { Id = "1", Title = "夜的钢琴曲 (纯音乐)", Artist = "石进", Source = "netease" };
+        var pureEn = new OnlineTrack { Id = "2", Title = "Gymnopédie No. 1 [Instrumental]", Artist = "Erik Satie", Source = "netease" };
+        var karaoke = new OnlineTrack { Id = "3", Title = "晴天 (伴奏)", Artist = "周杰伦", Source = "netease" };
+        var karaokeEn = new OnlineTrack { Id = "4", Title = "Yellow (Karaoke)", Artist = "Coldplay", Source = "netease" };
+        var instBacking = new OnlineTrack { Id = "4b", Title = "晴天 (Inst.)", Artist = "周杰伦", Source = "netease" };
+        var cover = new OnlineTrack { Id = "5", Title = "晴天 (Cover)", Artist = "翻唱", Source = "netease" };
+        var rock = new OnlineTrack { Id = "6", Title = "狂暴重金属摇滚", Artist = "摇滚乐队", Source = "netease" };
+
+        // 默认模式拦截纯音乐与伴奏；专注模式放行纯音乐/Instrumental，仍拦截卡拉OK伴奏、(Inst.)与翻唱
+        Assert.True(CandidateRanker.IsUnwantedVersion(pureZh, "夜的钢琴曲", allowPureInstrumental: false));
+        Assert.False(CandidateRanker.IsUnwantedVersion(pureZh, "夜的钢琴曲", allowPureInstrumental: true));
+        Assert.False(CandidateRanker.IsUnwantedVersion(pureEn, "Gymnopédie", allowPureInstrumental: true));
+        Assert.True(CandidateRanker.IsUnwantedVersion(karaoke, "晴天", allowPureInstrumental: true));
+        Assert.True(CandidateRanker.IsUnwantedVersion(karaokeEn, "Yellow", allowPureInstrumental: true));
+        Assert.True(CandidateRanker.IsUnwantedVersion(instBacking, "晴天", allowPureInstrumental: true));
+        Assert.True(CandidateRanker.IsUnwantedVersion(cover, "晴天", allowPureInstrumental: true));
+        Assert.True(CandidateRanker.IsAgitatedVersion(rock));
+
+        // 真实 RecommendationService + Broker 端到端接线：验证 Prompt 注入专注选曲偏好、Broker 走纯音乐评分放行、
+        // 且专注场景激活期间即使发生额外氛围偏好变更（如用户误点 FIRE），专注过滤约束依然保持生效
+        var originalLanguage = AppLanguage.Current;
+        AppLanguage.Apply("zh");
+        try
+        {
+            string? capturedPrompt = null;
+            var llmMock = new Mock<ILLMService>();
+            llmMock.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+                .Callback<string, List<ChatMessage>>((p, _) => capturedPrompt = p)
+                .ReturnsAsync("石进 夜的钢琴曲");
+            var brokerMock = new Mock<Services.Music.IMusicSourceBroker>();
+            var brokerSearchCalls = 0;
+            brokerMock.Setup(x => x.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<int>(),
+                    MusicSearchIntent.Automatic,
+                    true,
+                    It.IsAny<System.Threading.CancellationToken>()))
+                .Callback(() => brokerSearchCalls++)
+                .ReturnsAsync(new List<OnlineTrack> { karaoke, instBacking, rock, pureZh, pureEn });
+            brokerMock.Setup(x => x.ResolveTrackAsync(
+                    It.IsAny<OnlineTrack>(),
+                    false,
+                    It.IsAny<System.Threading.CancellationToken>()))
+                .ReturnsAsync((OnlineTrack t, bool _, System.Threading.CancellationToken _) =>
+                    new Services.Music.ResolveTrackResult(
+                        $"https://example.com/{t.Id}.mp3",
+                        new ProviderTrackRef(t.Source, t.Id),
+                        t.Source,
+                        new Dictionary<string, string>()));
+
+            var recService = new RecommendationService(llmMock.Object, brokerMock.Object);
+            recService.UpdateSceneMode(RadioSceneMode.Focus);
+            recService.SetMoodBias("energetic");
+            var program = await recService.CreateProgramAsync(new RecommendationRequest { UserIntent = "继续当前电台" });
+
+            Assert.NotNull(capturedPrompt);
+            Assert.Contains("专注模式选曲偏好", capturedPrompt);
+            Assert.Equal(1, brokerSearchCalls);
+            Assert.Equal("focus", program.Context.Scene);
+            var titles = program.Tracks.Select(t => t.Track.Title).ToList();
+            Assert.Contains(pureZh.Title, titles);
+            Assert.Contains(pureEn.Title, titles);
+            Assert.DoesNotContain(karaoke.Title, titles);
+            Assert.DoesNotContain(instBacking.Title, titles);
+            Assert.DoesNotContain(rock.Title, titles);
+
+            // 验证 LLM 异常回退时 BuildFallbackQueries 优先命中专注关键词（即使已有当前歌手）
+            var queriedKeywords = new List<string>();
+            llmMock.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+                .ThrowsAsync(new InvalidOperationException("offline"));
+            brokerMock.Setup(x => x.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<int>(),
+                    MusicSearchIntent.Automatic,
+                    true,
+                    It.IsAny<System.Threading.CancellationToken>()))
+                .Callback<string, int, MusicSearchIntent, bool, System.Threading.CancellationToken>(
+                    (q, _, _, _, _) => queriedKeywords.Add(q))
+                .ReturnsAsync(new List<OnlineTrack> { pureZh });
+            await recService.CreateProgramAsync(new RecommendationRequest
+            {
+                UserIntent = "继续当前电台",
+                CurrentTrack = MakeTrack("cur", "晴天", "周杰伦")
+            });
+            Assert.Contains(queriedKeywords, q => q.Contains("纯音乐") || q.Contains("instrumental", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            AppLanguage.Apply(originalLanguage);
+        }
+    }
+
+    [AvaloniaFact]
+    public void FocusModeButton_InMainWindow_TogglesFocusModeAndUpdatesTooltip()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        var originalLanguage = AppLanguage.Current;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = ChatAreaMicButtonTests.CreateViewModel();
+        var theme = new FluentTheme();
+        Application.Current!.Styles.Add(theme);
+        Window? window = null;
+        try
+        {
+            AppLanguage.Apply("zh");
+            window = new MainWindow { DataContext = vm, Width = 943, Height = 893 };
+            var strings = new ResourceDictionary();
+            foreach (var pair in AppLanguage.GetStringTable("zh"))
+                strings[pair.Key] = pair.Value;
+            window.Resources.MergedDictionaries.Add(strings);
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+
+            var focusBtn = window.FindControl<Button>("FocusModeButton")
+                ?? throw new InvalidOperationException("FocusModeButton not found");
+            var buttonOnClick = typeof(Button).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("Button.OnClick not found");
+            Assert.Same(vm.ToggleFocusModeCommand, focusBtn.Command);
+            Assert.DoesNotContain("active", focusBtn.Classes);
+            Assert.Equal(AppLanguage.Get("S_FocusModeTooltipOff"), ToolTip.GetTip(focusBtn));
+
+            buttonOnClick.Invoke(focusBtn, null);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.IsFocusRadioMode);
+            Assert.Contains("active", focusBtn.Classes);
+            Assert.Equal(AppLanguage.Get("S_FocusModeTooltipOn"), ToolTip.GetTip(focusBtn));
+
+            AppLanguage.Apply("en");
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(AppLanguage.Get("S_FocusModeTooltipOn"), ToolTip.GetTip(focusBtn));
+
+            buttonOnClick.Invoke(focusBtn, null);
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.IsFocusRadioMode);
+            Assert.DoesNotContain("active", focusBtn.Classes);
+            Assert.Equal(AppLanguage.Get("S_FocusModeTooltipOff"), ToolTip.GetTip(focusBtn));
+        }
+        finally
+        {
+            window?.Close();
+            Application.Current!.Styles.Remove(theme);
+            vm.Dispose();
+            AppLanguage.Apply(originalLanguage);
+            RxApp.MainThreadScheduler = originalScheduler;
         }
     }
 }

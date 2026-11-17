@@ -55,6 +55,14 @@ public interface IMusicSourceBroker : IMusicSearchService
     /// <summary>意图化搜索：Automatic 链路挡 YouTube 等慢源，防止顶穿续播预算。</summary>
     Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, MusicSearchIntent intent, CancellationToken cancellationToken);
 
+    /// <summary>意图化搜索（带纯音乐排序策略控制）：allowPureInstrumental 为 true 时保留纯音乐/器乐评分。</summary>
+    Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        MusicSearchIntent intent,
+        bool allowPureInstrumental,
+        CancellationToken cancellationToken);
+
     /// <summary>曲目级解析（显式覆写默认接口方法：带 ProviderMetadata 与跨源回退；
     /// new 隐藏是有意的——强制实现者显式实现，防静默回落 IMusicSearchService 的弱默认路径）。</summary>
     new Task<string?> GetPlayUrlAsync(OnlineTrack track, CancellationToken cancellationToken);

@@ -313,14 +313,23 @@ public class MusicSourceBroker : IMusicSourceBroker
         int limit,
         MusicSearchIntent intent,
         CancellationToken cancellationToken)
-        => SearchCoreAsync(keyword, limit, intent, cancellationToken, includeSlow: true);
+        => SearchCoreAsync(keyword, limit, intent, cancellationToken, includeSlow: true, allowPureInstrumental: false);
+
+    public Task<List<OnlineTrack>> SearchAsync(
+        string keyword,
+        int limit,
+        MusicSearchIntent intent,
+        bool allowPureInstrumental,
+        CancellationToken cancellationToken)
+        => SearchCoreAsync(keyword, limit, intent, cancellationToken, includeSlow: true, allowPureInstrumental: allowPureInstrumental);
 
     private async Task<List<OnlineTrack>> SearchCoreAsync(
         string keyword,
         int limit,
         MusicSearchIntent intent,
         CancellationToken cancellationToken,
-        bool includeSlow)
+        bool includeSlow,
+        bool allowPureInstrumental = false)
     {
         lock (_reportGate)
         {
@@ -416,7 +425,7 @@ public class MusicSourceBroker : IMusicSourceBroker
 
         // 基于 CandidateRanker 智能重排聚合搜索结果（低分与非预期版本后置），
         // 再做智能跨源去重（每组宽松同曲身份保留评分最高的副本）并截回上限
-        merged = RankResults(merged, keyword, limit);
+        merged = RankResults(merged, keyword, limit, allowPureInstrumental);
         Log.Information("Music search '{Keyword}' returned {Count} fallback result(s)", keyword, merged.Count);
         return merged;
     }
@@ -443,9 +452,13 @@ public class MusicSourceBroker : IMusicSourceBroker
         return new List<OnlineTrack>();
     }
 
-    private List<OnlineTrack> RankResults(IEnumerable<OnlineTrack> results, string keyword, int limit)
+    private List<OnlineTrack> RankResults(
+        IEnumerable<OnlineTrack> results,
+        string keyword,
+        int limit,
+        bool allowPureInstrumental = false)
         => CandidateRanker.DeduplicateTracks(
-                CandidateRanker.RankSearchResults(results.ToList(), keyword, SourcePolicy))
+                CandidateRanker.RankSearchResults(results.ToList(), keyword, SourcePolicy, allowPureInstrumental))
             .Take(limit * 2)
             .ToList();
 

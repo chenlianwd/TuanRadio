@@ -21,4 +21,10 @@ public interface IRecommendationService
 
     /// <summary>设置会话级氛围偏好（如 calm/energetic），影响后续节目单的意图检测与搜索词生成。传 null 清除。</summary>
     string? SetMoodBias(string? mood);
+
+    /// <summary>当前电台场景模式（由场景服务同步，保障专注/伴眠过滤与选曲约束独立于临时氛围微调）。</summary>
+    RadioSceneMode CurrentSceneMode { get; }
+
+    /// <summary>同步当前电台场景模式并刷新节目单缓存。</summary>
+    void UpdateSceneMode(RadioSceneMode mode);
 }
