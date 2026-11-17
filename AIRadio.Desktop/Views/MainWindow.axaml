@@ -92,6 +92,27 @@
             <Setter Property="Opacity" Value="1.0"/>
         </Style>
 
+        <!-- Web 遥控器按钮激活态：无线电波图标点亮 AccentGreen -->
+        <Style Selector="Button#WebRemoteButton Path">
+            <Setter Property="Stroke" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="Opacity" Value="0.6"/>
+        </Style>
+        <Style Selector="Button#WebRemoteButton.active Path">
+            <Setter Property="Stroke" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="Opacity" Value="1.0"/>
+        </Style>
+
+        <!-- Web 遥控器 Flyout 浮层样式 -->
+        <Style Selector="FlyoutPresenter.web-remote-flyout">
+            <Setter Property="Background" Value="{DynamicResource C_FC0E0E15}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_667B7898}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="MinWidth" Value="256"/>
+            <Setter Property="MaxWidth" Value="296"/>
+        </Style>
+
         <!-- 睡眠定时 Flyout 浮层样式 -->
         <Style Selector="FlyoutPresenter.sleep-timer-flyout">
             <Setter Property="Background" Value="{DynamicResource C_FC0E0E15}"/>
@@ -297,6 +318,57 @@
                                                            Margin="24,0,0,0"
                                                            TextWrapping="Wrap"/>
                                             </StackPanel>
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                            <Button x:Name="WebRemoteButton" Width="32" Height="30" Padding="0" Background="{DynamicResource C_10000000}"
+                                    Classes.active="{Binding IsWebRemoteRunning}"
+                                    ToolTip.Tip="{Binding WebRemoteTooltip}" AutomationProperties.Name="{DynamicResource S_WebRemoteTitle}">
+                                <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.8" Fill="Transparent" StrokeLineCap="Round"
+                                      Data="M3,8.5 C7.8,3.8 16.2,3.8 21,8.5 M6.5,12 C9.6,9 14.4,9 17.5,12 M10,15.5 C11.1,14.5 12.9,14.5 14,15.5 M12,19.5 L12.01,19.5"/>
+                                <Button.Flyout>
+                                    <Flyout Placement="BottomEdgeAlignedRight" ShowMode="Standard" FlyoutPresenterClasses="web-remote-flyout">
+                                        <StackPanel Width="252" Spacing="8">
+                                            <DockPanel LastChildFill="True">
+                                                <Button DockPanel.Dock="Right"
+                                                        Command="{Binding ToggleWebRemoteCommand}"
+                                                        Content="{Binding WebRemoteToggleButtonText}"
+                                                        Padding="10,4" FontSize="11" CornerRadius="6" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{DynamicResource S_WebRemoteTitle}" FontWeight="600" FontSize="13"
+                                                           Foreground="{DynamicResource TitleText}" VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding WebRemoteStatusText}" FontSize="11"
+                                                       Foreground="{DynamicResource C_FFB3B3B3}" TextWrapping="Wrap"/>
+
+                                            <StackPanel Spacing="8" IsVisible="{Binding IsWebRemoteRunning}">
+                                                <Border Background="#FFFFFFFF" CornerRadius="8" Padding="6" HorizontalAlignment="Center"
+                                                        IsVisible="{Binding WebRemoteQrImage, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                    <Image Source="{Binding WebRemoteQrImage}" Width="168" Height="168"
+                                                           RenderOptions.BitmapInterpolationMode="None"/>
+                                                </Border>
+                                                <SelectableTextBlock Text="{Binding WebRemoteUrl}" FontSize="11" FontFamily="Consolas"
+                                                                     Foreground="{DynamicResource AccentGreen}" TextWrapping="Wrap"/>
+                                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                                    <Button Command="{Binding CopyWebRemoteUrlCommand}"
+                                                            Content="{Binding WebRemoteCopyButtonText}"
+                                                            Padding="10,4" FontSize="11" CornerRadius="6"/>
+                                                    <Button Command="{Binding RefreshWebRemoteTokenCommand}"
+                                                            Content="{DynamicResource S_WebRemoteRefreshToken}"
+                                                            Padding="10,4" FontSize="11" CornerRadius="6"/>
+                                                </StackPanel>
+                                            </StackPanel>
+
+                                            <Rectangle Height="1" Fill="#20FFFFFF"/>
+                                            <DockPanel LastChildFill="True">
+                                                <Button DockPanel.Dock="Right"
+                                                        Command="{Binding OpenWebRemoteSettingsCommand}"
+                                                        Click="OnWebRemoteSettingsClicked"
+                                                        Content="{DynamicResource S_WebRemoteOpenSettings}"
+                                                        Padding="8,3" FontSize="11" CornerRadius="6" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{DynamicResource S_WebRemoteLanHint}" FontSize="10"
+                                                           Foreground="{DynamicResource C_FF9B9BA8}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                            </DockPanel>
                                         </StackPanel>
                                     </Flyout>
                                 </Button.Flyout>

@@ -54,6 +54,10 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
+    public IReadOnlyList<LyricLine>? Lines => _lines;
+    public int CurrentLineIndex => _currentIndex;
+    public event Action? LyricsChanged;
+
     public LyricsViewModel(IAudioService audioService, ILyricService lyricService, TimeSpan? retryDelay = null)
     {
         _audioService = audioService;
@@ -160,6 +164,7 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
             _lines = null;
             ClearLines();
             SetStatus(result is { IsInstrumental: true } ? StatusKind.Instrumental : StatusKind.NoLyrics);
+            LyricsChanged?.Invoke();
             return;
         }
 
@@ -196,6 +201,7 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
             NextLineText = index + 1 < _lines.Count ? _lines[index + 1].Text : string.Empty;
             HasCurrentLine = !string.IsNullOrWhiteSpace(CurrentLineText);
         }
+        LyricsChanged?.Invoke();
     }
 
     /// <summary>最后一个 Time &lt;= position 的行下标；早于首行返回 -1。行列表已按 Time 升序。</summary>
@@ -242,6 +248,7 @@ public partial class LyricsViewModel : ViewModelBase, IDisposable
             _ => string.Empty
         };
         HasStatusText = _statusKind != StatusKind.None;
+        LyricsChanged?.Invoke();
     }
 
     public void Dispose()
