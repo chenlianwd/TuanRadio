@@ -52,39 +52,48 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 - 网易 br/type 声明值采集（2026-10-12）：IMusicSearchService 增默认方法 ResolvePlayInfoAsync（ResolvedPlayInfo 记录，null=不支持回退字符串路径/非 null=已解析且 Url 空不得回退——契约防失败路径双重请求），NeteaseMusicService 提取 type/br 为声明值（试听/非 http 语义逐字保留），适配器按契约接线；首播点歌网易曲目徽标即显声明值。
 - 全局源策略：覆盖/稳定/音质优先（2026-10-12，阶段 4 收官）：MusicSourcePolicy 枚举 + SourcePolicyClasses 静态分级表（稳定类按自建性/风控史、音质类按已知能力），Broker SourcePolicy 生效于跨源回退尝试序（ApplySourcePolicyOrder 稳定重排，类内保用户序）与 CandidateRanker 15% 源权重（Coverage 沿用既有表零回归）；设置页 music_source_policy 下拉（Hint 明示不改首选源）。稳定优先下回退先试自建/公开 API 源、风控史源后置；音质优先按源能力分级。
 - Provider 程序集拆分 Phase 1（2026-10-12，阶段 3 收官）：新建类库 AIRadio.Desktop.Music（Serilog + TagLibSharp），音乐域 40 文件 git mv 入库（契约/五源/Broker/账号凭据家族/CandidateRanker/Track 模型），命名空间不变使 host/测试零改动；AppLanguage 去 Avalonia 化（SetUiMarshal 注入 + host AppLanguageUi 资源字典适配）；PlaybackPreflightService 因 RxUI 调度留守。slim 构建与 #if 组合根语义不变。Phase 2（条件裁剪/manifest/社区 Provider/版本检测）留待发布期。
+- DJ 聊天现场上下文统一（2026-10-22）：`DJService.UpdateStationContext` 推送在播曲目/最近播放/DJ 近期台呼进系统提示快照尾部，打通聊天与串场双向记忆，并在推荐起播前统一解析实际在播实例以对齐念播。
+- 播放队列与持久歌单解耦（2026-10-22）：在线搜索/点歌/推荐/电台续播统一走 `PlayOneShot` 或会话级播放上下文，不再隐式写入持久歌单（由用户 ❤️ 收藏转正入单）；空歌单同样走 DJ 推荐开台。
+- SMTC 系统媒体集成与任务栏图标自愈（2026-10-22~26）：接入 Windows `SystemMediaTransportControls`（媒体键切歌/暂停、封面与进度同步）及任务栏缩略图收藏按钮；`MainWindow.Opened` 增加图标重申兜底超时灰块问题。
+- 四套配色主题与三态外观模式（2026-10-23、2026-11-10）：新增薄荷绿/暖琥珀/蒸汽波紫/冰蓝四套调色板叠加层（全量 WCAG 2.1 对比度自动化门禁），并支持跟随系统/浅色/深色三态模式（`ThemeModes`）。
+- 滑条调谐针与无缝轨道补线（2026-10-29~11-02）：主界面进度与音量滑条统一为同位显影发丝线、常显竖条调谐指针与拇指补线无缝衔接。
+- 开源发布与 Velopack 自动更新（2026-11-04~06）：落地 GPL-3.0-only 许可与 `THIRD-PARTY-NOTICES.md`、GitHub Actions CI/Release 自动出包、Velopack 安装包与应用内更新（`SimpleWebSource` 直连 Release 静态资产规避 API 限流），以及发布包内置经 SHA256 校验的 Node.js 运行时（v1.0.0 ~ v1.0.3）。
+- 主播音量对齐与系统托盘常驻（2026-11-06）：Edge TTS 与调频音效音量跟随全局主音量并修复说话期间 Ducking 冲刷；新增 `TrayIconService` 托盘图标与播控菜单，支持最小化托盘/直接退出/每次询问配置。
+- 零配置 DJ 智能台呼兜底与大模型快捷预置（2026-11-09）：未配置 LLM 时结合时间段、实时天气与主播人设轮转多套双语开台/串场台呼；设置页新增 DeepSeek / 智谱 GLM / Kimi / 通义千问 / 硅基流动 / 本地 Ollama 一键预置。
+- 全球开源网络电台与自定义电台导入管理（2026-11-09~13）：新增 `RadioBrowserClient` 三镜像集群与 `CuratedStationRegistry` 8 大流派离线精选库，全链路适配 24/7 直播流（ICY 元数据、断流重连、跳过歌词/画像污染）；新增自定义流 URL 录入、轻量化响应头嗅探（`IRadioStreamProbeService`）、M3U/M3U8/PLS 批量导入（`IPlaylistFileParser`）与 `custom_stations.json` 持久化。
+- 大模型优先智能点歌与降级自愈（2026-11-10）：已配置 LLM 时放行自然语义点歌并支持漏发协议自愈/元数据对齐/灰歌顺延；未配置或异常时回退结构化本地点歌规则。
+- 收藏歌曲与电台分流隔离及多维排序（2026-11-11）：收藏页拆分为单曲与电台双集合，连播收藏自动排除直播流防止死锁，并支持收藏歌曲即时搜索与多维排序。
+- 收音机睡眠定时与深夜伴眠场景模式（2026-11-11~12）：新增 `SleepTimerService`（倒计时/播完即止/最后 10 秒渐弱淡出/到期退出）与 `SceneModeService`（伴眠温柔提示词/TTS 耳语韵律与安全 Clamp/动态临界静默/氛围锁定 `calm` 并过滤激昂曲目/说话光晕降噪）。
+- 搜索浮层独立解耦与多语言打磨（2026-11-13）：在线搜索拆分为独立浮层 `SearchDrawer`，曲库抽屉移除搜索页签并补齐页签高亮与浮层互斥收起；修复英文模式下天气城市与多处状态文案本地化。
 
 ## 当前流程
 
 ### 启动流程
 
-1. `App` 初始化 DI、日志和 `MusicApiServer`。
-2. 创建 `MainWindowViewModel` 并加载设置、歌单。
-3. 初始化当前 DJ 角色和 LLM/TTS 配置。
-4. 播放欢迎语。
-5. 如果歌单非空，生成一次启动推荐。
+1. `App` 初始化 DI、日志，恢复已保存的音源凭据与本地状态（设置/歌单/主题/简洁模式），标准构建下并行启动网易/酷狗 `MusicApiServer`；主窗口 `Opened` 后挂载 SMTC、任务栏缩略图按钮与系统托盘。
+2. `MainWindowViewModel.StartSessionAsync` 并行刷新账号状态并播放开台欢迎语。
+3. 无论歌单是否为空，均并行预取 DJ 推荐后尝试开播（歌单非空时推荐超预算或失败退回歌单轮换；歌单为空且冷启动推荐失败则回落空歌单引导文案）。
 
 ### 点歌流程
 
-1. `ChatViewModel` 识别明确点歌输入或 JSON 控制块。
-2. `MusicSourceBroker` 经现有 Provider 适配器搜索在线音源。
-3. 获取首选源播放 URL；失效时按歌名/歌手到其他源重新匹配。
-4. 加入 `PlaylistViewModel` 和 `AudioService`。
-5. 播放目标曲目，并避免重复加入同一首歌。
+1. `ChatViewModel` 按 `IsLlmConfigured` 调度：已配置大模型时放行自然语义点歌并解析拟人台词与 `<cmd>` 控制块（具备控制块漏发与异常降级兜底）；未配置时走结构化本地点歌规则。
+2. `MusicSourceBroker` 搜索在线音源，经 `CandidateRanker` 评分对齐与可播性兜底，获取解析结果（失效时跨源回退或顺延可用候选）。
+3. 通过 `AudioService.PlayOneShot` 以瞬态单曲上下文插播，不隐式污染持久歌单（用户主动点击 ❤️ 收藏才转正入单并落盘）。
 
 ### Radio Mode 续播流程
 
 1. `AudioService.TrackEnded` 发出当前曲目结束事件。
-2. `MainWindowViewModel` 接管自动续播。
-3. 优先通过 `RecommendationService` 获取当前节目单的下一首或生成新节目单。
-4. 如果节目单推荐失败，退回 `DJService.RecommendNextTrackAsync` 单首推荐。
-5. DJ 生成串场文本，TTS 播报后切到下一首。
+2. `MainWindowViewModel` 接管自动续播（若睡眠定时「播完当前曲后停止」已激活则前置拦截停播）。
+3. 优先通过 `RecommendationService` 获取当前节目单的下一首或生成新节目单（伴眠场景下偏向柔和舒缓并屏蔽激昂曲目）。
+4. 如果节目单推荐失败，退回 `DJService.RecommendNextTrackAsync` 单首推荐或歌单轮换。
+5. 若未命中伴眠临界静默门限，DJ 生成串场文本（无 LLM 时走多维规则兜底），TTS 播报后切到下一首。
 
 ### 关闭流程
 
-1. `App` 取消应用生命周期令牌，停止初始化、推荐、LLM、TTS、STT、搜索和 yt-dlp 请求。
-2. `MainWindowViewModel` 只释放自身订阅和子 ViewModel，不在 UI 线程同步停止原生音频设备。
-3. DI 容器统一释放 `AudioService`、`EdgeTtsService` 和 `WhisperSttService`。
-4. 原生回调在限定时间内未退出时，窗口继续关闭，清理任务在后台等待回调恢复后完成释放。
+1. 点击关闭窗口按用户 `CloseAction` 设置处理：默认询问、隐藏到系统托盘后台继续播放，或直接触发退出（托盘菜单「退出」与睡眠定时到期退出同样走显式退出）。
+2. `App.OnShutdownRequested` 先第一时间释放 `AudioService` 停播，再取消应用生命周期令牌，停止初始化、推荐、LLM、TTS、STT、搜索和 yt-dlp 请求。
+3. `MainWindowViewModel` 释放自身订阅与子 ViewModel，随后销毁系统托盘、SMTC、缩略图工具栏及本地 Node.js 代理进程。
+4. DI 容器统一收尾并刷新关闭日志；原生音频回调在限定等待时间内未退出时，窗口继续关闭，后台清理任务等待回调恢复后完成释放。
 
 ## 当前开发阶段
 
@@ -153,5 +162,5 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 
 ```bash
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
-dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal "/p:UseSharedCompilation=false"
+dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```

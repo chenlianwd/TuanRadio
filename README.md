@@ -28,7 +28,7 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 
 - **品牌头（Brand Header）**：
   - **主播身份**：黑胶唱片徽章与主播名。AI DJ 说话时徽章辉光随 Edge TTS 真实输出音量呼吸起伏、主播名点亮；点击徽章可快速切换主播角色。
-  - **功能按钮簇**：全局曲库与多源搜索按钮（弹出搜索抽屉）、设置按钮、明暗主题即时切换按钮。
+  - **功能按钮簇**：多源在线搜索按钮（弹出独立搜索浮层）、睡眠定时按钮（月牙图标，弹出定时倒计时/播完即止与到期退出菜单）、设置按钮。
   - **窗口控制**：除标准最小化、最大化、关闭外，内置**一键收缩至简洁播放模式按钮**。
 - **时钟舞台（Clock Stage & Lyrics）**：
   - **中央主屏**：大字号复古时钟显示（时:分:秒），鼠标轻点即可在**时钟舞台**与**逐行同步滚动歌词**间平滑切换，自动记忆用户偏好。
@@ -58,10 +58,10 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 
 | 分组 | 导航项 | 详细配置内容 |
 | :--- | :--- | :--- |
-| **AI 服务** | `AI 服务` | 接口协议（OpenAI 兼容 / Anthropic 兼容 / 本地模型如 Ollama）、API Key（系统安全存储与掩码保护）、Base URL、模型名、一键连接测试与错误诊断 |
+| **AI 服务** | `AI 服务` | **快捷预置**：一键填充 DeepSeek / 智谱 GLM / Kimi / 通义千问 / 硅基流动 / 本地 Ollama 地址与推荐模型<br>**接口与鉴权**：接口协议（OpenAI 兼容 / Anthropic 兼容 / 本地模型）、API Key（系统安全存储与掩码保护）、Base URL、模型名、一键连接测试与错误诊断 |
 | **音源与曲库** | `音源与曲库` | **流媒体账号**：网易云扫码登录（免登录可用免费库）、酷狗扫码登录（支持滑块风控验证）、yt-dlp 浏览器 Cookie<br>**开放与私有云**：OpenSubsonic 服务器连接与音质偏好（自动/原始/128k 省流量）、Audius 开放曲库接入<br>**本地曲库**：文件夹路径管理、曲库扫描与索引状态<br>**音源治理**：逐源启停与优先级排序、全局源策略（覆盖/稳定/音质优先）、逐源连接健康记录与熔断监控 |
 | **主播与播报** | `主播与播报` | **主播人设**：内置主播角色切换（小夏/阿星等）、音色微调、自定义人设提示词（System Prompt）<br>**语音播报**：Edge TTS 播报总开关、纯程序化 FM 调频杂音与台呼音效开关、播报与音乐混音方式（压低音乐 Ducking / 暂停音乐） |
-| **外观与通用** | `外观与通用` | **语言与地区**：界面及 AI 回复语言（中文/英文）、天气城市（搜索候选点选 / 自动 IP 定位）<br>**配色与主题**：深浅双变体 × 四套调色板（薄荷绿 / 暖琥珀 / 蒸汽波紫 / 冰蓝，全数通过 WCAG 门禁）<br>**视觉开关**：星空背景开关、频谱初始样式、简洁模式窗口置顶记忆、单行动态歌词开关<br>**版本与更新（v1.0.1 新增）**：当前版本信息与安装渠道、应用内一键检查更新、静默差分下载与重启平滑升级 |
+| **外观与通用** | `外观与通用` | **语言与地区**：界面及 AI 回复语言（中文/英文）、天气城市（搜索候选点选 / 自动 IP 定位）<br>**配色与主题**：外观模式（跟随系统 / 浅色 / 深色）× 四套调色板（薄荷绿 / 暖琥珀 / 蒸汽波紫 / 冰蓝，全数通过 WCAG 门禁）<br>**视觉开关**：星空背景开关、频谱初始样式、简洁模式窗口置顶记忆、单行动态歌词开关<br>**窗口行为**：关闭主窗口时动作（最小化到系统托盘 / 退出软件 / 每次询问）<br>**版本与更新**：当前版本信息与安装渠道、应用内一键检查更新、静默差分下载与重启平滑升级 |
 | **收听画像** | `收听画像` | 口味学习总开关（纯本地存储，无云端数据泄露）、生成/重新归纳口味摘要（LLM Digest）、听众性格印象（LLM Impression）、Top 喜爱歌手排行、避开/反感歌手排行、Dislike 黑名单管理（支持手动逐项解封，带 30 天半衰期衰减提示）、一键清除画像 |
 
 ---
@@ -139,16 +139,16 @@ AIRadio.Desktop/            宿主应用（Avalonia 11.3.9 + ReactiveUI + Velopa
   Assets/                   应用图标与矢量资源
   Converters/               共享 XAML Converter
   Models/                   ChatMessage、DJProfile、推荐数据模型等
-  Services/                 播放中枢 (AudioService)、AI DJ、LLM、Edge TTS、歌词、Whisper ASR、天气等
+  Services/                 播放中枢 (AudioService)、AI DJ、LLM、Edge TTS、歌词、Whisper ASR、天气、睡眠定时、伴眠场景、系统托盘与 SMTC 等
   Services/Music/Playback/  播放队列预检与调度（依赖 Avalonia UI 线程）
   Themes/                   Colors.axaml 主题 token + Palettes/ 四套调色板叠加层
-  ViewModels/ Views/        ReactiveUI ViewModel 与 Avalonia 视图（主界面/设置/迷你模式/抽屉）
+  ViewModels/ Views/        ReactiveUI ViewModel 与 Avalonia 视图（主界面/设置/迷你模式/曲库抽屉/独立搜索浮层）
   server/ server-kugou/     网易 / 酷狗 Node.js 代理进程与补丁基线
 AIRadio.Desktop.Music/      音乐领域独立类库（宿主单向引用，命名空间保持稳定）
-  Models/                   Track、Album 等核心实体
+  Models/                   Track、RadioStation、RadioSceneMode 等核心实体
   Services/Music/           Contracts（抽象契约）、Broker（中枢聚合、策略编排与解析缓存）、
-                            Providers（本地/OpenSubsonic/Audius）、Adapters（流媒体适配）、
-                            Playback（MediaUriPolicy 安全白名单与重定向复检）
+                            Providers（本地/OpenSubsonic/Audius 及 Radio/ 全球网络电台、精选库与自定义流探测解析）、
+                            Adapters（流媒体适配）、Playback（MediaUriPolicy 安全白名单与重定向复检）
 AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1300+ 测试用例）
 tools/                      tools/publish.ps1 自动化出包流水线、品牌图标导出脚本与实机截图工具
 ```
