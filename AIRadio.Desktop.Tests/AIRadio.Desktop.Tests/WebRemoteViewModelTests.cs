@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
+using AIRadio.Desktop.Services.Music;
 using AIRadio.Desktop.Services.WebRemote;
 using AIRadio.Desktop.ViewModels;
 using AIRadio.Desktop.Views;
@@ -43,6 +44,7 @@ public class WebRemoteViewModelTests
 
         public Func<WebRemoteSnapshot>? SnapshotProvider { get; private set; }
         public Func<WebRemoteCommand, Task<WebRemoteCommandResult>>? CommandHandler { get; private set; }
+        public Func<WebRemoteBrowseRequest, CancellationToken, Task<WebRemoteBrowseResponse>>? BrowseHandler { get; private set; }
 
         public event Action? StatusChanged;
 
@@ -52,6 +54,12 @@ public class WebRemoteViewModelTests
         {
             SnapshotProvider = snapshotProvider;
             CommandHandler = commandHandler;
+        }
+
+        public void ConfigureBrowseHandler(
+            Func<WebRemoteBrowseRequest, CancellationToken, Task<WebRemoteBrowseResponse>> browseHandler)
+        {
+            BrowseHandler = browseHandler;
         }
 
         public Task<bool> StartAsync(int preferredPort, string token, IPAddress? bindAddress = null, CancellationToken cancellationToken = default)
@@ -330,6 +338,332 @@ public class WebRemoteViewModelTests
         }
         finally
         {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task BrowseSections_AndExtendedCommands_WorkEndToEndWithoutPollutingDesktopFilters()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var originalLanguage = AppLanguage.Current;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"tuanradio-wr-browse-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        var audioMock = new Mock<IAudioService>();
+        var currentTrackSubj = new BehaviorSubject<Track?>(null);
+        audioMock.SetupGet(x => x.CurrentTrack).Returns(() => currentTrackSubj.Value);
+        audioMock.SetupGet(x => x.TrackChanged).Returns(currentTrackSubj);
+        audioMock.SetupGet(x => x.StateChanged).Returns(Observable.Never<PlaybackState>());
+        audioMock.SetupGet(x => x.PositionChanged).Returns(Observable.Never<TimeSpan>());
+        audioMock.SetupGet(x => x.TrackEnded).Returns(Observable.Never<Track?>());
+        audioMock.SetupGet(x => x.PlaybackRecoveryNotices).Returns(Observable.Never<PlaybackRecoveryNotice>());
+        audioMock.SetupGet(x => x.TrackMediaInfo).Returns(Observable.Never<TrackMediaInfo>());
+        audioMock.SetupGet(x => x.SpectrumData).Returns(Observable.Never<float[]>());
+        audioMock.SetupGet(x => x.TtsStateChanged).Returns(Observable.Never<bool>());
+        audioMock.SetupGet(x => x.TtsError).Returns(Observable.Never<string>());
+        audioMock.SetupGet(x => x.Playlist).Returns(Array.Empty<Track>());
+        audioMock.SetupGet(x => x.RepeatMode).Returns("radio");
+        audioMock.SetupProperty(x => x.Volume, 0.8f);
+
+        var progPlayable = new Track
+        {
+            Id = "prog-1",
+            SourceId = "netease:1001",
+            Title = "Midnight Drive",
+            Artist = "The Midnight",
+            FilePath = "https://cdn.example.com/prog1.mp3",
+            Duration = TimeSpan.FromMinutes(4)
+        };
+        var progUnplayable = new Track
+        {
+            Id = "prog-2",
+            SourceId = "netease:1002",
+            Title = "Blocked Track",
+            Artist = "Restricted",
+            FilePath = string.Empty
+        };
+        var program = new RadioProgram
+        {
+            Title = "Late Night Mix",
+            DjOpening = "Welcome to Late Night Mix",
+            Tracks =
+            [
+                new RecommendedTrack { Track = progPlayable, IsPlayable = true, Tags = ["Synthwave"], Reason = "Mood match" },
+                new RecommendedTrack { Track = progUnplayable, IsPlayable = false, Tags = ["Locked"] }
+            ]
+        };
+
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshGate = new TaskCompletionSource<RadioProgram>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var programCallCount = 0;
+        var recMock = new Mock<IRecommendationService>();
+        recMock.SetupGet(x => x.CurrentProgram).Returns(program);
+        recMock.SetupGet(x => x.RecentlyPlayed).Returns(Array.Empty<Track>());
+        recMock.Setup(x => x.CreateProgramAsync(It.IsAny<RecommendationRequest>()))
+            .Returns(() =>
+            {
+                programCallCount++;
+                if (programCallCount == 1)
+                    return Task.FromResult(program);
+                refreshStarted.TrySetResult(true);
+                return refreshGate.Task;
+            });
+
+        var jazzStation = new RadioStation
+        {
+            StationUuid = "jazz-01",
+            Name = "Smooth Jazz 247",
+            StreamUrl = "https://stream.example.com/jazz.mp3",
+            Tags = "jazz,smooth",
+            Codec = "MP3",
+            Bitrate = 128
+        };
+        var bbcStation = new RadioStation
+        {
+            StationUuid = "bbc-01",
+            Name = "BBC World",
+            StreamUrl = "https://stream.example.com/bbc.mp3",
+            Tags = "news",
+            Codec = "AAC",
+            Bitrate = 64
+        };
+        var radioMock = new Mock<IRadioBrowserService>();
+        radioMock.Setup(x => x.GetStationsByCategoryAsync("jazz", It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([jazzStation]);
+        radioMock.Setup(x => x.SearchStationsAsync("BBC", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([bbcStation]);
+
+        var feed1 = new PodcastFeed { FeedId = "f1", Title = "Tech Talk", RssUrl = "https://example.com/tech.xml" };
+        var epSafe = new PodcastEpisode
+        {
+            EpisodeKey = "ep-safe",
+            FeedUrl = feed1.RssUrl,
+            FeedTitle = feed1.Title,
+            Title = "Episode Safe",
+            AudioUrl = "https://cdn.example.com/ep1.mp3",
+            Summary = "Detailed episode shownotes for AI digest.",
+            Duration = TimeSpan.FromMinutes(25),
+            ResumePositionMs = 45_000
+        };
+        var epUnsafe = new PodcastEpisode
+        {
+            EpisodeKey = "ep-unsafe",
+            FeedUrl = feed1.RssUrl,
+            FeedTitle = feed1.Title,
+            Title = "Episode Unsafe",
+            AudioUrl = "http://127.0.0.1/blocked.mp3",
+            Summary = string.Empty,
+            Duration = TimeSpan.FromMinutes(10)
+        };
+        var rssMock = new Mock<IPodcastRssService>();
+        rssMock.Setup(x => x.FetchFeedAsync(feed1.RssUrl, It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PodcastFeedParseResult(true, feed1, [epSafe, epUnsafe]));
+
+        using var podStorage = new PodcastStorage(Path.Combine(tempDir, "podcasts.json"));
+        await podStorage.AddOrUpdateFeedAsync(feed1);
+
+        var digestStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var digestGate = new TaskCompletionSource<DJScript>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var djMock = new Mock<IDJService>();
+        djMock.SetupGet(x => x.DjName).Returns("Haru");
+        djMock.Setup(x => x.GeneratePodcastDigestAsync(epSafe, It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                digestStarted.TrySetResult(true);
+                return digestGate.Task;
+            });
+
+        var webRemote = new StubWebRemoteService();
+        var vm = new MainWindowViewModel(
+            audioMock.Object,
+            djMock.Object,
+            new Mock<ILLMService>().Object,
+            new Mock<ISecureStorage>().Object,
+            new Mock<IMusicSearchService>().Object,
+            new Mock<ISttService>().Object,
+            Path.Combine(tempDir, "playlist.json"),
+            Path.Combine(tempDir, "settings.json"),
+            recommendationService: recMock.Object,
+            radioBrowserService: radioMock.Object,
+            podcastRssService: rssMock.Object,
+            podcastStorage: podStorage,
+            webRemoteService: webRemote);
+
+        try
+        {
+            AppLanguage.Apply("zh");
+            await vm.ToggleWebRemoteCommand!.Execute();
+            Assert.NotNull(webRemote.BrowseHandler);
+
+            // 初始化播客安全校验桩：允许 https://cdn.example.com，拒绝 127.0.0.1
+            vm.PlaylistVM.SetPodcastAudioUriValidatorForTests((uri, _) =>
+                Task.FromResult(uri.Host.Equals("cdn.example.com", StringComparison.OrdinalIgnoreCase)));
+
+            // 1. Program 切片与指令
+            var progBrowse = await webRemote.BrowseHandler!(new WebRemoteBrowseRequest { Section = "program" }, CancellationToken.None);
+            Assert.True(progBrowse.Ok);
+            Assert.Equal("今日电台", progBrowse.ProgramTitle);
+            Assert.Equal(2, progBrowse.ProgramTracks.Count);
+
+            var playProgOk = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_program_track", Text = "prog-1" });
+            Assert.True(playProgOk.Ok);
+            audioMock.Verify(x => x.PlayOneShot(progPlayable, It.IsAny<string>()), Times.Once);
+
+            var playProgBlocked = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_program_track", Text = "prog-2" });
+            Assert.False(playProgBlocked.Ok);
+            Assert.Equal("track_not_playable", playProgBlocked.Message);
+
+            var playProgMissing = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_program_track", Text = "missing" });
+            Assert.False(playProgMissing.Ok);
+            Assert.Equal("track_not_found", playProgMissing.Message);
+
+            // refresh_program 应非阻塞立即返回 Success
+            var refreshTask = webRemote.CommandHandler!(new WebRemoteCommand { Action = "refresh_program" });
+            var refreshRes = await refreshTask.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.True(refreshRes.Ok);
+            await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            refreshGate.TrySetResult(program);
+
+            // 2. Library 切片：纯内存过滤不污染桌面端 LibraryFilterText
+            var lib1 = new Track { Id = "lib-1", SourceId = "local:1", Title = "Alpha Song", Artist = "Artist A", Duration = TimeSpan.FromMinutes(3) };
+            var lib2 = new Track { Id = "lib-2", SourceId = "local:2", Title = "Beta Tune", Artist = "Artist B", Duration = TimeSpan.FromMinutes(4) };
+            vm.PlaylistVM.Tracks.Add(lib1);
+            vm.PlaylistVM.Tracks.Add(lib2);
+
+            var libBrowse = await webRemote.BrowseHandler!(new WebRemoteBrowseRequest { Section = "library", Query = "Beta" }, CancellationToken.None);
+            Assert.True(libBrowse.Ok);
+            var matchedLib = Assert.Single(libBrowse.LibraryTracks);
+            Assert.Equal("lib-2", matchedLib.Id);
+            Assert.Equal(1, matchedLib.Index);
+            Assert.Equal(string.Empty, vm.PlaylistVM.LibraryFilterText);
+
+            var playLib = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_library_track", Text = "lib-2" });
+            Assert.True(playLib.Ok);
+            audioMock.Verify(x => x.PlayTrack(lib2), Times.Once);
+
+            var nextLib = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "enqueue_library_track", Text = "lib-1" });
+            Assert.True(nextLib.Ok);
+            audioMock.Verify(x => x.PlayNextInQueue(lib1), Times.Once);
+
+            var tailLib = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "enqueue_library_track", Text = "lib-1", IntValue = 2 });
+            Assert.True(tailLib.Ok);
+            audioMock.Verify(x => x.AddToQueue(lib1), Times.Once);
+
+            // 3. Favorites 切片：歌曲/电台隔离与不污染 FavoriteFilterText
+            vm.PlaylistVM.ToggleFavoriteCommand.Execute(lib1).Subscribe();
+            var favStationTrack = new Track
+            {
+                Id = "radio-browser:fav-st",
+                SourceId = "radio-browser:fav-st",
+                Title = "Jazz Favorite FM",
+                Artist = "US · jazz",
+                FilePath = "https://stream.example.com/favjazz.mp3"
+            };
+            vm.PlaylistVM.ToggleFavoriteCommand.Execute(favStationTrack).Subscribe();
+
+            var favBrowse = await webRemote.BrowseHandler!(new WebRemoteBrowseRequest { Section = "favorites", Query = "Alpha" }, CancellationToken.None);
+            Assert.True(favBrowse.Ok);
+            Assert.Single(favBrowse.FavoriteSongs);
+            Assert.Empty(favBrowse.FavoriteStations);
+            Assert.Equal(string.Empty, vm.PlaylistVM.FavoriteFilterText);
+
+            var favAllBrowse = await webRemote.BrowseHandler!(new WebRemoteBrowseRequest { Section = "favorites" }, CancellationToken.None);
+            Assert.Single(favAllBrowse.FavoriteSongs);
+            Assert.Single(favAllBrowse.FavoriteStations);
+
+            var playFavRes = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_favorite", Text = "lib-1" });
+            Assert.True(playFavRes.Ok);
+            audioMock.Verify(x => x.StartPlaybackContext(
+                It.Is<IReadOnlyList<Track>>(l => l.Any(t => t.Id == "lib-1")),
+                0,
+                false,
+                It.IsAny<string>()), Times.Once);
+
+            // 4. Radio 切片：分类切换、搜索及电台收藏/取消收藏闭环
+            var radioCatBrowse = await webRemote.BrowseHandler!(new WebRemoteBrowseRequest { Section = "radio", Category = "jazz" }, CancellationToken.None);
+            Assert.True(radioCatBrowse.Ok);
+            Assert.Equal("jazz", radioCatBrowse.SelectedRadioCategory);
+            Assert.Equal("jazz", vm.PlaylistVM.SelectedRadioCategory?.Key);
+            Assert.Single(radioCatBrowse.RadioStations);
+
+            var playRadioRes = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_radio_station", Text = "jazz-01" });
+            Assert.True(playRadioRes.Ok);
+            audioMock.Verify(x => x.PlayRadioSoundFx(RadioFxKind.TuningSweep), Times.Once);
+
+            // 收藏 -> Favorites 应新增，再调用一次 -> 应完整移除（验证取消收藏修复）
+            var favRadioAdd = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "toggle_radio_favorite", Text = "jazz-01" });
+            Assert.True(favRadioAdd.Ok);
+            Assert.Contains(vm.PlaylistVM.Favorites, t => t.Id == "radio-browser:jazz-01");
+
+            var favRadioRemove = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "toggle_radio_favorite", Text = "jazz-01" });
+            Assert.True(favRadioRemove.Ok);
+            Assert.DoesNotContain(vm.PlaylistVM.Favorites, t => t.Id == "radio-browser:jazz-01");
+
+            var radioSearchBrowse = await webRemote.BrowseHandler!(new WebRemoteBrowseRequest { Section = "radio", Query = "BBC" }, CancellationToken.None);
+            Assert.Single(radioSearchBrowse.RadioStations);
+            Assert.Equal("bbc-01", radioSearchBrowse.RadioStations[0].StationUuid);
+
+            var missingStationRes = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_radio_station", Text = "no-such-uuid" });
+            Assert.False(missingStationRes.Ok);
+            Assert.Equal("station_not_found", missingStationRes.Message);
+
+            // 5. Podcasts 切片与指令：续播、从头播、URI 安全策略拦截与非阻塞 AI 速读
+            var podBrowse = await webRemote.BrowseHandler!(
+                new WebRemoteBrowseRequest { Section = "podcasts", Feed = feed1.RssUrl, Query = "Episode Safe" },
+                CancellationToken.None);
+            Assert.True(podBrowse.Ok);
+            Assert.Contains(podBrowse.PodcastFeeds, f => f.RssUrl == feed1.RssUrl);
+            Assert.Equal(feed1.RssUrl, podBrowse.SelectedPodcastFeedUrl);
+            Assert.Single(podBrowse.PodcastEpisodes);
+            Assert.Equal("ep-safe", podBrowse.PodcastEpisodes[0].EpisodeKey);
+            Assert.Equal(string.Empty, vm.PlaylistVM.PodcastFilterText);
+
+            var playPodResume = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_podcast_episode", Text = "ep-safe", IntValue = 0 });
+            Assert.True(playPodResume.Ok);
+            audioMock.Verify(x => x.StartPlaybackContext(
+                It.Is<IReadOnlyList<Track>>(l => l.Any(t =>
+                    t.ProviderMetadata.ContainsKey("resume_ms") && t.ProviderMetadata["resume_ms"] == "45000")),
+                0,
+                false,
+                It.IsAny<string>()), Times.Once);
+
+            var playPodRestart = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_podcast_episode", Text = "ep-safe", IntValue = 1 });
+            Assert.True(playPodRestart.Ok);
+            audioMock.Verify(x => x.StartPlaybackContext(
+                It.Is<IReadOnlyList<Track>>(l => l.Any(t =>
+                    t.ProviderMetadata.ContainsKey("resume_ms") && t.ProviderMetadata["resume_ms"] == "0")),
+                0,
+                false,
+                It.IsAny<string>()), Times.Once);
+
+            var playPodUnsafe = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "play_podcast_episode", Text = "ep-unsafe" });
+            Assert.False(playPodUnsafe.Ok);
+            Assert.Equal("unsafe_audio_url", playPodUnsafe.Message);
+
+            var emptyShownotesRes = await webRemote.CommandHandler!(new WebRemoteCommand { Action = "digest_podcast_episode", Text = "ep-unsafe" });
+            Assert.False(emptyShownotesRes.Ok);
+            Assert.Equal("empty_shownotes", emptyShownotesRes.Message);
+
+            // digest_podcast_episode 必须立即返回（不阻塞等待 LLM/TTS 完成）
+            var digestCmdTask = webRemote.CommandHandler!(new WebRemoteCommand { Action = "digest_podcast_episode", Text = "ep-safe" });
+            var digestCmdRes = await digestCmdTask.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.True(digestCmdRes.Ok);
+            await digestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("ep-safe", webRemote.SnapshotProvider!().DigestingEpisodeKey);
+
+            digestGate.TrySetResult(new DJScript { Text = "AI 速读已完成！", Emotion = "calm", Expression = "calm", Motion = "idle" });
+            await Task.Delay(50);
+            Assert.Contains(vm.ChatVM.Messages, m => m.Content.Contains("AI 速读已完成！"));
+            Assert.Equal(string.Empty, webRemote.SnapshotProvider!().DigestingEpisodeKey);
+        }
+        finally
+        {
+            vm.Dispose();
+            AppLanguage.Apply(originalLanguage);
+            RxApp.MainThreadScheduler = originalScheduler;
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
     }

@@ -91,6 +91,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ObservableCollection<RadioStation> RadioStations { get; } = new();
     public ObservableCollection<PodcastFeed> PodcastFeeds { get; } = new();
     public ObservableCollection<PodcastEpisode> PodcastEpisodes { get; } = new();
+    internal IReadOnlyList<PodcastEpisode> AllPodcastEpisodes => _allPodcastEpisodes;
+    internal IReadOnlyList<RadioStation> CustomStationsCache => _customStationsCache;
+    internal string CurrentRadioCategoryKey => _currentCategoryKey;
     public event Action<PodcastEpisode>? PodcastDigestRequested;
     public ObservableCollection<Track> VisibleLibraryTracks { get; } = new();
     public ObservableCollection<Track> VisibleFavoriteTracks { get; } = new();
@@ -417,7 +420,11 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             if (track == null || track.IsPodcastEpisode)
                 return;
 
-            var playlistTrack = FindMatchingTrack(track) ?? track;
+            var playlistTrack = FindMatchingTrack(track)
+                ?? Favorites.FirstOrDefault(t =>
+                    (!string.IsNullOrWhiteSpace(track.Id) && string.Equals(t.Id, track.Id, StringComparison.OrdinalIgnoreCase)) ||
+                    MusicIdentity.IsSameSource(t.SourceId, track.SourceId))
+                ?? track;
             if (!playlistTrack.IsLiveStream && !Tracks.Contains(playlistTrack))
                 Tracks.Add(playlistTrack);
 
@@ -425,17 +432,28 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             {
                 _favoriteIds.Remove(playlistTrack.Id);
                 playlistTrack.IsFavorite = false;
+                track.IsFavorite = false;
                 Favorites.Remove(playlistTrack);
+                for (var i = Favorites.Count - 1; i >= 0; i--)
+                {
+                    if (string.Equals(Favorites[i].Id, playlistTrack.Id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Favorites[i].IsFavorite = false;
+                        Favorites.RemoveAt(i);
+                    }
+                }
             }
             else
             {
                 _favoriteIds.Add(playlistTrack.Id);
                 playlistTrack.IsFavorite = true;
+                track.IsFavorite = true;
                 if (!Favorites.Contains(playlistTrack))
                     Favorites.Add(playlistTrack);
             }
             ApplyFavoriteFilterAndSort();
-            var stationInList = RadioStations.FirstOrDefault(s => (RadioStation.SourcePrefix + s.StationUuid) == playlistTrack.Id);
+            var stationInList = RadioStations.FirstOrDefault(s =>
+                string.Equals(RadioStation.SourcePrefix + s.StationUuid, playlistTrack.Id, StringComparison.OrdinalIgnoreCase));
             if (stationInList != null)
                 stationInList.IsFavorite = playlistTrack.IsFavorite;
             _ = SaveAsync().ContinueWith(t => Log.Warning(t.Exception, "SaveAsync failed"), TaskContinuationOptions.OnlyOnFaulted);
@@ -894,7 +912,12 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             var data = new PlaylistData
             {
                 Version = PlaylistData.CurrentVersion,
-                Tracks = Tracks.Select(ToPlaylistTrack).ToList(),
+                Tracks = Tracks
+                    .Concat(Favorites.Where(f =>
+                        f.IsLiveStream &&
+                        !Tracks.Any(t => string.Equals(t.Id, f.Id, StringComparison.OrdinalIgnoreCase))))
+                    .Select(ToPlaylistTrack)
+                    .ToList(),
                 FavoriteIds = _favoriteIds.ToList(),
                 SyncedPlaylists = SyncedPlaylists.Select(playlist => new SyncedPlaylistData
                 {
@@ -1945,6 +1968,28 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         await LoadRadioStationsByCategoryAsync(key);
     }
 
+    internal async Task EnsureCustomStationsLoadedAsync()
+    {
+        if (_customRadioStorage == null || _customStationsCacheLoaded)
+            return;
+
+        _customStationsCache = await _customRadioStorage.LoadStationsAsync(_lifetimeCts.Token);
+        _customStationsCacheLoaded = true;
+    }
+
+    internal async Task SelectAndLoadRadioCategoryAsync(string categoryKey, bool force = false)
+    {
+        var target = RadioCategories.FirstOrDefault(c =>
+            string.Equals(c.Key, categoryKey, StringComparison.OrdinalIgnoreCase));
+        var normalizedKey = target?.Key ?? categoryKey;
+        _currentCategoryKey = normalizedKey;
+        RadioSearchText = string.Empty;
+        if (target != null && !ReferenceEquals(SelectedRadioCategory, target))
+            SelectedRadioCategory = target;
+
+        await LoadRadioStationsByCategoryAsync(normalizedKey, force);
+    }
+
     public async Task LoadRadioStationsByCategoryAsync(string category, bool force = false)
     {
         _currentCategoryKey = category;
@@ -2517,6 +2562,22 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
+    internal async Task SelectAndLoadPodcastFeedAsync(PodcastFeed feed, bool forceRefresh = false)
+    {
+        _suppressPodcastSelectionLoad = true;
+        try
+        {
+            if (!ReferenceEquals(SelectedPodcastFeed, feed))
+                SelectedPodcastFeed = feed;
+        }
+        finally
+        {
+            _suppressPodcastSelectionLoad = false;
+        }
+
+        await LoadPodcastEpisodesAsync(feed, forceRefresh);
+    }
+
     public async Task LoadPodcastEpisodesAsync(PodcastFeed feed, bool forceRefresh = false)
     {
         if (_podcastRssService == null)
@@ -2734,16 +2795,19 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     internal void SetPodcastAudioUriValidatorForTests(Func<Uri, CancellationToken, Task<bool>> validator)
         => _podcastAudioUriValidator = validator ?? MediaUriPolicy.ValidateCustomRadioAsync;
 
-    public async Task PlayPodcastEpisodeAsync(PodcastEpisode episode, bool fromStart = false)
+    public Task PlayPodcastEpisodeAsync(PodcastEpisode episode, bool fromStart = false)
+        => TryPlayPodcastEpisodeAsync(episode, fromStart);
+
+    internal async Task<bool> TryPlayPodcastEpisodeAsync(PodcastEpisode episode, bool fromStart = false)
     {
         if (episode == null)
-            return;
+            return false;
 
         if (!Uri.TryCreate(episode.AudioUrl, UriKind.Absolute, out var audioUri) ||
             !await _podcastAudioUriValidator(audioUri, _lifetimeCts.Token))
         {
             SetPodcastStatus(() => AppLanguage.T("播客音频地址被安全策略拒绝", "Podcast audio URL blocked by security policy"));
-            return;
+            return false;
         }
 
         var snapshot = PodcastEpisodes.ToList();
@@ -2774,6 +2838,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         _audioService.StartPlaybackContext(tracks, startIndex, shuffle: false,
             AppLanguage.T("播客节目", "Podcast"));
+        return true;
     }
 
     public void SyncPodcastEpisodeProgress(string episodeKey, long positionMs, bool isCompleted)

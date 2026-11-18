@@ -1,3 +1,4 @@
+using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
 using AIRadio.Desktop.Services.WebRemote;
 using Avalonia;
@@ -65,6 +66,7 @@ public partial class MainWindowViewModel
             _webRemoteService.ConfigureHandlers(
                 () => _latestWebRemoteSnapshot,
                 DispatchWebRemoteCommandAsync);
+            _webRemoteService.ConfigureBrowseHandler(DispatchWebRemoteBrowseAsync);
 
             Action onStatusChanged = () =>
                 RxApp.MainThreadScheduler.Schedule(() =>
@@ -112,6 +114,12 @@ public partial class MainWindowViewModel
                 x => x.SleepTimerTargetMinutes,
                 x => x.CanStopAfterCurrentTrack,
                 x => x.SelectedCharacter)
+            .Subscribe(_ => UpdateWebRemoteSnapshot(immediate: true)));
+
+        subs.Add(this.WhenAnyValue(
+                x => x.IsProgramLoading,
+                x => x.HasCurrentRadioProgram,
+                x => x.ProgramStatusText)
             .Subscribe(_ => UpdateWebRemoteSnapshot(immediate: true)));
 
         subs.Add(ChatVM.WhenAnyValue(x => x.IsSpeaking, x => x.IsProcessing)
@@ -349,10 +357,323 @@ public partial class MainWindowViewModel
             CurrentLyricIndex = LyricsVM.CurrentLineIndex,
             LyricLines = lyricLines,
             Messages = recentMsgs,
+            IsProgramLoading = IsProgramLoading,
+            DigestingEpisodeKey = _digestingEpisodeKey,
             ServerTimeUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
         _webRemoteService?.NotifyStateChanged(immediate);
+    }
+
+    private Task<WebRemoteBrowseResponse> DispatchWebRemoteBrowseAsync(WebRemoteBrowseRequest req, CancellationToken ct)
+    {
+        if (IsDisposed)
+        {
+            return Task.FromResult(new WebRemoteBrowseResponse
+            {
+                Ok = false,
+                Section = req.Section,
+                Error = "disposed"
+            });
+        }
+        if (ct.IsCancellationRequested)
+            return Task.FromCanceled<WebRemoteBrowseResponse>(ct);
+
+        var tcs = new TaskCompletionSource<WebRemoteBrowseResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelReg = ct.Register(() => tcs.TrySetCanceled(ct));
+        RxApp.MainThreadScheduler.Schedule(() =>
+        {
+            _ = RunBrowseAsync();
+        });
+        return tcs.Task;
+
+        async Task RunBrowseAsync()
+        {
+            try
+            {
+                var result = await ExecuteWebRemoteBrowseOnMainThreadAsync(req, ct);
+                tcs.TrySetResult(result);
+            }
+            catch (OperationCanceledException oce)
+            {
+                tcs.TrySetCanceled(oce.CancellationToken.CanBeCanceled ? oce.CancellationToken : ct);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "WebRemote browse error: {Section}", req.Section);
+                tcs.TrySetResult(new WebRemoteBrowseResponse
+                {
+                    Ok = false,
+                    Section = req.Section,
+                    Error = "browse_failed"
+                });
+            }
+            finally
+            {
+                cancelReg.Dispose();
+            }
+        }
+    }
+
+    private async Task<WebRemoteBrowseResponse> ExecuteWebRemoteBrowseOnMainThreadAsync(WebRemoteBrowseRequest req, CancellationToken ct)
+    {
+        if (IsDisposed)
+        {
+            return new WebRemoteBrowseResponse
+            {
+                Ok = false,
+                Section = req.Section,
+                Error = "disposed"
+            };
+        }
+
+        var section = string.IsNullOrWhiteSpace(req.Section)
+            ? "program"
+            : req.Section.Trim().ToLowerInvariant();
+        var query = req.Query?.Trim();
+        var currentTrack = _audioService.CurrentTrack;
+
+        switch (section)
+        {
+            case "program":
+            {
+                if (req.Force || (!HasCurrentRadioProgram && !IsProgramLoading))
+                {
+                    var loadTask = LoadProgramAsync(force: req.Force);
+                    if (!loadTask.IsCompleted)
+                    {
+                        using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        var completed = await Task.WhenAny(loadTask, Task.Delay(TimeSpan.FromMilliseconds(2500), waitCts.Token));
+                        if (completed == loadTask)
+                        {
+                            waitCts.Cancel();
+                            await loadTask;
+                        }
+                    }
+                    else
+                    {
+                        await loadTask;
+                    }
+                }
+                ct.ThrowIfCancellationRequested();
+
+                currentTrack = _audioService.CurrentTrack;
+                var items = (CurrentRadioProgram?.Tracks ?? new List<RecommendedTrack>())
+                    .Where(item => MatchesKeyword(query, item.Track.Title, item.Track.DisplayArtist, string.Join(' ', item.Tags), item.Reason))
+                    .Take(50)
+                    .Select(item =>
+                    {
+                        var trackId = !string.IsNullOrWhiteSpace(item.Track.Id)
+                            ? item.Track.Id
+                            : (item.Track.SourceId ?? string.Empty);
+                        return new WebRemoteProgramTrackItem(
+                            trackId,
+                            item.Track.Title,
+                            item.Track.DisplayArtist,
+                            item.Track.Duration.TotalSeconds,
+                            item.Tags.ToArray(),
+                            item.Track.Playability.ToString(),
+                            item.IsPlayable && !string.IsNullOrWhiteSpace(item.Track.FilePath),
+                            item.Reason,
+                            IsSameTrack(currentTrack, item.Track));
+                    })
+                    .ToArray();
+
+                return new WebRemoteBrowseResponse
+                {
+                    Ok = true,
+                    Section = "program",
+                    IsLoading = IsProgramLoading,
+                    StatusText = ProgramStatusText,
+                    ProgramTitle = CurrentRadioProgram?.Title ?? string.Empty,
+                    ProgramOpening = CurrentRadioProgram?.DjOpening ?? string.Empty,
+                    ProgramTracks = items
+                };
+            }
+
+            case "library":
+            {
+                var items = PlaylistVM.Tracks
+                    .Select((track, idx) => (Track: track, Index: idx))
+                    .Where(x => MatchesKeyword(query, x.Track.Title, x.Track.Artist, x.Track.Album))
+                    .Take(200)
+                    .Select(x => ToWebRemoteTrackItem(x.Track, x.Index, currentTrack))
+                    .ToArray();
+
+                var status = items.Length > 0
+                    ? string.Empty
+                    : PlaylistVM.Tracks.Count == 0
+                        ? AppLanguage.T("播放列表为空", "Playlist is empty")
+                        : AppLanguage.T("未找到匹配歌曲", "No matching tracks");
+
+                return new WebRemoteBrowseResponse
+                {
+                    Ok = true,
+                    Section = "library",
+                    StatusText = status,
+                    LibraryTracks = items
+                };
+            }
+
+            case "favorites":
+            {
+                var favSongs = PlaylistVM.Favorites
+                    .Where(t => !t.IsLiveStream && !t.IsPodcastEpisode)
+                    .Reverse()
+                    .Where(t => MatchesKeyword(query, t.Title, t.Artist, t.Album))
+                    .Take(200)
+                    .Select((t, idx) => ToWebRemoteTrackItem(t, idx, currentTrack))
+                    .ToArray();
+
+                var favStations = PlaylistVM.Favorites
+                    .Where(t => t.IsLiveStream)
+                    .Reverse()
+                    .Where(t => MatchesKeyword(query, t.Title, t.Artist))
+                    .Take(200)
+                    .Select((t, idx) => ToWebRemoteTrackItem(t, idx, currentTrack))
+                    .ToArray();
+
+                var status = favSongs.Length > 0 || favStations.Length > 0
+                    ? string.Empty
+                    : PlaylistVM.Favorites.Count == 0
+                        ? AppLanguage.T("暂无收藏内容", "No favorites yet")
+                        : AppLanguage.T("未找到匹配的收藏内容", "No matching favorites");
+
+                return new WebRemoteBrowseResponse
+                {
+                    Ok = true,
+                    Section = "favorites",
+                    StatusText = status,
+                    FavoriteSongs = favSongs,
+                    FavoriteStations = favStations
+                };
+            }
+
+            case "radio":
+            {
+                if (!string.IsNullOrWhiteSpace(query))
+                {
+                    PlaylistVM.RadioSearchText = query;
+                    await PlaylistVM.SearchRadioStationsAsync();
+                }
+                else
+                {
+                    var targetCategory = !string.IsNullOrWhiteSpace(req.Category)
+                        ? req.Category.Trim()
+                        : PlaylistVM.CurrentRadioCategoryKey;
+                    var hadSearch = !string.IsNullOrWhiteSpace(PlaylistVM.RadioSearchText);
+                    var categoryChanged = !string.IsNullOrWhiteSpace(req.Category) &&
+                                          !string.Equals(req.Category.Trim(), PlaylistVM.CurrentRadioCategoryKey, StringComparison.OrdinalIgnoreCase);
+
+                    if (hadSearch || categoryChanged || req.Force)
+                        await PlaylistVM.SelectAndLoadRadioCategoryAsync(targetCategory, req.Force);
+                    else if (PlaylistVM.RadioStations.Count == 0)
+                        await PlaylistVM.LoadInitialRadioStationsAsync();
+                }
+                ct.ThrowIfCancellationRequested();
+
+                currentTrack = _audioService.CurrentTrack;
+                var categories = PlaylistVM.RadioCategories
+                    .Select(c => new WebRemoteRadioCategoryItem(c.Key, c.DisplayName))
+                    .ToArray();
+                var selectedCat = PlaylistVM.SelectedRadioCategory?.Key ?? PlaylistVM.CurrentRadioCategoryKey;
+                var stations = PlaylistVM.RadioStations
+                    .Take(200)
+                    .Select(s => new WebRemoteRadioStationItem(
+                        s.StationUuid,
+                        s.Name,
+                        s.DisplayCountryAndTags,
+                        s.Codec,
+                        s.Bitrate,
+                        s.DisplayQuality,
+                        s.IsCustom,
+                        s.IsFavorite,
+                        IsSamePlayingStation(currentTrack, s.StationUuid)))
+                    .ToArray();
+
+                return new WebRemoteBrowseResponse
+                {
+                    Ok = true,
+                    Section = "radio",
+                    IsLoading = PlaylistVM.IsRadioLoading,
+                    StatusText = PlaylistVM.RadioStatusMessage,
+                    RadioCategories = categories,
+                    SelectedRadioCategory = selectedCat,
+                    RadioStations = stations
+                };
+            }
+
+            case "podcasts":
+            {
+                if (PlaylistVM.PodcastFeeds.Count == 0)
+                    await PlaylistVM.LoadInitialPodcastsAsync();
+
+                if (!string.IsNullOrWhiteSpace(req.Feed))
+                {
+                    var feedKey = req.Feed.Trim();
+                    var targetFeed = PlaylistVM.PodcastFeeds.FirstOrDefault(f =>
+                        string.Equals(f.RssUrl, feedKey, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(f.FeedId, feedKey, StringComparison.OrdinalIgnoreCase));
+                    if (targetFeed != null &&
+                        (!ReferenceEquals(targetFeed, PlaylistVM.SelectedPodcastFeed) ||
+                         req.Force ||
+                         PlaylistVM.AllPodcastEpisodes.Count == 0))
+                    {
+                        await PlaylistVM.SelectAndLoadPodcastFeedAsync(targetFeed, req.Force);
+                    }
+                }
+                else if (req.Force && PlaylistVM.SelectedPodcastFeed != null)
+                {
+                    await PlaylistVM.LoadPodcastEpisodesAsync(PlaylistVM.SelectedPodcastFeed, forceRefresh: true);
+                }
+                ct.ThrowIfCancellationRequested();
+
+                currentTrack = _audioService.CurrentTrack;
+                var feeds = PlaylistVM.PodcastFeeds
+                    .Select(f => new WebRemotePodcastFeedItem(f.FeedId, f.Title, f.DisplaySubTitle, f.RssUrl))
+                    .ToArray();
+                var episodes = PlaylistVM.AllPodcastEpisodes
+                    .Where(ep => MatchesKeyword(query, ep.Title, ep.Summary))
+                    .Take(200)
+                    .Select(ep => new WebRemotePodcastEpisodeItem(
+                        ep.EpisodeKey,
+                        ep.Title,
+                        ep.DisplayMeta,
+                        ep.ShortSummary,
+                        ep.ResumePositionMs,
+                        ep.IsCompleted,
+                        ep.DisplayProgressBadge,
+                        !string.IsNullOrWhiteSpace(ep.Summary),
+                        ep.IsDigesting || string.Equals(_digestingEpisodeKey, ep.EpisodeKey, StringComparison.OrdinalIgnoreCase),
+                        IsSamePlayingPodcast(currentTrack, ep.EpisodeKey)))
+                    .ToArray();
+
+                var podStatus = episodes.Length > 0
+                    ? string.Empty
+                    : !string.IsNullOrWhiteSpace(PlaylistVM.PodcastStatusMessage)
+                        ? PlaylistVM.PodcastStatusMessage
+                        : AppLanguage.Get("S_PodcastEmptyEpisodes");
+
+                return new WebRemoteBrowseResponse
+                {
+                    Ok = true,
+                    Section = "podcasts",
+                    IsLoading = PlaylistVM.IsPodcastLoading,
+                    StatusText = podStatus,
+                    PodcastFeeds = feeds,
+                    SelectedPodcastFeedUrl = PlaylistVM.SelectedPodcastFeed?.RssUrl ?? string.Empty,
+                    PodcastEpisodes = episodes
+                };
+            }
+
+            default:
+                return new WebRemoteBrowseResponse
+                {
+                    Ok = false,
+                    Section = section,
+                    Error = "unknown_section"
+                };
+        }
     }
 
     private Task<WebRemoteCommandResult> DispatchWebRemoteCommandAsync(WebRemoteCommand cmd)
@@ -363,9 +684,15 @@ public partial class MainWindowViewModel
         var tcs = new TaskCompletionSource<WebRemoteCommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         RxApp.MainThreadScheduler.Schedule(() =>
         {
+            _ = RunCommandAsync();
+        });
+        return tcs.Task;
+
+        async Task RunCommandAsync()
+        {
             try
             {
-                var result = ExecuteWebRemoteCommandOnMainThread(cmd);
+                var result = await ExecuteWebRemoteCommandOnMainThreadAsync(cmd);
                 tcs.TrySetResult(result);
             }
             catch (Exception ex)
@@ -373,11 +700,10 @@ public partial class MainWindowViewModel
                 Log.Warning(ex, "WebRemote command dispatch error: {Action}", cmd.Action);
                 tcs.TrySetResult(WebRemoteCommandResult.Fail("command_failed"));
             }
-        });
-        return tcs.Task;
+        }
     }
 
-    private WebRemoteCommandResult ExecuteWebRemoteCommandOnMainThread(WebRemoteCommand cmd)
+    private async Task<WebRemoteCommandResult> ExecuteWebRemoteCommandOnMainThreadAsync(WebRemoteCommand cmd)
     {
         if (IsDisposed)
             return WebRemoteCommandResult.Fail("disposed");
@@ -483,9 +809,287 @@ public partial class MainWindowViewModel
                 ChatVM.SendMessageCommand.Execute().Subscribe();
                 return WebRemoteCommandResult.Success();
 
+            case "play_program_track":
+            {
+                var progTracks = CurrentRadioProgram?.Tracks;
+                if (progTracks == null || progTracks.Count == 0)
+                    return WebRemoteCommandResult.Fail("track_not_found");
+
+                RecommendedTrack? item = null;
+                var key = cmd.Text?.Trim();
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    item = progTracks.FirstOrDefault(t =>
+                        string.Equals(t.Track.Id, key, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(t.Track.SourceId, key, StringComparison.OrdinalIgnoreCase));
+                }
+                else if (cmd.IntValue is int idx && idx >= 0 && idx < progTracks.Count)
+                {
+                    item = progTracks[idx];
+                }
+
+                if (item == null)
+                    return WebRemoteCommandResult.Fail("track_not_found");
+                if (!item.IsPlayable || string.IsNullOrWhiteSpace(item.Track.FilePath))
+                    return WebRemoteCommandResult.Fail("track_not_playable");
+
+                PlayProgramTrack(item);
+                return WebRemoteCommandResult.Success();
+            }
+
+            case "refresh_program":
+                _ = LoadProgramAsync(force: true);
+                return WebRemoteCommandResult.Success();
+
+            case "play_library_track":
+            {
+                Track? target = null;
+                var key = cmd.Text?.Trim();
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    target = PlaylistVM.Tracks.FirstOrDefault(t =>
+                        string.Equals(t.Id, key, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(t.SourceId, key, StringComparison.OrdinalIgnoreCase));
+                }
+                else if (cmd.IntValue is int idx && idx >= 0 && idx < PlaylistVM.Tracks.Count)
+                {
+                    target = PlaylistVM.Tracks[idx];
+                }
+
+                if (target == null)
+                    return WebRemoteCommandResult.Fail("track_not_found");
+
+                PlaylistVM.PlayFromLibraryCommand.Execute(target).Subscribe();
+                return WebRemoteCommandResult.Success();
+            }
+
+            case "enqueue_library_track":
+            {
+                var key = cmd.Text?.Trim();
+                var target = string.IsNullOrWhiteSpace(key)
+                    ? null
+                    : PlaylistVM.Tracks.FirstOrDefault(t =>
+                          string.Equals(t.Id, key, StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(t.SourceId, key, StringComparison.OrdinalIgnoreCase))
+                      ?? PlaylistVM.Favorites.FirstOrDefault(t =>
+                          !t.IsLiveStream && !t.IsPodcastEpisode &&
+                          (string.Equals(t.Id, key, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(t.SourceId, key, StringComparison.OrdinalIgnoreCase)));
+                if (target == null)
+                    return WebRemoteCommandResult.Fail("track_not_found");
+
+                if (cmd.IntValue == 2)
+                    PlaylistVM.EnqueueTrackCommand.Execute(target).Subscribe();
+                else
+                    PlaylistVM.PlayTrackNextCommand.Execute(target).Subscribe();
+                return WebRemoteCommandResult.Success();
+            }
+
+            case "play_favorite":
+            {
+                var key = cmd.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                    return WebRemoteCommandResult.Fail("favorite_not_found");
+
+                var prefixed = key.StartsWith(RadioStation.SourcePrefix, StringComparison.OrdinalIgnoreCase)
+                    ? key
+                    : RadioStation.SourcePrefix + key;
+                var favTrack = PlaylistVM.Favorites.FirstOrDefault(t =>
+                    string.Equals(t.Id, key, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(t.SourceId, key, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(t.Id, prefixed, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(t.SourceId, prefixed, StringComparison.OrdinalIgnoreCase));
+                if (favTrack == null)
+                    return WebRemoteCommandResult.Fail("favorite_not_found");
+
+                PlaylistVM.PlayFavoriteCommand.Execute(favTrack).Subscribe();
+                return WebRemoteCommandResult.Success();
+            }
+
+            case "play_radio_station":
+            {
+                var (station, favTrack) = await ResolveRadioStationTargetAsync(cmd.Text);
+                if (station != null)
+                {
+                    PlaylistVM.PlayRadioStationCommand.Execute(station).Subscribe();
+                    return WebRemoteCommandResult.Success();
+                }
+                if (favTrack != null)
+                {
+                    PlaylistVM.PlayFavoriteCommand.Execute(favTrack).Subscribe();
+                    return WebRemoteCommandResult.Success();
+                }
+                return WebRemoteCommandResult.Fail("station_not_found");
+            }
+
+            case "toggle_radio_favorite":
+            {
+                var uuid = ExtractStationUuid(cmd.Text);
+                var (station, favTrack) = await ResolveRadioStationTargetAsync(cmd.Text);
+                if (station != null)
+                {
+                    PlaylistVM.FavoriteRadioStationCommand.Execute(station).Subscribe();
+                }
+                else if (favTrack != null)
+                {
+                    PlaylistVM.ToggleFavoriteCommand.Execute(favTrack).Subscribe();
+                    if (string.Equals(PlaylistVM.SelectedRadioCategory?.Key, "favorites", StringComparison.OrdinalIgnoreCase))
+                        _ = PlaylistVM.LoadRadioStationsByCategoryAsync("favorites");
+                }
+                else
+                {
+                    return WebRemoteCommandResult.Fail("station_not_found");
+                }
+
+                if (_audioService.CurrentTrack is { } cur &&
+                    (string.Equals(cur.Id, RadioStation.SourcePrefix + uuid, StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(cur.SourceId, RadioStation.SourcePrefix + uuid, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var isFav = PlaylistVM.Favorites.Any(t =>
+                        string.Equals(t.Id, RadioStation.SourcePrefix + uuid, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(t.SourceId, RadioStation.SourcePrefix + uuid, StringComparison.OrdinalIgnoreCase));
+                    cur.IsFavorite = isFav;
+                    IsCurrentFavorite = isFav;
+                }
+                UpdateWebRemoteSnapshot(immediate: true);
+                return WebRemoteCommandResult.Success();
+            }
+
+            case "play_podcast_episode":
+            {
+                var epKey = cmd.Text?.Trim();
+                var episode = string.IsNullOrWhiteSpace(epKey)
+                    ? null
+                    : PlaylistVM.AllPodcastEpisodes.FirstOrDefault(ep =>
+                        string.Equals(ep.EpisodeKey, epKey, StringComparison.OrdinalIgnoreCase));
+                if (episode == null)
+                    return WebRemoteCommandResult.Fail("episode_not_found");
+
+                var started = await PlaylistVM.TryPlayPodcastEpisodeAsync(episode, fromStart: cmd.IntValue == 1);
+                return started
+                    ? WebRemoteCommandResult.Success()
+                    : WebRemoteCommandResult.Fail("unsafe_audio_url");
+            }
+
+            case "digest_podcast_episode":
+            {
+                var epKey = cmd.Text?.Trim();
+                var episode = string.IsNullOrWhiteSpace(epKey)
+                    ? null
+                    : PlaylistVM.AllPodcastEpisodes.FirstOrDefault(ep =>
+                        string.Equals(ep.EpisodeKey, epKey, StringComparison.OrdinalIgnoreCase));
+                if (episode == null)
+                    return WebRemoteCommandResult.Fail("episode_not_found");
+                if (string.IsNullOrWhiteSpace(episode.Summary))
+                    return WebRemoteCommandResult.Fail("empty_shownotes");
+
+                _ = DigestPodcastEpisodeAsync(episode);
+                return WebRemoteCommandResult.Success();
+            }
+
             default:
                 return WebRemoteCommandResult.Fail("unknown_action");
         }
+    }
+
+    private async Task<(RadioStation? Station, Track? FavoriteTrack)> ResolveRadioStationTargetAsync(string? rawStationUuid)
+    {
+        var uuid = ExtractStationUuid(rawStationUuid);
+        if (string.IsNullOrWhiteSpace(uuid))
+            return (null, null);
+
+        var station = PlaylistVM.RadioStations.FirstOrDefault(s =>
+            string.Equals(s.StationUuid, uuid, StringComparison.OrdinalIgnoreCase));
+        if (station != null)
+            return (station, null);
+
+        await PlaylistVM.EnsureCustomStationsLoadedAsync();
+        station = PlaylistVM.CustomStationsCache.FirstOrDefault(s =>
+            string.Equals(s.StationUuid, uuid, StringComparison.OrdinalIgnoreCase));
+        if (station != null)
+            return (station, null);
+
+        var sourceId = RadioStation.SourcePrefix + uuid;
+        var favTrack = PlaylistVM.Favorites.FirstOrDefault(t =>
+            t.IsLiveStream &&
+            (string.Equals(t.Id, sourceId, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(t.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)));
+        return (null, favTrack);
+    }
+
+    private static string ExtractStationUuid(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return string.Empty;
+        var trimmed = raw.Trim();
+        return trimmed.StartsWith(RadioStation.SourcePrefix, StringComparison.OrdinalIgnoreCase)
+            ? trimmed[RadioStation.SourcePrefix.Length..]
+            : trimmed;
+    }
+
+    private static bool MatchesKeyword(string? keyword, params string?[] fields)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+            return true;
+        var q = keyword.Trim();
+        foreach (var f in fields)
+        {
+            if (!string.IsNullOrWhiteSpace(f) && f.Contains(q, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static string FormatTrackSourceName(Track track)
+    {
+        var sourceId = track.SourceId;
+        if (string.IsNullOrWhiteSpace(sourceId))
+            return AppLanguage.T("本地", "Local");
+        var separator = sourceId.IndexOf(':');
+        return separator > 0 ? AppLanguage.MusicSourceName(sourceId[..separator]) : string.Empty;
+    }
+
+    private static WebRemoteTrackItem ToWebRemoteTrackItem(Track track, int index, Track? currentTrack)
+    {
+        string? stationUuid = null;
+        if (track.IsLiveStream)
+        {
+            var raw = !string.IsNullOrWhiteSpace(track.SourceId) ? track.SourceId : track.Id;
+            stationUuid = ExtractStationUuid(raw);
+        }
+
+        return new WebRemoteTrackItem(
+            index,
+            track.Id,
+            track.Title,
+            track.DisplayArtist,
+            track.DisplayAlbum,
+            FormatTrackSourceName(track),
+            track.DisplayQuality,
+            track.Duration.TotalSeconds,
+            track.IsFavorite,
+            currentTrack != null && IsSameTrack(currentTrack, track),
+            track.IsLiveStream,
+            stationUuid);
+    }
+
+    private static bool IsSamePlayingStation(Track? currentTrack, string stationUuid)
+    {
+        if (currentTrack == null || !currentTrack.IsLiveStream || string.IsNullOrWhiteSpace(stationUuid))
+            return false;
+        var expected = RadioStation.SourcePrefix + stationUuid;
+        return string.Equals(currentTrack.SourceId, expected, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(currentTrack.Id, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSamePlayingPodcast(Track? currentTrack, string episodeKey)
+    {
+        if (currentTrack == null || !currentTrack.IsPodcastEpisode || string.IsNullOrWhiteSpace(episodeKey))
+            return false;
+        if (string.Equals(currentTrack.SourceId, PodcastFeed.SourcePrefix + episodeKey, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return currentTrack.ProviderMetadata.TryGetValue("episode_key", out var k) &&
+               string.Equals(k, episodeKey, StringComparison.OrdinalIgnoreCase);
     }
 
     private void DisposeWebRemote()

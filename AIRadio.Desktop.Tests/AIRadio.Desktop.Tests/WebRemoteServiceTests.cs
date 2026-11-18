@@ -246,6 +246,81 @@ public class WebRemoteServiceTests
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversizedResp.StatusCode);
     }
 
+    [Fact]
+    public async Task BrowseEndpoint_EnforcesAuth_AndForwardsQueryParameters()
+    {
+        using var server = new WebRemoteService();
+        const string token = "BrowseToken_123456";
+        WebRemoteBrowseRequest? capturedReq = null;
+        var capturedCanBeCanceled = false;
+
+        server.ConfigureHandlers(() => new WebRemoteSnapshot(), _ => Task.FromResult(WebRemoteCommandResult.Success()));
+        server.ConfigureBrowseHandler((req, ct) =>
+        {
+            capturedReq = req;
+            capturedCanBeCanceled = ct.CanBeCanceled;
+            if (req.Section == "invalid")
+            {
+                return Task.FromResult(new WebRemoteBrowseResponse
+                {
+                    Ok = false,
+                    Section = req.Section,
+                    Error = "unknown_section"
+                });
+            }
+
+            return Task.FromResult(new WebRemoteBrowseResponse
+            {
+                Ok = true,
+                Section = req.Section,
+                SelectedRadioCategory = req.Category ?? string.Empty,
+                SelectedPodcastFeedUrl = req.Feed ?? string.Empty,
+                StatusText = req.Query ?? string.Empty
+            });
+        });
+
+        Assert.True(await server.StartAsync(0, token, IPAddress.Loopback));
+        var baseUrl = $"http://127.0.0.1:{server.Port}";
+        using var http = CreateLocalHttpClient();
+
+        // 1. 未鉴权访问 -> 401
+        var unauth = await http.GetAsync($"{baseUrl}/api/browse?section=library");
+        Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
+        Assert.Null(capturedReq);
+
+        // 2. 合法令牌携带完整 query 参数 -> 200 + no-store + 透传
+        var encodedFeed = Uri.EscapeDataString("https://example.com/rss.xml");
+        var encodedQuery = Uri.EscapeDataString("AI 电台");
+        var req = new HttpRequestMessage(HttpMethod.Get,
+            $"{baseUrl}/api/browse?section=podcasts&category=jazz&feed={encodedFeed}&q={encodedQuery}&force=1");
+        req.Headers.Add("X-Remote-Token", token);
+        var resp = await http.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains("no-store", resp.Headers.CacheControl?.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(capturedReq);
+        Assert.True(capturedCanBeCanceled);
+        Assert.Equal("podcasts", capturedReq!.Section);
+        Assert.Equal("jazz", capturedReq.Category);
+        Assert.Equal("https://example.com/rss.xml", capturedReq.Feed);
+        Assert.Equal("AI 电台", capturedReq.Query);
+        Assert.True(capturedReq.Force);
+
+        using (var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync()))
+        {
+            Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+            Assert.Equal("podcasts", doc.RootElement.GetProperty("section").GetString());
+            Assert.Equal("https://example.com/rss.xml", doc.RootElement.GetProperty("selectedPodcastFeedUrl").GetString());
+            Assert.Equal("AI 电台", doc.RootElement.GetProperty("statusText").GetString());
+        }
+
+        // 3. Handler 返回 Ok=false -> 400
+        var badReq = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/browse?section=invalid");
+        badReq.Headers.Add("X-Remote-Token", token);
+        var badResp = await http.SendAsync(badReq);
+        Assert.Equal(HttpStatusCode.BadRequest, badResp.StatusCode);
+    }
+
     private static HttpClient CreateLocalHttpClient()
         => new(new SocketsHttpHandler { UseProxy = false });
 

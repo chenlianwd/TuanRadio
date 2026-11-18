@@ -50,7 +50,97 @@ public sealed record WebRemoteSnapshot
     [JsonPropertyName("currentLyricIndex")] public int CurrentLyricIndex { get; init; } = -1;
     [JsonPropertyName("lyricLines")] public IReadOnlyList<WebRemoteLyricLine> LyricLines { get; init; } = Array.Empty<WebRemoteLyricLine>();
     [JsonPropertyName("messages")] public IReadOnlyList<WebRemoteChatMessage> Messages { get; init; } = Array.Empty<WebRemoteChatMessage>();
+    [JsonPropertyName("isProgramLoading")] public bool IsProgramLoading { get; init; }
+    [JsonPropertyName("digestingEpisodeKey")] public string DigestingEpisodeKey { get; init; } = string.Empty;
     [JsonPropertyName("serverTimeUtcMs")] public long ServerTimeUtcMs { get; init; }
+}
+
+public sealed record WebRemoteBrowseRequest
+{
+    public string Section { get; init; } = "program";
+    public string? Category { get; init; }
+    public string? Feed { get; init; }
+    public string? Query { get; init; }
+    public bool Force { get; init; }
+}
+
+public sealed record WebRemoteProgramTrackItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("artist")] string Artist,
+    [property: JsonPropertyName("durationSeconds")] double DurationSeconds,
+    [property: JsonPropertyName("tags")] IReadOnlyList<string> Tags,
+    [property: JsonPropertyName("playability")] string Playability,
+    [property: JsonPropertyName("isPlayable")] bool IsPlayable,
+    [property: JsonPropertyName("reason")] string Reason,
+    [property: JsonPropertyName("isCurrent")] bool IsCurrent);
+
+public sealed record WebRemoteTrackItem(
+    [property: JsonPropertyName("index")] int Index,
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("artist")] string Artist,
+    [property: JsonPropertyName("album")] string Album,
+    [property: JsonPropertyName("source")] string Source,
+    [property: JsonPropertyName("quality")] string Quality,
+    [property: JsonPropertyName("durationSeconds")] double DurationSeconds,
+    [property: JsonPropertyName("isFavorite")] bool IsFavorite,
+    [property: JsonPropertyName("isCurrent")] bool IsCurrent,
+    [property: JsonPropertyName("isLiveStream")] bool IsLiveStream = false,
+    [property: JsonPropertyName("stationUuid")] string? StationUuid = null);
+
+public sealed record WebRemoteRadioCategoryItem(
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("name")] string Name);
+
+public sealed record WebRemoteRadioStationItem(
+    [property: JsonPropertyName("stationUuid")] string StationUuid,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("tags")] string Tags,
+    [property: JsonPropertyName("codec")] string Codec,
+    [property: JsonPropertyName("bitrate")] int Bitrate,
+    [property: JsonPropertyName("quality")] string Quality,
+    [property: JsonPropertyName("isCustom")] bool IsCustom,
+    [property: JsonPropertyName("isFavorite")] bool IsFavorite,
+    [property: JsonPropertyName("isCurrent")] bool IsCurrent);
+
+public sealed record WebRemotePodcastFeedItem(
+    [property: JsonPropertyName("feedId")] string FeedId,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("subTitle")] string SubTitle,
+    [property: JsonPropertyName("rssUrl")] string RssUrl);
+
+public sealed record WebRemotePodcastEpisodeItem(
+    [property: JsonPropertyName("episodeKey")] string EpisodeKey,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("meta")] string Meta,
+    [property: JsonPropertyName("shortSummary")] string ShortSummary,
+    [property: JsonPropertyName("resumePositionMs")] long ResumePositionMs,
+    [property: JsonPropertyName("isCompleted")] bool IsCompleted,
+    [property: JsonPropertyName("progressBadge")] string ProgressBadge,
+    [property: JsonPropertyName("hasSummary")] bool HasSummary,
+    [property: JsonPropertyName("isDigesting")] bool IsDigesting,
+    [property: JsonPropertyName("isCurrent")] bool IsCurrent);
+
+public sealed record WebRemoteBrowseResponse
+{
+    [JsonPropertyName("ok")] public bool Ok { get; init; } = true;
+    [JsonPropertyName("section")] public string Section { get; init; } = "program";
+    [JsonPropertyName("error")] public string? Error { get; init; }
+    [JsonPropertyName("statusText")] public string StatusText { get; init; } = string.Empty;
+    [JsonPropertyName("isLoading")] public bool IsLoading { get; init; }
+    [JsonPropertyName("programTitle")] public string ProgramTitle { get; init; } = string.Empty;
+    [JsonPropertyName("programOpening")] public string ProgramOpening { get; init; } = string.Empty;
+    [JsonPropertyName("programTracks")] public IReadOnlyList<WebRemoteProgramTrackItem> ProgramTracks { get; init; } = Array.Empty<WebRemoteProgramTrackItem>();
+    [JsonPropertyName("libraryTracks")] public IReadOnlyList<WebRemoteTrackItem> LibraryTracks { get; init; } = Array.Empty<WebRemoteTrackItem>();
+    [JsonPropertyName("songs")] public IReadOnlyList<WebRemoteTrackItem> FavoriteSongs { get; init; } = Array.Empty<WebRemoteTrackItem>();
+    [JsonPropertyName("stations")] public IReadOnlyList<WebRemoteTrackItem> FavoriteStations { get; init; } = Array.Empty<WebRemoteTrackItem>();
+    [JsonPropertyName("radioCategories")] public IReadOnlyList<WebRemoteRadioCategoryItem> RadioCategories { get; init; } = Array.Empty<WebRemoteRadioCategoryItem>();
+    [JsonPropertyName("selectedRadioCategory")] public string SelectedRadioCategory { get; init; } = string.Empty;
+    [JsonPropertyName("radioStations")] public IReadOnlyList<WebRemoteRadioStationItem> RadioStations { get; init; } = Array.Empty<WebRemoteRadioStationItem>();
+    [JsonPropertyName("podcastFeeds")] public IReadOnlyList<WebRemotePodcastFeedItem> PodcastFeeds { get; init; } = Array.Empty<WebRemotePodcastFeedItem>();
+    [JsonPropertyName("selectedPodcastFeedUrl")] public string SelectedPodcastFeedUrl { get; init; } = string.Empty;
+    [JsonPropertyName("podcastEpisodes")] public IReadOnlyList<WebRemotePodcastEpisodeItem> PodcastEpisodes { get; init; } = Array.Empty<WebRemotePodcastEpisodeItem>();
 }
 
 public sealed record WebRemoteCommand
