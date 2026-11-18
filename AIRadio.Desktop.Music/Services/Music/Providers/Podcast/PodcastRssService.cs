@@ -297,6 +297,11 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
                        ?? channel.Element("category")?.Value?.Trim()
                        ?? string.Empty;
 
+        var rawLang = channel.Element("language")?.Value?.Trim();
+        var language = string.IsNullOrWhiteSpace(rawLang)
+            ? "zh"
+            : rawLang.Split('-', '_')[0].ToLowerInvariant();
+
         var feed = new PodcastFeed
         {
             FeedId = PodcastFeed.CustomFeedPrefix + PodcastEpisode.BuildEpisodeKey(feedUrl, null, feedUrl),
@@ -306,6 +311,7 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
             RssUrl = feedUrl,
             ImageUrl = imageUrl,
             Category = category,
+            Language = language,
             LastUpdatedUtc = DateTimeOffset.UtcNow
         };
 
@@ -369,6 +375,11 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
         var imageUrl = root.Element(ns + "logo")?.Value?.Trim()
                        ?? root.Element(ns + "icon")?.Value?.Trim()
                        ?? string.Empty;
+        var rawLang = root.Attribute(XNamespace.Xml + "lang")?.Value?.Trim()
+                      ?? root.Element(ns + "language")?.Value?.Trim();
+        var language = string.IsNullOrWhiteSpace(rawLang)
+            ? "zh"
+            : rawLang.Split('-', '_')[0].ToLowerInvariant();
 
         var feed = new PodcastFeed
         {
@@ -378,6 +389,7 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
             Description = feedDesc,
             RssUrl = feedUrl,
             ImageUrl = imageUrl,
+            Language = language,
             LastUpdatedUtc = DateTimeOffset.UtcNow
         };
 

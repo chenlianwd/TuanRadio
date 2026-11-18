@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 
 namespace AIRadio.Desktop.Views;
@@ -463,5 +464,74 @@ public partial class PlaylistDrawer : UserControl
     {
         if (e.Key == Key.Enter && DataContext is MainWindowViewModel vm && !vm.PlaylistVM.IsSubscribingPodcast)
             vm.PlaylistVM.SubscribePodcastCommand.Execute(Unit.Default).Subscribe();
+    }
+
+    private async void OnChooseOpmlImportClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is not MainWindowViewModel vm)
+                return;
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel == null)
+                return;
+
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = Services.AppLanguage.Get("S_PodcastOpmlImport"),
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new Avalonia.Platform.Storage.FilePickerFileType("OPML Files (*.opml, *.xml)")
+                    {
+                        Patterns = ["*.opml", "*.xml"]
+                    },
+                    Avalonia.Platform.Storage.FilePickerFileTypes.All
+                ]
+            });
+
+            var file = files.Count > 0 ? files[0] : null;
+            var localPath = file?.TryGetLocalPath();
+            if (!string.IsNullOrWhiteSpace(localPath))
+                await vm.PlaylistVM.ImportOpmlFileAsync(localPath);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Choose OPML file failed");
+        }
+    }
+
+    private async void OnExportOpmlClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is not MainWindowViewModel vm)
+                return;
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel == null)
+                return;
+
+            var file = await topLevel.StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
+            {
+                Title = Services.AppLanguage.Get("S_PodcastOpmlExport"),
+                SuggestedFileName = "tuanradio-podcasts.opml",
+                DefaultExtension = "opml",
+                FileTypeChoices =
+                [
+                    new Avalonia.Platform.Storage.FilePickerFileType("OPML File (*.opml)")
+                    {
+                        Patterns = ["*.opml", "*.xml"]
+                    }
+                ]
+            });
+
+            var localPath = file?.TryGetLocalPath();
+            if (!string.IsNullOrWhiteSpace(localPath))
+                await vm.PlaylistVM.ExportOpmlFileAsync(localPath);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Export OPML file failed");
+        }
     }
 }

@@ -643,7 +643,9 @@ public partial class MainWindowViewModel
                         ep.ResumePositionMs,
                         ep.IsCompleted,
                         ep.DisplayProgressBadge,
-                        !string.IsNullOrWhiteSpace(ep.Summary),
+                        !string.IsNullOrWhiteSpace(ep.Summary)
+                            || !string.IsNullOrWhiteSpace(ep.TranscriptExcerpt)
+                            || (_podcastTranscriptionService != null && !string.IsNullOrWhiteSpace(ep.AudioUrl)),
                         ep.IsDigesting || string.Equals(_digestingEpisodeKey, ep.EpisodeKey, StringComparison.OrdinalIgnoreCase),
                         IsSamePlayingPodcast(currentTrack, ep.EpisodeKey)))
                     .ToArray();
@@ -980,7 +982,8 @@ public partial class MainWindowViewModel
                         string.Equals(ep.EpisodeKey, epKey, StringComparison.OrdinalIgnoreCase));
                 if (episode == null)
                     return WebRemoteCommandResult.Fail("episode_not_found");
-                if (string.IsNullOrWhiteSpace(episode.Summary))
+                var canTranscribe = _podcastTranscriptionService != null && !string.IsNullOrWhiteSpace(episode.AudioUrl);
+                if (string.IsNullOrWhiteSpace(episode.Summary) && !canTranscribe && string.IsNullOrWhiteSpace(episode.TranscriptExcerpt))
                     return WebRemoteCommandResult.Fail("empty_shownotes");
 
                 _ = DigestPodcastEpisodeAsync(episode);

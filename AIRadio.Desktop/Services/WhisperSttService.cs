@@ -57,9 +57,12 @@ public class WhisperSttService : ISttService, IDisposable
     }
 
     public Task<string> TranscribeAsync(string wavFilePath)
-        => TranscribeAsync(wavFilePath, CancellationToken.None);
+        => TranscribeAsync(wavFilePath, null, CancellationToken.None);
 
-    public async Task<string> TranscribeAsync(string wavFilePath, CancellationToken cancellationToken)
+    public Task<string> TranscribeAsync(string wavFilePath, CancellationToken cancellationToken)
+        => TranscribeAsync(wavFilePath, null, cancellationToken);
+
+    public async Task<string> TranscribeAsync(string wavFilePath, string? languageHint, CancellationToken cancellationToken)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -75,8 +78,9 @@ public class WhisperSttService : ISttService, IDisposable
             if (_factory == null)
                 return string.Empty;
 
+            var effectiveLanguage = string.IsNullOrWhiteSpace(languageHint) ? Language : languageHint.Trim();
             using var processor = _factory.CreateBuilder()
-                .WithLanguage(Language)
+                .WithLanguage(effectiveLanguage)
                 .WithNoSpeechThreshold(0.3f)
                 .Build();
 

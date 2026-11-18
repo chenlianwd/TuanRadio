@@ -26,6 +26,12 @@ public interface IDJService
     /// <summary>生成播客单集一分钟速读（默认回退为空脚本以便未实现 mock 安全兼容）。</summary>
     Task<DJScript> GeneratePodcastDigestAsync(PodcastEpisode episode, CancellationToken cancellationToken = default)
         => Task.FromResult(new DJScript { Emotion = "neutral", Expression = "neutral", Motion = "idle" });
+    /// <summary>生成播客单集一分钟速读；当无 Shownotes 时可传入音频转写片段作为依据。</summary>
+    Task<DJScript> GeneratePodcastDigestAsync(
+        PodcastEpisode episode,
+        string? transcriptExcerpt,
+        CancellationToken cancellationToken = default)
+        => GeneratePodcastDigestAsync(episode, cancellationToken);
     Task<SongStory> GenerateSongStoryAsync(Track track, CancellationToken cancellationToken)
         => GenerateSongStoryAsync(track);
     Task<Track?> RecommendNextTrackAsync(Track? current);

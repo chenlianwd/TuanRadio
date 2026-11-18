@@ -35,6 +35,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IListeningProfileService? _listeningProfile;
     private readonly IRadioBrowserService? _radioBrowserService;
     private readonly IPodcastStorage? _podcastStorage;
+    private readonly IPodcastTranscriptionService? _podcastTranscriptionService;
     private CancellationTokenSource? _podcastDigestCts;
     private string? _activePodcastEpisodeKey;
     private string _digestingEpisodeKey = string.Empty;
@@ -227,7 +228,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IPlaylistFileParser? playlistFileParser = null,
         IPodcastRssService? podcastRssService = null,
         IPodcastStorage? podcastStorage = null,
-        Services.WebRemote.IWebRemoteService? webRemoteService = null)
+        Services.WebRemote.IWebRemoteService? webRemoteService = null,
+        IPodcastOpmlService? podcastOpmlService = null,
+        IPodcastTranscriptionService? podcastTranscriptionService = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -240,6 +243,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _localLibrary = localLibrary;
         _radioBrowserService = radioBrowserService;
         _podcastStorage = podcastStorage;
+        _podcastTranscriptionService = podcastTranscriptionService;
         _listeningProfile = listeningProfile;
 
         SelectedCharacter = Characters[0];
@@ -259,7 +263,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             radioStreamProbeService: radioStreamProbeService,
             playlistFileParser: playlistFileParser,
             podcastRssService: podcastRssService,
-            podcastStorage: podcastStorage);
+            podcastStorage: podcastStorage,
+            podcastOpmlService: podcastOpmlService);
         PlaylistVM.PodcastDigestRequested += OnPodcastDigestRequested;
         if (musicSearchService is IMusicSourceBroker broker)
             _playbackPreflight = new PlaybackPreflightService(_audioService, broker, accountStore, openSubsonic);
@@ -1125,7 +1130,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed || episode == null)
             return;
 
-        if (string.IsNullOrWhiteSpace(episode.Summary))
+        var hasShownotes = !string.IsNullOrWhiteSpace(episode.Summary);
+        var transcript = episode.TranscriptExcerpt;
+        var canTranscribe = !hasShownotes
+            && string.IsNullOrWhiteSpace(transcript)
+            && _podcastTranscriptionService != null
+            && !string.IsNullOrWhiteSpace(episode.AudioUrl);
+
+        if (!hasShownotes && string.IsNullOrWhiteSpace(transcript) && !canTranscribe)
         {
             ChatVM.AddAssistantMessage(AppLanguage.Get("S_PodcastNoShownotes"));
             return;
@@ -1141,13 +1153,45 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         UpdateWebRemoteSnapshot(immediate: true);
         try
         {
-            var script = await _djService.GeneratePodcastDigestAsync(episode, digestCts.Token);
+            if (canTranscribe)
+            {
+                episode.IsTranscribing = true;
+                try
+                {
+                    var feedLang = PlaylistVM.PodcastFeeds
+                        .FirstOrDefault(f => string.Equals(f.RssUrl, episode.FeedUrl, StringComparison.OrdinalIgnoreCase))
+                        ?.Language;
+                    transcript = await _podcastTranscriptionService!.TranscribeExcerptAsync(
+                        episode,
+                        feedLang,
+                        digestCts.Token);
+                }
+                finally
+                {
+                    episode.IsTranscribing = false;
+                }
+
+                if (IsDisposed || digestCts.IsCancellationRequested)
+                    return;
+
+                if (string.IsNullOrWhiteSpace(transcript))
+                {
+                    ChatVM.AddAssistantMessage(AppLanguage.Get("S_PodcastTranscribeFailed"));
+                    return;
+                }
+
+                episode.TranscriptExcerpt = transcript;
+            }
+
+            var script = hasShownotes
+                ? await _djService.GeneratePodcastDigestAsync(episode, digestCts.Token)
+                : await _djService.GeneratePodcastDigestAsync(episode, transcript, digestCts.Token);
             if (IsDisposed || digestCts.IsCancellationRequested)
                 return;
 
             if (string.IsNullOrWhiteSpace(script.Text))
             {
-                ChatVM.AddAssistantMessage(AppLanguage.Get("S_PodcastNoShownotes"));
+                ChatVM.AddAssistantMessage(AppLanguage.Get(hasShownotes ? "S_PodcastNoShownotes" : "S_PodcastTranscribeFailed"));
                 return;
             }
 
@@ -1164,6 +1208,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            episode.IsTranscribing = false;
             episode.IsDigesting = false;
             if (string.Equals(_digestingEpisodeKey, episode.EpisodeKey, StringComparison.OrdinalIgnoreCase))
             {

@@ -30,6 +30,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     private readonly IPlaylistFileParser? _playlistFileParser;
     private readonly IPodcastRssService? _podcastRssService;
     private readonly IPodcastStorage? _podcastStorage;
+    private readonly IPodcastOpmlService _podcastOpmlService;
     private Func<Uri, CancellationToken, Task<bool>> _podcastAudioUriValidator = MediaUriPolicy.ValidateCustomRadioAsync;
     private List<PodcastEpisode> _allPodcastEpisodes = new();
     private bool _podcastFeedsLoaded;
@@ -135,9 +136,13 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool HasPodcastFeeds { get; set; }
     [Reactive] public partial string PodcastStatusMessage { get; set; } = string.Empty;
     [Reactive] public partial bool IsPodcastSubscribeOpen { get; set; }
+    [Reactive] public partial bool IsPodcastOpmlMode { get; set; }
     [Reactive] public partial string PodcastRssUrlInput { get; set; } = string.Empty;
     [Reactive] public partial string PodcastSubscribeError { get; set; } = string.Empty;
     [Reactive] public partial bool IsSubscribingPodcast { get; set; }
+    [Reactive] public partial string PodcastOpmlStatusText { get; set; } = string.Empty;
+    [Reactive] public partial bool PodcastOpmlIsWarning { get; set; }
+    [Reactive] public partial bool IsImportingPodcastOpml { get; set; }
     [Reactive] public partial RadioCategoryItem? SelectedRadioCategory { get; set; }
     [Reactive] public partial string RadioSearchText { get; set; } = string.Empty;
     [Reactive] public partial string RadioStatusMessage { get; set; } = string.Empty;
@@ -190,6 +195,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> RefreshPodcastCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenPodcastSubscribeCommand { get; }
     public ReactiveCommand<Unit, Unit> ClosePodcastSubscribeCommand { get; }
+    public ReactiveCommand<Unit, Unit> SwitchToPodcastSubscribeModeCommand { get; }
+    public ReactiveCommand<Unit, Unit> SwitchToPodcastOpmlModeCommand { get; }
     public ReactiveCommand<Unit, Unit> SubscribePodcastCommand { get; }
     public ReactiveCommand<Unit, Unit> UnsubscribePodcastCommand { get; }
     public ReactiveCommand<PodcastEpisode, Unit> PlayPodcastEpisodeCommand { get; }
@@ -233,7 +240,8 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         IRadioStreamProbeService? radioStreamProbeService = null,
         IPlaylistFileParser? playlistFileParser = null,
         IPodcastRssService? podcastRssService = null,
-        IPodcastStorage? podcastStorage = null)
+        IPodcastStorage? podcastStorage = null,
+        IPodcastOpmlService? podcastOpmlService = null)
     {
         _audioService = audioService;
         _musicSearchService = musicSearchService;
@@ -245,6 +253,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         _playlistFileParser = playlistFileParser;
         _podcastRssService = podcastRssService;
         _podcastStorage = podcastStorage;
+        _podcastOpmlService = podcastOpmlService ?? new PodcastOpmlService();
         _playlistFile = playlistFile ?? DefaultPlaylistFile;
         _playlistDir = Path.GetDirectoryName(_playlistFile) ?? DefaultPlaylistDir;
         _customWriter = writeAllTextAsync != null;
@@ -544,6 +553,20 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             SelectedPodcastFeed != null ? LoadPodcastEpisodesAsync(SelectedPodcastFeed, forceRefresh: true) : LoadInitialPodcastsAsync());
         OpenPodcastSubscribeCommand = ReactiveCommand.Create(OpenPodcastSubscribePanel);
         ClosePodcastSubscribeCommand = ReactiveCommand.Create(ClosePodcastSubscribePanel);
+        SwitchToPodcastSubscribeModeCommand = ReactiveCommand.Create(() =>
+        {
+            IsPodcastOpmlMode = false;
+            PodcastSubscribeError = string.Empty;
+            PodcastOpmlStatusText = string.Empty;
+            PodcastOpmlIsWarning = false;
+        });
+        SwitchToPodcastOpmlModeCommand = ReactiveCommand.Create(() =>
+        {
+            IsPodcastOpmlMode = true;
+            PodcastSubscribeError = string.Empty;
+            PodcastOpmlStatusText = string.Empty;
+            PodcastOpmlIsWarning = false;
+        });
         SubscribePodcastCommand = ReactiveCommand.CreateFromTask(SubscribePodcastAsync);
         UnsubscribePodcastCommand = ReactiveCommand.CreateFromTask(UnsubscribeCurrentPodcastAsync);
         PlayPodcastEpisodeCommand = ReactiveCommand.CreateFromTask<PodcastEpisode>(ep => PlayPodcastEpisodeAsync(ep, fromStart: false));
@@ -2651,6 +2674,9 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     {
         PodcastRssUrlInput = string.Empty;
         PodcastSubscribeError = string.Empty;
+        PodcastOpmlStatusText = string.Empty;
+        PodcastOpmlIsWarning = false;
+        IsPodcastOpmlMode = false;
         IsPodcastSubscribeOpen = true;
     }
 
@@ -2658,6 +2684,29 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     {
         IsPodcastSubscribeOpen = false;
         PodcastSubscribeError = string.Empty;
+        PodcastOpmlStatusText = string.Empty;
+        PodcastOpmlIsWarning = false;
+    }
+
+    private void ReplacePodcastFeeds(IReadOnlyList<PodcastFeed> feeds, string? preferredRssUrl = null)
+    {
+        _suppressPodcastSelectionLoad = true;
+        try
+        {
+            PodcastFeeds.Clear();
+            foreach (var f in feeds)
+                PodcastFeeds.Add(f);
+            HasPodcastFeeds = PodcastFeeds.Count > 0;
+            SelectedPodcastFeed = string.IsNullOrWhiteSpace(preferredRssUrl)
+                ? PodcastFeeds.FirstOrDefault()
+                : PodcastFeeds.FirstOrDefault(f =>
+                    string.Equals(f.RssUrl, preferredRssUrl, StringComparison.OrdinalIgnoreCase))
+                    ?? PodcastFeeds.FirstOrDefault();
+        }
+        finally
+        {
+            _suppressPodcastSelectionLoad = false;
+        }
     }
 
     public async Task SubscribePodcastAsync()
@@ -2688,22 +2737,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             await _podcastStorage.AddOrUpdateFeedAsync(result.Feed, _lifetimeCts.Token);
             var feeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
             _podcastFeedsLoaded = true;
-
-            _suppressPodcastSelectionLoad = true;
-            try
-            {
-                PodcastFeeds.Clear();
-                foreach (var f in feeds)
-                    PodcastFeeds.Add(f);
-                HasPodcastFeeds = PodcastFeeds.Count > 0;
-                SelectedPodcastFeed = PodcastFeeds.FirstOrDefault(f =>
-                    string.Equals(f.RssUrl, result.Feed.RssUrl, StringComparison.OrdinalIgnoreCase))
-                    ?? PodcastFeeds.FirstOrDefault();
-            }
-            finally
-            {
-                _suppressPodcastSelectionLoad = false;
-            }
+            ReplacePodcastFeeds(feeds, result.Feed.RssUrl);
 
             foreach (var ep in result.Episodes)
             {
@@ -2737,6 +2771,164 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         }
     }
 
+    public async Task ImportOpmlFileAsync(string filePath)
+    {
+        if (_podcastStorage == null || string.IsNullOrWhiteSpace(filePath) || IsImportingPodcastOpml)
+            return;
+
+        IsImportingPodcastOpml = true;
+        PodcastOpmlIsWarning = false;
+        PodcastOpmlStatusText = string.Empty;
+        try
+        {
+            if (!File.Exists(filePath))
+            {
+                PodcastOpmlIsWarning = true;
+                PodcastOpmlStatusText = AppLanguage.T("未找到所选 OPML 文件", "Selected OPML file not found");
+                return;
+            }
+
+            var info = new FileInfo(filePath);
+            if (info.Length > PodcastOpmlService.MaxOpmlChars)
+            {
+                PodcastOpmlIsWarning = true;
+                PodcastOpmlStatusText = AppLanguage.T("OPML 文件超过 5 MB 大小上限", "OPML file exceeds 5 MB limit");
+                return;
+            }
+
+            var xml = await File.ReadAllTextAsync(filePath, _lifetimeCts.Token);
+            var parsed = _podcastOpmlService.Parse(xml);
+            if (!parsed.IsSuccess)
+            {
+                PodcastOpmlIsWarning = true;
+                PodcastOpmlStatusText = parsed.ErrorMessage
+                    ?? AppLanguage.T("OPML 解析失败", "Failed to parse OPML file");
+                return;
+            }
+
+            if (parsed.Feeds.Count == 0)
+            {
+                PodcastOpmlIsWarning = true;
+                PodcastOpmlStatusText = AppLanguage.T("OPML 文件中未找到有效的播客订阅地址", "No valid podcast feeds found in OPML");
+                return;
+            }
+
+            var existingFeeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
+            var existingUrls = new HashSet<string>(
+                existingFeeds
+                    .Select(f => Uri.TryCreate(f.RssUrl.Trim(), UriKind.Absolute, out var eu) ? eu.AbsoluteUri : f.RssUrl.Trim())
+                    .Where(u => !string.IsNullOrEmpty(u)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var candidates = new List<PodcastFeed>();
+            var duplicateCount = 0;
+            var blockedCount = parsed.SkippedInvalidCount;
+
+            foreach (var item in parsed.Feeds)
+            {
+                if (existingUrls.Contains(item.RssUrl))
+                {
+                    duplicateCount++;
+                    continue;
+                }
+
+                if (!Uri.TryCreate(item.RssUrl, UriKind.Absolute, out var uri) ||
+                    !await _podcastAudioUriValidator(uri, _lifetimeCts.Token))
+                {
+                    blockedCount++;
+                    continue;
+                }
+
+                candidates.Add(new PodcastFeed
+                {
+                    FeedId = PodcastFeed.CustomFeedPrefix + PodcastEpisode.BuildEpisodeKey(item.RssUrl, null, item.RssUrl),
+                    Title = item.Title,
+                    RssUrl = item.RssUrl,
+                    Category = item.Category,
+                    LastUpdatedUtc = DateTimeOffset.UtcNow
+                });
+            }
+
+            var importedCount = candidates.Count > 0
+                ? await _podcastStorage.AddFeedsIfMissingAsync(candidates, _lifetimeCts.Token)
+                : 0;
+            if (candidates.Count > importedCount)
+                duplicateCount += candidates.Count - importedCount;
+
+            var refreshedFeeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
+            _podcastFeedsLoaded = true;
+            var preferredUrl = importedCount > 0 ? candidates[0].RssUrl : SelectedPodcastFeed?.RssUrl;
+            ReplacePodcastFeeds(refreshedFeeds, preferredUrl);
+
+            if (importedCount > 0 && SelectedPodcastFeed != null)
+                await LoadPodcastEpisodesAsync(SelectedPodcastFeed);
+
+            PodcastOpmlIsWarning = importedCount == 0;
+            PodcastOpmlStatusText = BuildOpmlImportSummary(importedCount, duplicateCount, blockedCount);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "OPML import failed for {Path}", filePath);
+            PodcastOpmlIsWarning = true;
+            PodcastOpmlStatusText = AppLanguage.T("OPML 导入失败，请检查文件编码与格式", "OPML import failed; check file encoding and format");
+        }
+        finally
+        {
+            IsImportingPodcastOpml = false;
+        }
+    }
+
+    public async Task ExportOpmlFileAsync(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            return;
+
+        try
+        {
+            var feeds = _podcastStorage != null
+                ? await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token)
+                : PodcastFeeds.ToList();
+
+            if (feeds.Count == 0)
+            {
+                PodcastOpmlIsWarning = true;
+                PodcastOpmlStatusText = AppLanguage.Get("S_PodcastOpmlNoFeeds");
+                return;
+            }
+
+            var xml = _podcastOpmlService.Export(feeds);
+            await _writeAllTextAsync(filePath, xml);
+            PodcastOpmlIsWarning = false;
+            PodcastOpmlStatusText = AppLanguage.T(
+                $"已导出 {feeds.Count} 个播客订阅至 OPML 文件。",
+                $"Exported {feeds.Count} podcast feed(s) to OPML.");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "OPML export failed for {Path}", filePath);
+            PodcastOpmlIsWarning = true;
+            PodcastOpmlStatusText = AppLanguage.T("导出 OPML 文件失败", "Failed to export OPML file");
+        }
+    }
+
+    private static string BuildOpmlImportSummary(int imported, int duplicates, int blockedOrInvalid)
+    {
+        var details = new List<string>(2);
+        if (duplicates > 0)
+            details.Add(AppLanguage.T($"跳过 {duplicates} 个重复", $"{duplicates} duplicate(s) skipped"));
+        if (blockedOrInvalid > 0)
+            details.Add(AppLanguage.T($"忽略 {blockedOrInvalid} 个无效/受限链接", $"{blockedOrInvalid} invalid/blocked"));
+
+        var head = AppLanguage.T($"已导入 {imported} 个播客订阅", $"Imported {imported} podcast feed(s)");
+        return details.Count > 0 ? $"{head}（{string.Join("，", details)}）" : head;
+    }
+
     public async Task UnsubscribeCurrentPodcastAsync()
     {
         if (_podcastStorage == null || SelectedPodcastFeed == null)
@@ -2745,20 +2937,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         var removedUrl = SelectedPodcastFeed.RssUrl;
         await _podcastStorage.RemoveFeedAsync(removedUrl, _lifetimeCts.Token);
         var feeds = await _podcastStorage.LoadFeedsAsync(_lifetimeCts.Token);
-
-        _suppressPodcastSelectionLoad = true;
-        try
-        {
-            PodcastFeeds.Clear();
-            foreach (var f in feeds)
-                PodcastFeeds.Add(f);
-            HasPodcastFeeds = PodcastFeeds.Count > 0;
-            SelectedPodcastFeed = PodcastFeeds.FirstOrDefault();
-        }
-        finally
-        {
-            _suppressPodcastSelectionLoad = false;
-        }
+        ReplacePodcastFeeds(feeds);
 
         if (SelectedPodcastFeed != null)
         {

@@ -846,18 +846,26 @@ Requirements:
         }
     }
 
-    public async Task<DJScript> GeneratePodcastDigestAsync(PodcastEpisode episode, CancellationToken cancellationToken = default)
+    public Task<DJScript> GeneratePodcastDigestAsync(PodcastEpisode episode, CancellationToken cancellationToken = default)
+        => GeneratePodcastDigestAsync(episode, null, cancellationToken);
+
+    public async Task<DJScript> GeneratePodcastDigestAsync(
+        PodcastEpisode episode,
+        string? transcriptExcerpt,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(episode);
-        if (string.IsNullOrWhiteSpace(episode.Summary))
+        var hasShownotes = !string.IsNullOrWhiteSpace(episode.Summary);
+        var hasTranscript = !hasShownotes && !string.IsNullOrWhiteSpace(transcriptExcerpt);
+        if (!hasShownotes && !hasTranscript)
             return new DJScript { Text = string.Empty, Emotion = "neutral", Expression = "neutral", Motion = "idle" };
 
         if (_llm is LLMService llmService && !llmService.IsConfigured())
-            return BuildPodcastDigestFallback(_profile, episode, _sceneMode);
+            return BuildPodcastDigestFallback(_profile, episode, _sceneMode, transcriptExcerpt);
 
         try
         {
-            var prompt = BuildPodcastDigestPrompt(_profile, episode, _sceneMode);
+            var prompt = BuildPodcastDigestPrompt(_profile, episode, _sceneMode, transcriptExcerpt);
             var text = _llm is LLMService llm
                 ? await llm.ChatRawAsync(prompt, cancellationToken)
                 : await _llm.ChatAsync(prompt, new List<ChatMessage>()).WaitAsync(cancellationToken);
@@ -865,7 +873,7 @@ Requirements:
             var emotion = DetectEmotion(text);
             var cleaned = CleanPodcastDigestText(text);
             if (string.IsNullOrWhiteSpace(cleaned))
-                return BuildPodcastDigestFallback(_profile, episode, _sceneMode);
+                return BuildPodcastDigestFallback(_profile, episode, _sceneMode, transcriptExcerpt);
 
             return new DJScript
             {
@@ -881,19 +889,24 @@ Requirements:
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to generate AI digest for podcast {Title}; using shownotes fallback", episode.Title);
-            return BuildPodcastDigestFallback(_profile, episode, _sceneMode);
+            Log.Warning(ex, "Failed to generate AI digest for podcast {Title}; using shownotes/transcript fallback", episode.Title);
+            return BuildPodcastDigestFallback(_profile, episode, _sceneMode, transcriptExcerpt);
         }
     }
 
-    internal static string BuildPodcastDigestPrompt(DJProfile profile, PodcastEpisode episode, RadioSceneMode sceneMode = RadioSceneMode.Default)
+    internal static string BuildPodcastDigestPrompt(
+        DJProfile profile,
+        PodcastEpisode episode,
+        RadioSceneMode sceneMode = RadioSceneMode.Default,
+        string? transcriptExcerpt = null)
     {
         var isEn = profile.Language == "en";
         var feedTitle = PromptHygiene.StripControlMarkers(episode.FeedTitle).Trim();
         var epTitle = PromptHygiene.StripControlMarkers(episode.Title).Trim();
-        var summary = PromptHygiene.StripControlMarkers(episode.Summary).Trim();
-        if (summary.Length > 2500)
-            summary = summary[..2500].TrimEnd() + "...";
+        var fromTranscript = string.IsNullOrWhiteSpace(episode.Summary) && !string.IsNullOrWhiteSpace(transcriptExcerpt);
+        var sourceText = PromptHygiene.StripControlMarkers(fromTranscript ? transcriptExcerpt! : episode.Summary).Trim();
+        if (sourceText.Length > 2500)
+            sourceText = sourceText[..2500].TrimEnd() + "...";
 
         var calmConstraint = sceneMode is RadioSceneMode.Sleep or RadioSceneMode.Focus;
         if (isEn)
@@ -901,15 +914,18 @@ Requirements:
             var tone = calmConstraint
                 ? "Keep your tone calm and measured, ending with [calm]."
                 : "Keep your tone conversational and engaging, ending with one emotion tag such as [neutral], [calm], or [happy].";
+            var sourceLabel = fromTranscript
+                ? "Opening audio transcript excerpt (may contain minor speech-to-text typos)"
+                : "Shownotes";
             return $"""
-                You are the AI radio host "{profile.Name}". Give listeners a spoken 1-minute podcast preview based strictly on the shownotes below.
+                You are the AI radio host "{profile.Name}". Give listeners a spoken 1-minute podcast preview based strictly on the {(fromTranscript ? "opening transcript" : "shownotes")} below.
                 Podcast: {feedTitle}
                 Episode: {epTitle}
-                Shownotes: {summary}
+                {sourceLabel}: {sourceText}
 
                 Rules:
                 - 90 to 130 English words, written for natural speech (no Markdown, no bullet symbols, no URLs).
-                - Summarize the core topic and 2 key highlights so the listener quickly decides whether to listen.
+                - Summarize the core topic and key highlights so the listener quickly decides whether to listen.
                 - {tone}
                 - Reply in English only.
                 """;
@@ -918,11 +934,13 @@ Requirements:
         var zhTone = calmConstraint
             ? "语气沉稳克制，末尾附加 [calm]。"
             : "语气亲切自然，像电台主持人导听，末尾附加 [neutral]、[calm] 或 [happy] 之一。";
+        var zhSourceLabel = fromTranscript ? "音频开头转写片段（可能含少量同音误识别，请结合上下文理解）" : "简介内容";
+        var zhBasis = fromTranscript ? "播客开篇音频的语音转写片段" : "播客单集的文字简介（Shownotes）";
         return $"""
-            你是 AI 电台主播“{profile.Name}”。请严格根据下面播客单集的文字简介（Shownotes），为听众做一段约 1 分钟的口语化速读导听。
+            你是 AI 电台主播“{profile.Name}”。请严格根据下面{zhBasis}，为听众做一段约 1 分钟的口语化速读导听。
             播客节目：{feedTitle}
             本期标题：{epTitle}
-            简介内容：{summary}
+            {zhSourceLabel}：{sourceText}
 
             要求：
             - 字数控制在 150~220 字，适合直接朗读（不要 Markdown 符号、不要项目列表符号、不要网址）。
@@ -932,21 +950,30 @@ Requirements:
             """;
     }
 
-    internal static DJScript BuildPodcastDigestFallback(DJProfile profile, PodcastEpisode episode, RadioSceneMode sceneMode = RadioSceneMode.Default)
+    internal static DJScript BuildPodcastDigestFallback(
+        DJProfile profile,
+        PodcastEpisode episode,
+        RadioSceneMode sceneMode = RadioSceneMode.Default,
+        string? transcriptExcerpt = null)
     {
         var isEn = profile.Language == "en";
-        var summary = PromptHygiene.StripControlMarkers(episode.Summary).Trim();
-        if (string.IsNullOrWhiteSpace(summary))
+        var fromTranscript = string.IsNullOrWhiteSpace(episode.Summary) && !string.IsNullOrWhiteSpace(transcriptExcerpt);
+        var sourceText = PromptHygiene.StripControlMarkers(fromTranscript ? transcriptExcerpt! : episode.Summary).Trim();
+        if (string.IsNullOrWhiteSpace(sourceText))
             return new DJScript { Text = string.Empty, Emotion = "neutral", Expression = "neutral", Motion = "idle" };
 
         var maxLen = isEn ? 320 : 210;
-        var excerpt = summary.Length <= maxLen ? summary : SliceAtSentenceBoundary(summary, maxLen);
+        var excerpt = sourceText.Length <= maxLen ? sourceText : SliceAtSentenceBoundary(sourceText, maxLen);
         var feedName = string.IsNullOrWhiteSpace(episode.FeedTitle)
             ? (isEn ? "this podcast" : "这档播客")
             : episode.FeedTitle.Trim();
         var text = isEn
-            ? $"Here is a quick preview of \"{episode.Title}\" from {feedName}: {excerpt}"
-            : $"为你带来《{feedName}》这一期〈{episode.Title}〉的速览：{excerpt}";
+            ? fromTranscript
+                ? $"Here is an opening audio preview of \"{episode.Title}\" from {feedName}: {excerpt}"
+                : $"Here is a quick preview of \"{episode.Title}\" from {feedName}: {excerpt}"
+            : fromTranscript
+                ? $"为你带来《{feedName}》这一期〈{episode.Title}〉的音频开篇速览：{excerpt}"
+                : $"为你带来《{feedName}》这一期〈{episode.Title}〉的速览：{excerpt}";
 
         var isQuiet = sceneMode is RadioSceneMode.Sleep or RadioSceneMode.Focus;
         return new DJScript
