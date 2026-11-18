@@ -244,6 +244,46 @@ public class PlaylistViewModelRadioTests
 
         // 收藏列表中应存在该电台对应的 Track
         Assert.Contains(vm.Favorites, t => t.Id == "radio-browser:fav-1");
+
+        // 再次点击应取消收藏
+        vm.FavoriteRadioStationCommand.Execute(station).Subscribe();
+        Assert.DoesNotContain(vm.Favorites, t => t.Id == "radio-browser:fav-1");
+        Assert.False(station.IsFavorite);
+    }
+
+    [Fact]
+    public async Task FavoriteRadioStation_PersistsAcrossReload_AndCanBeUnfavorited()
+    {
+        var playlistFile = CreateTempPlaylistFile();
+        var station = new RadioStation
+        {
+            StationUuid = "fav-persist-1",
+            Name = "Persist Radio",
+            StreamUrl = "https://stream.persist.org/live.mp3",
+            Codec = "MP3",
+            Bitrate = 128
+        };
+
+        var (vm1, _, _, _) = CreateRadioVm(playlistFile);
+        vm1.RadioStations.Add(station);
+        vm1.FavoriteRadioStationCommand.Execute(station).Subscribe();
+        Assert.Contains(vm1.Favorites, t => t.Id == "radio-browser:fav-persist-1");
+        Assert.Empty(vm1.Tracks);
+        await vm1.SaveAsync();
+
+        var (vm2, _, _, _) = CreateRadioVm(playlistFile);
+        await vm2.LoadAsync();
+        Assert.Contains(vm2.Favorites, t =>
+            t.Id == "radio-browser:fav-persist-1" &&
+            t.FilePath == "https://stream.persist.org/live.mp3");
+
+        vm2.FavoriteRadioStationCommand.Execute(station).Subscribe();
+        Assert.DoesNotContain(vm2.Favorites, t => t.Id == "radio-browser:fav-persist-1");
+        await vm2.SaveAsync();
+
+        var (vm3, _, _, _) = CreateRadioVm(playlistFile);
+        await vm3.LoadAsync();
+        Assert.DoesNotContain(vm3.Favorites, t => t.Id == "radio-browser:fav-persist-1");
     }
 
     [Fact]

@@ -22,6 +22,11 @@ public interface IWebRemoteService : IDisposable
         Func<WebRemoteSnapshot> snapshotProvider,
         Func<WebRemoteCommand, Task<WebRemoteCommandResult>> commandHandler);
 
+    void ConfigureBrowseHandler(
+        Func<WebRemoteBrowseRequest, CancellationToken, Task<WebRemoteBrowseResponse>> browseHandler)
+    {
+    }
+
     Task<bool> StartAsync(
         int preferredPort,
         string token,

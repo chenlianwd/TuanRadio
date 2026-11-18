@@ -91,6 +91,8 @@ public sealed class WebRemoteService : IWebRemoteService
     private Func<WebRemoteSnapshot> _snapshotProvider = () => new WebRemoteSnapshot();
     private Func<WebRemoteCommand, Task<WebRemoteCommandResult>> _commandHandler =
         _ => Task.FromResult(WebRemoteCommandResult.Fail("unavailable"));
+    private Func<WebRemoteBrowseRequest, CancellationToken, Task<WebRemoteBrowseResponse>> _browseHandler =
+        (_, _) => Task.FromResult(new WebRemoteBrowseResponse { Ok = false, Error = "unavailable" });
 
     private TcpListener? _listener;
     private CancellationTokenSource? _runCts;
@@ -123,6 +125,12 @@ public sealed class WebRemoteService : IWebRemoteService
     {
         _snapshotProvider = snapshotProvider ?? throw new ArgumentNullException(nameof(snapshotProvider));
         _commandHandler = commandHandler ?? throw new ArgumentNullException(nameof(commandHandler));
+    }
+
+    public void ConfigureBrowseHandler(
+        Func<WebRemoteBrowseRequest, CancellationToken, Task<WebRemoteBrowseResponse>> browseHandler)
+    {
+        _browseHandler = browseHandler ?? throw new ArgumentNullException(nameof(browseHandler));
     }
 
     public async Task<bool> StartAsync(
@@ -477,7 +485,7 @@ public sealed class WebRemoteService : IWebRemoteService
             if (parsed == null)
                 return;
 
-            var (method, path, queryToken, headers, bodyBytes) = parsed.Value;
+            var (method, path, queryToken, queryParams, headers, bodyBytes) = parsed.Value;
 
             if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) &&
                 (path == "/" || path == "/index.html"))
@@ -567,6 +575,62 @@ public sealed class WebRemoteService : IWebRemoteService
                 var snapshot = _snapshotProvider();
                 var json = JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonOptions);
                 await WriteHttpResponseAsync(stream, 200, "OK", "application/json; charset=utf-8", json, ct);
+                return;
+            }
+
+            if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) &&
+                path == "/api/browse")
+            {
+                var section = queryParams.TryGetValue("section", out var s) && !string.IsNullOrWhiteSpace(s)
+                    ? s.Trim().ToLowerInvariant()
+                    : "program";
+                queryParams.TryGetValue("category", out var category);
+                queryParams.TryGetValue("feed", out var feed);
+                queryParams.TryGetValue("q", out var queryText);
+                var force = queryParams.TryGetValue("force", out var forceText) &&
+                            (string.Equals(forceText, "1", StringComparison.Ordinal) ||
+                             string.Equals(forceText, "true", StringComparison.OrdinalIgnoreCase));
+
+                var browseReq = new WebRemoteBrowseRequest
+                {
+                    Section = section,
+                    Category = category,
+                    Feed = feed,
+                    Query = queryText,
+                    Force = force
+                };
+
+                using var browseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                browseCts.CancelAfter(TimeSpan.FromSeconds(15));
+
+                WebRemoteBrowseResponse browseResp;
+                try
+                {
+                    browseResp = await _browseHandler(browseReq, browseCts.Token);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    browseResp = new WebRemoteBrowseResponse
+                    {
+                        Ok = false,
+                        Section = section,
+                        Error = "browse_timeout"
+                    };
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug(ex, "WebRemote browse handler error for section {Section}", section);
+                    browseResp = new WebRemoteBrowseResponse
+                    {
+                        Ok = false,
+                        Section = section,
+                        Error = "browse_failed"
+                    };
+                }
+
+                var status = browseResp.Ok ? 200 : 400;
+                var reason = browseResp.Ok ? "OK" : "Bad Request";
+                await WriteJsonResponseAsync(stream, status, reason, browseResp, ct);
                 return;
             }
 
@@ -754,7 +818,7 @@ public sealed class WebRemoteService : IWebRemoteService
         return CryptographicOperations.FixedTimeEquals(a, b);
     }
 
-    private static async Task<(string Method, string Path, string? QueryToken, Dictionary<string, string> Headers, byte[] Body)?> ReadHttpRequestAsync(
+    private static async Task<(string Method, string Path, string? QueryToken, Dictionary<string, string> QueryParams, Dictionary<string, string> Headers, byte[] Body)?> ReadHttpRequestAsync(
         NetworkStream stream,
         CancellationToken ct)
     {
@@ -794,7 +858,11 @@ public sealed class WebRemoteService : IWebRemoteService
         var rawTarget = requestParts[1];
         var qIdx = rawTarget.IndexOf('?');
         var path = qIdx >= 0 ? rawTarget[..qIdx] : rawTarget;
-        var queryToken = qIdx >= 0 ? ExtractTokenFromQuery(rawTarget[(qIdx + 1)..]) : null;
+        var rawQuery = qIdx >= 0 ? rawTarget[(qIdx + 1)..] : string.Empty;
+        var queryToken = qIdx >= 0 ? ExtractTokenFromQuery(rawQuery) : null;
+        var queryParams = qIdx >= 0
+            ? ParseQueryParams(rawQuery)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 1; i < lines.Length; i++)
@@ -834,7 +902,33 @@ public sealed class WebRemoteService : IWebRemoteService
             }
         }
 
-        return (method, path, queryToken, headers, body);
+        return (method, path, queryToken, queryParams, headers, body);
+    }
+
+    private static Dictionary<string, string> ParseQueryParams(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(query))
+            return result;
+
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=');
+            var rawKey = eq >= 0 ? pair[..eq] : pair;
+            var rawVal = eq >= 0 ? pair[(eq + 1)..] : string.Empty;
+            try
+            {
+                var key = Uri.UnescapeDataString(rawKey.Replace('+', ' '));
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+                var val = Uri.UnescapeDataString(rawVal.Replace('+', ' '));
+                result[key] = val;
+            }
+            catch (UriFormatException)
+            {
+            }
+        }
+        return result;
     }
 
     private static string? ExtractTokenFromQuery(string query)

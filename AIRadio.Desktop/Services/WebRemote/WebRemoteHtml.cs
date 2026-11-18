@@ -197,6 +197,39 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
   border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px;
 }
 .auth-err { color: var(--danger); font-size: 12px; min-height: 16px; }
+.browse-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; background: #11111c; }
+.sub-pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.sub-pills::-webkit-scrollbar { display: none; }
+.sub-pill { border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.sub-pill.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.browse-toolbar { display: flex; gap: 6px; align-items: center; }
+.browse-search { flex: 1; min-width: 0; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 9px; padding: 7px 10px; font-size: 13px; outline: none; }
+.browse-search:focus { border-color: var(--accent); }
+.browse-refresh { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 9px; padding: 7px 11px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.browse-refresh:disabled { opacity: .45; cursor: default; }
+.browse-subbar { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; align-items: center; }
+.browse-subbar::-webkit-scrollbar { display: none; }
+.browse-select { width: 100%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 9px; padding: 7px 10px; font-size: 13px; outline: none; }
+.browse-list { display: flex; flex-direction: column; gap: 7px; }
+.browse-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; }
+.browse-item.pod { flex-direction: column; align-items: stretch; cursor: default; }
+.browse-item.active { border-color: var(--accent); background: var(--accent-dim); }
+.browse-item.disabled { opacity: .55; cursor: default; }
+.browse-main { min-width: 0; flex: 1; }
+.browse-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-sub { font-size: 11px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-summary { font-size: 12px; color: var(--muted); line-height: 1.4; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.browse-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.browse-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.browse-pod-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.mini-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 5px 9px; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.mini-btn.accent { border-color: rgba(86,245,196,.45); color: var(--accent); background: var(--accent-dim); }
+.mini-btn.fav.active { color: #ff5c7c; border-color: rgba(255,92,124,.45); background: rgba(255,92,124,.12); }
+.mini-btn:disabled { opacity: .45; cursor: default; }
+.browse-banner { font-size: 12px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; line-height: 1.4; }
+.browse-section-hdr { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .4px; padding: 4px 2px 0; }
+.browse-notice { font-size: 11px; color: var(--accent); padding: 2px 2px 0; }
+.browse-notice.err { color: var(--danger); }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -265,11 +298,36 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 
   <div class="tabs">
     <button id="tabLyrics" class="tab-btn active" type="button">Lyrics</button>
+    <button id="tabBrowse" class="tab-btn" type="button">Stations / Library</button>
     <button id="tabChat" class="tab-btn" type="button">AI DJ / Request</button>
   </div>
 
   <div id="lyricsPanel" class="panel">
     <div id="lyricsScroll" class="scroll-area"></div>
+  </div>
+
+  <div id="browsePanel" class="panel hidden">
+    <div class="browse-head">
+      <div class="sub-pills">
+        <button class="sub-pill active" data-sec="program" type="button" id="secProgram">Program</button>
+        <button class="sub-pill" data-sec="library" type="button" id="secLibrary">Playlist</button>
+        <button class="sub-pill" data-sec="favorites" type="button" id="secFavorites">Favorites</button>
+        <button class="sub-pill" data-sec="radio" type="button" id="secRadio">Radio</button>
+        <button class="sub-pill" data-sec="podcasts" type="button" id="secPodcasts">Podcasts</button>
+      </div>
+      <div class="browse-toolbar">
+        <input id="browseSearch" class="browse-search" type="text" autocomplete="off" placeholder="Filter or search...">
+        <button id="browseRefreshBtn" class="browse-refresh" type="button">Refresh</button>
+      </div>
+      <div id="browseRadioCats" class="browse-subbar hidden"></div>
+      <div id="browsePodFeedWrap" class="browse-subbar hidden">
+        <select id="browsePodFeedSelect" class="browse-select"></select>
+      </div>
+      <div id="browseNotice" class="browse-notice hidden"></div>
+    </div>
+    <div id="browseScroll" class="scroll-area">
+      <div id="browseList" class="browse-list"></div>
+    </div>
   </div>
 
   <div id="chatPanel" class="panel hidden">
@@ -323,12 +381,33 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
   let draggingVol = false;
   let activeTab = "lyrics";
   let lastSnapshotMs = 0;
+  let browseSection = "program";
+  let browseCategory = "";
+  let browseFeed = "";
+  let browseData = null;
+  let browseLoading = false;
+  let browseReqSeq = 0;
+  let browseDebounce = null;
+  let browseNoticeTimer = null;
+  let prevProgramLoading = false;
+  let prevDigestKey = "";
+  let prevTrackTitle = "";
+  let prevFavorite = false;
+  let browseStale = false;
+  let browseSnapshotTitle = "";
 
   const I18N = {
     zh: {
       focus: "专注", sleep: "定时", live: "直播", pod: "播客", shuffle: "随机",
       fbLike: "喜欢", fbDislike: "不喜欢", fbSimilar: "相似", fbCalm: "舒缓", fbEnergetic: "欢快", fbStory: "故事",
-      tabLyrics: "歌词", tabChat: "点歌 / AI DJ",
+      tabLyrics: "歌词", tabBrowse: "选台 · 曲库", tabChat: "点歌 / AI DJ",
+      secProgram: "节目单", secLibrary: "歌单", secFavorites: "收藏", secRadio: "电台", secPodcasts: "播客",
+      browseSearchPh: "筛选关键词或搜索...", browseSearchRadioPh: "搜索全球 / 自定义电台...", browseRefresh: "刷新",
+      browseLoading: "正在加载...", browseEmpty: "暂无内容", browsePlayNext: "下一首",
+      browseFavSongs: "收藏歌曲", browseFavStations: "收藏电台", browseCustom: "自定义",
+      podPlay: "收听", podResume: "续播", podRestart: "从头", podDigest: "AI 速读", podDigesting: "速读中...",
+      queuedNext: "已安排下一首播放", digestStarted: "AI 正在生成速读并加入聊天流...",
+      errGeneric: "操作未成功", errUnsafeUrl: "播客地址被安全策略拦截", errNotPlayable: "该曲目暂不可播", errNoShownotes: "该单集暂无 Shownotes 简介",
       chatPlaceholder: "输入歌名、歌手，或对 AI DJ 说...", send: "发送", sending: "处理中",
       sleepTitle: "睡眠定时", close: "关闭", sleepOff: "关闭", sleepTrackEnd: "播完当前曲停止",
       authTitle: "连接 TuanRadio 遥控器", authDesc: "使用电脑端二维码扫码直连，或粘贴当前访问令牌：",
@@ -338,7 +417,14 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
     en: {
       focus: "Focus", sleep: "Sleep", live: "LIVE", pod: "PODCAST", shuffle: "Shuffle",
       fbLike: "Like", fbDislike: "Dislike", fbSimilar: "Similar", fbCalm: "Calm", fbEnergetic: "Upbeat", fbStory: "Story",
-      tabLyrics: "Lyrics", tabChat: "Request / AI DJ",
+      tabLyrics: "Lyrics", tabBrowse: "Stations · Library", tabChat: "Request / AI DJ",
+      secProgram: "Program", secLibrary: "Playlist", secFavorites: "Favorites", secRadio: "Radio", secPodcasts: "Podcasts",
+      browseSearchPh: "Filter keyword...", browseSearchRadioPh: "Search global / custom radio...", browseRefresh: "Refresh",
+      browseLoading: "Loading...", browseEmpty: "Nothing here", browsePlayNext: "Next",
+      browseFavSongs: "Favorite Songs", browseFavStations: "Favorite Radio", browseCustom: "Custom",
+      podPlay: "Play", podResume: "Resume", podRestart: "Restart", podDigest: "AI Digest", podDigesting: "Digesting...",
+      queuedNext: "Queued to play next", digestStarted: "Generating AI digest in chat...",
+      errGeneric: "Action failed", errUnsafeUrl: "Audio URL blocked by security policy", errNotPlayable: "Track is not playable", errNoShownotes: "No shownotes available",
       chatPlaceholder: "Request a song or chat with AI DJ...", send: "Send", sending: "Busy",
       sleepTitle: "Sleep Timer", close: "Close", sleepOff: "Off", sleepTrackEnd: "After track",
       authTitle: "Connect TuanRadio Remote", authDesc: "Scan the desktop QR code or paste the pairing token:",
@@ -361,7 +447,15 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
     el("fbEnergetic").textContent = l.fbEnergetic;
     el("fbStory").textContent = l.fbStory;
     el("tabLyrics").textContent = l.tabLyrics;
+    el("tabBrowse").textContent = l.tabBrowse;
     el("tabChat").textContent = l.tabChat;
+    el("secProgram").textContent = l.secProgram;
+    el("secLibrary").textContent = l.secLibrary;
+    el("secFavorites").textContent = l.secFavorites;
+    el("secRadio").textContent = l.secRadio;
+    el("secPodcasts").textContent = l.secPodcasts;
+    el("browseSearch").placeholder = browseSection === "radio" ? l.browseSearchRadioPh : l.browseSearchPh;
+    el("browseRefreshBtn").textContent = l.browseRefresh;
     el("chatInput").placeholder = l.chatPlaceholder;
     el("sendBtn").textContent = (state && state.isDjProcessing) ? l.sending : l.send;
     el("sleepTitle").textContent = l.sleepTitle;
@@ -419,9 +513,54 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
       headers: { "Content-Type": "application/json", "X-Remote-Token": token },
       body: JSON.stringify(payload)
     }).then(r => {
-      if (r.status === 401) showAuth(t().authUnauthorized);
-      else refreshViaRest();
+      if (r.status === 401) { showAuth(t().authUnauthorized); return null; }
+      return r.json().catch(() => null);
+    }).then(res => {
+      if (res) handleAck({ action: payload.action, ok: !!res.ok, message: res.message });
+      refreshViaRest();
     }).catch(() => {});
+  }
+
+  function showBrowseNotice(msg, isErr) {
+    const box = el("browseNotice");
+    if (!box) return;
+    clearTimeout(browseNoticeTimer);
+    if (!msg) {
+      box.textContent = "";
+      box.classList.add("hidden");
+      return;
+    }
+    box.textContent = msg;
+    box.classList.toggle("err", !!isErr);
+    box.classList.remove("hidden");
+    browseNoticeTimer = setTimeout(() => {
+      box.classList.add("hidden");
+    }, 2600);
+  }
+
+  function handleAck(msg) {
+    if (!msg) return;
+    const l = t();
+    if (!msg.ok) {
+      const code = msg.message || "";
+      const text = code === "unsafe_audio_url" ? l.errUnsafeUrl
+        : code === "track_not_playable" ? l.errNotPlayable
+        : code === "empty_shownotes" ? l.errNoShownotes
+        : (code || l.errGeneric);
+      if (activeTab === "browse") showBrowseNotice(text, true);
+      return;
+    }
+    if (msg.action === "enqueue_library_track") {
+      showBrowseNotice(l.queuedNext, false);
+    } else if (msg.action === "digest_podcast_episode") {
+      showBrowseNotice(l.digestStarted, false);
+    } else if (msg.action === "toggle_radio_favorite" && activeTab === "browse") {
+      loadBrowse(false);
+    } else if (msg.action === "refresh_program" && activeTab === "browse" && browseSection === "program") {
+      setTimeout(() => {
+        if (!state || !state.isProgramLoading) loadBrowse(false);
+      }, 600);
+    }
   }
 
   function refreshViaRest() {
@@ -489,6 +628,364 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
     el("sendBtn").disabled = !!s.isDjProcessing;
     renderLyrics(s);
     renderChat(s);
+
+    const progLoading = !!s.isProgramLoading;
+    const digestKey = s.digestingEpisodeKey || "";
+    const curTitle = s.title || "";
+    const curFav = !!s.isFavorite;
+
+    const progFinished = prevProgramLoading && !progLoading;
+    const trackOrFavChanged = prevTrackTitle !== curTitle || prevFavorite !== curFav;
+
+    if (activeTab === "browse") {
+      if ((progFinished && browseSection === "program") || trackOrFavChanged) {
+        loadBrowse(false);
+      } else if (browseData && (prevDigestKey !== digestKey || prevProgramLoading !== progLoading)) {
+        renderBrowse();
+      }
+    } else if (progFinished || trackOrFavChanged || prevDigestKey !== digestKey) {
+      browseStale = true;
+    }
+    prevProgramLoading = progLoading;
+    prevDigestKey = digestKey;
+    prevTrackTitle = curTitle;
+    prevFavorite = curFav;
+  }
+
+  function loadBrowse(force) {
+    if (!token) { showAuth(); return; }
+    const seq = ++browseReqSeq;
+    browseLoading = true;
+    el("browseRefreshBtn").disabled = true;
+    if (!browseData || browseData.section !== browseSection || force) {
+      const empty = document.createElement("div");
+      empty.className = "lyric-empty";
+      empty.textContent = t().browseLoading;
+      el("browseList").replaceChildren(empty);
+    }
+    const params = new URLSearchParams();
+    params.set("section", browseSection);
+    const q = el("browseSearch").value.trim();
+    if (q) params.set("q", q);
+    if (browseSection === "radio" && browseCategory) params.set("category", browseCategory);
+    if (browseSection === "podcasts" && browseFeed) params.set("feed", browseFeed);
+    if (force) params.set("force", "1");
+
+    fetch("/api/browse?" + params.toString(), { headers: { "X-Remote-Token": token } })
+      .then(r => {
+        if (r.status === 401) { showAuth(t().authUnauthorized); return null; }
+        return r.json();
+      })
+      .then(data => {
+        if (seq !== browseReqSeq || !data) return;
+        browseLoading = false;
+        el("browseRefreshBtn").disabled = false;
+        browseData = data;
+        browseSnapshotTitle = (state && state.title) || "";
+        browseStale = false;
+        if (data.section === "radio" && data.selectedRadioCategory) browseCategory = data.selectedRadioCategory;
+        if (data.section === "podcasts" && data.selectedPodcastFeedUrl) browseFeed = data.selectedPodcastFeedUrl;
+        renderBrowse();
+      })
+      .catch(() => {
+        if (seq !== browseReqSeq) return;
+        browseLoading = false;
+        el("browseRefreshBtn").disabled = false;
+      });
+  }
+
+  function appendBrowseEmpty(list, msg) {
+    const empty = document.createElement("div");
+    empty.className = "lyric-empty";
+    empty.textContent = msg || t().browseEmpty;
+    list.appendChild(empty);
+  }
+
+  function makeTrackRow(item, opts) {
+    const row = document.createElement("div");
+    const useServerCurrent = !state || (state.title || "") === browseSnapshotTitle;
+    const isCur = useServerCurrent
+      ? !!item.isCurrent
+      : !!(state && state.hasTrack && item.title && state.title === item.title && (!item.artist || state.artist === item.artist));
+    row.className = "browse-item" + (isCur ? " active" : "") + (opts && opts.disabled ? " disabled" : "");
+    const main = document.createElement("div");
+    main.className = "browse-main";
+    const title = document.createElement("div");
+    title.className = "browse-title";
+    title.textContent = item.title || "---";
+    const subParts = [];
+    if (item.artist) subParts.push(item.artist);
+    if (item.source) subParts.push(item.source);
+    if (item.quality) subParts.push(item.quality);
+    if (item.durationSeconds > 0) subParts.push(fmtTime(item.durationSeconds));
+    const sub = document.createElement("div");
+    sub.className = "browse-sub";
+    sub.textContent = subParts.join(" · ");
+    main.appendChild(title);
+    main.appendChild(sub);
+    if (opts && opts.tags && opts.tags.length) {
+      const tagsEl = document.createElement("div");
+      tagsEl.className = "browse-tags";
+      opts.tags.slice(0, 4).forEach(tag => {
+        const b = document.createElement("span");
+        b.className = "badge";
+        b.textContent = tag;
+        tagsEl.appendChild(b);
+      });
+      main.appendChild(tagsEl);
+    }
+    row.appendChild(main);
+    if (!opts || !opts.disabled) {
+      row.addEventListener("click", () => { if (opts && opts.onPlay) opts.onPlay(); });
+    }
+    if (opts && opts.actions && opts.actions.length) {
+      const actWrap = document.createElement("div");
+      actWrap.className = "browse-actions";
+      opts.actions.forEach(a => actWrap.appendChild(a));
+      row.appendChild(actWrap);
+    }
+    return row;
+  }
+
+  function renderBrowse() {
+    const l = t();
+    const radioBar = el("browseRadioCats");
+    const podBar = el("browsePodFeedWrap");
+    const list = el("browseList");
+    radioBar.classList.toggle("hidden", browseSection !== "radio");
+    podBar.classList.toggle("hidden", browseSection !== "podcasts");
+    el("browseSearch").placeholder = browseSection === "radio" ? l.browseSearchRadioPh : l.browseSearchPh;
+
+    if (!browseData || browseData.section !== browseSection) {
+      list.replaceChildren();
+      if (browseLoading) appendBrowseEmpty(list, l.browseLoading);
+      return;
+    }
+
+    const d = browseData;
+    list.replaceChildren();
+
+    if (browseSection === "program") {
+      if (d.programOpening) {
+        const banner = document.createElement("div");
+        banner.className = "browse-banner";
+        banner.textContent = d.programOpening;
+        list.appendChild(banner);
+      }
+      if (state && state.isProgramLoading) {
+        const loadingBanner = document.createElement("div");
+        loadingBanner.className = "browse-banner";
+        loadingBanner.textContent = l.browseLoading;
+        list.appendChild(loadingBanner);
+      }
+      const items = d.programTracks || [];
+      if (items.length === 0) {
+        appendBrowseEmpty(list, d.statusText || l.browseEmpty);
+        return;
+      }
+      items.forEach((item, idx) => {
+        list.appendChild(makeTrackRow(item, {
+          disabled: !item.isPlayable,
+          tags: item.tags || [],
+          onPlay: () => sendCommand({ action: "play_program_track", text: item.id, intValue: idx })
+        }));
+      });
+      return;
+    }
+
+    if (browseSection === "library") {
+      const items = d.libraryTracks || [];
+      if (items.length === 0) {
+        appendBrowseEmpty(list, d.statusText || l.browseEmpty);
+        return;
+      }
+      items.forEach(item => {
+        const nextBtn = document.createElement("button");
+        nextBtn.className = "mini-btn";
+        nextBtn.type = "button";
+        nextBtn.textContent = l.browsePlayNext;
+        nextBtn.addEventListener("click", ev => {
+          ev.stopPropagation();
+          sendCommand({ action: "enqueue_library_track", text: item.id });
+        });
+        list.appendChild(makeTrackRow(item, {
+          actions: [nextBtn],
+          onPlay: () => sendCommand({ action: "play_library_track", text: item.id, intValue: item.index })
+        }));
+      });
+      return;
+    }
+
+    if (browseSection === "favorites") {
+      const songs = d.songs || [];
+      const stations = d.stations || [];
+      if (songs.length === 0 && stations.length === 0) {
+        appendBrowseEmpty(list, d.statusText || l.browseEmpty);
+        return;
+      }
+      if (songs.length > 0) {
+        const hdr = document.createElement("div");
+        hdr.className = "browse-section-hdr";
+        hdr.textContent = l.browseFavSongs + " (" + songs.length + ")";
+        list.appendChild(hdr);
+        songs.forEach(item => {
+          const nextBtn = document.createElement("button");
+          nextBtn.className = "mini-btn";
+          nextBtn.type = "button";
+          nextBtn.textContent = l.browsePlayNext;
+          nextBtn.addEventListener("click", ev => {
+            ev.stopPropagation();
+            sendCommand({ action: "enqueue_library_track", text: item.id });
+          });
+          list.appendChild(makeTrackRow(item, {
+            actions: [nextBtn],
+            onPlay: () => sendCommand({ action: "play_favorite", text: item.id })
+          }));
+        });
+      }
+      if (stations.length > 0) {
+        const hdr = document.createElement("div");
+        hdr.className = "browse-section-hdr";
+        hdr.textContent = l.browseFavStations + " (" + stations.length + ")";
+        list.appendChild(hdr);
+        stations.forEach(item => {
+          const favBtn = document.createElement("button");
+          favBtn.className = "mini-btn fav active";
+          favBtn.type = "button";
+          favBtn.textContent = "\u2665";
+          favBtn.addEventListener("click", ev => {
+            ev.stopPropagation();
+            sendCommand({ action: "toggle_radio_favorite", text: item.stationUuid || item.id });
+          });
+          list.appendChild(makeTrackRow(item, {
+            actions: [favBtn],
+            onPlay: () => sendCommand({ action: "play_favorite", text: item.id })
+          }));
+        });
+      }
+      return;
+    }
+
+    if (browseSection === "radio") {
+      radioBar.replaceChildren();
+      (d.radioCategories || []).forEach(cat => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "sub-pill" + (cat.key === (d.selectedRadioCategory || browseCategory) ? " active" : "");
+        chip.textContent = cat.name;
+        chip.addEventListener("click", () => {
+          browseCategory = cat.key;
+          el("browseSearch").value = "";
+          loadBrowse(false);
+        });
+        radioBar.appendChild(chip);
+      });
+      const stations = d.radioStations || [];
+      if (stations.length === 0) {
+        appendBrowseEmpty(list, d.statusText || l.browseEmpty);
+        return;
+      }
+      stations.forEach(s => {
+        const favBtn = document.createElement("button");
+        favBtn.className = "mini-btn fav" + (s.isFavorite ? " active" : "");
+        favBtn.type = "button";
+        favBtn.textContent = s.isFavorite ? "\u2665" : "\u2661";
+        favBtn.addEventListener("click", ev => {
+          ev.stopPropagation();
+          sendCommand({ action: "toggle_radio_favorite", text: s.stationUuid });
+        });
+        const metaParts = [];
+        if (s.isCustom) metaParts.push(l.browseCustom);
+        if (s.tags) metaParts.push(s.tags);
+        const itemObj = {
+          title: s.name,
+          artist: metaParts.join(" · "),
+          quality: s.quality,
+          isCurrent: s.isCurrent
+        };
+        list.appendChild(makeTrackRow(itemObj, {
+          actions: [favBtn],
+          onPlay: () => sendCommand({ action: "play_radio_station", text: s.stationUuid })
+        }));
+      });
+      return;
+    }
+
+    if (browseSection === "podcasts") {
+      const sel = el("browsePodFeedSelect");
+      sel.replaceChildren();
+      (d.podcastFeeds || []).forEach(f => {
+        const opt = document.createElement("option");
+        opt.value = f.rssUrl;
+        opt.textContent = f.title;
+        if (f.rssUrl === (d.selectedPodcastFeedUrl || browseFeed)) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      const eps = d.podcastEpisodes || [];
+      if (eps.length === 0) {
+        appendBrowseEmpty(list, d.statusText || l.browseEmpty);
+        return;
+      }
+      const activeDigest = (state && state.digestingEpisodeKey) || "";
+      eps.forEach(ep => {
+        const card = document.createElement("div");
+        const isDigesting = state
+          ? (activeDigest !== "" && activeDigest.toLowerCase() === (ep.episodeKey || "").toLowerCase())
+          : !!ep.isDigesting;
+        const useServerCurrent = !state || (state.title || "") === browseSnapshotTitle;
+        const isCur = useServerCurrent
+          ? !!ep.isCurrent
+          : !!(state && state.isPodcast && state.title === ep.title);
+        card.className = "browse-item pod" + (isCur ? " active" : "");
+
+        const title = document.createElement("div");
+        title.className = "browse-title";
+        title.textContent = ep.title || "---";
+        card.appendChild(title);
+
+        const sub = document.createElement("div");
+        sub.className = "browse-sub";
+        sub.textContent = ep.progressBadge ? (ep.meta ? ep.meta + " · " + ep.progressBadge : ep.progressBadge) : (ep.meta || "");
+        card.appendChild(sub);
+
+        if (ep.shortSummary) {
+          const sum = document.createElement("div");
+          sum.className = "browse-summary";
+          sum.textContent = ep.shortSummary;
+          card.appendChild(sum);
+        }
+
+        const actRow = document.createElement("div");
+        actRow.className = "browse-pod-actions";
+
+        const playBtn = document.createElement("button");
+        playBtn.type = "button";
+        playBtn.className = "mini-btn accent";
+        playBtn.textContent = (!ep.isCompleted && ep.resumePositionMs > 3000) ? l.podResume : l.podPlay;
+        playBtn.addEventListener("click", () => sendCommand({ action: "play_podcast_episode", text: ep.episodeKey, intValue: 0 }));
+        actRow.appendChild(playBtn);
+
+        const restartBtn = document.createElement("button");
+        restartBtn.type = "button";
+        restartBtn.className = "mini-btn";
+        restartBtn.textContent = l.podRestart;
+        restartBtn.addEventListener("click", () => sendCommand({ action: "play_podcast_episode", text: ep.episodeKey, intValue: 1 }));
+        actRow.appendChild(restartBtn);
+
+        if (ep.hasSummary) {
+          const digBtn = document.createElement("button");
+          digBtn.type = "button";
+          digBtn.className = "mini-btn";
+          digBtn.disabled = !!isDigesting;
+          digBtn.textContent = isDigesting ? l.podDigesting : l.podDigest;
+          digBtn.addEventListener("click", () => sendCommand({ action: "digest_podcast_episode", text: ep.episodeKey }));
+          actRow.appendChild(digBtn);
+        }
+
+        card.appendChild(actRow);
+        list.appendChild(card);
+      });
+    }
   }
 
   let lastLyricSignature = "";
@@ -575,6 +1072,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === "state" && msg.data) renderState(msg.data);
+        else if (msg.type === "ack") handleAck(msg);
       } catch {}
     };
     ws.onclose = ev => {
@@ -644,21 +1142,57 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
     sendCommand({ action: "set_volume", value: parseFloat(volBar.value) / 100.0 });
   });
 
-  el("tabLyrics").addEventListener("click", () => {
-    activeTab = "lyrics";
-    el("tabLyrics").classList.add("active");
-    el("tabChat").classList.remove("active");
-    el("lyricsPanel").classList.remove("hidden");
-    el("chatPanel").classList.add("hidden");
+  function switchTab(tab) {
+    activeTab = tab;
+    el("tabLyrics").classList.toggle("active", tab === "lyrics");
+    el("tabBrowse").classList.toggle("active", tab === "browse");
+    el("tabChat").classList.toggle("active", tab === "chat");
+    el("lyricsPanel").classList.toggle("hidden", tab !== "lyrics");
+    el("browsePanel").classList.toggle("hidden", tab !== "browse");
+    el("chatPanel").classList.toggle("hidden", tab !== "chat");
+    if (tab === "chat") {
+      const scroll = el("chatScroll");
+      scroll.scrollTop = scroll.scrollHeight;
+    } else if (tab === "browse") {
+      if (!browseData || browseData.section !== browseSection || browseStale) {
+        browseStale = false;
+        loadBrowse(false);
+      }
+    }
+  }
+
+  el("tabLyrics").addEventListener("click", () => switchTab("lyrics"));
+  el("tabBrowse").addEventListener("click", () => switchTab("browse"));
+  el("tabChat").addEventListener("click", () => switchTab("chat"));
+
+  document.querySelectorAll("[data-sec]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sec = btn.getAttribute("data-sec");
+      if (!sec || sec === browseSection) return;
+      browseSection = sec;
+      document.querySelectorAll("[data-sec]").forEach(b => b.classList.toggle("active", b.getAttribute("data-sec") === sec));
+      el("browseSearch").value = "";
+      showBrowseNotice("");
+      loadBrowse(false);
+    });
   });
-  el("tabChat").addEventListener("click", () => {
-    activeTab = "chat";
-    el("tabChat").classList.add("active");
-    el("tabLyrics").classList.remove("active");
-    el("chatPanel").classList.remove("hidden");
-    el("lyricsPanel").classList.add("hidden");
-    const scroll = el("chatScroll");
-    scroll.scrollTop = scroll.scrollHeight;
+
+  el("browseSearch").addEventListener("input", () => {
+    clearTimeout(browseDebounce);
+    browseDebounce = setTimeout(() => loadBrowse(false), 220);
+  });
+
+  el("browseRefreshBtn").addEventListener("click", () => {
+    if (browseSection === "program") {
+      sendCommand({ action: "refresh_program" });
+    } else {
+      loadBrowse(true);
+    }
+  });
+
+  el("browsePodFeedSelect").addEventListener("change", () => {
+    browseFeed = el("browsePodFeedSelect").value || "";
+    loadBrowse(false);
   });
 
   el("chatForm").addEventListener("submit", e => {

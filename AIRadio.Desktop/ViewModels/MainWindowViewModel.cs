@@ -37,6 +37,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IPodcastStorage? _podcastStorage;
     private CancellationTokenSource? _podcastDigestCts;
     private string? _activePodcastEpisodeKey;
+    private string _digestingEpisodeKey = string.Empty;
     private readonly IDisposable _trackEndedSub;
     private readonly IDisposable _naturalTrackCompletedSub;
     private readonly IDisposable _trackChangedSub;
@@ -1135,7 +1136,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         var digestCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
         _podcastDigestCts = digestCts;
 
+        _digestingEpisodeKey = episode.EpisodeKey;
         episode.IsDigesting = true;
+        UpdateWebRemoteSnapshot(immediate: true);
         try
         {
             var script = await _djService.GeneratePodcastDigestAsync(episode, digestCts.Token);
@@ -1162,6 +1165,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         finally
         {
             episode.IsDigesting = false;
+            if (string.Equals(_digestingEpisodeKey, episode.EpisodeKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _digestingEpisodeKey = string.Empty;
+                UpdateWebRemoteSnapshot(immediate: true);
+            }
         }
     }
 
