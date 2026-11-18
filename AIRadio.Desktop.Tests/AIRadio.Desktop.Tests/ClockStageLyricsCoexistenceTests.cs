@@ -119,6 +119,8 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
     }
 
@@ -167,13 +169,15 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
     }
 
     [AvaloniaFact]
     public void ToggleLyricsModeCommand_FlipsMode_PersistsSetting()
     {
-        var vm = CreateViewModel(null);
+        using var vm = CreateViewModel(null);
         Assert.False(vm.HasCurrentTrack); // 中栏点击守门：无曲目不进空歌词层
         Assert.False(vm.IsLyricsMode);    // 全新 settings.json 默认关
 
@@ -203,15 +207,18 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
 
         // 有在播曲目：面板本体与其子元素（经祖先链）都命中切换
         var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
         Window? window2 = null;
+        MainWindowViewModel? vmWithTrack = null;
         try
         {
             var trackChanged = new Subject<Track?>();
-            var vmWithTrack = CreateViewModel(track, out _, trackChanged);
+            vmWithTrack = CreateViewModel(track, out _, trackChanged);
             trackChanged.OnNext(track);
 
             var stage2 = new ClockStage { DataContext = vmWithTrack };
@@ -230,6 +237,8 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window2?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vmWithTrack?.Dispose();
         }
     }
 
@@ -263,13 +272,15 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
     }
 
     [AvaloniaFact]
     public async Task CycleSpectrumStyleCommand_CyclesThroughAllStyles_Persists()
     {
-        var vm = CreateViewModel(null, out var settingsFile);
+        using var vm = CreateViewModel(null, out var settingsFile);
         // 保存守卫契约：对已存在文件的自动保存要求本会话完成过一次加载
         //（首次保存会创建文件，后续保存都在"文件已存在"状态下进行）
         await vm.SettingsVM.LoadAsync();
@@ -348,6 +359,8 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
     }
 
@@ -382,6 +395,8 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
     }
 
@@ -434,6 +449,8 @@ public class ClockStageLyricsCoexistenceTests
         finally
         {
             window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
         }
     }
 }
