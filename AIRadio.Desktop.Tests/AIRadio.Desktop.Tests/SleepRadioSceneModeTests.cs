@@ -409,7 +409,7 @@ public class SleepRadioSceneModeTests
             Assert.Equal("伴眠电台", AppLanguage.Get("S_SceneModeSleep"));
             Assert.Equal("伴眠电台 · 晚安", AppLanguage.Get("S_SceneSleepStatus"));
             Assert.Equal("专注模式", AppLanguage.Get("S_SceneModeFocus"));
-            Assert.Equal("专注电台 · 心流免打扰", AppLanguage.Get("S_SceneFocusStatus"));
+            Assert.Equal("专注电台 · 纯音免打扰", AppLanguage.Get("S_SceneFocusStatus"));
             Assert.NotEmpty(AppLanguage.Get("S_FocusModeTooltipOff"));
             Assert.NotEmpty(AppLanguage.Get("S_FocusModeTooltipOn"));
 
