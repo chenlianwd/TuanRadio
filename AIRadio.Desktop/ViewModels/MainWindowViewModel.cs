@@ -728,13 +728,31 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 1s 时钟推进（spec §5.5）
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
             .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(_ =>
-            {
-                Now = DateTimeOffset.Now;
-                RefreshLocalizedClockText();
-            });
+            .Subscribe(_ => DispatchClockTick());
 
         InitializeWebRemote(webRemoteService);
+    }
+
+    private void DispatchClockTick()
+    {
+        if (IsDisposed)
+            return;
+
+        if (Avalonia.Application.Current != null && !Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(ApplyClockTick);
+            return;
+        }
+
+        ApplyClockTick();
+    }
+
+    private void ApplyClockTick()
+    {
+        if (IsDisposed)
+            return;
+        Now = DateTimeOffset.Now;
+        RefreshLocalizedClockText();
     }
 
     internal async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
