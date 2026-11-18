@@ -142,7 +142,6 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IAppUpdateService _appUpdate;
     private readonly Action<string> _openExternalUrl;
     private AppUpdateCheckResult? _pendingUpdate;
-    private int _updateDownloadPercent;
     private int _disposed;
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIRadio");
@@ -338,6 +337,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string UpdateActionButtonText { get; private set; } = string.Empty;
     [Reactive] public partial string UpdateStatusText { get; private set; } = string.Empty;
     [Reactive] public partial bool IsUpdateBusy { get; private set; }
+    [Reactive] public partial bool IsUpdateDownloading { get; private set; }
+    [Reactive] public partial int UpdateDownloadPercent { get; private set; }
     [Reactive] public partial UpdateActionPhase UpdatePhase { get; private set; } = UpdateActionPhase.Check;
 
     public ReactiveCommand<Unit, Unit> TestConnectionCommand { get; }
@@ -2975,10 +2976,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             ? AppLanguage.T($"TuanRadio FM v{ver}（安装版）", $"TuanRadio FM v{ver} (Installed)")
             : AppLanguage.T($"TuanRadio FM v{ver}（免安装版）", $"TuanRadio FM v{ver} (Portable)");
 
+        IsUpdateDownloading = IsUpdateBusy && UpdatePhase == UpdateActionPhase.Download;
+        if (!IsUpdateDownloading && UpdateDownloadPercent != 0)
+            UpdateDownloadPercent = 0;
+
         if (IsUpdateBusy)
         {
             UpdateActionButtonText = UpdatePhase == UpdateActionPhase.Download
-                ? AppLanguage.T($"正在下载 {_updateDownloadPercent}%…", $"Downloading {_updateDownloadPercent}%…")
+                ? AppLanguage.T($"正在下载 {UpdateDownloadPercent}%…", $"Downloading {UpdateDownloadPercent}%…")
                 : AppLanguage.T("正在检查…", "Checking…");
             return;
         }
@@ -3100,7 +3105,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         }
 
         IsUpdateBusy = true;
-        _updateDownloadPercent = 0;
+        UpdateDownloadPercent = 0;
         RefreshUpdateTexts();
         try
         {
@@ -3108,7 +3113,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 _pendingUpdate,
                 percent =>
                 {
-                    _updateDownloadPercent = Math.Clamp(percent, 0, 100);
+                    UpdateDownloadPercent = Math.Clamp(percent, 0, 100);
                     RefreshUpdateTexts();
                 },
                 _lifetimeCts.Token);

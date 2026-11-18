@@ -49,6 +49,31 @@
         </Style>
         <!-- AutoCompleteBox 水印：11.3.9 自带 Watermark 属性（Fluent 模板经 TemplateBinding
              转发到内嵌 TextBox）；早期"/template/ 样式恢复"路径实证不生效，勿再走 -->
+        <!-- 版本更新按钮：下载态保留胶囊轮廓与可读字色，底层裁剪渲染进度填充 -->
+        <Style Selector="Button.update-action">
+            <Setter Property="Background" Value="{DynamicResource C_11121620}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_333A3D4A}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="14"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+        </Style>
+        <Style Selector="Button.update-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
+        </Style>
+        <Style Selector="Button.update-action.downloading">
+            <Setter Property="MinWidth" Value="132"/>
+        </Style>
+        <Style Selector="Button.update-action.downloading:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_11121620}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_6656F5C4}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+        </Style>
+        <Style Selector="Button.update-action.downloading TextBlock#UpdateActionButtonTextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="*,Auto" RowSpacing="16">
@@ -512,9 +537,43 @@
                             <TextBlock Text="{DynamicResource S_UpdateSectionTitle}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                             <DockPanel>
                                 <Button x:Name="UpdateActionButton" DockPanel.Dock="Right"
+                                        Classes="update-action"
+                                        Classes.downloading="{Binding IsUpdateDownloading}"
                                         Command="{Binding UpdateActionCommand}"
-                                        Content="{Binding UpdateActionButtonText}"
-                                        Padding="14,6" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center"
+                                        AutomationProperties.Name="{Binding UpdateActionButtonText}">
+                                    <Border CornerRadius="13" ClipToBounds="True">
+                                        <Grid>
+                                            <ProgressBar x:Name="UpdateDownloadProgressBar"
+                                                         IsVisible="{Binding IsUpdateDownloading}"
+                                                         Minimum="0" Maximum="100"
+                                                         Value="{Binding UpdateDownloadPercent}"
+                                                         MinWidth="0" MinHeight="0"
+                                                         HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                                         Background="Transparent"
+                                                         Foreground="{DynamicResource C_3356F5C4}"
+                                                         IsHitTestVisible="False">
+                                                <ProgressBar.Template>
+                                                    <ControlTemplate>
+                                                        <Border x:Name="PART_Track"
+                                                                Background="{TemplateBinding Background}">
+                                                            <Border x:Name="PART_Indicator"
+                                                                    HorizontalAlignment="Left"
+                                                                    VerticalAlignment="Stretch"
+                                                                    Background="{TemplateBinding Foreground}"/>
+                                                        </Border>
+                                                    </ControlTemplate>
+                                                </ProgressBar.Template>
+                                            </ProgressBar>
+                                            <TextBlock x:Name="UpdateActionButtonTextBlock"
+                                                       Text="{Binding UpdateActionButtonText}"
+                                                       Padding="14,6"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       TextAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                </Button>
                                 <TextBlock x:Name="AppVersionTextBlock" Text="{Binding AppVersionText}"
                                            Foreground="{DynamicResource C_FFEDEDF5}" FontSize="12" VerticalAlignment="Center"
                                            TextWrapping="Wrap"/>
