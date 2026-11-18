@@ -22,7 +22,20 @@ public interface IPodcastStorage
 {
     Task<IReadOnlyList<PodcastFeed>> LoadFeedsAsync(CancellationToken ct = default);
     Task<bool> AddOrUpdateFeedAsync(PodcastFeed feed, CancellationToken ct = default);
+    Task<int> AddFeedsIfMissingAsync(IEnumerable<PodcastFeed> feeds, CancellationToken ct = default)
+        => AddFeedsIfMissingFallbackAsync(feeds, ct);
     Task<bool> RemoveFeedAsync(string rssUrl, CancellationToken ct = default);
+
+    private async Task<int> AddFeedsIfMissingFallbackAsync(IEnumerable<PodcastFeed> feeds, CancellationToken ct)
+    {
+        var added = 0;
+        foreach (var feed in feeds)
+        {
+            if (await AddOrUpdateFeedAsync(feed, ct).ConfigureAwait(false))
+                added++;
+        }
+        return added;
+    }
     Task<PodcastEpisodeProgress?> GetEpisodeProgressAsync(string episodeKey, CancellationToken ct = default);
     Task UpdateEpisodeProgressAsync(
         string episodeKey,

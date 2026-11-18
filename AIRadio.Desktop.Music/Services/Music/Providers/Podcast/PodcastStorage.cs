@@ -77,21 +77,7 @@ public sealed class PodcastStorage : IPodcastStorage, IDisposable
             var existingIdx = store.Feeds.FindIndex(f =>
                 string.Equals(NormalizeRssUrl(f.RssUrl), normalizedUrl, StringComparison.OrdinalIgnoreCase));
 
-            var sanitized = new PodcastFeed
-            {
-                FeedId = string.IsNullOrWhiteSpace(feed.FeedId)
-                    ? PodcastFeed.CustomFeedPrefix + PodcastEpisode.BuildEpisodeKey(normalizedUrl, null, normalizedUrl)
-                    : feed.FeedId,
-                Title = string.IsNullOrWhiteSpace(feed.Title) ? normalizedUrl : feed.Title.Trim(),
-                Author = feed.Author?.Trim() ?? string.Empty,
-                Description = feed.Description?.Trim() ?? string.Empty,
-                RssUrl = normalizedUrl,
-                ImageUrl = feed.ImageUrl?.Trim() ?? string.Empty,
-                Category = feed.Category?.Trim() ?? string.Empty,
-                Language = string.IsNullOrWhiteSpace(feed.Language) ? "zh" : feed.Language.Trim(),
-                IsCurated = feed.IsCurated,
-                LastUpdatedUtc = feed.LastUpdatedUtc ?? DateTimeOffset.UtcNow
-            };
+            var sanitized = SanitizeFeed(feed, normalizedUrl);
 
             var isNew = existingIdx < 0;
             if (isNew)
@@ -107,6 +93,60 @@ public sealed class PodcastStorage : IPodcastStorage, IDisposable
             _gate.Release();
         }
     }
+
+    public async Task<int> AddFeedsIfMissingAsync(IEnumerable<PodcastFeed> feeds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(feeds);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var store = await EnsureLoadedCoreAsync(ct).ConfigureAwait(false);
+            var existingUrls = new HashSet<string>(
+                store.Feeds.Select(f => NormalizeRssUrl(f.RssUrl)).Where(u => !string.IsNullOrEmpty(u)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var toInsert = new List<PodcastFeed>();
+            foreach (var feed in feeds)
+            {
+                if (feed == null)
+                    continue;
+                var normalizedUrl = NormalizeRssUrl(feed.RssUrl);
+                if (string.IsNullOrEmpty(normalizedUrl) || !existingUrls.Add(normalizedUrl))
+                    continue;
+                toInsert.Add(SanitizeFeed(feed, normalizedUrl));
+            }
+
+            if (toInsert.Count == 0)
+                return 0;
+
+            for (var i = toInsert.Count - 1; i >= 0; i--)
+                store.Feeds.Insert(0, toInsert[i]);
+
+            await SaveStoreCoreAsync(store, ct).ConfigureAwait(false);
+            return toInsert.Count;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private static PodcastFeed SanitizeFeed(PodcastFeed feed, string normalizedUrl) => new()
+    {
+        FeedId = string.IsNullOrWhiteSpace(feed.FeedId)
+            ? PodcastFeed.CustomFeedPrefix + PodcastEpisode.BuildEpisodeKey(normalizedUrl, null, normalizedUrl)
+            : feed.FeedId,
+        Title = string.IsNullOrWhiteSpace(feed.Title) ? normalizedUrl : feed.Title.Trim(),
+        Author = feed.Author?.Trim() ?? string.Empty,
+        Description = feed.Description?.Trim() ?? string.Empty,
+        RssUrl = normalizedUrl,
+        ImageUrl = feed.ImageUrl?.Trim() ?? string.Empty,
+        Category = feed.Category?.Trim() ?? string.Empty,
+        Language = string.IsNullOrWhiteSpace(feed.Language) ? "zh" : feed.Language.Trim(),
+        IsCurated = feed.IsCurated,
+        LastUpdatedUtc = feed.LastUpdatedUtc ?? DateTimeOffset.UtcNow
+    };
 
     public async Task<bool> RemoveFeedAsync(string rssUrl, CancellationToken ct = default)
     {

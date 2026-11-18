@@ -18,6 +18,8 @@ public sealed class PodcastEpisode : INotifyPropertyChanged
     private long _resumePositionMs;
     private bool _isCompleted;
     private bool _isDigesting;
+    private bool _isTranscribing;
+    private string _transcriptExcerpt = string.Empty;
 
     public string EpisodeKey { get; init; } = string.Empty;
     public string FeedUrl { get; init; } = string.Empty;
@@ -69,6 +71,33 @@ public sealed class PodcastEpisode : INotifyPropertyChanged
         }
     }
 
+    public bool IsTranscribing
+    {
+        get => _isTranscribing;
+        set
+        {
+            if (_isTranscribing == value)
+                return;
+            _isTranscribing = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsTranscribing)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DigestButtonText)));
+        }
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string TranscriptExcerpt
+    {
+        get => _transcriptExcerpt;
+        set
+        {
+            var normalized = value ?? string.Empty;
+            if (string.Equals(_transcriptExcerpt, normalized, StringComparison.Ordinal))
+                return;
+            _transcriptExcerpt = normalized;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TranscriptExcerpt)));
+        }
+    }
+
     [System.Text.Json.Serialization.JsonIgnore]
     public bool HasResumePosition => !IsCompleted && ResumePositionMs > 3000;
 
@@ -76,9 +105,11 @@ public sealed class PodcastEpisode : INotifyPropertyChanged
     public bool HasProgressBadge => IsCompleted || HasResumePosition;
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public string DigestButtonText => IsDigesting
-        ? AppLanguage.Get("S_PodcastDigesting")
-        : AppLanguage.Get("S_PodcastAiDigest");
+    public string DigestButtonText => IsTranscribing
+        ? AppLanguage.Get("S_PodcastTranscribing")
+        : IsDigesting
+            ? AppLanguage.Get("S_PodcastDigesting")
+            : AppLanguage.Get("S_PodcastAiDigest");
 
     [System.Text.Json.Serialization.JsonIgnore]
     public string DisplayProgressBadge

@@ -456,7 +456,14 @@ public sealed class AppUpdateServiceTests : IDisposable
             Assert.Equal(expectedFill.ToUInt32(), ((ISolidColorBrush)indicator.Background!).Color.ToUInt32());
 
             downloadGate.SetResult();
-            Dispatcher.UIThread.RunJobs();
+            var deadline = Environment.TickCount64 + 1500;
+            do
+            {
+                Dispatcher.UIThread.RunJobs();
+                if (button.IsEffectivelyEnabled && !vm.IsUpdateBusy)
+                    break;
+                Thread.Sleep(5);
+            } while (Environment.TickCount64 < deadline);
 
             Assert.False(vm.IsUpdateBusy);
             Assert.False(vm.IsUpdateDownloading);
