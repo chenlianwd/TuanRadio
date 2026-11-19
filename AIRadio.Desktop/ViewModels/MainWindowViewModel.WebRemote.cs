@@ -96,6 +96,8 @@ public partial class MainWindowViewModel
 
         subs.Add(PlayerVM.WhenAnyValue(
                 x => x.IsLiveStream,
+                x => x.IsPodcast,
+                x => x.PlaybackRate,
                 x => x.TotalSeconds,
                 x => x.Volume,
                 x => x.IsShuffled,
@@ -333,6 +335,7 @@ public partial class MainWindowViewModel
             IsPlaying = PlayerVM.IsPlaying,
             IsLiveStream = PlayerVM.IsLiveStream,
             IsPodcast = currentTrack?.IsPodcastEpisode ?? false,
+            PlaybackRate = PlayerVM.PlaybackRate,
             IsFavorite = IsCurrentFavorite,
             PositionSeconds = PlayerVM.CurrentSeconds,
             DurationSeconds = PlayerVM.TotalSeconds,
@@ -755,6 +758,32 @@ public partial class MainWindowViewModel
                 var maxDur = _audioService.Duration.TotalSeconds;
                 var clampedSec = maxDur > 0 ? Math.Clamp(sec, 0.0, maxDur) : Math.Max(0.0, sec);
                 _audioService.Seek(TimeSpan.FromSeconds(clampedSec));
+                return WebRemoteCommandResult.Success();
+
+            case "seek_relative":
+                if (cmd.Value is not double offsetSec || double.IsNaN(offsetSec) || double.IsInfinity(offsetSec))
+                    return WebRemoteCommandResult.Fail("invalid_offset");
+                if (_audioService.CurrentTrack is { IsLiveStream: true })
+                    return WebRemoteCommandResult.Fail("live_stream_not_seekable");
+                var clampedOffset = Math.Clamp(offsetSec, -300.0, 300.0);
+                _audioService.SeekRelative(TimeSpan.FromSeconds(clampedOffset));
+                UpdateWebRemoteSnapshot(immediate: true);
+                return WebRemoteCommandResult.Success();
+
+            case "set_playback_rate":
+                if (cmd.Value is not double reqRate || double.IsNaN(reqRate) || double.IsInfinity(reqRate) || reqRate <= 0)
+                    return WebRemoteCommandResult.Fail("invalid_playback_rate");
+                if (_audioService.CurrentTrack is not { IsPodcastEpisode: true })
+                    return WebRemoteCommandResult.Fail("podcast_only_action");
+                PlayerVM.SetPlaybackRate((float)reqRate, notifyPersist: true);
+                UpdateWebRemoteSnapshot(immediate: true);
+                return WebRemoteCommandResult.Success();
+
+            case "cycle_playback_rate":
+                if (_audioService.CurrentTrack is not { IsPodcastEpisode: true })
+                    return WebRemoteCommandResult.Fail("podcast_only_action");
+                PlayerVM.CyclePlaybackRate();
+                UpdateWebRemoteSnapshot(immediate: true);
                 return WebRemoteCommandResult.Success();
 
             case "toggle_focus_mode":

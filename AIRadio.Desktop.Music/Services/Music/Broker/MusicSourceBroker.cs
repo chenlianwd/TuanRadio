@@ -551,7 +551,7 @@ public class MusicSourceBroker : IMusicSourceBroker
 
     /// <summary>曲目解析缓存漏斗：命中直接返回；forceRefresh 读跳过且解析前逐出；
     /// 回退结果不入缓存（缓存命中不重放身份回写，防"Id 指向 A 源/URL 是 B 源直链"错位）。
-    /// 声明媒体信息（编码/码率/试听）仅随首选源命中透传；跨源回退路径无声明值。</summary>
+    /// 声明媒体信息（编码/码率/试听）与播放头在首选源与跨源回退两条路径均随实际生效源透传。</summary>
     private async Task<ResolveTrackResult?> GetPlayUrlCoreAsync(
         OnlineTrack track,
         bool forceRefresh,
@@ -592,7 +592,13 @@ public class MusicSourceBroker : IMusicSourceBroker
         var beforeId = track.Id;
         var url = preferred != null && resolved != null ? ToPlayableUrl(preferred, resolved) : null;
         if (string.IsNullOrWhiteSpace(url))
-            url = await GetFallbackPlayUrlAsync(track, preferred, deadline, cancellationToken).ConfigureAwait(false);
+        {
+            var fallback = await ResolveFallbackAsync(track, preferred, deadline, cancellationToken).ConfigureAwait(false);
+            if (fallback == null)
+                return null;
+            url = fallback.Value.Url;
+            resolved = fallback.Value.Media;
+        }
         if (string.IsNullOrWhiteSpace(url))
             return null;
 
@@ -624,15 +630,28 @@ public class MusicSourceBroker : IMusicSourceBroker
     /// 当前音源已经提前结束时，跳过该音源并按歌曲元数据寻找替代播放地址。
     /// 成功时同步更新 track.Id，确保后续刷新继续使用实际生效的音源。
     /// </summary>
-    public Task<string?> GetAlternativePlayUrlAsync(
+    public async Task<string?> GetAlternativePlayUrlAsync(
+        OnlineTrack track,
+        CancellationToken cancellationToken)
+        => (await ResolveAlternativeTrackAsync(track, cancellationToken).ConfigureAwait(false))?.Url;
+
+    /// <summary>
+    /// 跨源回退对象化解析：跳过当前音源按歌曲元数据寻源，返回替代源的 URL、音质声明值与播放头。
+    /// 成功时同步更新 track 身份与元数据。
+    /// </summary>
+    public async Task<ResolveTrackResult?> ResolveAlternativeTrackAsync(
         OnlineTrack track,
         CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow + ResolveOverallDeadline;
-        return GetFallbackPlayUrlAsync(track, FindProvider(track.Id), deadline, cancellationToken);
+        var beforeId = track.Id;
+        var fallback = await ResolveFallbackAsync(track, FindProvider(track.Id), deadline, cancellationToken).ConfigureAwait(false);
+        return fallback == null
+            ? null
+            : BuildResolveResult(fallback.Value.Url, track, beforeId, fallback.Value.Media);
     }
 
-    private async Task<string?> GetFallbackPlayUrlAsync(
+    private async Task<(string Url, ResolvedMedia Media)?> ResolveFallbackAsync(
         OnlineTrack track,
         IMusicProvider? excludedProvider,
         DateTimeOffset deadline,
@@ -665,20 +684,20 @@ public class MusicSourceBroker : IMusicSourceBroker
 
             // 任务已全部启动，但按优先级逐个等待：高优先级源一旦命中即可立即解析 URL，
             // 不必等一个低优先级挂起源跑满超时。
-            string? resolvedUrl = null;
+            (string Url, ResolvedMedia Media)? resolvedFallback = null;
             try
             {
                 foreach (var search in searches)
                 {
                     var (provider, candidates) = await search;
-                    resolvedUrl = await TryResolveFallbackCandidateAsync(
+                    resolvedFallback = await TryResolveFallbackCandidateAsync(
                         track,
                         provider,
                         candidates,
                         excludedProvider,
                         deadline,
                         cancellationToken);
-                    if (!string.IsNullOrWhiteSpace(resolvedUrl))
+                    if (resolvedFallback != null)
                         break;
                 }
             }
@@ -696,8 +715,8 @@ public class MusicSourceBroker : IMusicSourceBroker
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(resolvedUrl))
-                return resolvedUrl;
+            if (resolvedFallback != null)
+                return resolvedFallback;
         }
         else if (fastSources.Length > 0)
         {
@@ -710,7 +729,7 @@ public class MusicSourceBroker : IMusicSourceBroker
 
     /// <summary>
     /// 全局源策略重排（稳定/音质优先）：按源分级升序稳定排序，类内保持用户序；
-    /// 覆盖优先返回原序（现状）。GetAlternativePlayUrlAsync 复用同一回退漏斗，一并生效。
+    /// 覆盖优先返回原序（现状）。GetAlternativePlayUrlAsync / ResolveAlternativeTrackAsync 复用同一回退漏斗，一并生效。
     /// </summary>
     private IMusicProvider[] ApplySourcePolicyOrder(IMusicProvider[] providers)
     {
@@ -725,7 +744,7 @@ public class MusicSourceBroker : IMusicSourceBroker
             .ToArray();
     }
 
-    private async Task<string?> TryResolveFallbackCandidateAsync(
+    private async Task<(string Url, ResolvedMedia Media)?> TryResolveFallbackCandidateAsync(
         OnlineTrack track,
         IMusicProvider provider,
         IReadOnlyList<OnlineTrack> candidates,
@@ -748,15 +767,14 @@ public class MusicSourceBroker : IMusicSourceBroker
             return null;
         }
 
-        var url = ToPlayableUrl(
+        var media = await ResolveWithTimeout(
             provider,
-            await ResolveWithTimeout(
-                provider,
-                StripSourcePrefix(candidate.Id),
-                candidate.ProviderMetadata,
-                urlBudget,
-                cancellationToken));
-        if (string.IsNullOrWhiteSpace(url))
+            StripSourcePrefix(candidate.Id),
+            candidate.ProviderMetadata,
+            urlBudget,
+            cancellationToken);
+        var url = ToPlayableUrl(provider, media);
+        if (media == null || string.IsNullOrWhiteSpace(url))
             return null;
 
         var previousSource = excludedProvider?.Descriptor.DisplayName ?? "unknown";
@@ -778,7 +796,7 @@ public class MusicSourceBroker : IMusicSourceBroker
             track.Title,
             previousSource,
             provider.Descriptor.DisplayName);
-        return url;
+        return (url, media);
     }
 
     /// <summary>

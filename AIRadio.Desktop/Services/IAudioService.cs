@@ -12,6 +12,10 @@ public interface IAudioService
     TimeSpan CurrentPosition { get; }
     TimeSpan Duration { get; }
     float Volume { get; set; }
+    /// <summary>当前实际生效的播放倍速（仅播客单集允许非 1.0x，普通歌曲与直播电台恒为 1.0x）。</summary>
+    float PlaybackRate => 1.0f;
+    /// <summary>播客专属记忆倍速偏好。</summary>
+    float PodcastPlaybackRate => 1.0f;
 
     Track? CurrentTrack { get; }
     IReadOnlyList<Track> Playlist { get; }
@@ -26,6 +30,7 @@ public interface IAudioService
     IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices { get; }
     IObservable<TrackMediaInfo> TrackMediaInfo { get; }
     IObservable<string?> LiveMetadataChanged => System.Reactive.Linq.Observable.Empty<string?>();
+    IObservable<float> PlaybackRateChanged => System.Reactive.Linq.Observable.Empty<float>();
 
     void LoadTracks(IEnumerable<Track> tracks);
     void LoadFiles(IEnumerable<string> filePaths);
@@ -33,6 +38,10 @@ public interface IAudioService
     void Pause();
     void Stop();
     void Seek(TimeSpan position);
+    /// <summary>相对当前播放位置快进或快退（直播电台自动忽略，结果自动夹逼在安全范围内）。</summary>
+    void SeekRelative(TimeSpan offset) { }
+    /// <summary>设置播客倍速偏好；当前播放播客单集时立即生效，切回普通歌曲或直播电台自动恢复 1.0x。</summary>
+    void SetPlaybackRate(float rate) { }
     void Next();
     void SetNextCallback(Func<CancellationToken, Task<Track?>>? callback);
     void Previous();

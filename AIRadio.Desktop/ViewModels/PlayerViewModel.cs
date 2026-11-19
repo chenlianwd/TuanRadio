@@ -18,6 +18,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _posSub;
     private readonly IDisposable _volSub;
     private readonly IDisposable? _mediaInfoSub;
+    private readonly IDisposable? _playbackRateSub;
     // 最近一次 LibVLC 实际轨道信息；语言切换重算文案时判断是否仍属当前曲目
     private TrackMediaInfo? _lastMediaInfo;
     // 常驻文案随语言切换重算；静态事件必须持委托在 Dispose 退订
@@ -36,8 +37,16 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool HasQuality { get; set; }
     [Reactive] public partial string TrackPreviewText { get; set; } = AppLanguage.T("试听片段", "Preview");
     [Reactive] public partial bool TrackIsPreview { get; set; }
+    public static readonly float[] PodcastPlaybackRates = [0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f];
+    public const int PodcastSkipBackwardSeconds = 15;
+    public const int PodcastSkipForwardSeconds = 30;
+
     [Reactive] public partial bool IsPlaying { get; set; }
     [Reactive] public partial bool IsLiveStream { get; set; }
+    [Reactive] public partial bool IsPodcast { get; set; }
+    [Reactive] public partial float PlaybackRate { get; set; } = 1.0f;
+    [Reactive] public partial string PlaybackRateText { get; set; } = "1.0x";
+    [Reactive] public partial bool IsNonDefaultPlaybackRate { get; set; }
     [Reactive] public partial double CurrentSeconds { get; set; }
     [Reactive] public partial double TotalSeconds { get; set; }
     [Reactive] public partial float Volume { get; set; } = 0.8f;
@@ -57,6 +66,12 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> NextCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleShuffleCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleRepeatCommand { get; }
+    public ReactiveCommand<Unit, Unit> SkipBackwardCommand { get; }
+    public ReactiveCommand<Unit, Unit> SkipForwardCommand { get; }
+    public ReactiveCommand<Unit, Unit> CyclePlaybackRateCommand { get; }
+
+    /// <summary>用户主动调整播客倍速时触发，供宿主持久化至 settings.json。</summary>
+    public event Action<float>? PodcastPlaybackRateChanged;
 
     public PlayerViewModel(IAudioService audioService)
     {
@@ -93,6 +108,13 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             UpdateRepeatMode(next);
         });
 
+        SkipBackwardCommand = ReactiveCommand.Create(() => SkipRelative(-PodcastSkipBackwardSeconds));
+        SkipForwardCommand = ReactiveCommand.Create(() => SkipRelative(PodcastSkipForwardSeconds));
+        CyclePlaybackRateCommand = ReactiveCommand.Create(CyclePlaybackRate);
+
+        IsPodcast = _audioService.CurrentTrack?.IsPodcastEpisode ?? false;
+        SyncPlaybackRateFromService();
+
         _trackSub = _audioService.TrackChanged
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(track =>
@@ -100,6 +122,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
                 _lastMediaInfo = null;
                 _liveStreamNowPlaying = null;
                 IsLiveStream = track?.IsLiveStream ?? false;
+                IsPodcast = track?.IsPodcastEpisode ?? false;
                 if (track != null)
                 {
                     TrackTitle = track.Title;
@@ -122,6 +145,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
                 else
                 {
                     IsLiveStream = false;
+                    IsPodcast = false;
                     TrackTitle = AppLanguage.T("未播放", "Nothing playing");
                     TrackArtist = "";
                     TrackSource = "";
@@ -133,7 +157,12 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
                     HasQuality = false;
                     TrackIsPreview = false;
                 }
+                SyncPlaybackRateFromService();
             });
+
+        _playbackRateSub = _audioService.PlaybackRateChanged
+            ?.ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(rate => ApplyPlaybackRateUi(IsPodcast ? rate : 1.0f));
 
         _liveMetadataSub = _audioService.LiveMetadataChanged
             ?.ObserveOn(RxApp.MainThreadScheduler)
@@ -239,6 +268,75 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         _audioService.Seek(TimeSpan.FromSeconds(seconds));
     }
 
+    public void SkipRelative(int seconds)
+    {
+        if (IsLiveStream || seconds == 0) return;
+        _audioService.SeekRelative(TimeSpan.FromSeconds(seconds));
+    }
+
+    public void SetPlaybackRate(float rate, bool notifyPersist = true)
+    {
+        var normalized = Services.AudioService.NormalizePlaybackRate(rate);
+        _audioService.SetPlaybackRate(normalized);
+        ApplyPlaybackRateUi(IsPodcast ? normalized : 1.0f);
+        if (notifyPersist)
+            PodcastPlaybackRateChanged?.Invoke(normalized);
+    }
+
+    public void CyclePlaybackRate()
+    {
+        var baseRate = IsPodcast
+            ? PlaybackRate
+            : (_audioService.PodcastPlaybackRate > 0f ? _audioService.PodcastPlaybackRate : 1.0f);
+        SetPlaybackRate(GetNextPlaybackRate(baseRate), notifyPersist: true);
+    }
+
+    public void SyncPlaybackRateFromService()
+    {
+        if (!IsPodcast)
+        {
+            ApplyPlaybackRateUi(1.0f);
+            return;
+        }
+        var raw = _audioService.PlaybackRate > 0f
+            ? _audioService.PlaybackRate
+            : (_audioService.PodcastPlaybackRate > 0f ? _audioService.PodcastPlaybackRate : 1.0f);
+        ApplyPlaybackRateUi(raw);
+    }
+
+    internal static float GetNextPlaybackRate(float current)
+    {
+        var normalized = Services.AudioService.NormalizePlaybackRate(current);
+        for (var i = 0; i < PodcastPlaybackRates.Length; i++)
+        {
+            if (Math.Abs(PodcastPlaybackRates[i] - normalized) < 0.02f)
+                return PodcastPlaybackRates[(i + 1) % PodcastPlaybackRates.Length];
+        }
+        // 非标准档位向上取最近档位，越界回 1.0x
+        foreach (var preset in PodcastPlaybackRates)
+        {
+            if (preset > normalized)
+                return preset;
+        }
+        return 1.0f;
+    }
+
+    internal static string FormatPlaybackRate(float rate)
+    {
+        var normalized = Services.AudioService.NormalizePlaybackRate(rate);
+        return Math.Abs(normalized - MathF.Round(normalized)) < 0.005f
+            ? $"{normalized:0.0}x"
+            : $"{normalized:0.##}x";
+    }
+
+    private void ApplyPlaybackRateUi(float rate)
+    {
+        var normalized = Services.AudioService.NormalizePlaybackRate(rate);
+        PlaybackRate = normalized;
+        PlaybackRateText = FormatPlaybackRate(normalized);
+        IsNonDefaultPlaybackRate = Math.Abs(normalized - 1.0f) > 0.01f;
+    }
+
     public void Dispose()
     {
         _trackSub?.Dispose();
@@ -247,6 +345,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         _volSub?.Dispose();
         _mediaInfoSub?.Dispose();
         _liveMetadataSub?.Dispose();
+        _playbackRateSub?.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
     }
 

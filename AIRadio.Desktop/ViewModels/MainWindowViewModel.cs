@@ -60,6 +60,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISleepTimerService _sleepTimerService;
     private readonly IDisposable _sleepTimerSub;
     private readonly IDisposable _sleepTimerCloseAppSub;
+    private readonly Action<float> _onPodcastPlaybackRateChanged;
     private readonly ISceneModeService _sceneModeService;
     private readonly IDisposable _sceneModeSub;
     private string? _preSleepMoodBias;
@@ -508,6 +509,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SettingsVM.SaveUiStateCommand.Execute().Subscribe();
             });
 
+        _onPodcastPlaybackRateChanged = rate =>
+        {
+            if (IsDisposed) return;
+            var normalized = AudioService.NormalizePlaybackRate(rate);
+            if (Math.Abs(SettingsVM.PodcastPlaybackRate - normalized) > 0.005f)
+            {
+                SettingsVM.PodcastPlaybackRate = normalized;
+                SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+            }
+        };
+        PlayerVM.PodcastPlaybackRateChanged += _onPodcastPlaybackRateChanged;
+
         UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
         UpdateSleepTimerState();
         UpdateFocusModeTooltip();
@@ -845,7 +858,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ResolveTrackResult? resolved = null;
         if (requireAlternative)
         {
-            url = await multi.GetAlternativePlayUrlAsync(onlineTrack, cancellationToken);
+            resolved = await multi.ResolveAlternativeTrackAsync(onlineTrack, cancellationToken);
+            url = resolved?.Url;
         }
         else
         {
@@ -1428,6 +1442,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         _sleepTimerService.CloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
         SleepTimerCloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
+        _audioService.SetPlaybackRate(SettingsVM.PodcastPlaybackRate);
+        PlayerVM.SyncPlaybackRateFromService();
         await RestoreWebRemoteAfterLoadAsync(cancellationToken);
     }
 
@@ -2317,6 +2333,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _sleepTimerService.RequestAppShutdown -= OnSleepTimerRequestAppShutdown;
         _sleepTimerSub?.Dispose();
         _sleepTimerCloseAppSub?.Dispose();
+        PlayerVM.PodcastPlaybackRateChanged -= _onPodcastPlaybackRateChanged;
         _sceneModeSub?.Dispose();
         _sceneModeService?.Dispose();
         _sleepTimerService?.Dispose();

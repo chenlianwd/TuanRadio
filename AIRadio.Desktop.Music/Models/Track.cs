@@ -83,8 +83,8 @@ public class Track : System.ComponentModel.INotifyPropertyChanged
     public AIRadio.Desktop.Services.Music.PlaybackHeaders? PlaybackHeaders { get; set; }
     /// <summary>
     /// 播放 URL 最近一次解析完成的时刻（UTC，内存不落盘）。距播放 ≤ FreshResolveSkipWindow
-    /// 时跳过后台同源预刷新（刚解析的 URL 无需再解析）；跨源回退结果不标记（回退结果无头，
-    /// 保留后台刷新补齐）。
+    /// 时跳过后台同源预刷新（刚解析的 URL 无需再解析）；跨源回退结果保守地不标记，
+    /// 仍由后台刷新对实际生效源再校验一次（回退结果本身已携带声明值与播放头）。
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public DateTimeOffset? ResolvedAtUtc { get; set; }

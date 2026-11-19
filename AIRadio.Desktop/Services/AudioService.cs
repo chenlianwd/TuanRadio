@@ -51,6 +51,9 @@ public class AudioService : IAudioService, IDisposable
     private readonly Subject<PlaybackRecoveryNotice> _playbackRecoverySubject = new();
     private readonly Subject<TrackMediaInfo> _trackMediaInfoSubject = new();
     private readonly Subject<string?> _liveMetadataSubject = new();
+    private readonly Subject<float> _playbackRateSubject = new();
+    private float _podcastPlaybackRate = 1.0f;
+    private float _effectivePlaybackRate = 1.0f;
     private readonly AutomaticSkipGuard _automaticSkipGuard = new();
     private readonly List<Track> _playlist = new();
     // UI 线程（增删/清空）与后台续播线程（NextAsync 追加）并发访问 _playlist/_currentIndex，
@@ -114,7 +117,7 @@ public class AudioService : IAudioService, IDisposable
     private static readonly TimeSpan UrlRefreshTimeout = TimeSpan.FromSeconds(8);
     // 后台预刷新新鲜度窗口：刚解析的 URL（首播 ToTrack(result) 或刷新回写）无需再同源解析，
     // 省一次后台 CDN 请求与 forceRefresh 缓存逐出；窗口远小于 CDN 签名 URL 常见有效期。
-    // 回退结果不标记新鲜（ToTrack 重载），保留后台刷新为回退首播补播放头
+    // 回退结果保守地不标记新鲜（ToTrack 重载），仍由后台刷新对实际生效源再校验一次
     private static readonly TimeSpan FreshResolveSkipWindow = TimeSpan.FromMinutes(2);
     // 实际轨道信息解析预算：在线流要经网络预解析（对音源 CDN 多发一次 GET），本地文件快速返回
     private const int LocalMediaParseTimeoutMs = 2500;
@@ -209,6 +212,8 @@ public class AudioService : IAudioService, IDisposable
     }
     public bool IsShuffled => _shuffle;
     public string RepeatMode => _repeatMode;
+    public float PlaybackRate => Volatile.Read(ref _effectivePlaybackRate);
+    public float PodcastPlaybackRate => Volatile.Read(ref _podcastPlaybackRate);
 
     public IObservable<float[]> SpectrumData => _spectrumSubject.AsObservable();
     public IObservable<Track?> TrackChanged => _trackChangedSubject.AsObservable();
@@ -219,6 +224,7 @@ public class AudioService : IAudioService, IDisposable
     public IObservable<PlaybackRecoveryNotice> PlaybackRecoveryNotices => _playbackRecoverySubject.AsObservable();
     public IObservable<TrackMediaInfo> TrackMediaInfo => _trackMediaInfoSubject.AsObservable();
     public IObservable<string?> LiveMetadataChanged => _liveMetadataSubject.AsObservable();
+    public IObservable<float> PlaybackRateChanged => _playbackRateSubject.AsObservable();
     public IObservable<bool> TtsStateChanged => _ttsStateSubject.AsObservable();
     public IObservable<string> TtsError => _ttsErrorSubject.AsObservable();
 
@@ -520,6 +526,7 @@ public class AudioService : IAudioService, IDisposable
         _playbackRecoverySubject.Dispose();
         _trackMediaInfoSubject.Dispose();
         _liveMetadataSubject.Dispose();
+        _playbackRateSubject.Dispose();
         _ttsStateSubject.Dispose();
         _ttsErrorSubject.Dispose();
         // 不释放 _lifetimeCts：后台延迟任务（重试/续播/旧 Media 释放）在 IsDisposed 检查
@@ -532,6 +539,18 @@ public class AudioService : IAudioService, IDisposable
     {
         SetState(PlaybackState.Playing);
         MarkRecoveryPlaybackStarted();
+        var requestId = Volatile.Read(ref _playRequestId);
+        var targetRate = Volatile.Read(ref _effectivePlaybackRate);
+        // 严禁在 LibVLC 原生事件回调线程同步调用 _player.SetRate，改为后台安全补设确保网络流起播后维持目标倍速
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            if (IsDisposed || requestId != Volatile.Read(ref _playRequestId))
+                return;
+            var latestRate = Volatile.Read(ref _effectivePlaybackRate);
+            if (Math.Abs(latestRate - targetRate) > 0.001f)
+                targetRate = latestRate;
+            TryPlayerOperation(() => _player.SetRate(targetRate));
+        });
     }
 
     private void OnPlayerPaused(object? sender, EventArgs e) => SetState(PlaybackState.Paused);
@@ -877,6 +896,64 @@ public class AudioService : IAudioService, IDisposable
                 }
             }
         }
+    }
+
+    public void SeekRelative(TimeSpan offset)
+    {
+        if (IsDisposed || CurrentTrack == null || CurrentTrack.IsLiveStream)
+            return;
+        if (_currentState != PlaybackState.Playing && _currentState != PlaybackState.Paused)
+            return;
+
+        var target = ComputeRelativeSeekTarget(CurrentPosition, Duration, offset);
+        Seek(target);
+    }
+
+    public void SetPlaybackRate(float rate)
+    {
+        if (IsDisposed)
+            return;
+
+        var normalized = NormalizePlaybackRate(rate);
+        Volatile.Write(ref _podcastPlaybackRate, normalized);
+        var isPodcast = CurrentTrack?.IsPodcastEpisode == true;
+        var target = isPodcast ? normalized : 1.0f;
+        ApplyEffectivePlaybackRate(target, applyToPlayer: isPodcast);
+    }
+
+    internal static float NormalizePlaybackRate(float rate)
+    {
+        if (float.IsNaN(rate) || float.IsInfinity(rate) || rate <= 0f)
+            return 1.0f;
+        return MathF.Round(Math.Clamp(rate, 0.5f, 2.5f), 2);
+    }
+
+    internal static TimeSpan ComputeRelativeSeekTarget(TimeSpan current, TimeSpan duration, TimeSpan offset)
+    {
+        var raw = current + offset;
+        if (raw <= TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        if (duration > TimeSpan.Zero)
+        {
+            var maxTarget = duration > TimeSpan.FromSeconds(1)
+                ? duration - TimeSpan.FromSeconds(1)
+                : duration;
+            if (raw > maxTarget)
+                return maxTarget;
+        }
+
+        return raw;
+    }
+
+    private void ApplyEffectivePlaybackRate(float targetRate, bool applyToPlayer)
+    {
+        var previous = Volatile.Read(ref _effectivePlaybackRate);
+        Volatile.Write(ref _effectivePlaybackRate, targetRate);
+        if (applyToPlayer)
+            TryPlayerOperation(() => _player.SetRate(targetRate));
+        if (!IsDisposed && Math.Abs(previous - targetRate) > 0.001f)
+            _playbackRateSubject.OnNext(targetRate);
     }
 
     public void Shuffle()
@@ -1572,6 +1649,9 @@ public class AudioService : IAudioService, IDisposable
                 return;
             }
 
+            ApplyEffectivePlaybackRate(
+                track.IsPodcastEpisode ? Volatile.Read(ref _podcastPlaybackRate) : 1.0f,
+                applyToPlayer: true);
             QueuePlayerVolume(0);
             NotifyTrackChanged();
             StartFadeIn();
