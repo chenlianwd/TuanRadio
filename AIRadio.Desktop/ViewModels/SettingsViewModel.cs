@@ -253,6 +253,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial List<string> ProfileStyleTagItems { get; set; } = new();
     [Reactive] public partial bool ProfileHasPersonaTraits { get; set; }
     [Reactive] public partial List<string> ProfilePersonaTraitItems { get; set; } = new();
+    [Reactive] public partial bool ProfileHasLanguageMix { get; set; }
+    [Reactive] public partial string ProfileLanguageMixText { get; set; } = string.Empty;
+    [Reactive] public partial bool ProfileHasTimeBandPreferences { get; set; }
+    [Reactive] public partial string ProfileTimeBandSummaryText { get; set; } = string.Empty;
     [Reactive] public partial bool ProfileHasImpression { get; set; }
     [Reactive] public partial string ProfileImpressionText { get; set; } = string.Empty;
     [Reactive] public partial string ProfileImpressionMeta { get; set; } = string.Empty;
@@ -1678,10 +1682,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         var hasDigest = !string.IsNullOrWhiteSpace(snapshot.Digest?.Text);
         var hasTopArtists = snapshot.TopArtists.Count > 0;
         var hasBlacklist = snapshot.DislikeBlacklist.Count > 0;
+        var hasLanguageMix = snapshot.LanguageDistribution.Count > 0;
+        var hasTimeBandPreferences = snapshot.TimeBandPreferences.Count > 0;
         // 性格印象与口味是独立水位（16 条消息 vs 30 事件）：只聊天不收听的新用户
         // 攒出印象时卡片也必须可见，否则印象段恰好在它的目标场景不可达
         var hasImpression = !string.IsNullOrWhiteSpace(snapshot.Impression?.Text);
-        if (!hasDigest && !hasTopArtists && !hasBlacklist && !hasImpression)
+        if (!hasDigest && !hasTopArtists && !hasBlacklist && !hasImpression &&
+            !hasLanguageMix && !hasTimeBandPreferences)
         {
             ProfileHasCard = false;
             ProfileEmptyHint = AppLanguage.T(
@@ -1713,6 +1720,31 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .ToList();
         ProfileHasPersonaTraits = personaTraits.Count > 0;
         ProfilePersonaTraitItems = personaTraits;
+
+        ProfileHasLanguageMix = hasLanguageMix;
+        ProfileLanguageMixText = hasLanguageMix
+            ? ListeningPersona.FormatLanguageMix(snapshot.LanguageDistribution, isUiEn, " · ")
+            : string.Empty;
+
+        var bandColon = isUiEn ? ": " : "：";
+        var bandItems = hasTimeBandPreferences
+            ? ListeningPersona.TimeBandOrder
+                .Where(snapshot.TimeBandPreferences.ContainsKey)
+                .Select(b =>
+                {
+                    var pref = snapshot.TimeBandPreferences[b];
+                    var summary = ListeningPersona.FormatTimeBandSummary(pref, isUiEn);
+                    return string.IsNullOrEmpty(summary)
+                        ? string.Empty
+                        : $"{ListeningPersona.TimeBandLabel(b, isUiEn)}{bandColon}{summary}";
+                })
+                .Where(s => s.Length > 0)
+                .ToList()
+            : new List<string>();
+        ProfileHasTimeBandPreferences = bandItems.Count > 0;
+        ProfileTimeBandSummaryText = bandItems.Count > 0
+            ? string.Join(" / ", bandItems)
+            : string.Empty;
 
         ProfileHasImpression = hasImpression;
         ProfileImpressionText = hasImpression ? snapshot.Impression!.Text : string.Empty;
@@ -1753,6 +1785,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ProfileStyleTagItems = new();
         ProfileHasPersonaTraits = false;
         ProfilePersonaTraitItems = new();
+        ProfileHasLanguageMix = false;
+        ProfileLanguageMixText = string.Empty;
+        ProfileHasTimeBandPreferences = false;
+        ProfileTimeBandSummaryText = string.Empty;
         ProfileHasImpression = false;
         ProfileImpressionText = string.Empty;
         ProfileImpressionMeta = string.Empty;

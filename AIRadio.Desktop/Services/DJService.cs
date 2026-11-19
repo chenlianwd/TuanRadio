@@ -16,6 +16,7 @@ public class DJService : IDJService
     private readonly ITtsService? _tts;
     private readonly IMusicSearchService? _musicSearch;
     private readonly IListeningProfileService? _listeningProfile;
+    private readonly Func<DateTime> _clock;
     private DJProfile _profile = new();
     private volatile WeatherInfo? _weatherSnapshot;
     private volatile RadioSceneMode _sceneMode = RadioSceneMode.Default;
@@ -100,12 +101,13 @@ public class DJService : IDJService
     }
 
     public DJService(ILLMService llm, ITtsService? tts = null, IMusicSearchService? musicSearch = null,
-        IListeningProfileService? profile = null)
+        IListeningProfileService? profile = null, Func<DateTime>? clock = null)
     {
         _llm = llm;
         _tts = tts;
         _musicSearch = musicSearch;
         _listeningProfile = profile;
+        _clock = clock ?? (() => DateTime.Now);
     }
 
     public void Initialize(DJProfile profile)
@@ -1234,6 +1236,23 @@ Requirements:
             var moods = snapshot.MoodUsage.OrderByDescending(kv => kv.Value).Take(2).Select(kv => kv.Key).ToList();
             if (moods.Count > 0)
                 statsParts.Add((isEn ? "frequent moods: " : "常见氛围：") + string.Join(separator, moods));
+            if (snapshot.LanguageDistribution.Count > 0)
+            {
+                var langMix = ListeningPersona.FormatLanguageMix(snapshot.LanguageDistribution, isEn, separator, maxItems: 3);
+                statsParts.Add((isEn ? "language mix: " : "语种配比：") + langMix);
+            }
+            var currentBand = ListeningPersona.ResolveTimeBand(_clock());
+            if (snapshot.TimeBandPreferences.TryGetValue(currentBand, out var bandPref))
+            {
+                var bandSummary = ListeningPersona.FormatTimeBandSummary(bandPref, isEn);
+                if (!string.IsNullOrEmpty(bandSummary))
+                {
+                    var bandLabel = ListeningPersona.TimeBandLabel(currentBand, isEn);
+                    statsParts.Add(isEn
+                        ? $"at this hour ({bandLabel}): leans toward {bandSummary}"
+                        : $"当前时段（{bandLabel}）常听：{bandSummary}");
+                }
+            }
             lines.Add(string.Join(isEn ? "; " : "；", statsParts));
 
             lines.Add(isEn
