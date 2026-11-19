@@ -894,6 +894,8 @@ public class AudioService : IAudioService, IDisposable
                         podTrack.ProviderMetadata["resume_ms"] = positionMs.ToString(CultureInfo.InvariantCulture);
                     }
                 }
+                if (!IsDisposed)
+                    _positionChangedSubject.OnNext(TimeSpan.FromMilliseconds(positionMs));
             }
         }
     }

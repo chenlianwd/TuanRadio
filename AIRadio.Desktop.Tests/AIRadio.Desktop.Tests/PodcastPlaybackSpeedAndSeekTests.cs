@@ -6,6 +6,7 @@ using System.Net;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using AIRadio.Desktop.Models;
@@ -77,6 +78,36 @@ public class PodcastPlaybackSpeedAndSeekTests
 
         Assert.Equal(1.5f, audio.PodcastPlaybackRate);
         Assert.Equal(1.0f, audio.PlaybackRate);
+    }
+
+    [Fact]
+    public void AudioService_SeekRelative_WhenPaused_UpdatesResumeAndEmitsPositionChanged()
+    {
+        using var audio = new AudioService();
+        var podcast = CreatePodcastTrack();
+        audio.LoadTracks(new[] { podcast });
+
+        var currentIndexField = typeof(AudioService).GetField("_currentIndex", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var currentStateField = typeof(AudioService).GetField("_currentState", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var lastPosField = typeof(AudioService).GetField("_lastPositionMs", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        currentIndexField.SetValue(audio, 0);
+        currentStateField.SetValue(audio, PlaybackState.Paused);
+        lastPosField.SetValue(audio, 60_000L);
+
+        var emitted = new List<TimeSpan>();
+        using var sub = audio.PositionChanged.Subscribe(emitted.Add);
+
+        audio.SeekRelative(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(TimeSpan.FromSeconds(90), audio.CurrentPosition);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(90) }, emitted);
+        Assert.Equal("90000", podcast.ProviderMetadata["resume_ms"]);
+
+        audio.SeekRelative(TimeSpan.FromSeconds(-15));
+
+        Assert.Equal(TimeSpan.FromSeconds(75), audio.CurrentPosition);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(75) }, emitted);
+        Assert.Equal("75000", podcast.ProviderMetadata["resume_ms"]);
     }
 
     [Fact]
