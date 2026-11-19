@@ -49,6 +49,8 @@ public class SettingsExpanderStretchTests
                     v => v.SettingsVM.IsOpenSubsonicExpanded, (v, x) => v.SettingsVM.IsOpenSubsonicExpanded = x),
                 (view.FindControl<Expander>("AudiusExpander") ?? throw new InvalidOperationException("AudiusExpander not found"),
                     v => v.SettingsVM.IsAudiusExpanded, (v, x) => v.SettingsVM.IsAudiusExpanded = x),
+                (view.FindControl<Expander>("JamendoExpander") ?? throw new InvalidOperationException("JamendoExpander not found"),
+                    v => v.SettingsVM.IsJamendoExpanded, (v, x) => v.SettingsVM.IsJamendoExpanded = x),
                 (view.FindControl<Expander>("YtdlpExpander") ?? throw new InvalidOperationException("YtdlpExpander not found"),
                     v => v.SettingsVM.IsYtdlpExpanded, (v, x) => v.SettingsVM.IsYtdlpExpanded = x),
             };
@@ -83,9 +85,16 @@ public class SettingsExpanderStretchTests
                 widths.Add(expander.Bounds.Width);
             }
 
-            Assert.True(asserted >= 2, $"expected >=2 visible expanders, got {asserted}");
+            Assert.True(asserted >= 3, $"expected >=3 visible expanders, got {asserted}");
             // 三块等宽（折叠态标题长短不再影响宽度）
             Assert.All(widths, w => Assert.Equal(widths[0], w, 0.5));
+
+            // 展开 Jamendo 后重新打开设置弹层，折叠态必须自动复位为收起
+            vm.SettingsVM.IsJamendoExpanded = true;
+            vm.IsSettingsOpen = false;
+            vm.IsSettingsOpen = true;
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.SettingsVM.IsJamendoExpanded);
         }
         finally
         {

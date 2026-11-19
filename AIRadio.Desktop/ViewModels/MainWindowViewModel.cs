@@ -231,7 +231,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IPodcastStorage? podcastStorage = null,
         Services.WebRemote.IWebRemoteService? webRemoteService = null,
         IPodcastOpmlService? podcastOpmlService = null,
-        IPodcastTranscriptionService? podcastTranscriptionService = null)
+        IPodcastTranscriptionService? podcastTranscriptionService = null,
+        JamendoProvider? jamendo = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -274,7 +275,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
             listeningProfile, musicSearchService, openSubsonic, audius, recommendationService: _recommendationService,
             weatherService: weatherService, ttsService: ttsService, audioService: _audioService,
-            appUpdateService: appUpdateService);
+            appUpdateService: appUpdateService, jamendo: jamendo);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));
@@ -301,6 +302,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SettingsVM.RefreshProfileCard();
                 SettingsVM.IsOpenSubsonicExpanded = false;
                 SettingsVM.IsAudiusExpanded = false;
+                SettingsVM.IsJamendoExpanded = false;
                 SettingsVM.IsYtdlpExpanded = false;
             });
 

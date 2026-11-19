@@ -32,6 +32,7 @@ public static class SourcePolicyClasses
             ["local"] = (0, 2),
             ["opensubsonic"] = (0, 0),
             ["audius"] = (1, 2),
+            ["jamendo"] = (1, 2),
             ["netease"] = (2, 1),
             ["kugou"] = (3, 1),
             ["kuwo"] = (3, 2),
@@ -68,6 +69,7 @@ public static class SourcePolicyClasses
             "migu" or "咪咕" => "migu",
             "youtube" => "youtube",
             "audius" => "audius",
+            "jamendo" => "jamendo",
             _ => null
         };
     }

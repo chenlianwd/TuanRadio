@@ -82,6 +82,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IMusicSearchService? _musicSearch;
     private readonly OpenSubsonicProvider? _openSubsonic;
     private readonly AudiusProvider? _audius;
+    private readonly JamendoProvider? _jamendo;
     private readonly IWeatherService _weather;
     // 音色试听：合成与播放都复用生产链（null 时试听按钮静默无动作）
     private readonly ITtsService? _tts;
@@ -98,6 +99,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     // 语言本地化重查代次：不受 confirmed-city 节流自检干扰，只在用户清空/改输/再次切换语言/点选时作废
     private int _weatherRelocalizeEpoch;
     private Func<string>? _audiusStatusFactory;
+    private Func<string>? _jamendoStatusFactory;
     private Func<string>? _openSubsonicStatusFactory;
     private readonly IDisposable _listenerProfileToggleSub;
     private readonly IDisposable _localModelSettingsSub;
@@ -236,10 +238,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool IsOpenSubsonicExpanded { get; set; }
     /// <summary>Audius 区块折叠态：同私有曲库（零配置即用，Key 是可选增强），永远默认折叠。</summary>
     [Reactive] public partial bool IsAudiusExpanded { get; set; }
+    /// <summary>Jamendo 区块折叠态：同私有曲库（需填写 Client ID 后启用），永远默认折叠。</summary>
+    [Reactive] public partial bool IsJamendoExpanded { get; set; }
     /// <summary>YouTube(yt-dlp) 区块折叠态：同私有曲库（国内默认不可达，登录态是高级配置），永远默认折叠。</summary>
     [Reactive] public partial bool IsYtdlpExpanded { get; set; }
     [Reactive] public partial string AudiusApiKeyInput { get; set; } = string.Empty;
     [Reactive] public partial string AudiusStatus { get; set; } = string.Empty;
+    [Reactive] public partial string JamendoClientIdInput { get; set; } = string.Empty;
+    [Reactive] public partial string JamendoStatus { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public partial string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     // 「DJ 对你的印象」展示卡（数据源 GetSnapshot 现算，四态见 RefreshProfileCard）
@@ -359,6 +365,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> DisconnectOpenSubsonicCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveAudiusApiKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearAudiusApiKeyCommand { get; }
+    public ReactiveCommand<Unit, Unit> SaveJamendoClientIdCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearJamendoClientIdCommand { get; }
     public ReactiveCommand<GeoPlace, Unit> SelectWeatherCityCommand { get; }
     public ReactiveCommand<Unit, Unit> LocateWeatherCityCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
@@ -397,7 +405,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ITtsService? ttsService = null,
         IAudioService? audioService = null,
         IAppUpdateService? appUpdateService = null,
-        Action<string>? openExternalUrl = null)
+        Action<string>? openExternalUrl = null,
+        JamendoProvider? jamendo = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -414,6 +423,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _musicSearch = musicSearch;
         _openSubsonic = openSubsonic;
         _audius = audius;
+        _jamendo = jamendo;
         _tts = ttsService;
         _audio = audioService;
         _appUpdate = appUpdateService ?? new AppUpdateService(http);
@@ -442,6 +452,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         DisconnectOpenSubsonicCommand = ReactiveCommand.Create(DisconnectOpenSubsonic);
         SaveAudiusApiKeyCommand = ReactiveCommand.CreateFromTask(SaveAudiusApiKeyAsync);
         ClearAudiusApiKeyCommand = ReactiveCommand.Create(ClearAudiusApiKey);
+        SaveJamendoClientIdCommand = ReactiveCommand.CreateFromTask(SaveJamendoClientIdAsync);
+        ClearJamendoClientIdCommand = ReactiveCommand.Create(ClearJamendoClientId);
         SelectWeatherCityCommand = ReactiveCommand.Create<GeoPlace>(SelectWeatherCity);
         LocateWeatherCityCommand = ReactiveCommand.CreateFromTask(
             LocateWeatherCityAsync,
@@ -669,6 +681,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 OpenSubsonicStatus = _openSubsonicStatusFactory();
             if (_audiusStatusFactory != null)
                 AudiusStatus = _audiusStatusFactory();
+            if (_jamendoStatusFactory != null)
+                JamendoStatus = _jamendoStatusFactory();
             RefreshUpdateTexts();
             if (_updateStatusFactory != null)
                 UpdateStatusText = _updateStatusFactory();
@@ -1211,6 +1225,22 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 }
             }
 
+            if (_jamendo != null)
+            {
+                try
+                {
+                    await _jamendo.LoadAsync(cancellationToken);
+                    SetJamendoStatus(_jamendo.HasClientId
+                        ? () => AppLanguage.T("Client ID 已安全保存", "Client ID saved securely")
+                        : () => AppLanguage.T("未配置（需填写 Client ID 后启用）", "Not configured (enter a Client ID to enable)"));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning("Jamendo Client ID could not be loaded: {Type}", ex.GetType().Name);
+                    SetJamendoStatus(() => AppLanguage.T("Client ID 读取失败", "Could not load Client ID"));
+                }
+            }
+
             if (_openSubsonic != null)
             {
                 try
@@ -1350,6 +1380,46 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         {
             Log.Warning("Audius API Key clear failed: {Type}", ex.GetType().Name);
             SetAudiusStatus(() => AppLanguage.T("清除失败，请重试", "Could not clear the API Key; try again"));
+        }
+    }
+
+    private async Task SaveJamendoClientIdAsync()
+    {
+        if (_jamendo == null) return;
+        if (string.IsNullOrWhiteSpace(JamendoClientIdInput))
+        {
+            SetJamendoStatus(() => AppLanguage.T("请输入 Jamendo Client ID", "Enter a Jamendo Client ID"));
+            return;
+        }
+        try
+        {
+            await _jamendo.SaveClientIdAsync(JamendoClientIdInput, _lifetimeCts.Token);
+            JamendoClientIdInput = string.Empty;
+            SetJamendoStatus(() => AppLanguage.T("Client ID 已安全保存", "Client ID saved securely"));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Jamendo Client ID save failed: {Type}", ex.GetType().Name);
+            SetJamendoStatus(() => AppLanguage.T("保存失败，请检查 Client ID 并重试", "Could not save the Client ID; check it and retry"));
+        }
+    }
+
+    private void ClearJamendoClientId()
+    {
+        if (_jamendo == null) return;
+        try
+        {
+            _jamendo.ClearClientId();
+            JamendoClientIdInput = string.Empty;
+            SetJamendoStatus(() => AppLanguage.T("未配置（需填写 Client ID 后启用）", "Not configured (enter a Client ID to enable)"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Jamendo Client ID clear failed: {Type}", ex.GetType().Name);
+            SetJamendoStatus(() => AppLanguage.T("清除失败，请重试", "Could not clear the Client ID; try again"));
         }
     }
 
@@ -1569,6 +1639,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         _audiusStatusFactory = factory;
         AudiusStatus = factory();
+    }
+
+    private void SetJamendoStatus(Func<string> factory)
+    {
+        _jamendoStatusFactory = factory;
+        JamendoStatus = factory();
     }
 
     private void SetOpenSubsonicStatus(Func<string> factory)
