@@ -201,6 +201,12 @@ public class MusicSourceBroker : IMusicSourceBroker
                         "disabled", 0, AppLanguage.T("尚未配置服务器", "Server not configured")));
                     continue;
                 }
+                if (provider is JamendoProvider { IsConfigured: false })
+                {
+                    AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
+                        "disabled", 0, AppLanguage.T("尚未配置 Client ID", "Client ID not configured")));
+                    continue;
+                }
                 // 慢源（yt-dlp 子进程）给独立短预算：诊断是手动触发，总时长需有界
                 var budget = provider.Descriptor.IsSlowSource ? TimeSpan.FromSeconds(10) : SourceTimeout;
                 await SearchWithFallback(provider, "周杰伦", 1, budget, cancellationToken);
@@ -297,6 +303,14 @@ public class MusicSourceBroker : IMusicSourceBroker
     {
         foreach (var privateProvider in providers.OfType<OpenSubsonicProvider>())
             privateProvider.ConfigurationChanged += (_, _) => _mediaCache.ClearProvider(privateProvider.Descriptor.Id);
+        foreach (var jamendo in providers.OfType<JamendoProvider>())
+        {
+            jamendo.ConfigurationChanged += (_, _) =>
+            {
+                _mediaCache.ClearProvider(jamendo.Descriptor.Id);
+                _healthRegistry.Reset(jamendo.Descriptor.DisplayName);
+            };
+        }
     }
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
@@ -845,6 +859,12 @@ public class MusicSourceBroker : IMusicSourceBroker
         {
             AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
                 "disabled", 0, AppLanguage.T("尚未配置服务器", "Server not configured")));
+            return new List<OnlineTrack>();
+        }
+        if (provider is JamendoProvider { IsConfigured: false })
+        {
+            AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
+                "disabled", 0, AppLanguage.T("尚未配置 Client ID", "Client ID not configured")));
             return new List<OnlineTrack>();
         }
         if (!_healthRegistry.CanRequest(provider.Descriptor.DisplayName, out var remaining))
