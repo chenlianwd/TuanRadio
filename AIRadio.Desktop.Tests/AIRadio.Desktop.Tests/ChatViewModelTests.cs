@@ -1,9 +1,3 @@
-// TODO: Additional edge case tests needed (L23):
-// - Very long input (>100 chars)
-// - Mixed Chinese+English input
-// - Input with special characters
-// - "播放音乐" (generic music request)
-// - "推荐一首歌" (recommendation request)
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -1012,5 +1006,102 @@ public class ChatViewModelTests
         Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("《《"));
         Assert.DoesNotContain(vm.Messages, m => m.Content.Contains("》》"));
         Assert.Contains(vm.Messages, m => m.Content == "好，我来找李荣浩的《麻雀》。");
+    }
+
+    [Fact]
+    public async Task SendMessage_VeryLongInput_RoutesToLlmWithoutMisclassifyingAsBareSong()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("收到啦，辛苦了一整天，先歇口气吧。");
+
+        var longInput = new string('今', 60) + "天加班写代码到深夜有点累，想找人随便聊聊最近的心情和生活琐事，" + new string('呢', 40);
+        Assert.True(longInput.Length > 100);
+
+        vm.InputText = longInput;
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync(longInput, It.IsAny<CancellationToken>()), Times.Once);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_MixedChineseEnglishSongRequest_ParsesAndPlays()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+
+        var track = new OnlineTrack { Id = "netease:mojito", Title = "Mojito", Artist = "周杰伦" };
+        searchMock.Setup(x => x.SearchAsync("周杰伦 Mojito", It.IsAny<int>()))
+            .ReturnsAsync(new List<OnlineTrack> { track });
+        searchMock.Setup(x => x.GetPlayUrlAsync("netease:mojito"))
+            .ReturnsAsync("http://example.com/mojito.mp3");
+
+        vm.InputText = "帮我播放 周杰伦 的 Mojito";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        searchMock.Verify(x => x.SearchAsync("周杰伦 Mojito", It.IsAny<int>()), Times.AtLeastOnce);
+        audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "Mojito" && t.Artist == "周杰伦"), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendMessage_SpecialCharactersOnly_DoesNotThrowOrTriggerSongSearch()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("收到一段神秘信号，想聊点什么？");
+
+        vm.InputText = "!@#$%^&*()_+[]{}|;:',.<>?/~`";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.GenerateChatResponseAsync("!@#$%^&*()_+[]{}|;:',.<>?/~`", It.IsAny<CancellationToken>()), Times.Once);
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+        Assert.Contains(vm.Messages, m => m.Role == MessageRole.Assistant && m.Content.Contains("神秘信号"));
+    }
+
+    [Fact]
+    public async Task SendMessage_GenericMusicRequest_DoesNotSearchLiteralMusicKeyword()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("请先在设置中配置 AI 服务");
+
+        vm.InputText = "播放音乐";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        // "播放音乐" 属于泛请求，不应把"音乐"当歌名盲搜
+        searchMock.Verify(x => x.SearchAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        audioMock.Verify(x => x.PlayOneShot(It.IsAny<Track>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendMessage_RecommendationRequest_TriggersFreshRecommendationFlow()
+    {
+        var (vm, djMock, audioMock, searchMock) = CreateVm();
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(false);
+        var recommended = new Track
+        {
+            Id = "netease:rec-1",
+            SourceId = "netease:rec-1",
+            Title = "晴天",
+            Artist = "周杰伦",
+            FilePath = "http://example.com/qingtian.mp3"
+        };
+        djMock.Setup(x => x.RecommendNextTrackAsync(It.IsAny<Track?>()))
+            .ReturnsAsync(recommended);
+
+        Assert.True(ChatViewModel.IsFreshRecommendationRequest("推荐一首歌"));
+
+        vm.InputText = "推荐一首歌";
+        await vm.SendMessageCommand.Execute().FirstAsync();
+
+        djMock.Verify(x => x.RecommendNextTrackAsync(It.IsAny<Track?>()), Times.Once);
+        audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "晴天"), It.IsAny<string?>()), Times.Once);
+        searchMock.Verify(x => x.SearchAsync("一首歌", It.IsAny<int>()), Times.Never);
     }
 }

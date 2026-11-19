@@ -81,8 +81,7 @@ public class OnlineTrack
 
     /// <summary>
     /// 以完整解析结果构造 Track：除 URL/身份外携带音源声明值（编码/码率/试听）与播放头，
-    /// 首播即生效而非等待播放后的后台刷新回写。仅非回退结果标记 ResolvedAtUtc——
-    /// 跨源回退结果无播放头（BuildResolveResult 回退路径不透传），保留后台刷新补齐。
+    /// 首播及跨源回退均即时生效。仅非回退结果标记 ResolvedAtUtc，回退结果仍保留不入缓存与可刷新语义。
     /// </summary>
     public Track ToTrack(Music.ResolveTrackResult resolution)
     {

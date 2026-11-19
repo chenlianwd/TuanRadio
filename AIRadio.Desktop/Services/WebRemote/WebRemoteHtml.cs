@@ -111,6 +111,12 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .controls-row {
   display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 8px;
 }
+.podcast-row {
+  display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px;
+}
+.podcast-row .ctrl-btn.ghost {
+  font-family: ui-monospace, Consolas, monospace; min-width: 64px; height: 32px;
+}
 .ctrl-btn {
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
   border-radius: 12px; height: 42px; min-width: 44px; padding: 0 12px;
@@ -280,6 +286,12 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
       <button id="repeatBtn" class="ctrl-btn ghost" type="button">DJ</button>
     </div>
 
+    <div id="podcastRow" class="podcast-row hidden">
+      <button id="podBackBtn" class="ctrl-btn ghost" type="button">-15s</button>
+      <button id="podSpeedBtn" class="ctrl-btn ghost" type="button">1.0x</button>
+      <button id="podFwdBtn" class="ctrl-btn ghost" type="button">+30s</button>
+    </div>
+
     <div class="vol-row">
       <span style="font-size:12px;color:var(--muted);">VOL</span>
       <input id="volBar" type="range" min="0" max="100" step="1" value="80">
@@ -287,7 +299,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
     </div>
   </div>
 
-  <div class="feedback-row">
+  <div id="feedbackRow" class="feedback-row">
     <button class="chip-btn" data-fb="like" type="button" id="fbLike">Like</button>
     <button class="chip-btn" data-fb="dislike" type="button" id="fbDislike">Skip</button>
     <button class="chip-btn" data-fb="similar" type="button" id="fbSimilar">Similar</button>
@@ -607,6 +619,17 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
     el("shuffleBtn").classList.toggle("active", !!s.isShuffled);
     el("repeatBtn").textContent = s.repeatLabel || s.repeatMode || "DJ";
     el("sleepTrackEnd").disabled = !s.canStopAfterCurrentTrack;
+
+    const isPod = !!s.isPodcast;
+    el("podcastRow").classList.toggle("hidden", !isPod);
+    el("feedbackRow").classList.toggle("hidden", isPod);
+    if (isPod) {
+      const rate = (typeof s.playbackRate === "number" && s.playbackRate > 0) ? s.playbackRate : 1.0;
+      const rateStr = (Math.abs(rate - Math.round(rate)) < 0.005 ? rate.toFixed(1) : Number(rate.toFixed(2)).toString()) + "x";
+      const speedBtn = el("podSpeedBtn");
+      speedBtn.textContent = rateStr;
+      speedBtn.classList.toggle("active", Math.abs(rate - 1.0) > 0.01);
+    }
 
     const seek = el("seekBar");
     seek.disabled = !s.canSeek;
@@ -1121,6 +1144,10 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
       sendCommand({ action: "feedback", text: btn.getAttribute("data-fb") });
     });
   });
+
+  el("podBackBtn").addEventListener("click", () => sendCommand({ action: "seek_relative", value: -15 }));
+  el("podSpeedBtn").addEventListener("click", () => sendCommand({ action: "cycle_playback_rate" }));
+  el("podFwdBtn").addEventListener("click", () => sendCommand({ action: "seek_relative", value: 30 }));
 
   const seekBar = el("seekBar");
   seekBar.addEventListener("input", () => {

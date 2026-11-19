@@ -60,8 +60,8 @@ public class FirstPlayResolutionTests
 
         var track = online.ToTrack(BuildResolution(fellBack: true));
 
-        // 回退结果无播放头（BuildResolveResult 回退路径不透传），不标记新鲜：
-        // 保留后台刷新为回退首播补头，防"跳过刷新+回退无头"叠加
+        // 回退结果保守地不标记新鲜：保留后台同源刷新对实际生效源再校验；
+        // 本用例解析结果未带播放头，故 PlaybackHeaders 为空
         Assert.Null(track.PlaybackHeaders);
         Assert.Null(track.ResolvedAtUtc);
     }
@@ -238,5 +238,84 @@ public class FirstPlayResolutionTests
 
         public Task<ResolvedPlayInfo?> ResolvePlayInfoAsync(OnlineTrack track, CancellationToken cancellationToken)
             => Task.FromResult(_info);
+    }
+
+    [Fact]
+    public async Task ResolveTrackAsync_WhenFallingBack_CarriesAlternativeDeclaredInfoAndHeaders()
+    {
+        var fallbackHeaders = new PlaybackHeaders(UserAgent: "FallbackAgent/2.0", Cookie: "sid=abc");
+        var primary = new FailingPrimaryProvider("primary", PlaybackFailureKind.PreviewOnly);
+        var alternative = new PayloadProvider(fallbackHeaders);
+
+        using var redirectHttp = new HttpClient(new InstantOkHandler());
+        var broker = new MusicSourceBroker(primary, alternative)
+        {
+            RedirectGuard = new PlaybackRedirectGuard(redirectHttp)
+        };
+        var track = new OnlineTrack
+        {
+            Id = "primary:1",
+            Title = "模特",
+            Artist = "李荣浩",
+            Source = "primary"
+        };
+
+        var result = await broker.ResolveTrackAsync(track, forceRefresh: true, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.True(result!.FellBack);
+        Assert.Equal("stub:model", result.Track.ToSourceId());
+        Assert.Equal("https://203.0.113.52/model.flac", result.Url);
+        Assert.Equal("FLAC", result.Codec);
+        Assert.Equal(900, result.BitrateKbps);
+        Assert.False(result.IsPreview);
+        Assert.Same(fallbackHeaders, result.Headers);
+    }
+
+    [Fact]
+    public async Task ResolveAlternativeTrackAsync_CarriesAlternativeDeclaredInfoAndHeaders()
+    {
+        var fallbackHeaders = new PlaybackHeaders(UserAgent: "AltAgent/3.0", Cookie: "token=xyz");
+        var primary = new FailingPrimaryProvider("primary", PlaybackFailureKind.NotFound);
+        var alternative = new PayloadProvider(fallbackHeaders);
+
+        using var redirectHttp = new HttpClient(new InstantOkHandler());
+        var broker = new MusicSourceBroker(primary, alternative)
+        {
+            RedirectGuard = new PlaybackRedirectGuard(redirectHttp)
+        };
+        var track = new OnlineTrack
+        {
+            Id = "primary:1",
+            Title = "模特",
+            Artist = "李荣浩",
+            Source = "primary"
+        };
+
+        var result = await broker.ResolveAlternativeTrackAsync(track, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.True(result!.FellBack);
+        Assert.Equal("stub:model", result.Track.ToSourceId());
+        Assert.Equal("https://203.0.113.52/model.flac", result.Url);
+        Assert.Equal("FLAC", result.Codec);
+        Assert.Equal(900, result.BitrateKbps);
+        Assert.False(result.IsPreview);
+        Assert.Same(fallbackHeaders, result.Headers);
+        Assert.Equal("stub:model", track.Id);
+    }
+
+    private sealed class FailingPrimaryProvider(string id, PlaybackFailureKind failureKind) : IMusicProvider
+    {
+        public MusicProviderDescriptor Descriptor { get; } = new(id, id, ProviderNetworkScope.PublicInternet);
+
+        public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit, CancellationToken cancellationToken)
+            => Task.FromResult(new List<OnlineTrack>());
+
+        public Task<MediaResolutionResult> ResolveAsync(
+            ProviderTrackRef trackRef,
+            IReadOnlyDictionary<string, string>? providerMetadata,
+            CancellationToken cancellationToken)
+            => Task.FromResult(MediaResolutionResult.Failed(id, failureKind));
     }
 }

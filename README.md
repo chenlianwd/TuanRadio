@@ -71,8 +71,8 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 - 🎙️ **AI DJ 双模交互**：文字畅聊或按住麦克风离线语音点歌（Whisper 本地识别 + LLM 同音纠错）；自动曲目串场与 SongStory 现曲讲述，全部经 Edge TTS 高质量多音色播报（完全免费，零 API 账单）；主播角色（名称/声音/人设）可自由定制。
 - 📻 **复古电台拟物视听美学与伴眠体验**：纯数学算法程序化合成调频静电杂音与台呼（零外部音频体积）、WASAPI 回环硬件采集 1024 点真实 FFT 频谱驱动星空与舞台、时钟/歌词双模无缝切换、紧凑迷你摸鱼卡片（带迷你动态歌词与独立置顶记忆）、最小化至系统托盘，以及睡眠定时渐弱淡出与深夜伴眠 AI DJ 柔声模式。
 - 🌍 **全球网络电台与自定义流导入**：集成全球开源网络电台与 8 大离线精选流派保底库，支持单流 URL 手动录入（含 ICY 流可用性探测与局域网自建电台直连）及 M3U/M3U8/PLS 批量列表导入与收藏隔离。
-- 🎙️ **播客 RSS / OPML 订阅与 AI 一分钟速读**：曲库抽屉内置精选公开播客与自定义 RSS / Atom 订阅页签，支持标准 OPML 文件批量导入导出与长音频断点续播持久化（自动跳过歌词、歌曲画像与跨源搜歌回退）；每期提供独立「AI 速读」按钮由 AI DJ 基于 Shownotes 语音导听，遇到无文字简介的单集时自动安全截取开头音频并经内置 Whisper 语音转写后再提炼导听。
-- 📱 **局域网 Web 遥控器（Web Remote）**：零第三方依赖内嵌 HTTP/WebSocket 局域网服务与令牌鉴权，同一 Wi-Fi 下手机扫码直连离线 SPA 遥控台；支持播控、音量、进度拖拽、专注/睡眠模式切换、实时滚动点击跳转歌词、AI DJ 点歌对话，以及按需浏览点播节目单、歌单、收藏夹、网络电台与播客单集（含远程触发 AI 速读）。
+- 🎙️ **播客 RSS / OPML 订阅与 AI 一分钟速读**：曲库抽屉内置精选公开播客与自定义 RSS / Atom 订阅页签，支持标准 OPML 文件批量导入导出、长音频断点续播持久化以及专属 **0.75x–2.0x 倍速播放与 -15s / +30s 快捷跳转**（切回音乐自动恢复 1.0x，自动跳过歌词、歌曲画像与跨源搜歌回退）；每期提供独立「AI 速读」按钮由 AI DJ 基于 Shownotes 语音导听，遇到无文字简介的单集时自动安全截取开头音频并经内置 Whisper 语音转写后再提炼导听。
+- 📱 **局域网 Web 遥控器（Web Remote）**：零第三方依赖内嵌 HTTP/WebSocket 局域网服务与令牌鉴权，同一 Wi-Fi 下手机扫码直连离线 SPA 遥控台；支持播控、音量、进度拖拽、播客倍速与快退快进、专注/睡眠模式切换、实时滚动点击跳转歌词、AI DJ 点歌对话，以及按需浏览点播节目单、歌单、收藏夹、网络电台与播客单集（含远程触发 AI 速读）。
 - 🧠 **长期口味画像与防茧房推荐**：Radio Mode 自动续播按收听意图生成会话节目单（3~5 首候选及推荐理由）；长期收听画像（歌手亲和度 30 天半衰期、Dislike 黑名单、LLM 口味摘要与性格印象）同时注入推荐与 DJ 对话双链路，并强制引入探索方向防止茧房。
 - 🔀 **高可用多音源自愈中枢（Broker）**：本地曲库、OpenSubsonic 私有云、Audius 开放曲库开箱即用，完整构建另含网易云、酷狗与 YouTube；候选经标题/歌手/时长/源优先级四维排重打分；播放队列前瞻 3 首预检解析，播放 URL 失效或返回试听截断时自动跨源重搜自愈。
 - 💎 **真声音质透明呈现**：播放区实时显示音质品级（标准/高清/无损），实际音频编码、码率、采样率与声道悬停 ToolTip 可见，以 LibVLC 解析底层在播流为准、音源声明值兜底；试听截断流有专门徽标标记。
@@ -111,7 +111,7 @@ TuanRadio 是一个基于 .NET 10 与 Avalonia 构建的 Windows 桌面 AI 电�
 dotnet build AIRadio.Desktop\AIRadio.Desktop.csproj -v:minimal
 dotnet run --project AIRadio.Desktop\AIRadio.Desktop.csproj
 
-# 运行自动化测试套件（1300+ 测试）
+# 运行自动化测试套件（1400+ 测试）
 dotnet test AIRadio.Desktop.Tests\AIRadio.Desktop.Tests\AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```
 
@@ -151,7 +151,7 @@ AIRadio.Desktop.Music/      音乐领域独立类库（宿主单向引用，命�
   Services/Music/           Contracts（抽象契约）、Broker（中枢聚合、策略编排与解析缓存）、
                             Providers（本地/OpenSubsonic/Audius、Radio/ 全球网络电台与自定义流探测、Podcast/ RSS 解析与 OPML 导入导出）、
                             Adapters（流媒体适配）、Playback（MediaUriPolicy 安全白名单与重定向复检）
-AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1300+ 测试用例）
+AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1400+ 测试用例）
 tools/                      tools/publish.ps1 自动化出包流水线、品牌图标导出脚本与实机截图工具
 ```
 

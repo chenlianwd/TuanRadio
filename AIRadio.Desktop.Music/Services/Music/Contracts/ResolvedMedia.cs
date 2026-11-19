@@ -83,7 +83,7 @@ public sealed record ResolvedMedia(
 /// Broker 级曲目解析结果（docs/plans §3.1 两级解析入口的 Broker 层）：
 /// 跨源回退成功时携带实际生效的身份与元数据。现状跨源回退由聚合器直接回写
 /// 共享 track 实例（调用方依赖该行为），Broker 保持回写的同时把结果显式返回。
-/// Codec/BitrateKbps/IsPreview 为音源声明的媒体信息（仅首选源命中时透传，回退路径无声明值），
+/// Codec/BitrateKbps/IsPreview 与 Headers 在首选源及跨源回退路径均随实际生效源透传，
 /// 仅作展示兜底；实际播放编码/码率以播放器解析为准。
 /// </summary>
 public sealed record ResolveTrackResult(

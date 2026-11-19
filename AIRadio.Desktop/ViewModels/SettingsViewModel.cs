@@ -201,6 +201,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool HasPromptedCloseAction { get; set; } = false;
     [Reactive] public partial bool RadioSoundFxEnabled { get; set; } = true;
     [Reactive] public partial bool SleepTimerCloseApp { get; set; }
+    [Reactive] public partial float PodcastPlaybackRate { get; set; } = 1.0f;
     [Reactive] public partial bool StartInCompactMode { get; set; }
     [Reactive] public partial bool ShowLyricsInStage { get; set; }
     [Reactive] public partial bool ListenerProfileEnabled { get; set; } = true;
@@ -1050,6 +1051,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
                 if (root.TryGetProperty("sleep_timer_close_app", out var sleepTimerCloseApp))
                     SleepTimerCloseApp = sleepTimerCloseApp.GetBoolean();
+
+                if (root.TryGetProperty("podcast_playback_rate", out var podRateProp) && podRateProp.TryGetSingle(out var podRate))
+                    PodcastPlaybackRate = AudioService.NormalizePlaybackRate(podRate);
 
                 if (root.TryGetProperty("start_in_compact_mode", out var startCompact))
                     StartInCompactMode = startCompact.GetBoolean();
@@ -2575,6 +2579,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 has_prompted_close_action = HasPromptedCloseAction,
                 radio_sound_fx_enabled = RadioSoundFxEnabled,
                 sleep_timer_close_app = SleepTimerCloseApp,
+                podcast_playback_rate = AudioService.NormalizePlaybackRate(PodcastPlaybackRate),
                 start_in_compact_mode = StartInCompactMode,
                 show_lyrics_in_stage = ShowLyricsInStage,
                 listener_profile_enabled = ListenerProfileEnabled,

@@ -26,6 +26,7 @@ public sealed record WebRemoteSnapshot
     [JsonPropertyName("isPlaying")] public bool IsPlaying { get; init; }
     [JsonPropertyName("isLiveStream")] public bool IsLiveStream { get; init; }
     [JsonPropertyName("isPodcast")] public bool IsPodcast { get; init; }
+    [JsonPropertyName("playbackRate")] public float PlaybackRate { get; init; } = 1.0f;
     [JsonPropertyName("isFavorite")] public bool IsFavorite { get; init; }
     [JsonPropertyName("positionSeconds")] public double PositionSeconds { get; init; }
     [JsonPropertyName("durationSeconds")] public double DurationSeconds { get; init; }

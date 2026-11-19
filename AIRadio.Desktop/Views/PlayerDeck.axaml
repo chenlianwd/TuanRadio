@@ -101,6 +101,11 @@
         <Style Selector="Slider#VolumeSlider:focus">
             <Setter Property="Opacity" Value="1"/>
         </Style>
+        <Style Selector="Button.podcast-speed-btn.active">
+            <Setter Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
     </UserControl.Styles>
 
     <Border x:Name="DeckRoot" Background="{DynamicResource C_E91B1B2A}" BorderBrush="{DynamicResource C_223D3D4F}" BorderThickness="0,1" Padding="22,8" ClipToBounds="True">
@@ -200,8 +205,9 @@
                 </StackPanel>
             </StackPanel>
 
-            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
-                        HorizontalAlignment="Center" Margin="0,6,0,0">
+            <StackPanel x:Name="FeedbackRow" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                        HorizontalAlignment="Center" Margin="0,6,0,0"
+                        IsVisible="{Binding PlayerVM.IsPodcast, Converter={StaticResource InverseBoolConverter}}">
                 <Button Width="42" Height="24" Padding="0" Content="NOPE"
                         FontSize="9" Command="{Binding DislikeCurrentTrackCommand}"
                         ToolTip.Tip="{DynamicResource S_Dislike}" AutomationProperties.Name="{DynamicResource S_Dislike}"/>
@@ -217,6 +223,30 @@
                 <Button Width="48" Height="24" Padding="0" Content="STORY"
                         FontSize="9" Command="{Binding TellSongStoryCommand}"
                         ToolTip.Tip="{DynamicResource S_SongStory}" AutomationProperties.Name="{DynamicResource S_SongStory}"/>
+            </StackPanel>
+
+            <!-- 播客专属控制条：与歌曲反馈行共享 Row 1 同位互斥（高度严锁 24px，零行高漂移） -->
+            <StackPanel x:Name="PodcastControlRow" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                        HorizontalAlignment="Center" Margin="0,6,0,0"
+                        IsVisible="{Binding PlayerVM.IsPodcast}">
+                <Button x:Name="PodcastRewindButton" Width="46" Height="24" Padding="0" Content="-15s"
+                        FontSize="10" FontFamily="Consolas"
+                        Command="{Binding PlayerVM.SkipBackwardCommand}"
+                        ToolTip.Tip="{DynamicResource S_PodcastSkipBack}"
+                        AutomationProperties.Name="{DynamicResource S_PodcastSkipBack}"/>
+                <Button x:Name="PodcastSpeedButton" Width="54" Height="24" Padding="0"
+                        Classes="podcast-speed-btn"
+                        Classes.active="{Binding PlayerVM.IsNonDefaultPlaybackRate}"
+                        Content="{Binding PlayerVM.PlaybackRateText}"
+                        FontSize="10" FontFamily="Consolas" FontWeight="600"
+                        Command="{Binding PlayerVM.CyclePlaybackRateCommand}"
+                        ToolTip.Tip="{DynamicResource S_PodcastSpeedTip}"
+                        AutomationProperties.Name="{DynamicResource S_PodcastSpeedTip}"/>
+                <Button x:Name="PodcastForwardButton" Width="46" Height="24" Padding="0" Content="+30s"
+                        FontSize="10" FontFamily="Consolas"
+                        Command="{Binding PlayerVM.SkipForwardCommand}"
+                        ToolTip.Tip="{DynamicResource S_PodcastSkipForward}"
+                        AutomationProperties.Name="{DynamicResource S_PodcastSkipForward}"/>
             </StackPanel>
 
             <!-- Fluent Slider 模板是 15/thumb20/15 像素行（自然高 50；行 0 即被音量滑条
