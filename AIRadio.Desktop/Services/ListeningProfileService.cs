@@ -41,6 +41,9 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private const int BehaviorMinCompletionSamples = 10;
     private const int BehaviorMinPlayedSamples = 10;
     private const int BehaviorMinArtists = 5;
+    private const int BehaviorMinLanguageSamples = 10;
+    private const double LanguageMinShare = 0.05;
+    private const int TimeBandMinSamples = 5;
     private static readonly TimeSpan BehaviorWindow = TimeSpan.FromDays(30);
     // 聊天性格印象：素材窗口滚动上限/归纳触发水位/原文截断
     private const int ChatWindowMaxEntries = 20;
@@ -772,6 +775,16 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         var skippedCount = 0;
         var playedCount = 0;
         var timeBands = new int[4]; // 0=night(22~5) 1=morning(5~11) 2=afternoon(11~17) 3=evening(17~22)
+        var bandAccumulators = new[]
+        {
+            new TimeBandAccumulator(),
+            new TimeBandAccumulator(),
+            new TimeBandAccumulator(),
+            new TimeBandAccumulator(),
+        };
+        var langWeights = new Dictionary<string, double>(StringComparer.Ordinal);
+        var langCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var totalLangSamples = 0;
         var firstSeenArtist = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         var windowArtists = new HashSet<string>(StringComparer.Ordinal);
         var windowStart = now - BehaviorWindow;
@@ -792,6 +805,9 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 _ => 0.0,
             };
 
+            var bandIndex = ListeningPersona.TimeBandIndex(e.Time);
+            var bandAcc = bandAccumulators[bandIndex];
+
             var artistKey = MusicIdentity.NormalizeMusicText(e.Artist);
             if (weight != 0.0 && artistKey.Length > 0)
             {
@@ -803,6 +819,10 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                     entry.PlayCount++;
                     entry.LastPlayedAt = e.Time;
                 }
+
+                if (!bandAcc.Artists.TryGetValue(artistKey, out var bandArtist))
+                    bandAcc.Artists[artistKey] = bandArtist = new ArtistAccumulator { DisplayName = e.Artist };
+                bandArtist.Score = Math.Max(-5.0, bandArtist.Score + weight * decay);
             }
 
             if (e.Type == ListeningEventType.Dislike && artistKey.Length > 0)
@@ -825,7 +845,11 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                     _ => null,
                 };
                 if (mood != null)
+                {
                     moods[mood] = moods.TryGetValue(mood, out var count) ? count + 1 : 1;
+                    bandAcc.Moods[mood] = bandAcc.Moods.TryGetValue(mood, out var bc) ? bc + 1 : 1;
+                    bandAcc.SampleCount++;
+                }
             }
 
             // 行为指标累计（与歌手计分同一次遍历）
@@ -834,7 +858,26 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             else if (e.Type == ListeningEventType.Played)
             {
                 playedCount++;
-                timeBands[TimeBandIndex(e.Time)]++;
+                timeBands[bandIndex]++;
+                bandAcc.PlayCount++;
+            }
+
+            if (weight > 0)
+            {
+                bandAcc.SampleCount++;
+                var langCode = ListeningPersona.DetectTrackLanguage(e.Title, e.Artist);
+                if (langCode != null)
+                {
+                    var langWeight = weight * decay;
+                    langWeights[langCode] = langWeights.TryGetValue(langCode, out var lw) ? lw + langWeight : langWeight;
+                    langCounts[langCode] = langCounts.TryGetValue(langCode, out var lc) ? lc + 1 : 1;
+                    totalLangSamples++;
+
+                    bandAcc.LangWeights[langCode] = bandAcc.LangWeights.TryGetValue(langCode, out var blw)
+                        ? blw + langWeight
+                        : langWeight;
+                    bandAcc.LangSampleCount++;
+                }
             }
 
             if (artistKey.Length > 0)
@@ -889,13 +932,40 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             for (var i = 1; i < timeBands.Length; i++)
                 if (timeBands[i] > timeBands[best])
                     best = i;
-            dominantBand = best switch
-            {
-                0 => "night",
-                1 => "morning",
-                2 => "afternoon",
-                _ => "evening",
-            };
+            dominantBand = BandNameByIndex(best);
+        }
+
+        var languageDistribution = BuildLanguageDistribution(langWeights, langCounts, totalLangSamples);
+        var timeBandPreferences = new Dictionary<string, TimeBandPreference>(StringComparer.Ordinal);
+        for (var i = 0; i < bandAccumulators.Length; i++)
+        {
+            var acc = bandAccumulators[i];
+            if (acc.SampleCount < TimeBandMinSamples)
+                continue;
+            var bandTopArtists = acc.Artists.Values
+                .Where(a => a.Score > 0)
+                .OrderByDescending(a => a.Score)
+                .Take(3)
+                .Select(a => a.DisplayName)
+                .ToList();
+            var bandTopMoods = acc.Moods
+                .OrderByDescending(kv => kv.Value)
+                .Take(2)
+                .Select(kv => kv.Key)
+                .ToList();
+            if (bandTopArtists.Count == 0 && bandTopMoods.Count == 0)
+                continue;
+
+            var bandDominantLang = acc.LangSampleCount >= TimeBandMinSamples && acc.LangWeights.Count > 0
+                ? acc.LangWeights.OrderByDescending(kv => kv.Value).First().Key
+                : null;
+            var bandKey = BandNameByIndex(i);
+            timeBandPreferences[bandKey] = new TimeBandPreference(
+                bandKey,
+                acc.PlayCount,
+                bandTopArtists,
+                bandTopMoods,
+                bandDominantLang);
         }
 
         return new ListenerProfileSnapshot
@@ -913,18 +983,47 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
             DominantTimeBand = dominantBand,
             PersonaTraits = ListeningPersona.DerivePersonaTraits(
                 hasCompletion, completionRate, hasExploration, newArtistRatio, dominantBand),
+            LanguageDistribution = languageDistribution,
+            TimeBandPreferences = timeBandPreferences,
             Impression = _impression,
         };
     }
 
-    /// <summary>时段分桶：night=22~5 点，morning=5~11，afternoon=11~17，evening=17~22。</summary>
-    private static int TimeBandIndex(DateTime time) => time.Hour switch
+    private static string BandNameByIndex(int index) => index switch
     {
-        >= 22 or < 5 => 0,
-        < 11 => 1,
-        < 17 => 2,
-        _ => 3,
+        0 => "night",
+        1 => "morning",
+        2 => "afternoon",
+        _ => "evening",
     };
+
+    private static IReadOnlyList<LanguageShare> BuildLanguageDistribution(
+        Dictionary<string, double> weights,
+        Dictionary<string, int> counts,
+        int totalSamples)
+    {
+        if (totalSamples < BehaviorMinLanguageSamples || weights.Count == 0)
+            return Array.Empty<LanguageShare>();
+
+        var totalWeight = weights.Values.Sum();
+        if (totalWeight <= 0)
+            return Array.Empty<LanguageShare>();
+
+        var significant = weights
+            .Where(kv => kv.Value / totalWeight >= LanguageMinShare)
+            .OrderByDescending(kv => kv.Value)
+            .ToList();
+        if (significant.Count == 0)
+            return Array.Empty<LanguageShare>();
+
+        var keptWeight = significant.Sum(kv => kv.Value);
+        return significant
+            .Select(kv => new LanguageShare(
+                kv.Key,
+                kv.Value / keptWeight,
+                counts.GetValueOrDefault(kv.Key)))
+            .ToList();
+    }
 
     /// <summary>在 _gate 内递增变更版本并安排防抖保存。</summary>
     private void ScheduleSave()
@@ -1175,6 +1274,31 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
                 : $"最近听的歌手里 {Math.Round(snapshot.NewArtistRatio * 100):0}% 是新面孔");
         if (snapshot.DominantTimeBand is { } band)
             parts.Add(isEn ? $"mostly listens in the {band}" : $"主要在{BandTextZh(band)}");
+        if (snapshot.LanguageDistribution.Count > 0)
+        {
+            var langMix = ListeningPersona.FormatLanguageMix(
+                snapshot.LanguageDistribution, isEn, isEn ? ", " : "、", maxItems: 3);
+            parts.Add(isEn ? $"language mix: {langMix}" : $"语种配比：{langMix}");
+        }
+        if (snapshot.TimeBandPreferences.Count > 0)
+        {
+            var bandHints = ListeningPersona.TimeBandOrder
+                .Where(snapshot.TimeBandPreferences.ContainsKey)
+                .Select(b => snapshot.TimeBandPreferences[b])
+                .OrderByDescending(p => p.PlayCount)
+                .Take(2)
+                .Select(p =>
+                {
+                    var detail = ListeningPersona.FormatTimeBandSummary(p, isEn);
+                    return string.IsNullOrEmpty(detail)
+                        ? string.Empty
+                        : $"{ListeningPersona.TimeBandLabel(p.Band, isEn)}: {detail}";
+                })
+                .Where(s => s.Length > 0)
+                .ToList();
+            if (bandHints.Count > 0)
+                parts.Add((isEn ? "time-of-day tendencies: " : "时段偏好：") + string.Join(isEn ? "; " : "；", bandHints));
+        }
         if (parts.Count > 0)
             behaviorLine = (isEn ? "Listening behavior: " : "听歌习惯：") + string.Join(isEn ? "; " : "、", parts) + ".";
 
@@ -1212,6 +1336,16 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
         public int PlayCount;
         public DateTime LastPlayedAt;
         public string DisplayName = string.Empty;
+    }
+
+    private sealed class TimeBandAccumulator
+    {
+        public int PlayCount;
+        public int SampleCount;
+        public int LangSampleCount;
+        public readonly Dictionary<string, ArtistAccumulator> Artists = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, int> Moods = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, double> LangWeights = new(StringComparer.Ordinal);
     }
 
     private sealed class DislikeAccumulator

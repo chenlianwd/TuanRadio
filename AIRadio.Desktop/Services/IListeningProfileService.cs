@@ -111,6 +111,13 @@ public sealed class ListenerProfileSnapshot
     /// <summary>听歌习惯人格特质 key（ListeningPersona 派生），文案由消费点按语言域映射。</summary>
     public IReadOnlyList<string> PersonaTraits { get; init; } = Array.Empty<string>();
 
+    /// <summary>语种配比（降序，占比 ≥5%）；正信号样本 &lt;10 时为空。</summary>
+    public IReadOnlyList<LanguageShare> LanguageDistribution { get; init; } = Array.Empty<LanguageShare>();
+
+    /// <summary>分时段偏好（键为 morning/afternoon/evening/night）；单时段正样本 &lt;5 时不收录。</summary>
+    public IReadOnlyDictionary<string, TimeBandPreference> TimeBandPreferences { get; init; }
+        = new Dictionary<string, TimeBandPreference>();
+
     public ListenerImpressionData? Impression { get; init; }
 
     /// <summary>推荐注入门槛（冷启动防护）：累计 ≥30 事件且 ≥3 个歌手。</summary>
@@ -130,6 +137,17 @@ public sealed class ArtistAffinity
 
 /// <summary>黑名单曲目引用：匹配走 MusicIdentity.IsSameMusicIdentity（保留空歌手通配语义）。</summary>
 public sealed record ProfileMusicRef(string Title, string Artist);
+
+/// <summary>语种配比条目：基于曲目标题与歌手文本特征统计的衰减加权占比（"zh"/"en"/"ja"/"ko"）。</summary>
+public sealed record LanguageShare(string LanguageCode, double Share, int SampleCount);
+
+/// <summary>特定时段（night/morning/afternoon/evening）的听歌口味偏好。</summary>
+public sealed record TimeBandPreference(
+    string Band,
+    int PlayCount,
+    IReadOnlyList<string> TopArtists,
+    IReadOnlyList<string> TopMoods,
+    string? DominantLanguage);
 
 /// <summary>持久化事件（listener-profile.json）。Type=MoodSet 时 Detail 存归一化氛围值。</summary>
 public class ListeningEventData

@@ -14,6 +14,7 @@ public class RecommendationService : IRecommendationService
     private readonly ILLMService _llm;
     private readonly IMusicSearchService _musicSearch;
     private readonly IListeningProfileService? _profile;
+    private readonly Func<DateTime> _clock;
     private readonly List<UserMusicFeedback> _feedback = new();
     private readonly List<Track> _recentlyPlayed = new();
     private readonly HashSet<string> _returnedTrackIds = new(StringComparer.OrdinalIgnoreCase);
@@ -35,11 +36,13 @@ public class RecommendationService : IRecommendationService
     public RecommendationService(
         ILLMService llm,
         IMusicSearchService musicSearch,
-        IListeningProfileService? profile)
+        IListeningProfileService? profile,
+        Func<DateTime>? clock = null)
     {
         _llm = llm;
         _musicSearch = musicSearch;
         _profile = profile;
+        _clock = clock ?? (() => DateTime.Now);
     }
 
     public RadioProgram? CurrentProgram { get; private set; }
@@ -95,14 +98,16 @@ public class RecommendationService : IRecommendationService
         if (_profile != null)
             _ = _profile.RefreshDigestAsync(cancellationToken);
 
-        var context = BuildContext(moodBias, sceneMode, request);
+        var now = _clock();
+        var context = BuildContext(moodBias, sceneMode, request, now);
+        var currentTimeBand = ListeningPersona.ResolveTimeBand(now);
         var allowPureInstrumental = sceneMode == RadioSceneMode.Focus ||
                                     string.Equals(context.Mood, "focus", StringComparison.OrdinalIgnoreCase);
         var filterAgitated = sceneMode is RadioSceneMode.Focus or RadioSceneMode.Sleep ||
                              string.Equals(context.Mood, "calm", StringComparison.OrdinalIgnoreCase) ||
                              string.Equals(context.Mood, "focus", StringComparison.OrdinalIgnoreCase);
         var profileSnapshot = GetUsableProfileSnapshot();
-        var queries = await GenerateQueriesAsync(request, context, moodBias, sceneMode, profileSnapshot, cancellationToken);
+        var queries = await GenerateQueriesAsync(request, context, moodBias, sceneMode, profileSnapshot, currentTimeBand, cancellationToken);
         var excluded = BuildExcludedTracks(request);
 
         var tracks = new List<RecommendedTrack>();
@@ -440,10 +445,11 @@ public class RecommendationService : IRecommendationService
         string? moodBias,
         RadioSceneMode sceneMode,
         ListenerProfileSnapshot? profileSnapshot,
+        string currentTimeBand,
         CancellationToken cancellationToken)
     {
         var recentHistory = BuildRecentHistory(request);
-        var fallback = BuildFallbackQueries(request, context, sceneMode, recentHistory, profileSnapshot);
+        var fallback = BuildFallbackQueries(request, context, sceneMode, recentHistory, profileSnapshot, currentTimeBand);
         // 未配置时 ChatAsync 返回“请先在设置中配置 AI 服务。”提示文案，
         // 直接走本地兜底关键词，避免把提示文案当搜索词发给音源
         if (_llm is LLMService llmService && !llmService.IsConfigured())
@@ -464,7 +470,7 @@ public class RecommendationService : IRecommendationService
                 .DistinctBy(track => $"{track.Title.Trim()}|{track.Artist.Trim()}", StringComparer.OrdinalIgnoreCase)
                 .Take(8)
                 .Select(track => $"{PromptHygiene.StripControlMarkers(track.Title)} - {PromptHygiene.StripControlMarkers(track.Artist)}");
-            var profileSection = BuildProfilePromptSection(profileSnapshot);
+            var profileSection = BuildProfilePromptSection(profileSnapshot, currentTimeBand);
             var currentTitle = PromptHygiene.StripControlMarkers(request.CurrentTrack?.Title);
             var currentArtist = PromptHygiene.StripControlMarkers(request.CurrentTrack?.Artist);
             var favoritesText = string.Join(", ", request.Favorites.Take(5)
@@ -520,20 +526,55 @@ public class RecommendationService : IRecommendationService
     /// 画像提示词段：digest + 常听/回避歌手 + 反茧房探索要求。
     /// 仅在画像过冷启动门槛时注入，否则两段均为空（prompt 与现状逐字一致）。
     /// </summary>
-    private static (string ExploreInstruction, string Context) BuildProfilePromptSection(ListenerProfileSnapshot? snapshot)
+    private static (string ExploreInstruction, string Context) BuildProfilePromptSection(
+        ListenerProfileSnapshot? snapshot,
+        string? currentTimeBand = null)
     {
         if (snapshot == null)
             return (string.Empty, string.Empty);
 
-        var topArtists = string.Join("、", snapshot.TopArtists.Take(5).Select(a => a.Artist));
-        var avoidArtists = string.Join("、", snapshot.AvoidArtists.Take(3).Select(a => a.Artist));
+        var isEn = AppLanguage.Current == "en";
+        var topArtists = string.Join("、", snapshot.TopArtists.Take(5).Select(a => PromptHygiene.StripControlMarkers(a.Artist)));
+        var avoidArtists = string.Join("、", snapshot.AvoidArtists.Take(3).Select(a => PromptHygiene.StripControlMarkers(a.Artist)));
         var digestText = snapshot.Digest?.Text;
         // 风格标签拼进画像行（搜索词可直接使用标签，比整段总评更好使）
         var styleTags = snapshot.Digest?.StyleTags
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .ToList() ?? new List<string>();
         var styleTagText = string.Join("、", styleTags);
-        if (AppLanguage.Current == "en")
+        var langMixText = snapshot.LanguageDistribution.Count > 0
+            ? ListeningPersona.FormatLanguageMix(snapshot.LanguageDistribution, isEn, isEn ? ", " : "、", maxItems: 3)
+            : string.Empty;
+
+        var timeBandLine = string.Empty;
+        if (!string.IsNullOrEmpty(currentTimeBand) &&
+            snapshot.TimeBandPreferences.TryGetValue(currentTimeBand, out var bandPref))
+        {
+            var bandParts = new List<string>();
+            if (bandPref.TopArtists.Count > 0)
+            {
+                var bandArtists = string.Join(isEn ? ", " : "、",
+                    bandPref.TopArtists.Take(3).Select(PromptHygiene.StripControlMarkers));
+                bandParts.Add(isEn ? $"often plays {bandArtists}" : $"常听 {bandArtists}");
+            }
+            if (bandPref.TopMoods.Count > 0)
+                bandParts.Add(isEn
+                    ? $"mood leans {string.Join(", ", bandPref.TopMoods.Take(2))}"
+                    : $"偏向 {string.Join("、", bandPref.TopMoods.Take(2))} 氛围");
+            if (!string.IsNullOrEmpty(bandPref.DominantLanguage))
+                bandParts.Add(isEn
+                    ? $"mostly {ListeningPersona.LanguageLabel(bandPref.DominantLanguage, true)}"
+                    : $"偏 {ListeningPersona.LanguageLabel(bandPref.DominantLanguage, false)}");
+            if (bandParts.Count > 0)
+            {
+                var bandLabel = ListeningPersona.TimeBandLabel(currentTimeBand, isEn);
+                timeBandLine = isEn
+                    ? $"\nCurrent time-of-day preference ({bandLabel}): {string.Join("; ", bandParts)}"
+                    : $"\n当前时段（{bandLabel}）偏好：{string.Join("；", bandParts)}";
+            }
+        }
+
+        if (isEn)
         {
             var enTagSuffix = styleTags.Count > 0
                 ? $" (style tags: {styleTagText.Replace("、", ", ")})"
@@ -544,6 +585,9 @@ public class RecommendationService : IRecommendationService
             context += $"\nLong-term favorite artists: {topArtists}";
             if (avoidArtists.Length > 0)
                 context += $"; avoid: {avoidArtists}";
+            if (langMixText.Length > 0)
+                context += $"\nLanguage mix: {langMixText}";
+            context += timeBandLine;
             return (" At least 1 of the 3 queries should explore a fresh direction adjacent to this profile.", context);
         }
 
@@ -556,10 +600,13 @@ public class RecommendationService : IRecommendationService
         zhContext += $"\n长期常听歌手：{topArtists}";
         if (avoidArtists.Length > 0)
             zhContext += $"；长期回避歌手：{avoidArtists}";
+        if (langMixText.Length > 0)
+            zhContext += $"\n语种配比：{langMixText}";
+        zhContext += timeBandLine;
         return ("其中至少 1 个关键词尝试听众画像之外的相近新方向。", zhContext);
     }
 
-    private static ListeningContext BuildContext(string? moodBias, RadioSceneMode sceneMode, RecommendationRequest request)
+    private static ListeningContext BuildContext(string? moodBias, RadioSceneMode sceneMode, RecommendationRequest request, DateTime now)
     {
         var text = request.UserIntent ?? string.Empty;
         // 结构化氛围（calm/energetic/sad）优先用会话级 bias；自由词 bias 只进搜索提示，不占结构化 mood
@@ -572,7 +619,7 @@ public class RecommendationService : IRecommendationService
             UserIntentKey = request.UserIntentKey,
             Mood = mood,
             Scene = (sceneMode == RadioSceneMode.Focus || mood == "focus") ? "focus" : DetectScene(text),
-            TimeOfDay = DateTime.Now.Hour switch
+            TimeOfDay = now.Hour switch
             {
                 >= 5 and < 12 => "morning",
                 >= 12 and < 18 => "afternoon",
@@ -602,7 +649,8 @@ public class RecommendationService : IRecommendationService
         ListeningContext context,
         RadioSceneMode sceneMode,
         IReadOnlyCollection<Track> recentHistory,
-        ListenerProfileSnapshot? profileSnapshot)
+        ListenerProfileSnapshot? profileSnapshot,
+        string? currentTimeBand = null)
     {
         var queries = new List<string>();
         var recentArtists = recentHistory
@@ -623,12 +671,18 @@ public class RecommendationService : IRecommendationService
                 $"{string.Join(" ", recentArtists)} 相似风格",
                 $"music similar to {string.Join(" ", recentArtists)}")
             : null;
-        // 无近期多歌手历史但画像达标：用长期最常听歌手兜底，避免只有氛围一类词
-        var profileArtistQuery = recentArtists.Count <= 1 &&
-                profileSnapshot?.TopArtists.FirstOrDefault()?.Artist is { Length: > 0 } profileArtist
+        // 无近期多歌手历史但画像达标：优先取当前时段偏好歌手，其次回落全局最常听歌手
+        var timeBandArtist = !string.IsNullOrEmpty(currentTimeBand) &&
+                profileSnapshot?.TimeBandPreferences.TryGetValue(currentTimeBand, out var bandPref) == true
+            ? bandPref.TopArtists.FirstOrDefault()
+            : null;
+        var preferredProfileArtist = !string.IsNullOrWhiteSpace(timeBandArtist)
+            ? timeBandArtist
+            : profileSnapshot?.TopArtists.FirstOrDefault()?.Artist;
+        var profileArtistQuery = recentArtists.Count <= 1 && !string.IsNullOrWhiteSpace(preferredProfileArtist)
             ? AppLanguage.T(
-                $"{profileArtist} 相似歌曲",
-                $"songs similar to {profileArtist}")
+                $"{preferredProfileArtist} 相似歌曲",
+                $"songs similar to {preferredProfileArtist}")
             : null;
 
         // 词序按意图分叉：继续电台=最近听歌的多歌手方向打头（对应"按当前收听风格编排"的承诺）、
@@ -643,13 +697,32 @@ public class RecommendationService : IRecommendationService
         }
 
         var effectiveMood = sceneMode == RadioSceneMode.Focus ? "focus" : context.Mood;
+        if ((string.IsNullOrWhiteSpace(effectiveMood) ||
+             string.Equals(effectiveMood, "neutral", StringComparison.OrdinalIgnoreCase)) &&
+            !string.IsNullOrEmpty(currentTimeBand) &&
+            profileSnapshot?.TimeBandPreferences.TryGetValue(currentTimeBand, out var moodBandPref) == true &&
+            moodBandPref.TopMoods.FirstOrDefault() is { Length: > 0 } bandMood)
+        {
+            effectiveMood = bandMood;
+        }
+        var dominantLang = (!string.IsNullOrEmpty(currentTimeBand) &&
+                profileSnapshot?.TimeBandPreferences.TryGetValue(currentTimeBand, out var langBandPref) == true &&
+                !string.IsNullOrEmpty(langBandPref.DominantLanguage))
+            ? langBandPref.DominantLanguage
+            : profileSnapshot?.LanguageDistribution.FirstOrDefault()?.LanguageCode;
         var moodQuery = effectiveMood switch
         {
             "calm" => AppLanguage.T("安静 氛围", "calm ambient"),
             "focus" => AppLanguage.T("纯音乐 专注 轻音乐", "lofi instrumental focus"),
             "energetic" => AppLanguage.T("摇滚 热血", "energetic rock"),
             "sad" => AppLanguage.T("emo 治愈", "reflective emo"),
-            _ => AppLanguage.T("华语 流行", "popular music")
+            _ => dominantLang switch
+            {
+                "ja" => AppLanguage.T("日语 流行", "japanese pop"),
+                "ko" => AppLanguage.T("韩语 流行", "korean pop"),
+                "en" => AppLanguage.T("欧美 流行", "english pop"),
+                _ => AppLanguage.T("华语 流行", "popular music"),
+            }
         };
         if (effectiveMood == "focus")
             queries.Insert(0, moodQuery);

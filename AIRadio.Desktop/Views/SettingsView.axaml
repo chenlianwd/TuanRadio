@@ -664,6 +664,15 @@
                                     </ItemsControl>
                                 </StackPanel>
 
+                                <StackPanel Spacing="2" IsVisible="{Binding ProfileHasLanguageMix}">
+                                    <TextBlock Text="{DynamicResource S_ProfileLanguageMixLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock x:Name="ProfileLanguageMixText" Text="{Binding ProfileLanguageMixText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <StackPanel Spacing="2" IsVisible="{Binding ProfileHasTimeBandPreferences}">
+                                    <TextBlock Text="{DynamicResource S_ProfileTimeBandsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                    <TextBlock x:Name="ProfileTimeBandSummaryText" Text="{Binding ProfileTimeBandSummaryText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="{DynamicResource S_ProfileImpressionLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                                     <TextBlock x:Name="ProfileCardImpression" Text="{Binding ProfileImpressionText}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"
