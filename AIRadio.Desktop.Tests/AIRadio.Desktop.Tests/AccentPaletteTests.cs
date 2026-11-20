@@ -228,9 +228,26 @@ public class AccentPaletteTests
             using (var vm = new SettingsViewModel(mockLlm.Object, mockStorage.Object, settingsFile))
             {
                 vm.SelectedAccentPalette = AccentPalettes.SynthwaveId;
-                // 切换即跟随保存（订阅异步落盘，轮询等待写入完成）
-                await WaitForAsync(() => File.Exists(settingsFile));
-                Assert.Contains("\"accent_palette\": \"synthwave\"", await File.ReadAllTextAsync(settingsFile));
+                // 切换即跟随保存（订阅异步落盘，轮询等待写入完成并容忍短暂文件锁）
+                string? saved = null;
+                await WaitForAsync(() =>
+                {
+                    if (!File.Exists(settingsFile))
+                        return false;
+                    try
+                    {
+                        var text = File.ReadAllText(settingsFile);
+                        if (!text.Contains("\"accent_palette\": \"synthwave\""))
+                            return false;
+                        saved = text;
+                        return true;
+                    }
+                    catch (IOException)
+                    {
+                        return false;
+                    }
+                });
+                Assert.NotNull(saved);
             }
 
             using (var restored = new SettingsViewModel(mockLlm.Object, mockStorage.Object, settingsFile))

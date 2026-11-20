@@ -348,7 +348,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 SettingsVM.CloseAction = chosenAction;
                 SettingsVM.HasPromptedCloseAction = true;
-                _ = SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+                SettingsVM.RequestUiStateSave();
             }
 
             if (chosenAction == "exit")
@@ -418,12 +418,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ToggleCompactTopmostCommand = ReactiveCommand.Create(() =>
         {
             SettingsVM.CompactModeTopmost = !SettingsVM.CompactModeTopmost;
-            SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+            SettingsVM.RequestUiStateSave();
         });
         ToggleCompactLyricsCommand = ReactiveCommand.Create(() =>
         {
             SettingsVM.CompactShowLyrics = !SettingsVM.CompactShowLyrics;
-            SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+            SettingsVM.RequestUiStateSave();
         });
         _compactLyricsSub = this.WhenAnyValue(
             x => x.SettingsVM.CompactShowLyrics,
@@ -508,7 +508,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 _sleepTimerService.CloseAppOnExpiry = v;
                 SettingsVM.SleepTimerCloseApp = v;
-                SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+                SettingsVM.RequestUiStateSave();
             });
 
         _onPodcastPlaybackRateChanged = rate =>
@@ -518,7 +518,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (Math.Abs(SettingsVM.PodcastPlaybackRate - normalized) > 0.005f)
             {
                 SettingsVM.PodcastPlaybackRate = normalized;
-                SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+                SettingsVM.RequestUiStateSave();
             }
         };
         PlayerVM.PodcastPlaybackRateChanged += _onPodcastPlaybackRateChanged;
@@ -1476,7 +1476,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // 记住窗口模式，下次启动直接进入上次模式（复用主题切换的保存链路）
         SettingsVM.StartInCompactMode = IsCompactMode;
-        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+        SettingsVM.RequestUiStateSave();
     }
 
     private void ToggleLyricsMode()
@@ -1484,7 +1484,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IsLyricsMode = !IsLyricsMode;
         // 与简洁模式同款记忆链路：时钟舞台与歌词视图的偏好跨启动保留
         SettingsVM.ShowLyricsInStage = IsLyricsMode;
-        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+        SettingsVM.RequestUiStateSave();
     }
 
     /// <summary>舞台频谱点击：循环频谱样式（柱状→镜像→波形→粒子），与设置页下拉同源，走 UI 状态保存链路持久化。</summary>
@@ -1493,7 +1493,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         var styles = SettingsVM.SpectrumStyles;
         var current = styles.FindIndex(s => string.Equals(s.Id, SettingsVM.SelectedSpectrumStyle, StringComparison.OrdinalIgnoreCase));
         SettingsVM.SelectedSpectrumStyle = styles[(current + 1) % styles.Count].Id;
-        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+        SettingsVM.RequestUiStateSave();
     }
 
     private void CloseTransientOverlays()

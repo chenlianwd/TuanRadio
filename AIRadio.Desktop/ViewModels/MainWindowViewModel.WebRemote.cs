@@ -184,7 +184,7 @@ public partial class MainWindowViewModel
         SettingsVM.WebRemoteToken = freshToken;
         if (_webRemoteService != null)
             await _webRemoteService.RotateTokenAsync(freshToken);
-        SettingsVM.SaveUiStateCommand.Execute().Subscribe();
+        SettingsVM.RequestUiStateSave();
         RefreshWebRemoteUiState();
     }
 
