@@ -280,6 +280,8 @@ public class SettingsNavTests
             {
                 (v => v.SettingsVM.IsOpenSubsonicExpanded, (v, x) => v.SettingsVM.IsOpenSubsonicExpanded = x),
                 (v => v.SettingsVM.IsAudiusExpanded, (v, x) => v.SettingsVM.IsAudiusExpanded = x),
+                (v => v.SettingsVM.IsJamendoExpanded, (v, x) => v.SettingsVM.IsJamendoExpanded = x),
+                (v => v.SettingsVM.IsSoundCloudExpanded, (v, x) => v.SettingsVM.IsSoundCloudExpanded = x),
                 (v => v.SettingsVM.IsYtdlpExpanded, (v, x) => v.SettingsVM.IsYtdlpExpanded = x),
             };
 
@@ -338,12 +340,16 @@ public class SettingsNavTests
                     view.FindControl<Expander>("OpenSubsonicExpander") ?? throw new InvalidOperationException("OpenSubsonicExpander not found")),
                 (v => v.SettingsVM.IsAudiusExpanded, (v, x) => v.SettingsVM.IsAudiusExpanded = x,
                     view.FindControl<Expander>("AudiusExpander") ?? throw new InvalidOperationException("AudiusExpander not found")),
+                (v => v.SettingsVM.IsJamendoExpanded, (v, x) => v.SettingsVM.IsJamendoExpanded = x,
+                    view.FindControl<Expander>("JamendoExpander") ?? throw new InvalidOperationException("JamendoExpander not found")),
+                (v => v.SettingsVM.IsSoundCloudExpanded, (v, x) => v.SettingsVM.IsSoundCloudExpanded = x,
+                    view.FindControl<Expander>("SoundCloudExpander") ?? throw new InvalidOperationException("SoundCloudExpander not found")),
                 (v => v.SettingsVM.IsYtdlpExpanded, (v, x) => v.SettingsVM.IsYtdlpExpanded = x,
                     view.FindControl<Expander>("YtdlpExpander") ?? throw new InvalidOperationException("YtdlpExpander not found")),
             };
 
             // 可见性锚：YouTube 区块的实验源可见性（HasExperimentalProviders）随收纳挪到 Expander 上，搬移不丢
-            Assert.Equal(vm.SettingsVM.HasExperimentalProviders, specs[2].Expander.IsVisible);
+            Assert.Equal(vm.SettingsVM.HasExperimentalProviders, specs[4].Expander.IsVisible);
 
             foreach (var (get, set, expander) in specs)
             {

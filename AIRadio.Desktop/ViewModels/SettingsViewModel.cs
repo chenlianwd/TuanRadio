@@ -86,6 +86,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly OpenSubsonicProvider? _openSubsonic;
     private readonly AudiusProvider? _audius;
     private readonly JamendoProvider? _jamendo;
+    private readonly SoundCloudProvider? _soundCloud;
+    private readonly LocalLibraryProvider? _localLibrary;
     private readonly IWeatherService _weather;
     // 音色试听：合成与播放都复用生产链（null 时试听按钮静默无动作）
     private readonly ITtsService? _tts;
@@ -103,7 +105,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private int _weatherRelocalizeEpoch;
     private Func<string>? _audiusStatusFactory;
     private Func<string>? _jamendoStatusFactory;
+    private Func<string>? _soundCloudStatusFactory;
     private Func<string>? _openSubsonicStatusFactory;
+    private NeteaseAccountSnapshot? _lastNeteaseSnapshot;
+    private KugouAccountSnapshot? _lastKugouSnapshot;
     private readonly IDisposable _listenerProfileToggleSub;
     private readonly IDisposable _localModelSettingsSub;
     private readonly IDisposable _llmProfileSwapSub;
@@ -243,12 +248,17 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool IsAudiusExpanded { get; set; }
     /// <summary>Jamendo 区块折叠态：同私有曲库（需填写 Client ID 后启用），永远默认折叠。</summary>
     [Reactive] public partial bool IsJamendoExpanded { get; set; }
+    /// <summary>SoundCloud 区块折叠态：同私有曲库（需填写 Client ID 与 Client Secret 后启用），永远默认折叠。</summary>
+    [Reactive] public partial bool IsSoundCloudExpanded { get; set; }
     /// <summary>YouTube(yt-dlp) 区块折叠态：同私有曲库（国内默认不可达，登录态是高级配置），永远默认折叠。</summary>
     [Reactive] public partial bool IsYtdlpExpanded { get; set; }
     [Reactive] public partial string AudiusApiKeyInput { get; set; } = string.Empty;
     [Reactive] public partial string AudiusStatus { get; set; } = string.Empty;
     [Reactive] public partial string JamendoClientIdInput { get; set; } = string.Empty;
     [Reactive] public partial string JamendoStatus { get; set; } = string.Empty;
+    [Reactive] public partial string SoundCloudClientIdInput { get; set; } = string.Empty;
+    [Reactive] public partial string SoundCloudClientSecretInput { get; set; } = string.Empty;
+    [Reactive] public partial string SoundCloudStatus { get; set; } = string.Empty;
     // 清除画像的二次确认态：首次点击进入确认，5 秒内再点执行
     [Reactive] public partial string ResetProfileButtonText { get; set; } = AppLanguage.T("清除收听画像", "Clear listening profile");
     // 「DJ 对你的印象」展示卡（数据源 GetSnapshot 现算，四态见 RefreshProfileCard）
@@ -370,6 +380,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     public ReactiveCommand<Unit, Unit> ClearAudiusApiKeyCommand { get; }
     public ReactiveCommand<Unit, Unit> SaveJamendoClientIdCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearJamendoClientIdCommand { get; }
+    public ReactiveCommand<Unit, Unit> SaveSoundCloudCredentialsCommand { get; }
+    public ReactiveCommand<Unit, Unit> ClearSoundCloudCredentialsCommand { get; }
     public ReactiveCommand<GeoPlace, Unit> SelectWeatherCityCommand { get; }
     public ReactiveCommand<Unit, Unit> LocateWeatherCityCommand { get; }
     public ReactiveCommand<Unit, Unit> NeteaseQrLoginCommand { get; }
@@ -409,7 +421,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         IAudioService? audioService = null,
         IAppUpdateService? appUpdateService = null,
         Action<string>? openExternalUrl = null,
-        JamendoProvider? jamendo = null)
+        JamendoProvider? jamendo = null,
+        SoundCloudProvider? soundCloud = null,
+        LocalLibraryProvider? localLibrary = null)
     {
         _llmService = llmService;
         _secureStorage = secureStorage;
@@ -427,6 +441,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _openSubsonic = openSubsonic;
         _audius = audius;
         _jamendo = jamendo;
+        _soundCloud = soundCloud;
+        _localLibrary = localLibrary;
         _tts = ttsService;
         _audio = audioService;
         _appUpdate = appUpdateService ?? new AppUpdateService(http);
@@ -457,6 +473,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         ClearAudiusApiKeyCommand = ReactiveCommand.Create(ClearAudiusApiKey);
         SaveJamendoClientIdCommand = ReactiveCommand.CreateFromTask(SaveJamendoClientIdAsync);
         ClearJamendoClientIdCommand = ReactiveCommand.Create(ClearJamendoClientId);
+        SaveSoundCloudCredentialsCommand = ReactiveCommand.CreateFromTask(SaveSoundCloudCredentialsAsync);
+        ClearSoundCloudCredentialsCommand = ReactiveCommand.Create(ClearSoundCloudCredentials);
         SelectWeatherCityCommand = ReactiveCommand.Create<GeoPlace>(SelectWeatherCity);
         LocateWeatherCityCommand = ReactiveCommand.CreateFromTask(
             LocateWeatherCityAsync,
@@ -685,6 +703,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 AudiusStatus = _audiusStatusFactory();
             if (_jamendoStatusFactory != null)
                 JamendoStatus = _jamendoStatusFactory();
+            if (_soundCloudStatusFactory != null)
+                SoundCloudStatus = _soundCloudStatusFactory();
             RefreshUpdateTexts();
             if (_updateStatusFactory != null)
                 UpdateStatusText = _updateStatusFactory();
@@ -1243,6 +1263,22 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 }
             }
 
+            if (_soundCloud != null)
+            {
+                try
+                {
+                    await _soundCloud.LoadAsync(cancellationToken);
+                    SetSoundCloudStatus(_soundCloud.HasCredentials
+                        ? () => AppLanguage.T("凭据已安全保存", "Credentials saved securely")
+                        : () => AppLanguage.T("未配置（需填写 Client ID 与 Client Secret 后启用）", "Not configured (enter Client ID and Client Secret to enable)"));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning("SoundCloud credentials could not be loaded: {Type}", ex.GetType().Name);
+                    SetSoundCloudStatus(() => AppLanguage.T("凭据读取失败", "Could not load credentials"));
+                }
+            }
+
             if (_openSubsonic != null)
             {
                 try
@@ -1422,6 +1458,58 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         {
             Log.Warning("Jamendo Client ID clear failed: {Type}", ex.GetType().Name);
             SetJamendoStatus(() => AppLanguage.T("清除失败，请重试", "Could not clear the Client ID; try again"));
+        }
+    }
+
+    private async Task SaveSoundCloudCredentialsAsync()
+    {
+        if (_soundCloud == null) return;
+        if (string.IsNullOrWhiteSpace(SoundCloudClientIdInput) ||
+            string.IsNullOrWhiteSpace(SoundCloudClientSecretInput))
+        {
+            SetSoundCloudStatus(() => AppLanguage.T(
+                "请输入 SoundCloud Client ID 与 Client Secret",
+                "Enter both SoundCloud Client ID and Client Secret"));
+            return;
+        }
+        try
+        {
+            await _soundCloud.SaveCredentialsAsync(
+                SoundCloudClientIdInput,
+                SoundCloudClientSecretInput,
+                _lifetimeCts.Token);
+            SoundCloudClientIdInput = string.Empty;
+            SoundCloudClientSecretInput = string.Empty;
+            SetSoundCloudStatus(() => AppLanguage.T("凭据已安全保存", "Credentials saved securely"));
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("SoundCloud credentials save failed: {Type}", ex.GetType().Name);
+            SetSoundCloudStatus(() => AppLanguage.T(
+                "保存失败，请检查 Client ID 与 Client Secret 并重试",
+                "Could not save credentials; check Client ID and Client Secret and retry"));
+        }
+    }
+
+    private void ClearSoundCloudCredentials()
+    {
+        if (_soundCloud == null) return;
+        try
+        {
+            _soundCloud.ClearCredentials();
+            SoundCloudClientIdInput = string.Empty;
+            SoundCloudClientSecretInput = string.Empty;
+            SetSoundCloudStatus(() => AppLanguage.T(
+                "未配置（需填写 Client ID 与 Client Secret 后启用）",
+                "Not configured (enter Client ID and Client Secret to enable)"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("SoundCloud credentials clear failed: {Type}", ex.GetType().Name);
+            SetSoundCloudStatus(() => AppLanguage.T("清除失败，请重试", "Could not clear credentials; try again"));
         }
     }
 
@@ -1649,6 +1737,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         JamendoStatus = factory();
     }
 
+    private void SetSoundCloudStatus(Func<string> factory)
+    {
+        _soundCloudStatusFactory = factory;
+        SoundCloudStatus = factory();
+    }
+
     private void SetOpenSubsonicStatus(Func<string> factory)
     {
         _openSubsonicStatusFactory = factory;
@@ -1688,15 +1782,30 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             var report = (await multi.DiagnoseAsync(_lifetimeCts.Token)).ToList();
             var health = multi.GetHealthSnapshots()
                 .ToDictionary(item => item.SourceName, StringComparer.OrdinalIgnoreCase);
+            var activeIds = MusicProviders.Where(p => p.Enabled)
+                .Select(p => p.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var descriptorByName = multi.GetProviderDescriptors()
+                .ToDictionary(d => d.DisplayName, StringComparer.OrdinalIgnoreCase);
             // 文案在工厂里现算：语言切换时经 _onLanguageChanged 重建成当前语言
             SetSourceDiagnostics(() =>
             {
                 var sourceLines = report.Count == 0
                     ? AppLanguage.T("没有可诊断的音源。", "No music sources to diagnose.")
                     : string.Join("\n", report.Select(item =>
-                        PlaylistViewModel.FormatSourceStatus(item) +
-                        (health.TryGetValue(item.Name, out var snapshot)
-                            ? "\n  " + FormatSourceHealth(snapshot) : string.Empty)));
+                    {
+                        var lines = new List<string> { PlaylistViewModel.FormatSourceStatus(item) };
+                        if (health.TryGetValue(item.Name, out var snapshot))
+                            lines.Add("  " + FormatSourceHealth(snapshot));
+                        var providerId = descriptorByName.TryGetValue(item.Name, out var desc)
+                            ? desc.Id
+                            : item.Name;
+                        var enabled = descriptorByName.Count == 0 || MusicProviders.Count == 0 || activeIds.Contains(providerId);
+                        var detail = FormatProviderDiagnosticDetail(providerId, enabled);
+                        if (!string.IsNullOrWhiteSpace(detail))
+                            lines.Add("  " + SensitiveDataSanitizer.Sanitize(detail));
+                        return string.Join("\n", lines);
+                    }));
                 if (!HasExperimentalProviders) return sourceLines;
                 return sourceLines + "\n" + AppLanguage.T("网易云账号：", "NetEase account: ") +
                     NeteaseAccountStatus + "\n" +
@@ -1736,6 +1845,163 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         return AppLanguage.T(
             $"近 20 条记录 {snapshot.RecentSuccessCount}/{snapshot.RecentRequestCount} 次接口正常响应；搜索成功 {search}；播放解析成功 {resolution}；{circuit}",
             $"Valid API responses {snapshot.RecentSuccessCount}/{snapshot.RecentRequestCount} in recent 20 records; search success {search}; media resolution success {resolution}; {circuit}");
+    }
+
+    private string FormatProviderDiagnosticDetail(string providerId, bool enabled)
+    {
+        var enabledLabel = enabled
+            ? AppLanguage.T("启用状态：已启用", "Enabled: yes")
+            : AppLanguage.T("启用状态：已停用", "Enabled: no");
+        var specific = providerId.Trim().ToLowerInvariant() switch
+        {
+            "local" => FormatLocalDiagnostics(),
+            "opensubsonic" => FormatOpenSubsonicDiagnostics(),
+            "audius" => FormatAudiusDiagnostics(),
+            "jamendo" => FormatJamendoDiagnostics(),
+            "soundcloud" => FormatSoundCloudDiagnostics(),
+            "netease" => FormatNeteaseDiagnostics(),
+            "kugou" => FormatKugouDiagnostics(),
+            "youtube" => FormatYouTubeDiagnostics(),
+            _ => string.Empty
+        };
+        return string.IsNullOrWhiteSpace(specific) ? enabledLabel : $"{enabledLabel}；{specific}";
+    }
+
+    private string FormatLocalDiagnostics()
+    {
+        if (_localLibrary == null)
+            return AppLanguage.T("本地曲库就绪", "local library ready");
+        var count = _localLibrary.TrackCount;
+        return AppLanguage.T($"已索引 {count} 首本地曲目", $"{count} local track(s) indexed");
+    }
+
+    private string FormatOpenSubsonicDiagnostics()
+    {
+        if (_openSubsonic == null || !_openSubsonic.IsConfigured)
+            return AppLanguage.T("账号：未配置服务器", "account: server not configured");
+        var quality = NormalizeOpenSubsonicQuality(SelectedOpenSubsonicQuality);
+        return AppLanguage.T($"账号：已配置私有服务器；传输音质：{quality}", $"account: private server configured; quality: {quality}");
+    }
+
+    private string FormatAudiusDiagnostics()
+        => _audius?.HasApiKey == true
+            ? AppLanguage.T("账号：已配置 API Key", "account: API Key configured")
+            : AppLanguage.T("账号：公开无 Key 模式", "account: public no-key mode");
+
+    private string FormatJamendoDiagnostics()
+        => _jamendo?.IsConfigured == true
+            ? AppLanguage.T("账号：已配置 Client ID", "account: Client ID configured")
+            : AppLanguage.T("账号：未配置 Client ID", "account: Client ID not configured");
+
+    private string FormatSoundCloudDiagnostics()
+        => _soundCloud?.IsConfigured == true
+            ? AppLanguage.T("账号：已配置 OAuth 凭据", "account: OAuth credentials configured")
+            : AppLanguage.T("账号：未配置 Client ID / Secret", "account: Client ID & Secret not configured");
+
+    private string FormatNeteaseDiagnostics()
+    {
+        var accountPart = string.IsNullOrEmpty(_accounts.NeteaseCookie)
+            ? AppLanguage.T("账号：未登录（仅免费曲库）；权益：无会员", "account: signed out (free catalog only); rights: free")
+            : _lastNeteaseSnapshot is { IsValid: true } snap
+                ? (snap.VipType > 0
+                    ? AppLanguage.T($"账号：{snap.Nickname}；权益：黑胶 VIP（类型 {snap.VipType}）", $"account: {snap.Nickname}; rights: Vinyl VIP (type {snap.VipType})")
+                    : AppLanguage.T($"账号：{snap.Nickname}；权益：免费账号（付费曲目仅试听）", $"account: {snap.Nickname}; rights: free tier (VIP tracks preview-only)"))
+                : AppLanguage.T("账号：登录态待刷新或已失效", "account: session expired or unverified");
+
+        var proxyVer = MusicApiServer.ReadBundledProxyVersion("server", "NeteaseCloudMusicApi") ?? "4.32.0";
+        var nodeSummary = EnvironmentManager.GetNodeRuntimeSummary();
+        return AppLanguage.T(
+            $"{accountPart}；版本：NeteaseCloudMusicApi {proxyVer}（{nodeSummary}）",
+            $"{accountPart}; version: NeteaseCloudMusicApi {proxyVer} ({nodeSummary})");
+    }
+
+    private string FormatKugouDiagnostics()
+    {
+        string accountPart;
+        if (string.IsNullOrEmpty(_accounts.KugouCookie))
+        {
+            accountPart = AppLanguage.T("账号：未登录；权益：未激活", "account: signed out; rights: inactive");
+        }
+        else if (_lastKugouSnapshot != null)
+        {
+            var rights = _lastKugouSnapshot.VipType > 0
+                ? AppLanguage.T($"会员类型 {_lastKugouSnapshot.VipType}", $"VIP type {_lastKugouSnapshot.VipType}")
+                : AppLanguage.T("免费账号", "free tier");
+            var authState = _lastKugouSnapshot.HasAuth
+                ? AppLanguage.T("播放授权就绪", "auth ready")
+                : AppLanguage.T("播放授权未就绪", "auth pending");
+            accountPart = AppLanguage.T($"账号：已登录；权益：{rights}（{authState}）", $"account: signed in; rights: {rights} ({authState})");
+        }
+        else
+        {
+            accountPart = AppLanguage.T("账号：已登录（权益待刷新）", "account: signed in (rights unverified)");
+        }
+
+        var dfidReady = _accounts.HasKugouDfid;
+        var devicePart = dfidReady
+            ? AppLanguage.T("设备：稳定设备身份与 dfid 已注册", "device: stable identity & dfid registered")
+            : AppLanguage.T("设备：稳定设备身份已就绪（dfid 待注册）", "device: stable identity ready (dfid pending)");
+
+        string riskPart;
+        if (_kugouVerification == null)
+        {
+            riskPart = AppLanguage.T("风控：无验证记录", "risk: no challenge recorded");
+        }
+        else
+        {
+            var risk = _kugouVerification.GetRiskStatus();
+            riskPart = risk.VerificationInProgress
+                ? AppLanguage.T("风控：滑块验证进行中", "risk: verification in progress")
+                : risk.HasRecentChallenge
+                    ? (risk.AutoTriggerCooldownRemaining > TimeSpan.Zero
+                        ? AppLanguage.T($"风控：近期命中 20028（自动弹窗冷却 {Math.Ceiling(risk.AutoTriggerCooldownRemaining.TotalSeconds):0} 秒）",
+                            $"risk: recent 20028 challenge (auto-prompt cooldown {Math.Ceiling(risk.AutoTriggerCooldownRemaining.TotalSeconds):0}s)")
+                        : AppLanguage.T("风控：近期命中 20028，可点击滑块验证", "risk: recent 20028 challenge; captcha available"))
+                    : AppLanguage.T("风控：正常", "risk: clear");
+        }
+
+        var proxyVer = MusicApiServer.ReadBundledProxyVersion("server-kugou") ?? "1.6.2";
+        var nodeSummary = EnvironmentManager.GetNodeRuntimeSummary();
+        return AppLanguage.T(
+            $"{accountPart}；{devicePart}；{riskPart}；版本：KuGouMusicApi {proxyVer}（{nodeSummary}）",
+            $"{accountPart}; {devicePart}; {riskPart}; version: KuGouMusicApi {proxyVer} ({nodeSummary})");
+    }
+
+    private string FormatYouTubeDiagnostics()
+    {
+        var hasBrowserCookie = !string.IsNullOrWhiteSpace(_accounts.YtdlpCookieBrowser);
+        var accountRisk = hasBrowserCookie
+            ? AppLanguage.T($"账号/风控：已启用 {_accounts.YtdlpCookieBrowser} 浏览器 Cookie", $"account/risk: {_accounts.YtdlpCookieBrowser} browser cookies enabled")
+            : AppLanguage.T("账号/风控：匿名模式（未配置浏览器 Cookie，可能触发人机验证）", "account/risk: anonymous mode (no browser cookies; bot check may occur)");
+
+        var status = YtdlpManager.GetStatus();
+        string versionPart;
+        if (!status.Installed)
+        {
+            versionPart = AppLanguage.T(
+                $"版本：yt-dlp 未安装（固定版本 {YtdlpManager.PinnedVersion}）",
+                $"version: yt-dlp not installed (pinned {YtdlpManager.PinnedVersion})");
+        }
+        else if (!status.MeetsMinimumSupportedVersion)
+        {
+            versionPart = AppLanguage.T(
+                $"版本：yt-dlp {status.Version ?? "未知"}（低于最低支持版本 {YtdlpManager.MinimumSupportedVersion}，需更新至 {YtdlpManager.PinnedVersion}）",
+                $"version: yt-dlp {status.Version ?? "unknown"} (below minimum {YtdlpManager.MinimumSupportedVersion}; update to {YtdlpManager.PinnedVersion})");
+        }
+        else if (!string.Equals(status.Version, YtdlpManager.PinnedVersion, StringComparison.Ordinal))
+        {
+            versionPart = AppLanguage.T(
+                $"版本：yt-dlp {status.Version}（有可用更新：{YtdlpManager.PinnedVersion}）",
+                $"version: yt-dlp {status.Version} (update available: {YtdlpManager.PinnedVersion})");
+        }
+        else
+        {
+            versionPart = AppLanguage.T(
+                $"版本：yt-dlp {status.Version}（已是固定版本）",
+                $"version: yt-dlp {status.Version} (up to date)");
+        }
+
+        return $"{accountRisk}；{versionPart}";
     }
 
     /// <summary>
@@ -2202,10 +2468,17 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         {
             if (!string.IsNullOrEmpty(_accounts.NeteaseCookie))
             {
-                var nickname = await _neteaseAccount.GetNicknameAsync(_accounts.NeteaseCookie!, _lifetimeCts.Token);
-                SetNeteaseAccountStatus(() => nickname != null
-                    ? AppLanguage.T($"已登录：{nickname}", $"Signed in: {nickname}")
+                var neteaseSnap = await _neteaseAccount.GetAccountSnapshotAsync(_accounts.NeteaseCookie!, _lifetimeCts.Token);
+                _lastNeteaseSnapshot = neteaseSnap;
+                SetNeteaseAccountStatus(() => neteaseSnap.IsValid
+                    ? (neteaseSnap.VipType > 0
+                        ? AppLanguage.T($"已登录：{neteaseSnap.Nickname}（黑胶 VIP）", $"Signed in: {neteaseSnap.Nickname} (Vinyl VIP)")
+                        : AppLanguage.T($"已登录：{neteaseSnap.Nickname}（免费账号）", $"Signed in: {neteaseSnap.Nickname} (Free tier)"))
                     : AppLanguage.T("已登录（昵称获取失败，登录态可能过期）", "Signed in (nickname unavailable; login may have expired)"));
+            }
+            else
+            {
+                _lastNeteaseSnapshot = null;
             }
 
             if (!string.IsNullOrEmpty(_accounts.KugouCookie))
@@ -2224,6 +2497,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     if (latest == null)
                     {
                         // 刷新期间用户登出：按登出口径显示，不拿旧会话再查快照
+                        _lastKugouSnapshot = null;
                         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
                         return;
                     }
@@ -2235,7 +2509,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 }
 
                 var snapshot = await _kugouAccount.GetAccountSnapshotAsync(refreshed, _lifetimeCts.Token);
+                _lastKugouSnapshot = snapshot;
                 SetKugouAccountStatus(() => BuildKugouAccountStatus(snapshot));
+            }
+            else
+            {
+                _lastKugouSnapshot = null;
             }
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -2281,8 +2560,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                         await _accounts.SetNeteaseCookieAsync(result.Cookie!);
                         IsNeteaseQrVisible = false;
                         SetNeteaseQrImage(null);
-                        var nickname = await _neteaseAccount.GetNicknameAsync(result.Cookie!, _lifetimeCts.Token);
-                        SetNeteaseAccountStatus(() => AppLanguage.T($"已登录：{nickname ?? "未知昵称"}", $"Signed in: {nickname ?? "unknown"}"));
+                        var neteaseSnap = await _neteaseAccount.GetAccountSnapshotAsync(result.Cookie!, _lifetimeCts.Token);
+                        _lastNeteaseSnapshot = neteaseSnap;
+                        SetNeteaseAccountStatus(() => neteaseSnap.IsValid
+                            ? (neteaseSnap.VipType > 0
+                                ? AppLanguage.T($"已登录：{neteaseSnap.Nickname}（黑胶 VIP）", $"Signed in: {neteaseSnap.Nickname} (Vinyl VIP)")
+                                : AppLanguage.T($"已登录：{neteaseSnap.Nickname}（免费账号）", $"Signed in: {neteaseSnap.Nickname} (Free tier)"))
+                            : AppLanguage.T("已登录：未知昵称", "Signed in: unknown"));
                         return;
                     case QrState.Expired:
                         SetNeteaseAccountStatus(() => AppLanguage.T("二维码已过期，请重新扫码", "QR code expired; scan again"));
@@ -2350,6 +2634,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                         SetKugouQrImage(null);
                         var snapshot = await _kugouAccount.GetAccountSnapshotAsync(
                             result.Cookie!, _lifetimeCts.Token);
+                        _lastKugouSnapshot = snapshot;
                         SetKugouAccountStatus(() => BuildKugouAccountStatus(snapshot));
                         return;
                     case QrState.Expired:
@@ -2417,6 +2702,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private async Task LogoutNeteaseAsync()
     {
         await _accounts.SetNeteaseCookieAsync(null);
+        _lastNeteaseSnapshot = null;
         IsNeteaseQrVisible = false;
         SetNeteaseQrImage(null);
         SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
@@ -2518,6 +2804,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private async Task LogoutKugouAsync()
     {
         await _accounts.SetKugouCookieAsync(null);
+        _lastKugouSnapshot = null;
         IsKugouQrVisible = false;
         SetKugouQrImage(null);
         SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));

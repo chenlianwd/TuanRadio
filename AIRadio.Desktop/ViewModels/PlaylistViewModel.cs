@@ -1720,6 +1720,10 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
                 => AppLanguage.T("已在设置中停用", "Disabled in settings"),
             "尚未配置服务器" or "Server not configured"
                 => AppLanguage.T("尚未配置服务器", "Server not configured"),
+            "尚未配置 Client ID" or "Client ID not configured"
+                => AppLanguage.T("尚未配置 Client ID", "Client ID not configured"),
+            "尚未配置 Client ID / Secret" or "Client ID & Secret not configured"
+                => AppLanguage.T("尚未配置 Client ID / Secret", "Client ID & Secret not configured"),
             "可播性检查超时，已跳过" or "playability check timed out, skipped"
                 => AppLanguage.T("可播性检查超时，已跳过", "playability check timed out, skipped"),
             "试听或失效片段，已过滤" or "preview or stale clips only, filtered"

@@ -195,16 +195,10 @@ public class MusicSourceBroker : IMusicSourceBroker
                         "disabled", 0, AppLanguage.T("已在设置中停用", "Disabled in settings")));
                     continue;
                 }
-                if (provider is OpenSubsonicProvider { IsConfigured: false })
+                if (GetUnconfiguredDiagnosticReason(provider) is { } reason)
                 {
                     AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
-                        "disabled", 0, AppLanguage.T("尚未配置服务器", "Server not configured")));
-                    continue;
-                }
-                if (provider is JamendoProvider { IsConfigured: false })
-                {
-                    AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
-                        "disabled", 0, AppLanguage.T("尚未配置 Client ID", "Client ID not configured")));
+                        "disabled", 0, reason));
                     continue;
                 }
                 // 慢源（yt-dlp 子进程）给独立短预算：诊断是手动触发，总时长需有界
@@ -311,7 +305,23 @@ public class MusicSourceBroker : IMusicSourceBroker
                 _healthRegistry.Reset(jamendo.Descriptor.DisplayName);
             };
         }
+        foreach (var soundCloud in providers.OfType<SoundCloudProvider>())
+        {
+            soundCloud.ConfigurationChanged += (_, _) =>
+            {
+                _mediaCache.ClearProvider(soundCloud.Descriptor.Id);
+                _healthRegistry.Reset(soundCloud.Descriptor.DisplayName);
+            };
+        }
     }
+
+    private static string? GetUnconfiguredDiagnosticReason(IMusicProvider provider) => provider switch
+    {
+        OpenSubsonicProvider { IsConfigured: false } => AppLanguage.T("尚未配置服务器", "Server not configured"),
+        JamendoProvider { IsConfigured: false } => AppLanguage.T("尚未配置 Client ID", "Client ID not configured"),
+        SoundCloudProvider { IsConfigured: false } => AppLanguage.T("尚未配置 Client ID / Secret", "Client ID & Secret not configured"),
+        _ => null
+    };
 
     public Task<List<OnlineTrack>> SearchAsync(string keyword, int limit = 20)
         => SearchAsync(keyword, limit, CancellationToken.None);
@@ -665,6 +675,90 @@ public class MusicSourceBroker : IMusicSourceBroker
             : BuildResolveResult(fallback.Value.Url, track, beforeId, fallback.Value.Media);
     }
 
+    /// <summary>
+    /// 慢源（YouTube/yt-dlp）独立后台候选解析：使用 SlowSourceTimeout（30s）预算，
+    /// 不阻塞快速播放恢复；严格排除当前已失效源，遵循熔断、安全策略与重定向校验。
+    /// </summary>
+    public async Task<ResolveTrackResult?> ResolveSlowAlternativeTrackAsync(
+        OnlineTrack track,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var excludedProvider = FindProvider(track.Id);
+        var slowProviders = Volatile.Read(ref _activeProviders)
+            .Where(provider => !ReferenceEquals(provider, excludedProvider) && provider.Descriptor.IsSlowSource)
+            .ToArray();
+        if (slowProviders.Length == 0)
+            return null;
+
+        var query = string.IsNullOrWhiteSpace(track.Artist)
+            ? track.Title
+            : $"{track.Title} {track.Artist}";
+        if (string.IsNullOrWhiteSpace(query))
+            return null;
+
+        var beforeId = track.Id;
+        var deadline = DateTimeOffset.UtcNow + SlowSourceTimeout;
+        foreach (var provider in slowProviders)
+        {
+            var budget = CapBudget(SlowSourceTimeout, RemainingBudget(deadline));
+            if (budget < MinSourceBudget)
+            {
+                Log.Debug("Slow playback fallback skipped: slow budget exhausted");
+                break;
+            }
+
+            var candidates = await SearchForPlaybackFallbackAsync(
+                provider,
+                query,
+                budget,
+                cancellationToken).ConfigureAwait(false);
+            if (candidates.Count == 0)
+                continue;
+
+            var candidate = FindBestFallbackCandidate(candidates, track, stripDecorations: false)
+                ?? FindBestFallbackCandidate(candidates, track, stripDecorations: true);
+            if (candidate == null)
+                continue;
+
+            var urlBudget = CapBudget(SlowSourceTimeout, RemainingBudget(deadline));
+            if (urlBudget < MinSourceBudget)
+                break;
+
+            var media = await ResolveWithTimeout(
+                provider,
+                StripSourcePrefix(candidate.Id),
+                candidate.ProviderMetadata,
+                urlBudget,
+                cancellationToken).ConfigureAwait(false);
+            var url = ToPlayableUrl(provider, media);
+            if (media == null || string.IsNullOrWhiteSpace(url))
+                continue;
+
+            var previousSource = excludedProvider?.Descriptor.DisplayName ?? "unknown";
+            lock (_fallbackMutationGate)
+            {
+                track.Id = candidate.Id;
+                track.Source = candidate.Source;
+                track.ProviderMetadata = new Dictionary<string, string>(
+                    candidate.ProviderMetadata,
+                    StringComparer.OrdinalIgnoreCase);
+                if (candidate.DurationMs > 0)
+                    track.DurationMs = candidate.DurationMs;
+            }
+
+            Log.Information(
+                "Slow background playback fallback switched {Track} from {Preferred} to {Source}",
+                track.Title,
+                previousSource,
+                provider.Descriptor.DisplayName);
+            return BuildResolveResult(url, track, beforeId, media);
+        }
+
+        return null;
+    }
+
     private async Task<(string Url, ResolvedMedia Media)?> ResolveFallbackAsync(
         OnlineTrack track,
         IMusicProvider? excludedProvider,
@@ -855,16 +949,10 @@ public class MusicSourceBroker : IMusicSourceBroker
     {
         if (!Volatile.Read(ref _activeProviders).Contains(provider))
             return new List<OnlineTrack>();
-        if (provider is OpenSubsonicProvider { IsConfigured: false })
+        if (GetUnconfiguredDiagnosticReason(provider) is { } reason)
         {
             AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
-                "disabled", 0, AppLanguage.T("尚未配置服务器", "Server not configured")));
-            return new List<OnlineTrack>();
-        }
-        if (provider is JamendoProvider { IsConfigured: false })
-        {
-            AddSearchReport(new SourceSearchStatus(provider.Descriptor.DisplayName,
-                "disabled", 0, AppLanguage.T("尚未配置 Client ID", "Client ID not configured")));
+                "disabled", 0, reason));
             return new List<OnlineTrack>();
         }
         if (!_healthRegistry.CanRequest(provider.Descriptor.DisplayName, out var remaining))

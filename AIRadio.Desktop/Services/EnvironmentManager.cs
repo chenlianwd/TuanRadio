@@ -103,6 +103,16 @@ public static class EnvironmentManager
     /// <summary>发布包内 node.exe 相对路径（tools/publish.ps1 写入）。</summary>
     internal const string BundledNodeRelativePath = "runtime\\node\\node.exe";
 
+    /// <summary>无阻塞本地检测 Node.js 运行时就绪形态（随包内置 / 便携缓存），不启动进程也不触发下载。</summary>
+    internal static string GetNodeRuntimeSummary()
+    {
+        if (FindBundledNode(AppContext.BaseDirectory) != null)
+            return AppLanguage.T("内置 Node.js 已就绪", "bundled Node.js ready");
+        if (File.Exists(NodeExe))
+            return AppLanguage.T("便携 Node.js 已就绪", "portable Node.js ready");
+        return AppLanguage.T("将按需探测系统 Node.js 或下载便携运行时", "uses system Node.js or downloads portable runtime on demand");
+    }
+
     internal static string? FindBundledNode(string baseDir)
     {
         try

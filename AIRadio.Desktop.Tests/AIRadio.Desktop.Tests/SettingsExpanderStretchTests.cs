@@ -51,6 +51,8 @@ public class SettingsExpanderStretchTests
                     v => v.SettingsVM.IsAudiusExpanded, (v, x) => v.SettingsVM.IsAudiusExpanded = x),
                 (view.FindControl<Expander>("JamendoExpander") ?? throw new InvalidOperationException("JamendoExpander not found"),
                     v => v.SettingsVM.IsJamendoExpanded, (v, x) => v.SettingsVM.IsJamendoExpanded = x),
+                (view.FindControl<Expander>("SoundCloudExpander") ?? throw new InvalidOperationException("SoundCloudExpander not found"),
+                    v => v.SettingsVM.IsSoundCloudExpanded, (v, x) => v.SettingsVM.IsSoundCloudExpanded = x),
                 (view.FindControl<Expander>("YtdlpExpander") ?? throw new InvalidOperationException("YtdlpExpander not found"),
                     v => v.SettingsVM.IsYtdlpExpanded, (v, x) => v.SettingsVM.IsYtdlpExpanded = x),
             };
@@ -89,12 +91,14 @@ public class SettingsExpanderStretchTests
             // 三块等宽（折叠态标题长短不再影响宽度）
             Assert.All(widths, w => Assert.Equal(widths[0], w, 0.5));
 
-            // 展开 Jamendo 后重新打开设置弹层，折叠态必须自动复位为收起
+            // 展开 Jamendo / SoundCloud 后重新打开设置弹层，折叠态必须自动复位为收起
             vm.SettingsVM.IsJamendoExpanded = true;
+            vm.SettingsVM.IsSoundCloudExpanded = true;
             vm.IsSettingsOpen = false;
             vm.IsSettingsOpen = true;
             Dispatcher.UIThread.RunJobs();
             Assert.False(vm.SettingsVM.IsJamendoExpanded);
+            Assert.False(vm.SettingsVM.IsSoundCloudExpanded);
         }
         finally
         {

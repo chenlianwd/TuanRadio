@@ -101,6 +101,23 @@ public sealed class KugouVerificationService
         }
     }
 
+    /// <summary>供设置页诊断读取的非敏感风控状态快照（不含事件 ID/hash/凭据）。</summary>
+    public KugouRiskStatusSnapshot GetRiskStatus()
+    {
+        lock (_gate)
+        {
+            var inProgress = _verificationInProgress && !IsStaleInProgressLocked();
+            var remaining = TimeSpan.Zero;
+            if (_lastAutoTrigger is { } last)
+            {
+                var elapsed = DateTimeOffset.UtcNow - last;
+                if (elapsed < AutoTriggerCooldown)
+                    remaining = AutoTriggerCooldown - elapsed;
+            }
+            return new KugouRiskStatusSnapshot(_lastChallenge != null, inProgress, remaining);
+        }
+    }
+
     /// <summary>命中风控挑战时触发（KugouMusicService 解析响应后调用 RecordChallenge）。</summary>
     public event Action<KugouChallenge>? ChallengeDetected;
 
@@ -478,3 +495,8 @@ public sealed class KugouVerificationService
         return null;
     }
 }
+
+public sealed record KugouRiskStatusSnapshot(
+    bool HasRecentChallenge,
+    bool VerificationInProgress,
+    TimeSpan AutoTriggerCooldownRemaining);

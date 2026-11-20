@@ -297,6 +297,8 @@ public partial class App : Application
         services.AddSingleton<Services.Music.LocalLibraryProvider>();
         services.AddSingleton<Services.Music.JamendoProvider>(sp =>
             new Services.Music.JamendoProvider(storage: sp.GetRequiredService<ISecureStorage>()));
+        services.AddSingleton<Services.Music.SoundCloudProvider>(sp =>
+            new Services.Music.SoundCloudProvider(storage: sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<Services.Music.AudiusProvider>(sp =>
             new Services.Music.AudiusProvider(storage: sp.GetRequiredService<ISecureStorage>()));
         services.AddSingleton<Services.Music.OpenSubsonicProvider>(sp =>
@@ -308,7 +310,8 @@ public partial class App : Application
                 sp.GetRequiredService<Services.Music.LocalLibraryProvider>(),
                 sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
                 sp.GetRequiredService<Services.Music.AudiusProvider>(),
-                sp.GetRequiredService<Services.Music.JamendoProvider>());
+                sp.GetRequiredService<Services.Music.JamendoProvider>(),
+                sp.GetRequiredService<Services.Music.SoundCloudProvider>());
 #else
             var accounts = sp.GetRequiredService<MusicAccountStore>();
             var ytdlpPath = YtdlpManager.GetYtdlpPath();
@@ -325,7 +328,8 @@ public partial class App : Application
                 new Services.Music.IMusicProvider[]
                 {
                     sp.GetRequiredService<Services.Music.AudiusProvider>(),
-                    sp.GetRequiredService<Services.Music.JamendoProvider>()
+                    sp.GetRequiredService<Services.Music.JamendoProvider>(),
+                    sp.GetRequiredService<Services.Music.SoundCloudProvider>()
                 },
                 ytSource);
 #endif
@@ -390,6 +394,7 @@ public partial class App : Application
             openSubsonic: sp.GetRequiredService<Services.Music.OpenSubsonicProvider>(),
             audius: sp.GetRequiredService<Services.Music.AudiusProvider>(),
             jamendo: sp.GetRequiredService<Services.Music.JamendoProvider>(),
+            soundCloud: sp.GetRequiredService<Services.Music.SoundCloudProvider>(),
             ttsService: sp.GetRequiredService<ITtsService>(),
             appUpdateService: sp.GetRequiredService<IAppUpdateService>(),
             radioBrowserService: sp.GetRequiredService<IRadioBrowserService>(),

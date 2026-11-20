@@ -365,6 +365,34 @@ public class MusicApiServer : IDisposable
     private bool HealthResponseAccepted(HttpResponseMessage response)
         => !_requireSuccessStatusCode || response.IsSuccessStatusCode;
 
+    /// <summary>读取随包代理组件版本（优先包内 package.json，仅读本地元数据，不启动进程）。</summary>
+    internal static string? ReadBundledProxyVersion(string serverDirName, string? dependencyName = null)
+    {
+        try
+        {
+            var pkgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, serverDirName, "package.json");
+            if (!File.Exists(pkgPath))
+                return null;
+            using var doc = JsonDocument.Parse(File.ReadAllText(pkgPath));
+            var root = doc.RootElement;
+            if (!string.IsNullOrWhiteSpace(dependencyName) &&
+                root.TryGetProperty("dependencies", out var deps) &&
+                deps.ValueKind == JsonValueKind.Object &&
+                deps.TryGetProperty(dependencyName, out var depVer) &&
+                depVer.ValueKind == JsonValueKind.String)
+            {
+                return depVer.GetString();
+            }
+            if (root.TryGetProperty("version", out var ver) && ver.ValueKind == JsonValueKind.String)
+                return ver.GetString();
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static bool LooksLikeNeteaseSearchResponse(string body)
     {
         if (string.IsNullOrWhiteSpace(body) || body.Length > 64 * 1024)
