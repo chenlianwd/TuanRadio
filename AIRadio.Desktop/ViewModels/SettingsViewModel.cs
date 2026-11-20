@@ -1787,6 +1787,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var descriptorByName = multi.GetProviderDescriptors()
                 .ToDictionary(d => d.DisplayName, StringComparer.OrdinalIgnoreCase);
+            var manifest = ProviderManifest.LoadFromBaseDirectory();
             // 文案在工厂里现算：语言切换时经 _onLanguageChanged 重建成当前语言
             SetSourceDiagnostics(() =>
             {
@@ -1801,7 +1802,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                             ? desc.Id
                             : item.Name;
                         var enabled = descriptorByName.Count == 0 || MusicProviders.Count == 0 || activeIds.Contains(providerId);
-                        var detail = FormatProviderDiagnosticDetail(providerId, enabled);
+                        var detail = FormatProviderDiagnosticDetail(providerId, enabled, manifest);
                         if (!string.IsNullOrWhiteSpace(detail))
                             lines.Add("  " + SensitiveDataSanitizer.Sanitize(detail));
                         return string.Join("\n", lines);
@@ -1847,7 +1848,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             $"Valid API responses {snapshot.RecentSuccessCount}/{snapshot.RecentRequestCount} in recent 20 records; search success {search}; media resolution success {resolution}; {circuit}");
     }
 
-    private string FormatProviderDiagnosticDetail(string providerId, bool enabled)
+    private string FormatProviderDiagnosticDetail(string providerId, bool enabled, ProviderManifest manifest)
     {
         var enabledLabel = enabled
             ? AppLanguage.T("启用状态：已启用", "Enabled: yes")
@@ -1859,8 +1860,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             "audius" => FormatAudiusDiagnostics(),
             "jamendo" => FormatJamendoDiagnostics(),
             "soundcloud" => FormatSoundCloudDiagnostics(),
-            "netease" => FormatNeteaseDiagnostics(),
-            "kugou" => FormatKugouDiagnostics(),
+            "netease" => FormatNeteaseDiagnostics(manifest),
+            "kugou" => FormatKugouDiagnostics(manifest),
             "youtube" => FormatYouTubeDiagnostics(),
             _ => string.Empty
         };
@@ -1898,7 +1899,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             ? AppLanguage.T("账号：已配置 OAuth 凭据", "account: OAuth credentials configured")
             : AppLanguage.T("账号：未配置 Client ID / Secret", "account: Client ID & Secret not configured");
 
-    private string FormatNeteaseDiagnostics()
+    private string FormatNeteaseDiagnostics(ProviderManifest manifest)
     {
         var accountPart = string.IsNullOrEmpty(_accounts.NeteaseCookie)
             ? AppLanguage.T("账号：未登录（仅免费曲库）；权益：无会员", "account: signed out (free catalog only); rights: free")
@@ -1908,14 +1909,17 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     : AppLanguage.T($"账号：{snap.Nickname}；权益：免费账号（付费曲目仅试听）", $"account: {snap.Nickname}; rights: free tier (VIP tracks preview-only)"))
                 : AppLanguage.T("账号：登录态待刷新或已失效", "account: session expired or unverified");
 
-        var proxyVer = MusicApiServer.ReadBundledProxyVersion("server", "NeteaseCloudMusicApi") ?? "4.32.0";
+        var proxyVer = FormatBundledVersion(
+            "NeteaseCloudMusicApi",
+            manifest.EvaluateNetease(),
+            MusicApiServer.ReadBundledProxyVersion("server", "NeteaseCloudMusicApi"));
         var nodeSummary = EnvironmentManager.GetNodeRuntimeSummary();
         return AppLanguage.T(
-            $"{accountPart}；版本：NeteaseCloudMusicApi {proxyVer}（{nodeSummary}）",
-            $"{accountPart}; version: NeteaseCloudMusicApi {proxyVer} ({nodeSummary})");
+            $"{accountPart}；版本：{proxyVer}（{nodeSummary}）",
+            $"{accountPart}; version: {proxyVer} ({nodeSummary})");
     }
 
-    private string FormatKugouDiagnostics()
+    private string FormatKugouDiagnostics(ProviderManifest manifest)
     {
         string accountPart;
         if (string.IsNullOrEmpty(_accounts.KugouCookie))
@@ -1960,11 +1964,35 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     : AppLanguage.T("风控：正常", "risk: clear");
         }
 
-        var proxyVer = MusicApiServer.ReadBundledProxyVersion("server-kugou") ?? "1.6.2";
+        var proxyVer = FormatBundledVersion(
+            "KuGouMusicApi",
+            manifest.EvaluateKugou(),
+            MusicApiServer.ReadBundledProxyVersion("server-kugou"));
         var nodeSummary = EnvironmentManager.GetNodeRuntimeSummary();
         return AppLanguage.T(
-            $"{accountPart}；{devicePart}；{riskPart}；版本：KuGouMusicApi {proxyVer}（{nodeSummary}）",
-            $"{accountPart}; {devicePart}; {riskPart}; version: KuGouMusicApi {proxyVer} ({nodeSummary})");
+            $"{accountPart}；{devicePart}；{riskPart}；版本：{proxyVer}（{nodeSummary}）",
+            $"{accountPart}; {devicePart}; {riskPart}; version: {proxyVer} ({nodeSummary})");
+    }
+
+    /// <summary>
+    /// 随包 Node 代理版本文案：优先取构建清单，清单缺失时回退读包内 package.json；
+    /// 两者都没有则如实显示“未知”，不再臆造默认版本号。
+    /// </summary>
+    internal static string FormatBundledVersion(string label, ProviderVersionReport report, string? packageJsonFallback)
+    {
+        var installed = report.InstalledVersion ?? (string.IsNullOrWhiteSpace(packageJsonFallback) ? null : packageJsonFallback.Trim());
+        if (installed == null)
+        {
+            return AppLanguage.T(
+                $"{label} 未知（缺少随包组件清单）",
+                $"{label} unknown (bundled component manifest missing)");
+        }
+
+        return string.Equals(installed, report.ExpectedVersion, StringComparison.Ordinal)
+            ? AppLanguage.T($"{label} {installed}（固定版本）", $"{label} {installed} (pinned)")
+            : AppLanguage.T(
+                $"{label} {installed}（与固定版本 {report.ExpectedVersion} 不一致）",
+                $"{label} {installed} (differs from pinned {report.ExpectedVersion})");
     }
 
     private string FormatYouTubeDiagnostics()

@@ -152,7 +152,7 @@ TuanRadio 的方向已经收敛为“复古 AI 电台”：
 ### P3 增强：后续评估
 
 - 长期用户画像已落地（见「已完成」），并于 2026-11-19 完成语种配比与分时段偏好扩展（`LanguageDistribution`、`TimeBandPreferences` 注入推荐/DJ/设置卡）；后续仅评估跨设备同步。
-- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28 ~ 2026-11-20）已全面补齐开放曲库：Audius（无 Key 只读 + 可选 API Key）、Jamendo（2026-11-19，Client ID 安全存储）与 SoundCloud（2026-11-20，OAuth Client Credentials 安全存储 + 站外可播/署名元数据过滤）；OpenSubsonic 传输音质偏好、实际播放编码/码率展示（2026-10-10）、重定向逐跳复检、播放头传输（PlaybackHeaders）、首播对象化解析与全局源策略均已落地。独立 Provider 程序集 Phase 1 已拆分（AIRadio.Desktop.Music 类库，2026-10-12）；Phase 2 细项见总计划。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
+- 音源架构阶段 2 已接入可搜索的本地曲库与 OpenSubsonic，阶段 3 已提供无 Node 核心构建、代理路由裁剪及依赖清单；设置页支持已注册音源的启停和排序。阶段 4（2026-09-28 ~ 2026-11-20）已全面补齐开放曲库：Audius（无 Key 只读 + 可选 API Key）、Jamendo（2026-11-19，Client ID 安全存储）与 SoundCloud（2026-11-20，OAuth Client Credentials 安全存储 + 站外可播/署名元数据过滤）；OpenSubsonic 传输音质偏好、实际播放编码/码率展示（2026-10-10）、重定向逐跳复检、播放头传输（PlaybackHeaders）、首播对象化解析与全局源策略均已落地。独立 Provider 程序集 Phase 1 已拆分（AIRadio.Desktop.Music 类库，2026-10-12），并已于 2026-11-20 落地运行时 `providers-manifest.json` 版本核对、清单完整性与精简构建门禁测试（跨项目拆包与社区插件按计划延后）。总计划见 docs/plans/2026-08-25-music-source-architecture-evolution-plan.md。
 - 在线音源可靠性专项已接入结构化解析结果、后三首队列预检与逐首状态、最近 20 次请求健康度，网易云代理升级到 4.32.0，并于 2026-11-20 完成专项收口：补齐带请求代次隔离的 YouTube 慢源后台候选恢复代理，以及设置页逐源启用/账号/权益/设备风控/代理与 yt-dlp 版本更新诊断面板（脱敏无凭据泄漏）；代理的上游依赖链仍有既有 npm audit 告警。
 - 音源体验增强与设置页逐源连接诊断均已落地（2026-09-15，见「已完成」）。
 - Node.js/yt-dlp 供应链校验已落地（下载即 fail-closed 校验官方 SHA 值 + 固定 release 版本）。
