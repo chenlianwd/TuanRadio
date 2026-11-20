@@ -68,6 +68,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly string _settingsDir;
     private readonly string _settingsFile;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly object _uiSaveQueueLock = new();
+    private bool _uiSaveRunning;
+    private bool _uiSavePending;
     private readonly IDisposable _selectedCharacterSub;
     private readonly IDisposable _selectedYtdlpBrowserSub;
     private readonly IDisposable _openSubsonicQualitySub;
@@ -508,7 +511,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             });
 
         // 主题/简洁模式等无关 UI 状态的自动保存：不写 LLM 配置、不动凭据，
-        // 磁盘上已有的 llm_* 字段原样保留
+        // 磁盘上已有的 llm_* 字段原样保留；即发即弃触发请优先调用 RequestUiStateSave() 以合并连续请求
         SaveUiStateCommand = ReactiveCommand.CreateFromTask(() => SaveAsync(persistLlmFields: false));
 
         // Skip(1)：避免构造/加载赋值触发自动保存；加载期赋值由 _loadingProfileToggle 屏蔽
@@ -521,7 +524,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_listeningProfile != null)
                     _listeningProfile.Enabled = enabled;
                 RefreshProfileCard();
-                _ = SaveUiStateCommand.Execute().Subscribe();
+                RequestUiStateSave();
             });
         _webRemoteToggleSub = this.WhenAnyValue(x => x.WebRemoteEnabled)
             .Skip(1)
@@ -530,7 +533,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_loadingWebRemote)
                     return;
                 _ = enabled;
-                _ = SaveUiStateCommand.Execute().Subscribe();
+                RequestUiStateSave();
             });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
@@ -566,8 +569,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_loadingYtdlpBrowser)
                     return;
                 // 用户切换浏览器时跟随保存，不触碰 LLM 字段与凭据
-                // （Subscribe 与其余调用点对齐：不订阅则 IsExecuting 不翻转、异常无人观察）
-                _ = SaveUiStateCommand.Execute().Subscribe();
+                RequestUiStateSave();
             });
 
         _openSubsonicQualitySub = this.WhenAnyValue(x => x.SelectedOpenSubsonicQuality)
@@ -579,7 +581,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_openSubsonic != null)
                     _openSubsonic.Quality = ParseOpenSubsonicQuality(id);
                 if (!_loadingOpenSubsonicQuality)
-                    _ = SaveUiStateCommand.Execute().Subscribe();
+                    RequestUiStateSave();
             });
         _musicSourcePolicySub = this.WhenAnyValue(x => x.SelectedMusicSourcePolicy)
             .Skip(1)
@@ -590,7 +592,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_musicSearch is IMusicSourceBroker broker)
                     broker.SourcePolicy = ParseMusicSourcePolicy(id);
                 if (!_loadingMusicSourcePolicy)
-                    _ = SaveUiStateCommand.Execute().Subscribe();
+                    RequestUiStateSave();
             });
         // 外观主题：切换即生效并跟随保存（加载期赋值由 _loadingThemeMode 屏蔽）
         _themeModeSub = this.WhenAnyValue(x => x.SelectedThemeMode)
@@ -617,7 +619,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 {
                     _syncingThemeMode = false;
                 }
-                _ = SaveUiStateCommand.Execute().Subscribe();
+                RequestUiStateSave();
             });
         // 兼容单设 IsDarkMode 的旧调用路径（如单测或快捷指令）：
         // 仅在非跟随系统模式、且非主题模式同步期间生效，避免破坏跟随系统语义或循环倒灌
@@ -642,7 +644,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (_loadingAccentPalette)
                     return;
                 AccentPalettes.Apply(Avalonia.Application.Current, id);
-                _ = SaveUiStateCommand.Execute().Subscribe();
+                RequestUiStateSave();
             });
         // 界面显示语言严格跟随本选项：加载读到旧值与用户切换时都经 Apply 生效
         _selectedLanguageSub = this.WhenAnyValue(x => x.SelectedLanguage)
@@ -654,7 +656,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .Subscribe(action =>
             {
                 if (!_loadingCloseAction)
-                    _ = SaveUiStateCommand.Execute().Subscribe();
+                    RequestUiStateSave();
             });
 
         // 语言切换时刷新常驻文案与选项列表显示名（静态事件，Dispose 退订）
@@ -1539,7 +1541,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         WeatherCitySuggestions = Array.Empty<GeoPlace>();
         WeatherCityNoMatch = false;
         WeatherCitySearchFailed = false;
-        _ = SaveUiStateCommand.Execute().Subscribe();
+        RequestUiStateSave();
     }
 
     /// <summary>
@@ -2546,6 +2548,62 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     {
         (KugouQrImage as IDisposable)?.Dispose();
         KugouQrImage = image;
+    }
+
+    /// <summary>
+    /// 请求一次轻量 UI 状态持久化（不写 LLM 字段与凭据）。
+    /// 若已有 UI 保存任务在途，则合并登记一次挂起保存并在当前轮结束后补写最新状态，
+    /// 避免 ReactiveCommand 执行期 CanExecute=false 导致连续快速操作静默丢变更。
+    /// </summary>
+    public void RequestUiStateSave()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        lock (_uiSaveQueueLock)
+        {
+            if (_uiSaveRunning)
+            {
+                _uiSavePending = true;
+                return;
+            }
+            _uiSaveRunning = true;
+        }
+
+        _ = RunCoalescedUiStateSaveAsync();
+    }
+
+    private async Task RunCoalescedUiStateSaveAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    return;
+
+                await SaveAsync(persistLlmFields: false);
+
+                lock (_uiSaveQueueLock)
+                {
+                    if (!_uiSavePending || Volatile.Read(ref _disposed) != 0)
+                        return;
+                    _uiSavePending = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Unexpected failure in coalesced UI state save");
+        }
+        finally
+        {
+            lock (_uiSaveQueueLock)
+            {
+                _uiSaveRunning = false;
+                _uiSavePending = false;
+            }
+        }
     }
 
     private async Task SaveAsync(bool persistLlmFields = true)

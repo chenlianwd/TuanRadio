@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reactive.Linq;
+using System.Reactive.Threading.Tasks;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -2501,6 +2502,81 @@ public class SettingsViewModelTests
         finally
         {
             File.Delete(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task RequestUiStateSave_RapidConsecutiveChanges_CoalescesAndPersistsFinalState()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            var saveEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var storage = new Mock<ISecureStorage>();
+            storage.Setup(x => x.GetApiKeyAsync(It.IsAny<string>())).ReturnsAsync((string?)null);
+            storage.Setup(x => x.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()))
+                .Returns(async () =>
+                {
+                    saveEntered.TrySetResult();
+                    await releaseSave.Task;
+                });
+
+            using var vm = new SettingsViewModel(_mockLlm.Object, storage.Object, settingsFile);
+            await vm.LoadAsync();
+            vm.ApiKey = "sk-test-123";
+
+            // 1) 让 SaveCommand 持有 _saveGate 并卡在凭据写入处，稳定复现“保存正在进行中”窗口
+            var inFlightSave = vm.SaveCommand.Execute().ToTask();
+            await saveEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // 2) 在保存窗口内连续触发多次 UI 状态变更与保存请求（首轮进入等锁态，后续合并为待补写）
+            vm.SelectedSpectrumStyle = "mirror";
+            vm.RequestUiStateSave();
+            vm.SelectedThemeMode = ThemeModes.Light;
+            vm.SelectedAccentPalette = AccentPalettes.IceId;
+            vm.SelectedSpectrumStyle = "wave";
+            vm.RequestUiStateSave();
+
+            // 3) 放行首轮 SaveCommand；合并队列必须自动补写最终状态而非静默丢失
+            releaseSave.SetResult();
+            await inFlightSave.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            var persisted = false;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (File.Exists(settingsFile))
+                {
+                    try
+                    {
+                        var json = await File.ReadAllTextAsync(settingsFile);
+                        using var doc = JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("spectrum_style", out var s) && s.GetString() == "wave" &&
+                            root.TryGetProperty("accent_palette", out var a) && a.GetString() == AccentPalettes.IceId &&
+                            root.TryGetProperty("theme_mode", out var t) && t.GetString() == ThemeModes.Light)
+                        {
+                            persisted = true;
+                            break;
+                        }
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+                await Task.Delay(20);
+            }
+
+            Assert.True(persisted, "连续快速触发 UI 状态保存后，settings.json 必须保留最终状态");
+        }
+        finally
+        {
+            File.Delete(settingsFile);
+            File.Delete(settingsFile + ".bak");
         }
     }
 }

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reactive;
 using System.Reactive.Subjects;
+using System.Text.Json;
 using System.Threading;
 using AIRadio.Desktop.Models;
 using AIRadio.Desktop.Services;
@@ -280,33 +281,61 @@ public class ClockStageLyricsCoexistenceTests
     [AvaloniaFact]
     public async Task CycleSpectrumStyleCommand_CyclesThroughAllStyles_Persists()
     {
-        using var vm = CreateViewModel(null, out var settingsFile);
-        // 保存守卫契约：对已存在文件的自动保存要求本会话完成过一次加载
-        //（首次保存会创建文件，后续保存都在"文件已存在"状态下进行）
-        await vm.SettingsVM.LoadAsync();
-        Assert.Equal("bars", vm.SettingsVM.SelectedSpectrumStyle);
-
-        foreach (var expected in new[] { "mirror", "wave", "particles", "bars" })
+        var vm = CreateViewModel(null, out var settingsFile);
+        var tempDir = Path.GetDirectoryName(settingsFile);
+        try
         {
-            Execute(vm.CycleSpectrumStyleCommand);
-            Assert.Equal(expected, vm.SettingsVM.SelectedSpectrumStyle);
-            Assert.Equal(expected, vm.SpectrumVM.SelectedStyle);
-        }
+            // 保存守卫契约：对已存在文件的自动保存要求本会话完成过一次加载
+            //（首次保存会创建文件，后续保存都在"文件已存在"状态下进行）
+            await vm.SettingsVM.LoadAsync();
+            Assert.Equal("bars", vm.SettingsVM.SelectedSpectrumStyle);
 
-        // 持久化走 SaveUiStateCommand 异步落盘：轮询 settings.json 出现终值
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        var persisted = false;
-        while (DateTime.UtcNow < deadline)
-        {
-            Dispatcher.UIThread.RunJobs();
-            if (File.Exists(settingsFile) && File.ReadAllText(settingsFile).Contains("\"bars\""))
+            foreach (var expected in new[] { "mirror", "wave", "particles", "bars" })
             {
-                persisted = true;
-                break;
+                Execute(vm.CycleSpectrumStyleCommand);
+                Assert.Equal(expected, vm.SettingsVM.SelectedSpectrumStyle);
+                Assert.Equal(expected, vm.SpectrumVM.SelectedStyle);
             }
-            Thread.Sleep(20);
+
+            // 持久化走 RequestUiStateSave 合并异步落盘：轮询 settings.json 出现终值并容忍写盘替换的瞬时读锁
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            var persisted = false;
+            while (DateTime.UtcNow < deadline)
+            {
+                Dispatcher.UIThread.RunJobs();
+                if (File.Exists(settingsFile))
+                {
+                    try
+                    {
+                        var json = await File.ReadAllTextAsync(settingsFile);
+                        using var doc = JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("spectrum_style", out var styleEl) &&
+                            string.Equals(styleEl.GetString(), "bars", StringComparison.Ordinal))
+                        {
+                            persisted = true;
+                            break;
+                        }
+                    }
+                    catch (IOException)
+                    {
+                        // 后台写盘 File.Replace/File.Move 与轮询读盘的短暂共享冲突，稍候重试
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+                await Task.Delay(20);
+            }
+            Assert.True(persisted, "频谱样式应在超时内持久化到 settings.json");
         }
-        Assert.True(persisted, "频谱样式应在超时内持久化到 settings.json");
+        finally
+        {
+            vm.Dispose();
+            if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
     }
 
     [AvaloniaFact]
