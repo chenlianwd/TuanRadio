@@ -21,6 +21,7 @@ public sealed class MusicAccountStore
 
     public string? NeteaseCookie { get; private set; }
     public string? KugouCookie { get; private set; }
+    public bool HasKugouDfid => KugouCookieCodec.HasUsableDfid(KugouCookie);
     public KugouDeviceIdentity KugouDevice { get; private set; } = KugouDeviceIdentity.Create();
     public bool IsLoaded { get; private set; }
     public event EventHandler? KugouCredentialChanged;

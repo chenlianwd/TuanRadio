@@ -548,7 +548,7 @@ AIRadio.Desktop/Services/Music/
 按以下顺序评估，不要求全部实现：
 
 1. **AudiusProvider**：公开只读搜索/曲目详情/流地址 PoC 已接入。2026-09-28 对公开 REST 端点的无 Key 请求实测返回 200，stream 端点返回 302 到内容节点，跟随跳转后 Range 请求取得 206 audio/mpeg；代码在搜索和播放解析时过滤/复核门控及不可流播曲目。设置页已支持可选 API Key，并仅由搜索与详情请求的 x-api-key 请求头携带；播放 URL 保持公开无 Key 地址，避免 Key 进入歌单和播放器日志。Key 保存不等于服务端验收，真实 Key 的连接诊断需在本机完成；Bearer Token 不进入客户端。真实 LibVLC 长时播放及重定向逐跳防护仍待验证/实现。参考 [Audius SDK 入门](https://docs.audius.co/sdk/) 与 [曲目接口](https://docs.audius.co/sdk/tracks/)。
-2. **SoundCloudProvider**：遵守署名、来源链接和可播放状态要求，只使用允许站外播放的曲目。
+2. **SoundCloudProvider**：已接入（2026-11-20）——通过 OAuth 2.0 Client Credentials 安全存储鉴权，严格筛选允许站外播放的曲目（`streamable`、`access=playable`、`permalink_url` 来源元数据保留，拒绝将 `preview`/`blocked` 切片当作完整曲目），按优先序解析 `/tracks/{id}/streams` 流地址（`http_mp3_128_url` / `hls_aac_160_url` / `hls_aac_96_url` 等）。
 3. **JamendoProvider**：已接入（2026-11-19）——面向独立音乐、氛围音乐和 Creative Commons 候选池，接入 `v3.0/tracks/` 搜索与播放解析（`mp32` 声明 `MP3`/`192` kbps），`Client ID` 经系统安全存储读写；未配置时自动跳过不耗搜索预算，诊断明确提示需配置 Client ID，接口鉴权错误（`code 4/5`）映射 `AuthRequired`/`AuthExpired`，并在 `Client ID` 变更时刷新解析缓存。参考 [Jamendo API v3.0](https://developer.jamendo.com/v3.0)。
 4. **RadioBrowserProvider**：作为真实网络电台模式，不参与精确点歌和逐曲节目单替换。
 

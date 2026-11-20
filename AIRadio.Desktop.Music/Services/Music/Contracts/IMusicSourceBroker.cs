@@ -44,6 +44,10 @@ public interface IMusicSourceBroker : IMusicSearchService
     /// <summary>跨源回退对象化解析：成功时回写 track 身份，并携带回退源的音质声明值与播放头。</summary>
     Task<ResolveTrackResult?> ResolveAlternativeTrackAsync(OnlineTrack track, CancellationToken cancellationToken);
 
+    /// <summary>慢源（如 YouTube/yt-dlp）独立后台候选解析：使用慢源预算且不影响快速恢复链。</summary>
+    Task<ResolveTrackResult?> ResolveSlowAlternativeTrackAsync(OnlineTrack track, CancellationToken cancellationToken)
+        => Task.FromResult<ResolveTrackResult?>(null);
+
     /// <summary>
     /// Broker 级曲目解析入口：结果显式携带（可能已回退的）实际生效身份与元数据；
     /// forceRefresh=true 绕过解析缓存并先逐出旧值——播放恢复/重试链路必须传 true

@@ -232,7 +232,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Services.WebRemote.IWebRemoteService? webRemoteService = null,
         IPodcastOpmlService? podcastOpmlService = null,
         IPodcastTranscriptionService? podcastTranscriptionService = null,
-        JamendoProvider? jamendo = null)
+        JamendoProvider? jamendo = null,
+        SoundCloudProvider? soundCloud = null)
     {
         _audioService = audioService;
         _djService = djService;
@@ -275,7 +276,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SettingsVM = new SettingsViewModel(_llmService, secureStorage, settingsFile, accountStore, httpClient, kugouVerification,
             listeningProfile, musicSearchService, openSubsonic, audius, recommendationService: _recommendationService,
             weatherService: weatherService, ttsService: ttsService, audioService: _audioService,
-            appUpdateService: appUpdateService, jamendo: jamendo);
+            appUpdateService: appUpdateService, jamendo: jamendo, soundCloud: soundCloud, localLibrary: localLibrary);
         SpectrumVM = new SpectrumViewModel(_audioService);
         WeatherVM = new WeatherViewModel(
             weatherService ?? new WeatherService(httpClient ?? new System.Net.Http.HttpClient()));
@@ -303,6 +304,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SettingsVM.IsOpenSubsonicExpanded = false;
                 SettingsVM.IsAudiusExpanded = false;
                 SettingsVM.IsJamendoExpanded = false;
+                SettingsVM.IsSoundCloudExpanded = false;
                 SettingsVM.IsYtdlpExpanded = false;
             });
 
@@ -330,6 +332,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 ResolveTrackUrlAsync(track, requireAlternative: false, cancellationToken));
             audioSvc.SetFallbackTrackUrlResolver((track, cancellationToken) =>
                 ResolveTrackUrlAsync(track, requireAlternative: true, cancellationToken));
+            audioSvc.SetSlowFallbackTrackUrlResolver((track, cancellationToken) =>
+                ResolveTrackUrlAsync(track, requireAlternative: true, cancellationToken, slowOnly: true));
             audioSvc.SetNextCallback(GetNextTrackForAudioServiceAsync);
         }
 
@@ -779,7 +783,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     internal async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
         Track track,
         bool requireAlternative,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool slowOnly = false)
     {
         string sourceId = track.SourceId ?? track.Id ?? string.Empty;
         if (string.IsNullOrWhiteSpace(sourceId))
@@ -858,7 +863,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 播放前后台换新直链），必须 forceRefresh 绕过缓存——否则重试会拿到刚失败的陈旧 URL
         string? url;
         ResolveTrackResult? resolved = null;
-        if (requireAlternative)
+        if (slowOnly)
+        {
+            resolved = await multi.ResolveSlowAlternativeTrackAsync(onlineTrack, cancellationToken);
+            url = resolved?.Url;
+        }
+        else if (requireAlternative)
         {
             resolved = await multi.ResolveAlternativeTrackAsync(onlineTrack, cancellationToken);
             url = resolved?.Url;

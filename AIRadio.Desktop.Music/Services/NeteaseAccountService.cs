@@ -123,6 +123,12 @@ public sealed class NeteaseAccountService
 
     /// <summary>用已保存的 cookie 查询昵称；失败返回 null（不抛异常，仅影响状态展示）。</summary>
     public async Task<string?> GetNicknameAsync(string cookie, CancellationToken cancellationToken = default)
+        => (await GetAccountSnapshotAsync(cookie, cancellationToken)).Nickname;
+
+    /// <summary>用已保存的 cookie 查询账号昵称与 VIP 权益等级；失败返回 IsValid=false。</summary>
+    public async Task<NeteaseAccountSnapshot> GetAccountSnapshotAsync(
+        string cookie,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -134,15 +140,28 @@ public sealed class NeteaseAccountService
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
 
             var root = doc.RootElement;
-            // 常见形状: {data:{code:200, profile:{nickname}}}；登录态失效时无 profile
-            if (root.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("profile", out var profile) &&
-                profile.ValueKind == JsonValueKind.Object &&
-                profile.TryGetProperty("nickname", out var nick))
+            if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                return new NeteaseAccountSnapshot(null, 0, false);
+
+            string? nickname = null;
+            var vipType = 0;
+            if (data.TryGetProperty("profile", out var profile) && profile.ValueKind == JsonValueKind.Object)
             {
-                return nick.GetString();
+                if (profile.TryGetProperty("nickname", out var nick) && nick.ValueKind == JsonValueKind.String)
+                    nickname = nick.GetString();
+                if (profile.TryGetProperty("vipType", out var profileVip) && profileVip.TryGetInt32(out var pv))
+                    vipType = pv;
             }
-            return null;
+            if (vipType == 0 &&
+                data.TryGetProperty("account", out var account) &&
+                account.ValueKind == JsonValueKind.Object &&
+                account.TryGetProperty("vipType", out var accountVip) &&
+                accountVip.TryGetInt32(out var av))
+            {
+                vipType = av;
+            }
+
+            return new NeteaseAccountSnapshot(nickname, vipType, nickname != null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -151,7 +170,7 @@ public sealed class NeteaseAccountService
         catch (Exception ex)
         {
             Log.Debug(ex, "Netease login status check failed");
-            return null;
+            return new NeteaseAccountSnapshot(null, 0, false);
         }
     }
 
@@ -176,3 +195,5 @@ public sealed class NeteaseAccountService
         }
     }
 }
+
+public sealed record NeteaseAccountSnapshot(string? Nickname, int VipType, bool IsValid);

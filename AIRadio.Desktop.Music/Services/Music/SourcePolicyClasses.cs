@@ -33,6 +33,7 @@ public static class SourcePolicyClasses
             ["opensubsonic"] = (0, 0),
             ["audius"] = (1, 2),
             ["jamendo"] = (1, 2),
+            ["soundcloud"] = (1, 2),
             ["netease"] = (2, 1),
             ["kugou"] = (3, 1),
             ["kuwo"] = (3, 2),
@@ -70,6 +71,7 @@ public static class SourcePolicyClasses
             "youtube" => "youtube",
             "audius" => "audius",
             "jamendo" => "jamendo",
+            "soundcloud" => "soundcloud",
             _ => null
         };
     }

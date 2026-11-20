@@ -1529,6 +1529,7 @@ public class AudioService : IAudioService, IDisposable
         _trackStartedAtMs = Environment.TickCount64;
         if (!isRetry)
         {
+            CancelPendingSlowRecovery();
             _earlyEndRetryCount = 0;
             _playbackErrorRetryCount = 0;
             // 新曲目正常开播：清零上一首的恢复预算锚点
@@ -1979,6 +1980,8 @@ public class AudioService : IAudioService, IDisposable
                 return;
             }
 
+            if (TryStartSlowBackgroundRecovery(index, track, requestId, "play URL unavailable"))
+                return;
             ScheduleNextTrack(requestId, "play URL unavailable");
         }
         catch (OperationCanceledException) when (IsDisposed)
@@ -2171,6 +2174,8 @@ public class AudioService : IAudioService, IDisposable
                     return;
                 }
 
+                if (TryStartSlowBackgroundRecovery(index, track, requestId, "alternative source unavailable"))
+                    return;
                 ScheduleNextTrack(requestId, "alternative source unavailable");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2290,6 +2295,7 @@ public class AudioService : IAudioService, IDisposable
     {
         Interlocked.Increment(ref _playRequestId);
         Volatile.Write(ref _recoveryScheduled, 0);
+        CancelPendingSlowRecovery();
         // 停止/换列表必须连在途电台推荐一并作废：NextAsync 回调完成后只校验意图版本，
         // 不校验 requestId（PlayTrackCore 入场会铸造新 requestId），不递增则停止后
         // 迟到的推荐仍会开播。切模式经 SetRepeatMode→ClearPlaybackContextCore 的
@@ -2328,6 +2334,126 @@ public class AudioService : IAudioService, IDisposable
     private Func<string, Task<string?>>? _urlResolver;
     private Func<Track, CancellationToken, Task<TrackUrlResolution?>>? _trackUrlResolver;
     private Func<Track, CancellationToken, Task<TrackUrlResolution?>>? _fallbackTrackUrlResolver;
+    private Func<Track, CancellationToken, Task<TrackUrlResolution?>>? _slowFallbackTrackUrlResolver;
+    private CancellationTokenSource? _slowRecoveryCts;
+    internal TimeSpan SlowRecoveryTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    public void SetSlowFallbackTrackUrlResolver(Func<Track, CancellationToken, Task<TrackUrlResolution?>> resolver)
+    {
+        if (!IsDisposed)
+            _slowFallbackTrackUrlResolver = resolver;
+    }
+
+    private void CancelPendingSlowRecovery()
+    {
+        var previous = Interlocked.Exchange(ref _slowRecoveryCts, null);
+        if (previous == null)
+            return;
+        try { previous.Cancel(); } catch { }
+        try { previous.Dispose(); } catch { }
+    }
+
+    private bool TryStartSlowBackgroundRecovery(int index, Track track, int requestId, string fallbackFailureReason)
+    {
+        var resolver = _slowFallbackTrackUrlResolver;
+        if (resolver == null ||
+            IsDisposed ||
+            track.IsLiveStream ||
+            track.IsPodcastEpisode ||
+            string.IsNullOrWhiteSpace(track.SourceId) ||
+            requestId != Volatile.Read(ref _playRequestId))
+        {
+            return false;
+        }
+
+        var slowCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        var previous = Interlocked.Exchange(ref _slowRecoveryCts, slowCts);
+        if (previous != null)
+        {
+            try { previous.Cancel(); } catch { }
+            try { previous.Dispose(); } catch { }
+        }
+
+        // 在后台慢源解析前复制快照，严禁在结果尚未通过请求代次校验前改写共享 Track 实例
+        var trackSnapshot = new Track
+        {
+            Id = track.Id,
+            SourceId = track.SourceId,
+            Title = track.Title,
+            Artist = track.Artist,
+            Album = track.Album,
+            Duration = track.Duration,
+            ProviderMetadata = new Dictionary<string, string>(
+                track.ProviderMetadata,
+                StringComparer.OrdinalIgnoreCase)
+        };
+
+        _ = Task.Run(async () =>
+        {
+            var timedOut = false;
+            var cancelledBeforeDispose = false;
+            var failureReason = fallbackFailureReason;
+            try
+            {
+                var resolution = await resolver(trackSnapshot, slowCts.Token)
+                    .WaitAsync(SlowRecoveryTimeout, slowCts.Token)
+                    .ConfigureAwait(false);
+                if (resolution != null && !string.IsNullOrWhiteSpace(resolution.Url))
+                {
+                    var recovered = false;
+                    lock (_playbackIntentGate)
+                    {
+                        if (!slowCts.IsCancellationRequested &&
+                            !IsDisposed &&
+                            requestId == Volatile.Read(ref _playRequestId) &&
+                            IsPlaylistEntryAt(index, track))
+                        {
+                            ApplyTrackUrlResolution(track, resolution);
+                            ResetAutomaticSkipGuard();
+                            recovered = true;
+                            Log.Information(
+                                "Slow background recovery resolved {Track} via {SourceId}",
+                                track.Title,
+                                track.SourceId);
+                            PlayTrack(index, isRetry: true, skipUrlRefresh: true);
+                        }
+                    }
+
+                    if (recovered)
+                        return;
+                }
+            }
+            catch (OperationCanceledException) when (slowCts.IsCancellationRequested || IsDisposed)
+            {
+            }
+            catch (TimeoutException)
+            {
+                timedOut = true;
+                failureReason = "slow source recovery timed out";
+                slowCts.Cancel();
+                Log.Debug("Slow background recovery timed out for {Track}", trackSnapshot.Title);
+            }
+            catch (Exception ex)
+            {
+                failureReason = "slow source recovery failed";
+                Log.Debug(ex, "Slow background recovery failed for {Track}", trackSnapshot.Title);
+            }
+            finally
+            {
+                cancelledBeforeDispose = slowCts.IsCancellationRequested;
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _slowRecoveryCts, null, slowCts), slowCts))
+                    slowCts.Dispose();
+            }
+
+            if (!IsDisposed &&
+                requestId == Volatile.Read(ref _playRequestId) &&
+                (!cancelledBeforeDispose || timedOut))
+            {
+                ScheduleNextTrack(requestId, failureReason);
+            }
+        });
+        return true;
+    }
 
     public void SetTrackUrlResolver(Func<Track, CancellationToken, Task<TrackUrlResolution?>> resolver)
     {
@@ -2472,6 +2598,7 @@ public class AudioService : IAudioService, IDisposable
         _urlResolver = null;
         _trackUrlResolver = null;
         _fallbackTrackUrlResolver = null;
+        _slowFallbackTrackUrlResolver = null;
         _currentState = PlaybackState.Stopped;
         _isFading = false;
 
