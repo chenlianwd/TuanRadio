@@ -368,7 +368,7 @@ public class PlaylistViewModelTests
 
         var (vm, _, _) = CreateVm(playlistFile);
         await vm.LoadAsync();
-        await Task.Delay(200); // 加载完成后的自动回写
+        await WaitForPlaylistFileAsync(playlistFile, IsPlaylistVersion3); // 加载完成后的自动回写
 
         var backupPath = playlistFile + ".v1.bak";
         Assert.True(File.Exists(backupPath));
@@ -419,7 +419,7 @@ public class PlaylistViewModelTests
 
         var (vm, _, _) = CreateVm(playlistFile);
         await vm.LoadAsync();
-        await Task.Delay(200);
+        await WaitForPlaylistFileAsync(playlistFile, IsPlaylistVersion3);
 
         var backupPath = playlistFile + ".v2.bak";
         Assert.True(File.Exists(backupPath));
@@ -557,7 +557,11 @@ public class PlaylistViewModelTests
         var (vm, audioMock, searchMock) = CreateVm(playlistFile);
 
         await vm.LoadAsync();
-        await Task.Delay(150);
+        await WaitUntilAsync(() => vm.Tracks.Count == 1 && vm.Favorites.Count == 1);
+        await WaitForPlaylistFileAsync(playlistFile, json =>
+            IsPlaylistVersion3(json) &&
+            json.Contains("\"FavoriteIds\"", StringComparison.Ordinal) &&
+            json.Contains("ugly", StringComparison.Ordinal));
 
         Assert.Single(vm.Tracks);
         Assert.True(vm.Tracks[0].IsFavorite);
@@ -973,6 +977,42 @@ public class PlaylistViewModelTests
         while (!condition() && DateTime.UtcNow < deadline)
             await Task.Delay(10);
         Assert.True(condition());
+    }
+
+    /// <summary>
+    /// 有界轮询等待歌单文件满足条件（替代固定 Task.Delay，避免高并发 CPU 抖动下偶发失败）。
+    /// 临时占用的文件锁与半写入的 JSON 视为“尚未就绪”并继续重试。
+    /// </summary>
+    private static async Task WaitForPlaylistFileAsync(string path, Func<string, bool> predicate, int timeoutSeconds = 15)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                if (File.Exists(path) && predicate(File.ReadAllText(path)))
+                    return;
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+            catch (JsonException)
+            {
+            }
+            await Task.Delay(20);
+        }
+        Assert.Fail($"等待歌单文件满足条件超时（{timeoutSeconds}s）：{Path.GetFileName(path)}");
+    }
+
+    private static bool IsPlaylistVersion3(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty("Version", out var version) &&
+               version.ValueKind == JsonValueKind.Number &&
+               version.GetInt32() == 3;
     }
 
     [Fact]

@@ -133,6 +133,9 @@ public class AppLanguageTests : IDisposable
     public void CharacterProfile_RefreshLocalizedPresets_RaisesPropertyChanged()
     {
         var profile = AIRadio.Desktop.Models.CharacterProfile.Presets[0];
+        // 预设是进程级静态对象：先显式归位到中文，避免前序测试遗留英文文案导致“值未变化→不触发通知”
+        AppLanguage.Apply("zh");
+        AIRadio.Desktop.Models.CharacterProfile.RefreshLocalizedPresets();
         var changed = new System.Collections.Generic.List<string?>();
         profile.PropertyChanged += OnChanged;
         try
