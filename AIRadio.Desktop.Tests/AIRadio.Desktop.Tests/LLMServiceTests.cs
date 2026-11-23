@@ -362,4 +362,147 @@ public class LLMServiceTests
         else
             Assert.DoesNotContain("reasoning_effort", body);
     }
+
+    [Theory]
+    [InlineData("https://api.deepseek.com/v1", "https://api.deepseek.com/v1/chat/completions")]
+    [InlineData("https://api.deepseek.com/v1/chat/completions", "https://api.deepseek.com/v1/chat/completions")]
+    [InlineData("https://api.deepseek.com/v1/chat/completions/", "https://api.deepseek.com/v1/chat/completions")]
+    public async Task ChatAsync_OpenAiFormat_FullChatCompletionsUrl_DoesNotDuplicatePath(
+        string baseUrl,
+        string expectedEndpoint)
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var service = new LLMService(CreateMockHttpClient(
+            """{"choices":[{"message":{"content":"ok"}}]}""",
+            request => capturedRequest = request));
+        service.Configure(new LLMConfig
+        {
+            Provider = "openai",
+            BaseUrl = baseUrl,
+            Model = "deepseek-chat",
+            ApiKey = "sk-test"
+        });
+
+        var result = await service.ChatAsync("hello", new List<ChatMessage>());
+
+        Assert.Equal("ok", result);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(expectedEndpoint, capturedRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_OpenAi_StripsChatCompletionsSuffix()
+    {
+        string? requestedUrl = null;
+        var service = new LLMService(CreateMockHttpClient(
+            """{"data":[{"id":"deepseek-chat"},{"id":"deepseek-chat"},{"id":"deepseek-reasoner"}]}""",
+            request => requestedUrl = request.RequestUri?.ToString()));
+
+        var models = await service.ListModelsAsync(
+            "openai",
+            baseUrl: "https://api.deepseek.com/v1/chat/completions/",
+            apiKey: "sk-test",
+            CancellationToken.None);
+
+        Assert.Equal("https://api.deepseek.com/v1/models", requestedUrl);
+        Assert.Equal(new[] { "deepseek-chat", "deepseek-reasoner" }, models);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_Anthropic_StripsMessagesSuffix()
+    {
+        string? requestedUrl = null;
+        var service = new LLMService(CreateMockHttpClient(
+            """{"data":[{"id":"glm-4.7"}]}""",
+            request => requestedUrl = request.RequestUri?.ToString()));
+
+        var models = await service.ListModelsAsync(
+            "anthropic",
+            baseUrl: "https://open.bigmodel.cn/api/anthropic/v1/messages",
+            apiKey: "ak-test",
+            CancellationToken.None);
+
+        Assert.Equal("https://open.bigmodel.cn/api/anthropic/v1/models?limit=1000", requestedUrl);
+        Assert.Equal(new[] { "glm-4.7" }, models);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_Local_FallsBackToOpenAiModelsEndpoint_WhenOllamaTagsNotFound()
+    {
+        var requestedUrls = new List<string>();
+        var handler = new Mock<HttpMessageHandler>();
+        handler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync((HttpRequestMessage request, CancellationToken _) =>
+            {
+                var url = request.RequestUri!.ToString();
+                requestedUrls.Add(url);
+                if (url.EndsWith("/api/tags", StringComparison.Ordinal))
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"data":[{"id":"qwen2.5-coder-7b"},{"id":"llama-3.2-3b"}]}""")
+                };
+            });
+
+        var service = new LLMService(new HttpClient(handler.Object));
+        var models = await service.ListModelsAsync(
+            "local",
+            baseUrl: "http://localhost:1234/v1",
+            apiKey: null,
+            CancellationToken.None);
+
+        Assert.Equal(new[] { "http://localhost:1234/api/tags", "http://localhost:1234/v1/models" }, requestedUrls);
+        Assert.Equal(new[] { "qwen2.5-coder-7b", "llama-3.2-3b" }, models);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_Local_DoesNotRetryOpenAiModelsEndpoint_WhenTransportConnectionFails()
+    {
+        var requestedUrls = new List<string>();
+        var handler = new Mock<HttpMessageHandler>();
+        handler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((request, _) =>
+            {
+                requestedUrls.Add(request.RequestUri!.ToString());
+                return Task.FromException<HttpResponseMessage>(new HttpRequestException("Connection refused"));
+            });
+
+        var service = new LLMService(new HttpClient(handler.Object));
+        var models = await service.ListModelsAsync(
+            "local",
+            baseUrl: "http://localhost:11434/v1",
+            apiKey: null,
+            CancellationToken.None);
+
+        Assert.Empty(models);
+        Assert.Equal(new[] { "http://localhost:11434/api/tags" }, requestedUrls);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_CloudNonSuccessStatus_ReturnsEmpty()
+    {
+        var handler = new Mock<HttpMessageHandler>();
+        handler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("""{"data":[{"id":"should-not-parse"}]}""")
+            });
+
+        var service = new LLMService(new HttpClient(handler.Object));
+        var models = await service.ListModelsAsync("openai", "https://api.openai.com/v1", "sk-bad", CancellationToken.None);
+
+        Assert.Empty(models);
+    }
 }

@@ -102,8 +102,8 @@ public class LLMService : ILLMService
     }
 
     /// <summary>
-    /// 枚举可用模型（local=Ollama GET /api/tags；openai 兼容=GET /models Bearer；
-    /// anthropic=GET /models x-api-key）。尽力而为的 UI 增强：
+    /// 枚举可用模型（local=优先 Ollama GET /api/tags，非 Ollama 服务回退 OpenAI GET /models；
+    /// openai 兼容=GET /models Bearer；anthropic=GET /models x-api-key）。尽力而为的 UI 增强：
     /// 云端未配 Key/服务不可达/端点不支持/任何失败一律返回空列表，由调用方静默降级为手填。
     /// </summary>
     public async Task<List<string>> ListModelsAsync(string? provider, string? baseUrl, string? apiKey, CancellationToken cancellationToken)
@@ -123,57 +123,59 @@ public class LLMService : ILLMService
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(normalized == "local" ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(8));
-            string url;
+
             if (normalized == "local")
             {
-                // /v1 是 OpenAI 兼容层前缀，tags 属于 Ollama 原生 API，挂在根路径上
-                var root = effective.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
-                    ? effective[..^3]
+                // /v1 与 /chat/completions 是 OpenAI 兼容层路径，tags 属于 Ollama 原生 API，挂在根路径上
+                var root = effective.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)
+                    ? effective[..^17].TrimEnd('/')
                     : effective;
-                url = $"{root}/api/tags";
+                root = root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+                    ? root[..^3].TrimEnd('/')
+                    : root;
+                try
+                {
+                    using var ollamaReq = new HttpRequestMessage(HttpMethod.Get, $"{root}/api/tags");
+                    using var ollamaResp = await _httpClient.SendAsync(
+                        ollamaReq,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeoutCts.Token);
+                    if (ollamaResp.IsSuccessStatusCode)
+                    {
+                        var ollamaJson = await ollamaResp.Content.ReadAsStringAsync(timeoutCts.Token);
+                        if (TryParseModelNames(ollamaJson, "models", "name", out var ollamaNames))
+                            return ollamaNames;
+                    }
+                    // HTTP 收到响应但状态码非 2xx（如 LM Studio / vLLM / llama.cpp 无 /api/tags 返回 404/405）
+                    // 或 JSON 非 Ollama 结构时，继续回退探测 OpenAI 兼容 /models
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    // 传输层连接失败（如本地服务未启动 ConnectionRefused 或连接超时）直接放弃，
+                    // 避免对同一死端口再次请求 /models 造成双倍连接超时等待
+                    Log.Debug(ex, "Local /api/tags transport probe failed, skipping /models retry on unreachable host");
+                    return [];
+                }
             }
-            else if (normalized == "anthropic")
-            {
-                // 与 BuildAnthropicMessagesEndpoint 同规则：标准地址已含 /v1，
-                // 兼容代理可能只给上一级 Base。
-                // limit=1000：官方 List Models 默认分页 20 条会静默截断候选（上限即 1000）
-                url = (effective.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
-                        ? $"{effective}/models"
-                        : $"{effective}/v1/models")
-                    + "?limit=1000";
-            }
-            else
-            {
-                url = $"{effective}/models";
-            }
+
+            var url = normalized == "anthropic"
+                ? BuildAnthropicModelsEndpoint(effective)
+                : BuildOpenAiModelsEndpoint(effective);
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (normalized == "anthropic")
             {
                 request.Headers.Add("x-api-key", apiKey);
                 request.Headers.Add("anthropic-version", "2023-06-01");
             }
-            else if (normalized != "local")
+            else if (!string.IsNullOrWhiteSpace(apiKey))
             {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             }
             using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
-            var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-            using var doc = JsonDocument.Parse(json);
-            // local：models[].name；云端 OpenAI/Anthropic 同构：data[].id
-            JsonElement list;
-            var found = normalized == "local"
-                ? doc.RootElement.TryGetProperty("models", out list)
-                : doc.RootElement.TryGetProperty("data", out list);
-            if (!found || list.ValueKind != JsonValueKind.Array)
+            if (!response.IsSuccessStatusCode)
                 return [];
-            var nameKey = normalized == "local" ? "name" : "id";
-            var names = new List<string>();
-            foreach (var entry in list.EnumerateArray())
-            {
-                if (entry.TryGetProperty(nameKey, out var name) && name.GetString() is { Length: > 0 } value)
-                    names.Add(value);
-            }
-            return names;
+            var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+            return TryParseModelNames(json, "data", "id", out var names) ? names : [];
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -185,6 +187,27 @@ public class LLMService : ILLMService
             Log.Debug(ex, "Model enumeration failed");
             return [];
         }
+    }
+
+    private static bool TryParseModelNames(string json, string arrayProperty, string itemProperty, out List<string> names)
+    {
+        names = new List<string>();
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty(arrayProperty, out var list) || list.ValueKind != JsonValueKind.Array)
+            return false;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in list.EnumerateArray())
+        {
+            if (entry.TryGetProperty(itemProperty, out var name) &&
+                name.ValueKind == JsonValueKind.String &&
+                name.GetString()?.Trim() is { Length: > 0 } value &&
+                seen.Add(value))
+            {
+                names.Add(value);
+            }
+        }
+        return true;
     }
 
     internal List<object> BuildRawMessages(string userMessage)
@@ -294,7 +317,7 @@ public class LLMService : ILLMService
             var json = JsonSerializer.Serialize(requestBody);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
+            using var request = new HttpRequestMessage(HttpMethod.Post, BuildOpenAiChatCompletionsEndpoint(baseUrl))
             {
                 Content = content
             };
@@ -503,6 +526,33 @@ public class LLMService : ILLMService
         "ollama" or "local" => "local",
         _ => "openai"
     };
+
+    internal static string BuildOpenAiChatCompletionsEndpoint(string baseUrl)
+    {
+        var normalized = baseUrl.Trim().TrimEnd('/');
+        if (normalized.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+            return normalized;
+        return $"{normalized}/chat/completions";
+    }
+
+    internal static string BuildOpenAiModelsEndpoint(string baseUrl)
+    {
+        var normalized = baseUrl.Trim().TrimEnd('/');
+        if (normalized.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized[..^17].TrimEnd('/');
+        return $"{normalized}/models";
+    }
+
+    internal static string BuildAnthropicModelsEndpoint(string baseUrl)
+    {
+        var normalized = baseUrl.Trim().TrimEnd('/');
+        if (normalized.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized[..^9].TrimEnd('/');
+        // limit=1000：官方 List Models 默认分页 20 条会静默截断候选（上限即 1000）
+        return (normalized.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? $"{normalized}/models"
+            : $"{normalized}/v1/models") + "?limit=1000";
+    }
 
     private static string BuildAnthropicMessagesEndpoint(string baseUrl)
     {

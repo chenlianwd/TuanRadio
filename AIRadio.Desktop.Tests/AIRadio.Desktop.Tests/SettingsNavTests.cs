@@ -392,9 +392,55 @@ public class SettingsNavTests
                 ?? throw new InvalidOperationException("SettingsView not found");
             var itemsControl = view.FindControl<ItemsControl>("LlmPresetItems")
                 ?? throw new InvalidOperationException("LlmPresetItems not found");
+            var endpointCombo = view.FindControl<ComboBox>("EndpointComboBox")
+                ?? throw new InvalidOperationException("EndpointComboBox not found");
+            var providerCombo = view.FindControl<ComboBox>("ProviderComboBox")
+                ?? throw new InvalidOperationException("ProviderComboBox not found");
+            var modelBox = view.FindControl<AutoCompleteBox>("ModelInputBox")
+                ?? throw new InvalidOperationException("ModelInputBox not found");
+            var pickerButton = view.FindControl<Button>("ModelPickerButton")
+                ?? throw new InvalidOperationException("ModelPickerButton not found");
+            var refreshButton = view.FindControl<Button>("RefreshModelsButton")
+                ?? throw new InvalidOperationException("RefreshModelsButton not found");
+            var quickChips = view.FindControl<ItemsControl>("QuickModelChips")
+                ?? throw new InvalidOperationException("QuickModelChips not found");
 
             Assert.NotNull(itemsControl.ItemsSource);
-            Assert.Equal(6, vm.SettingsVM.LlmPresets.Count);
+            Assert.Equal(LlmProviderCatalog.All.Count, vm.SettingsVM.LlmPresets.Count);
+            Assert.NotNull(providerCombo.ItemsSource);
+            Assert.Same(vm.SettingsVM.RefreshModelsCommand, refreshButton.Command);
+
+            // 切换到多端点服务商：端点下拉、可用模型绑定与推荐芯片全部联动就绪
+            vm.SettingsVM.ApplyLlmPresetCommand.Execute("qwen").Subscribe();
+            vm.SettingsVM.SelectedEndpointId = "coding-anthropic";
+            Assert.True(vm.SettingsVM.HasMultiplePresetEndpoints);
+            Assert.NotNull(endpointCombo.ItemsSource);
+            Assert.Equal("coding-anthropic", endpointCombo.SelectedValue);
+            Assert.Equal("anthropic", providerCombo.SelectedValue);
+            Assert.True(pickerButton.IsEnabled);
+            Assert.True(quickChips.IsVisible);
+            Assert.Same(vm.SettingsVM.AvailableModels, modelBox.ItemsSource);
+
+            // 语言切换替换 ItemsSource 后，EndpointComboBox 与 ProviderComboBox 的 SelectedValue 保持不丢失
+            var originalLang = AppLanguage.Current;
+            try
+            {
+                AppLanguage.Apply("en");
+                Assert.Equal("coding-anthropic", endpointCombo.SelectedValue);
+                Assert.Equal("anthropic", providerCombo.SelectedValue);
+                AppLanguage.Apply("zh");
+                Assert.Equal("coding-anthropic", endpointCombo.SelectedValue);
+                Assert.Equal("anthropic", providerCombo.SelectedValue);
+            }
+            finally
+            {
+                AppLanguage.Apply(originalLang);
+            }
+
+            // 切换到 custom 预设：隐藏多端点下拉并清空预设推荐芯片
+            vm.SettingsVM.ApplyLlmPresetCommand.Execute("custom").Subscribe();
+            Assert.False(vm.SettingsVM.HasMultiplePresetEndpoints);
+            Assert.False(quickChips.IsVisible);
         }
         finally
         {

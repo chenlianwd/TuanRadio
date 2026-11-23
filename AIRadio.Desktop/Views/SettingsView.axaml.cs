@@ -12,6 +12,17 @@ public partial class SettingsView : UserControl
         InitializeComponent();
     }
 
+    private void OnModelPickerItemClicked(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is SettingsViewModel vm &&
+            sender is Control { DataContext: LlmModelOption option })
+        {
+            vm.SelectModel(option.ModelId);
+            if (ModelPickerButton.Flyout is { } flyout)
+                Avalonia.Threading.Dispatcher.UIThread.Post(flyout.Hide);
+        }
+    }
+
     private async void OnMusicProviderToggle(object? sender, RoutedEventArgs e)
     {
         try

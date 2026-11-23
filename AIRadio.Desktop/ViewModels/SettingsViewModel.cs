@@ -20,7 +20,63 @@ using ReactiveCommand = ReactiveUI.ReactiveCommand;
 namespace AIRadio.Desktop.ViewModels;
 
 /// <summary>国内/本地主流大模型快捷预置项。</summary>
-public sealed record LlmPresetOption(string Id, string DisplayName, string Provider, string BaseUrl, string DefaultModel);
+public sealed class LlmPresetOption : ReactiveObject
+{
+    private bool _isSelected;
+
+    public string Id { get; }
+    public string DisplayName { get; }
+    public string Provider { get; }
+    public string BaseUrl { get; }
+    public string DefaultModel { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => this.RaiseAndSetIfChanged(ref _isSelected, value);
+    }
+
+    public LlmPresetOption(
+        string id,
+        string displayName,
+        string provider,
+        string baseUrl,
+        string defaultModel,
+        bool isSelected = false)
+    {
+        Id = id;
+        DisplayName = displayName;
+        Provider = provider;
+        BaseUrl = baseUrl;
+        DefaultModel = defaultModel;
+        _isSelected = isSelected;
+    }
+}
+
+/// <summary>模型快速选择或列表枚举条目。</summary>
+public sealed class LlmModelOption : ReactiveObject
+{
+    private bool _isSelected;
+
+    public string ModelId { get; }
+    public bool IsRemote { get; }
+    public string SourceLabel => IsRemote
+        ? AppLanguage.T("远端", "Live")
+        : AppLanguage.T("推荐", "Preset");
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => this.RaiseAndSetIfChanged(ref _isSelected, value);
+    }
+
+    public LlmModelOption(string modelId, bool isSelected = false, bool isRemote = false)
+    {
+        ModelId = modelId;
+        _isSelected = isSelected;
+        IsRemote = isRemote;
+    }
+}
 
 public sealed class MusicProviderOption : ReactiveObject
 {
@@ -113,7 +169,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _localModelSettingsSub;
     private readonly IDisposable _llmProfileSwapSub;
     private readonly IDisposable _llmWatermarkSub;
+    private readonly IDisposable _llmEndpointSub;
+    private readonly IDisposable _llmModelSelectionSub;
     private int _localModelsEpoch;
+    private int _activeUserModelFetchEpoch;
+    private CancellationTokenSource? _modelFetchCts;
+    private bool _isSwappingLlm;
+    private Func<string>? _modelFetchStatusFactory;
     private bool _loadingProfileToggle;
     private int _listenerProfileResetArmed;
     private int _resetArmVersion;
@@ -184,6 +246,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         public string ApiKey { get; set; } = string.Empty;
     }
 
+    /// <summary>单个预设服务商的独立配置档案（记住端点、协议、地址、模型与会话 Key）。</summary>
+    private sealed record LlmPresetProfile(
+        string EndpointId,
+        string Provider,
+        string BaseUrl,
+        string Model,
+        string ApiKey);
+
     // llm_profiles 键白名单（服务 Id 与下拉三选项一致；未知键丢弃防 NormalizeProvider
     // 兜底把手编/未来版本的键并进 openai 档案）
     private static readonly string[] LlmProfileKeys = { "openai", "anthropic", "local" };
@@ -192,11 +262,35 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     // 每服务档案：不可变字典整体换新（COW）——切换处理器在 _saveGate 外修改、保存序列化
     // 在 Task.Run 内枚举，引用整体替换避免并发枚举异常；ApiKey 不进 json 只进凭据专槽
     private Dictionary<string, LlmProfile> _llmProfiles = new();
+    private Dictionary<string, LlmPresetProfile> _llmPresetProfiles = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _llmPresetDomainKeys = new(StringComparer.OrdinalIgnoreCase);
     // 当前字段内容归属的服务（切换处理器与 LoadCoreAsync 尾部双点维护）
     private string _lastProvider = "openai";
 
-    /// <summary>模型候选（本地 Ollama /api/tags、云端 /models 按 Key 鉴权），供模型输入框下拉选择；拉取失败为空、手填兜底。</summary>
+    /// <summary>当前选中的服务商预设 Id（"custom" 表示纯自定义模式）。</summary>
+    [Reactive] public partial string ActivePresetId { get; set; } = LlmProviderCatalog.CustomId;
+    /// <summary>当前预设服务商下可选的接口端点列表（OpenAI 兼容 / Anthropic 兼容 / Coding Plan 等）。</summary>
+    [Reactive] public partial List<VoiceOption> PresetEndpoints { get; set; } = new();
+    /// <summary>当前预设服务商下选中的端点 Id。</summary>
+    [Reactive] public partial string SelectedEndpointId { get; set; } = string.Empty;
+    [Reactive] public partial bool HasMultiplePresetEndpoints { get; private set; }
+    [Reactive] public partial string EndpointHint { get; private set; } = string.Empty;
+    [Reactive] public partial bool HasEndpointHint { get; private set; }
+
+    /// <summary>远端/本机拉取到的模型列表（保留兼容既有调用方与单测）。</summary>
     [Reactive] public partial List<string> LocalModels { get; set; } = new();
+    /// <summary>合并远端拉取与当前预设推荐模型后的去重模型名列表。</summary>
+    [Reactive] public partial List<string> AvailableModels { get; set; } = new();
+    /// <summary>供模型选择器弹层展示的模型条目列表。</summary>
+    [Reactive] public partial List<LlmModelOption> AvailableModelOptions { get; set; } = new();
+    /// <summary>供模型输入区下方快捷点选的推荐/可用模型芯片列表。</summary>
+    [Reactive] public partial List<LlmModelOption> QuickModelOptions { get; set; } = new();
+    [Reactive] public partial bool HasAvailableModels { get; private set; }
+    [Reactive] public partial bool HasQuickModelOptions { get; private set; }
+    [Reactive] public partial bool IsFetchingModels { get; private set; }
+    [Reactive] public partial string RefreshModelsButtonText { get; private set; } = AppLanguage.T("拉取模型", "Fetch models");
+    [Reactive] public partial string ModelFetchStatus { get; private set; } = string.Empty;
+    [Reactive] public partial bool HasModelFetchStatus { get; private set; }
     [Reactive] public partial string StatusMessage { get; set; } = string.Empty;
     [Reactive] public partial bool IsTesting { get; set; }
     [Reactive] public partial string TestConnectionButtonText { get; set; } = AppLanguage.T("测试连接", "Test");
@@ -341,6 +435,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     [Reactive] public partial List<LlmPresetOption> LlmPresets { get; set; } = new();
     public ReactiveCommand<string, Unit> ApplyLlmPresetCommand { get; }
+    public ReactiveCommand<Unit, Unit> RefreshModelsCommand { get; }
+    public ReactiveCommand<string, Unit> SelectModelCommand { get; }
 
     [Reactive] public partial List<VoiceOption> LlmProviders { get; set; } = new();
 
@@ -497,14 +593,32 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .Skip(1)
             .Subscribe(provider =>
             {
-                if (_isLoading)
+                if (_isLoading || _isSwappingLlm)
                     return;
                 var to = NormalizeProvider(provider);
                 if (to == _lastProvider)
                     return;
-                SwapLlmProfile(_lastProvider, to);
-                _lastProvider = to;
+                HandleProviderChanged(to);
             });
+
+        _llmEndpointSub = this.WhenAnyValue(x => x.SelectedEndpointId)
+            .Skip(1)
+            .Subscribe(endpointId =>
+            {
+                if (_isLoading || _isSwappingLlm || string.IsNullOrWhiteSpace(endpointId))
+                    return;
+                var activeSpec = LlmProviderCatalog.FindPreset(ActivePresetId);
+                if (activeSpec == null || activeSpec.IsCustom)
+                    return;
+                var endpoint = LlmProviderCatalog.FindEndpoint(activeSpec, endpointId);
+                if (endpoint == null)
+                    return;
+                ApplyPresetEndpointCore(activeSpec, endpoint);
+            });
+
+        _llmModelSelectionSub = this.WhenAnyValue(x => x.Model)
+            .Skip(1)
+            .Subscribe(_ => UpdateSelectedModelFlags());
 
         // provider/地址/Key 任一变化即清空旧候选并作废在途结果（云端模型列表经
         // Bearer/x-api-key 鉴权，Key 从档案回填晚到也要重拉）；防抖，避免逐字输入
@@ -513,9 +627,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .Skip(1)
             .Subscribe(settings =>
             {
-                if (_isLoading)
+                if (_isLoading || _isSwappingLlm)
                     return;
                 LocalModels = new();
+                ClearModelFetchStatus();
+                RebuildModelChoices();
                 _ = RefreshLocalModelsAsync(debounce: true);
             });
 
@@ -556,6 +672,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
         ApplyLlmPresetCommand = ReactiveCommand.Create<string>(ApplyLlmPreset);
+        RefreshModelsCommand = ReactiveCommand.CreateFromTask(
+            () => RefreshLocalModelsAsync(debounce: false, userInitiated: true),
+            this.WhenAnyValue(x => x.IsFetchingModels).Select(busy => !busy));
+        SelectModelCommand = ReactiveCommand.Create<string>(SelectModel);
         ShowAiTabCommand = ReactiveCommand.Create(() => { TabIndex = 0; });
         ShowMusicTabCommand = ReactiveCommand.Create(() => { TabIndex = 1; });
         ShowHostTabCommand = ReactiveCommand.Create(() => { TabIndex = 2; });
@@ -681,6 +801,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _onLanguageChanged = () =>
         {
             TestConnectionButtonText = AppLanguage.T("测试连接", "Test");
+            RefreshModelsButtonText = IsFetchingModels
+                ? AppLanguage.T("拉取中...", "Fetching...")
+                : AppLanguage.T("拉取模型", "Fetch models");
             DiagnoseSourcesButtonText = AppLanguage.T("音源连接诊断", "Diagnose music sources");
             ResetProfileButtonText = Volatile.Read(ref _listenerProfileResetArmed) != 0
                 ? AppLanguage.T("再次点击确认清除", "Click again to confirm")
@@ -710,6 +833,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 UpdateStatusText = _updateStatusFactory();
             if (_voicePreviewStatusFactory != null)
                 VoicePreviewStatus = _voicePreviewStatusFactory();
+            if (_modelFetchStatusFactory != null)
+            {
+                ModelFetchStatus = _modelFetchStatusFactory();
+                HasModelFetchStatus = !string.IsNullOrEmpty(ModelFetchStatus);
+            }
             if (IsYtdlpCookieNoticeVisible && SelectedYtdlpBrowser is { Id.Length: > 0 } browser)
                 YtdlpCookieNotice = BuildYtdlpCookieNotice(browser.Id);
             RebuildLocalizedOptionLists();
@@ -782,29 +910,52 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             _ => OpenSubsonicQuality.Automatic
         };
 
-    /// <summary>按当前服务与语言重算 Base URL 水印（显示该服务的内置默认地址）。</summary>
+    /// <summary>按当前预设端点/协议与语言重算 Base URL 水印（显示对应默认地址）。</summary>
     private void UpdateBaseUrlWatermark()
     {
-        var url = LLMService.GetDefaultBaseUrl(SelectedProvider);
+        var endpoint = GetActiveEndpointSpec();
+        var url = endpoint != null && !string.IsNullOrWhiteSpace(endpoint.BaseUrl)
+            ? endpoint.BaseUrl
+            : LLMService.GetDefaultBaseUrl(SelectedProvider);
         BaseUrlWatermark = AppLanguage.T($"Base URL；留空使用 {url}", $"Base URL; leave empty for {url}");
     }
 
-    /// <summary>按当前服务与语言重算模型名水印（示例文案；本地模型教下拉手势）。</summary>
+    /// <summary>按当前预设端点/协议与语言重算模型名水印（示例文案；本地模型提示下拉手势）。</summary>
     private void UpdateModelWatermark()
     {
-        ModelWatermark = NormalizeProvider(SelectedProvider) switch
+        var normalized = NormalizeProvider(SelectedProvider);
+        if (normalized == "local")
+        {
+            ModelWatermark = AppLanguage.T("模型名称，输入任意字符列出本机模型", "Model name; type any character to list local models");
+            return;
+        }
+
+        var endpoint = GetActiveEndpointSpec();
+        if (endpoint != null && endpoint.Models.Count > 0)
+        {
+            var sample = string.Join(" / ", endpoint.Models.Take(2));
+            ModelWatermark = AppLanguage.T($"模型名称，例如 {sample}", $"Model name, e.g. {sample}");
+            return;
+        }
+
+        ModelWatermark = normalized switch
         {
             "anthropic" => AppLanguage.T("模型名称，例如 claude-sonnet-4-5", "Model name, e.g. claude-sonnet-4-5"),
-            "local" => AppLanguage.T("模型名称，输入任意字符列出本机模型", "Model name; type any character to list local models"),
             _ => AppLanguage.T("模型名称，例如 gpt-4o-mini / deepseek-chat", "Model name, e.g. gpt-4o-mini / deepseek-chat"),
         };
     }
 
-    /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器选择重建不触发自动保存。</summary>
+    private void UpdateEndpointHint()
+    {
+        var endpoint = GetActiveEndpointSpec();
+        var hint = endpoint?.Hint ?? string.Empty;
+        EndpointHint = hint;
+        HasEndpointHint = !string.IsNullOrEmpty(hint);
+    }
+
+    /// <summary>重建依赖语言的选项列表；按 Id 保留既有选择，浏览器与 LLM 选择重建不触发自动保存或档案切换。</summary>
     private void RebuildLocalizedOptionLists()
     {
-        UpdateBaseUrlWatermark();
-        UpdateModelWatermark();
         var voiceId = CharacterVoice?.Id;
         Voices = new List<VoiceOption>
         {
@@ -818,22 +969,62 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         if (voiceId != null)
             CharacterVoice = Voices.FirstOrDefault(v => v.Id == voiceId) ?? Voices[0];
 
-        LlmPresets = new List<LlmPresetOption>
+        var wasSwapping = _isSwappingLlm;
+        _isSwappingLlm = true;
+        try
         {
-            new("deepseek", "DeepSeek", "openai", "https://api.deepseek.com/v1", "deepseek-chat"),
-            new("zhipu", AppLanguage.T("智谱 GLM", "Zhipu GLM"), "openai", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
-            new("kimi", AppLanguage.T("Kimi (月之暗面)", "Kimi (Moonshot)"), "openai", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
-            new("qwen", AppLanguage.T("通义千问 (百炼)", "Qwen (DashScope)"), "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
-            new("siliconflow", AppLanguage.T("硅基流动", "SiliconFlow"), "openai", "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct"),
-            new("ollama", AppLanguage.T("Ollama 本地", "Local Ollama"), "local", "http://localhost:11434/v1", ""),
-        };
+            var activeEndpointId = SelectedEndpointId;
+            var activeProvider = NormalizeProvider(SelectedProvider);
 
-        LlmProviders = new List<VoiceOption>
+            LlmPresets = LlmProviderCatalog.All.Select(spec =>
+            {
+                var firstEndpoint = spec.Endpoints.FirstOrDefault();
+                return new LlmPresetOption(
+                    spec.Id,
+                    spec.DisplayName,
+                    firstEndpoint?.Protocol ?? "openai",
+                    firstEndpoint?.BaseUrl ?? string.Empty,
+                    firstEndpoint?.Models.FirstOrDefault() ?? string.Empty,
+                    isSelected: string.Equals(spec.Id, ActivePresetId, StringComparison.OrdinalIgnoreCase));
+            }).ToList();
+
+            var activeSpec = LlmProviderCatalog.FindPreset(ActivePresetId);
+            if (activeSpec != null && !activeSpec.IsCustom)
+            {
+                PresetEndpoints = activeSpec.Endpoints
+                    .Select(e => new VoiceOption { Id = e.Id, DisplayName = e.DisplayName })
+                    .ToList();
+                HasMultiplePresetEndpoints = PresetEndpoints.Count > 1;
+                SelectedEndpointId = activeSpec.Endpoints.Any(e => string.Equals(e.Id, activeEndpointId, StringComparison.OrdinalIgnoreCase))
+                    ? activeEndpointId
+                    : (activeSpec.Endpoints.FirstOrDefault()?.Id ?? string.Empty);
+                this.RaisePropertyChanged(nameof(SelectedEndpointId));
+            }
+            else
+            {
+                PresetEndpoints = new List<VoiceOption>();
+                HasMultiplePresetEndpoints = false;
+                SelectedEndpointId = string.Empty;
+            }
+
+            LlmProviders = new List<VoiceOption>
+            {
+                new() { Id = "openai", DisplayName = AppLanguage.T("OpenAI 兼容格式", "OpenAI-compatible") },
+                new() { Id = "anthropic", DisplayName = AppLanguage.T("Anthropic 兼容格式", "Anthropic-compatible") },
+                new() { Id = "local", DisplayName = AppLanguage.T("本地模型", "Local model") },
+            };
+            SelectedProvider = activeProvider;
+            this.RaisePropertyChanged(nameof(SelectedProvider));
+        }
+        finally
         {
-            new() { Id = "openai", DisplayName = AppLanguage.T("OpenAI 兼容格式", "OpenAI-compatible") },
-            new() { Id = "anthropic", DisplayName = AppLanguage.T("Anthropic 兼容格式", "Anthropic-compatible") },
-            new() { Id = "local", DisplayName = AppLanguage.T("本地模型", "Local model") },
-        };
+            _isSwappingLlm = wasSwapping;
+        }
+
+        UpdateBaseUrlWatermark();
+        UpdateModelWatermark();
+        UpdateEndpointHint();
+        RebuildModelChoices();
 
         SpeechMixModes = new List<VoiceOption>
         {
@@ -1013,6 +1204,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             string[] savedMusicOrder = Array.Empty<string>();
             string[] disabledMusicProviders = Array.Empty<string>();
             Dictionary<string, LlmProfile>? parsedProfiles = null;
+            Dictionary<string, LlmPresetProfile>? parsedPresetProfiles = null;
+            string? diskActivePreset = null;
             var diskActiveProvider = NormalizeProvider(SelectedProvider);
             using var doc = await OpenSettingsDocumentAsync(cancellationToken);
             if (doc != null)
@@ -1030,9 +1223,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 if (root.TryGetProperty("llm_model", out var model))
                     Model = model.GetString() ?? string.Empty;
 
+                if (root.TryGetProperty("llm_active_preset", out var activePresetEl) &&
+                    activePresetEl.ValueKind == JsonValueKind.String)
+                    diskActivePreset = NormalizePresetId(activePresetEl.GetString());
+
                 // 其余服务的档案（active 服务以扁平字段为权威，兼容旧版/手编 json）；
                 // 键白名单+逐项 String 过滤：坏档案只丢自己，不拖垮其余字段加载
                 parsedProfiles = ParseLlmProfiles(root);
+                parsedPresetProfiles = ParseLlmPresetProfiles(root);
 
                 if (root.TryGetProperty("language", out var lang))
                     SelectedLanguage = lang.GetString() ?? "zh";
@@ -1198,28 +1396,142 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             // active 服务档案装配：扁平字段为权威；Key 专槽优先、旧单槽回退（唯一回退点）。
             // 回退命中即同步镜像写专槽完成一次性迁移——同步 await 在 _saveGate 内顺序化，
             // 消除与用户随后保存写同槽的竞态
-            var activeProfile = new LlmProfile { BaseUrl = BaseUrl, Model = Model };
-            var activeKey = await _secureStorage.GetApiKeyAsync(LlmCredentialSlot(diskActiveProvider));
-            if (string.IsNullOrEmpty(activeKey) && !string.IsNullOrEmpty(legacyKey))
+            var resolvedPresetId = diskActivePreset;
+            var resolvedEndpointId = string.Empty;
+            if (string.IsNullOrEmpty(resolvedPresetId))
             {
-                activeKey = legacyKey;
-                try
+                var inferred = LlmProviderCatalog.InferPresetFromConfig(diskActiveProvider, BaseUrl);
+                resolvedPresetId = inferred.PresetId;
+                resolvedEndpointId = inferred.EndpointId;
+            }
+            else if (!string.Equals(resolvedPresetId, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase))
+            {
+                var diskSpec = LlmProviderCatalog.FindPreset(resolvedPresetId);
+                if (diskSpec == null ||
+                    diskSpec.IsCustom ||
+                    !diskSpec.Endpoints.Any(e => string.Equals(e.Protocol, diskActiveProvider, StringComparison.OrdinalIgnoreCase)))
                 {
-                    await _secureStorage.SaveApiKeyAsync(LlmCredentialSlot(diskActiveProvider), activeKey);
-                }
-                catch (Exception migrateEx)
-                {
-                    Log.Debug(migrateEx, "Legacy LLM key slot migration failed");
+                    // 盘上手改配置出现预设与协议矛盾（如 llm_active_preset=deepseek 但 llm_provider=local）：
+                    // 优先按 (provider, baseUrl) 重新反推；若仍不兼容则回退 custom，保持三元组自洽
+                    var inferred = LlmProviderCatalog.InferPresetFromConfig(diskActiveProvider, BaseUrl);
+                    var inferredSpec = LlmProviderCatalog.FindPreset(inferred.PresetId);
+                    if (inferredSpec != null &&
+                        !inferredSpec.IsCustom &&
+                        inferredSpec.Endpoints.Any(e => string.Equals(e.Protocol, diskActiveProvider, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        resolvedPresetId = inferred.PresetId;
+                        resolvedEndpointId = inferred.EndpointId;
+                    }
+                    else
+                    {
+                        resolvedPresetId = LlmProviderCatalog.CustomId;
+                        resolvedEndpointId = string.Empty;
+                    }
                 }
             }
-            if (!string.IsNullOrEmpty(activeKey))
-            {
-                activeProfile.ApiKey = activeKey;
-                ApiKey = activeKey;
-            }
+
+            var presetProfiles = parsedPresetProfiles ??
+                new Dictionary<string, LlmPresetProfile>(StringComparer.OrdinalIgnoreCase);
             var profiles = parsedProfiles ?? new Dictionary<string, LlmProfile>();
-            profiles[diskActiveProvider] = activeProfile;
+            var domainKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            string? activeKey = null;
+            if (string.Equals(resolvedPresetId, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase))
+            {
+                activeKey = await _secureStorage.GetApiKeyAsync(LlmCredentialSlot(diskActiveProvider));
+                if (string.IsNullOrEmpty(activeKey) && !string.IsNullOrEmpty(legacyKey))
+                {
+                    activeKey = legacyKey;
+                    try
+                    {
+                        await _secureStorage.SaveApiKeyAsync(LlmCredentialSlot(diskActiveProvider), activeKey);
+                    }
+                    catch (Exception migrateEx)
+                    {
+                        Log.Debug(migrateEx, "Legacy LLM key slot migration failed");
+                    }
+                }
+
+                var activeProfile = new LlmProfile { BaseUrl = BaseUrl, Model = Model };
+                if (!string.IsNullOrEmpty(activeKey))
+                {
+                    activeProfile.ApiKey = activeKey;
+                    ApiKey = activeKey;
+                }
+                profiles[diskActiveProvider] = activeProfile;
+            }
+            else
+            {
+                var presetSpec = LlmProviderCatalog.FindPreset(resolvedPresetId)!;
+                if (string.IsNullOrEmpty(resolvedEndpointId))
+                {
+                    var inferred = LlmProviderCatalog.InferPresetFromConfig(diskActiveProvider, BaseUrl);
+                    if (string.Equals(inferred.PresetId, presetSpec.Id, StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrEmpty(inferred.EndpointId))
+                    {
+                        resolvedEndpointId = inferred.EndpointId;
+                    }
+                    else if (presetProfiles.TryGetValue(presetSpec.Id, out var savedPreset) &&
+                             !string.IsNullOrEmpty(savedPreset.EndpointId) &&
+                             LlmProviderCatalog.FindEndpoint(presetSpec, savedPreset.EndpointId) is { } savedEp &&
+                             string.Equals(savedEp.Protocol, diskActiveProvider, StringComparison.OrdinalIgnoreCase))
+                    {
+                        resolvedEndpointId = savedEp.Id;
+                    }
+                    else
+                    {
+                        resolvedEndpointId = (LlmProviderCatalog.FindMatchingEndpointForProtocol(presetSpec, diskActiveProvider, null)
+                                              ?? presetSpec.Endpoints.FirstOrDefault())?.Id ?? string.Empty;
+                    }
+                }
+
+                if (RequiresApiKey(diskActiveProvider))
+                {
+                    var activeSlot = LlmPresetCredentialSlot(presetSpec.Id, resolvedEndpointId);
+                    activeKey = await _secureStorage.GetApiKeyAsync(activeSlot);
+                    if (string.IsNullOrEmpty(activeKey))
+                    {
+                        var migratedKey = string.Empty;
+                        if (!string.Equals(activeSlot, LlmPresetCredentialSlot(presetSpec.Id), StringComparison.OrdinalIgnoreCase))
+                            migratedKey = await _secureStorage.GetApiKeyAsync(LlmPresetCredentialSlot(presetSpec.Id));
+                        if (string.IsNullOrEmpty(migratedKey))
+                            migratedKey = await _secureStorage.GetApiKeyAsync(LlmCredentialSlot(diskActiveProvider));
+                        if (string.IsNullOrEmpty(migratedKey))
+                            migratedKey = legacyKey;
+                        if (!string.IsNullOrEmpty(migratedKey))
+                        {
+                            activeKey = migratedKey;
+                            try
+                            {
+                                await _secureStorage.SaveApiKeyAsync(activeSlot, activeKey);
+                            }
+                            catch (Exception migrateEx)
+                            {
+                                Log.Debug(migrateEx, "Legacy LLM key migration to preset slot failed");
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(activeKey))
+                    {
+                        ApiKey = activeKey;
+                        domainKeys[activeSlot] = activeKey;
+                    }
+                }
+
+                presetProfiles[presetSpec.Id] = new LlmPresetProfile(
+                    resolvedEndpointId,
+                    diskActiveProvider,
+                    BaseUrl,
+                    Model,
+                    activeKey ?? string.Empty);
+            }
+
             _llmProfiles = profiles;
+            _llmPresetProfiles = presetProfiles;
+            _llmPresetDomainKeys = domainKeys;
+            ActivePresetId = resolvedPresetId;
+            SelectedEndpointId = resolvedEndpointId;
             _lastProvider = diskActiveProvider;
 
             ConfigureLlm();
@@ -1305,9 +1617,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             // SelectedProvider 现值，否则旧服务配置会被写进新服务档案并随保存持久化
             var tailProvider = NormalizeProvider(SelectedProvider);
             if (tailProvider != _lastProvider)
-                SwapLlmProfile(_lastProvider, tailProvider);
-            _lastProvider = tailProvider;
-            LlmNeedsApiKey = RequiresApiKey(tailProvider);
+                HandleProviderChanged(tailProvider, triggerModelRefresh: false);
+            _lastProvider = NormalizeProvider(SelectedProvider);
+            LlmNeedsApiKey = RequiresApiKey(_lastProvider);
+            SyncPresetChromeUi();
 
             // 此时 llm_* 全部字段已读取完，补拉模型候选（加载期赋值被 _isLoading 屏蔽；
             // 云端 Key 从凭据槽回填晚到时由 ApiKey 触发源自动重拉）
@@ -2301,42 +2614,123 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         });
 
     /// <summary>
-    /// 枚举模型候选填充下拉（本地 Ollama /api/tags、云端 /models 按 Key 鉴权）；
+    /// 枚举模型候选填充下拉（本地 Ollama /api/tags 或 OpenAI /models、云端 /models 按 Key 鉴权）；
     /// 失败静默保持空列表，手填模型名兜底。
     /// </summary>
-    private async Task RefreshLocalModelsAsync(bool debounce = false)
+    private async Task RefreshLocalModelsAsync(bool debounce = false, bool userInitiated = false)
     {
         // 代次守卫：快速来回切换 provider 时两次枚举并发，HTTP 完成序不定，
         // 旧结果晚到不得覆盖新结果（同歌词 generation 卫兵惯例）
         var epoch = ++_localModelsEpoch;
-        // 三字段同点快照保证单次请求的字段组合一致；防抖窗口内的新触发不发旧组合
-        // 请求靠的是上面 epoch 预递增 + 延迟后的代次检查
+        // 三字段同点快照保证单次请求的字段组合一致；命名预设下 BaseUrl 留空回退当前端点默认地址，
+        // 避免与 BaseUrlWatermark 冲突并防止将当前厂商 Key 误发至 OpenAI/Anthropic 官方域名
         var provider = SelectedProvider;
-        var baseUrl = BaseUrl;
+        var baseUrl = GetEffectiveBaseUrl();
         var apiKey = ApiKey;
+        var normalized = NormalizeProvider(provider);
+
+        var previousCts = Interlocked.Exchange(ref _modelFetchCts, null);
+        if (previousCts != null)
+        {
+            try { previousCts.Cancel(); } catch (ObjectDisposedException) { }
+            previousCts.Dispose();
+        }
+
+        if (userInitiated)
+        {
+            if (normalized != "local" && string.IsNullOrWhiteSpace(apiKey))
+            {
+                IsFetchingModels = false;
+                RefreshModelsButtonText = AppLanguage.T("拉取模型", "Fetch models");
+                SetModelFetchStatus(() => AppLanguage.T(
+                    "请先输入 API Key 后再拉取模型列表",
+                    "Enter your API key first to fetch models"));
+                return;
+            }
+
+            _activeUserModelFetchEpoch = epoch;
+            IsFetchingModels = true;
+            RefreshModelsButtonText = AppLanguage.T("拉取中...", "Fetching...");
+            ClearModelFetchStatus();
+        }
+        else if (IsFetchingModels)
+        {
+            // 后台自动刷新（切换预设/端点/编辑地址）抢占在途手动拉取时，立即释放按钮禁用态
+            _activeUserModelFetchEpoch = 0;
+            IsFetchingModels = false;
+            RefreshModelsButtonText = AppLanguage.T("拉取模型", "Fetch models");
+        }
+
+        using var fetchCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        _modelFetchCts = fetchCts;
+
         try
         {
             if (debounce)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(350), _lifetimeCts.Token);
+                await Task.Delay(TimeSpan.FromMilliseconds(350), fetchCts.Token);
                 if (epoch != _localModelsEpoch)
                     return;
             }
             // 端点从 VM 字段显式传入，不在此 ConfigureLlm——
             // 翻看 provider 下拉不能改变运行中服务的聊天配置（电台可能正在播）
-            var models = await _llmService.ListModelsAsync(provider, baseUrl, apiKey, _lifetimeCts.Token);
-            if (epoch != _localModelsEpoch || _lifetimeCts.IsCancellationRequested)
+            var models = await _llmService.ListModelsAsync(provider, baseUrl, apiKey, fetchCts.Token);
+            if (epoch != _localModelsEpoch || fetchCts.IsCancellationRequested)
                 return;
-            LocalModels = (models ?? Enumerable.Empty<string>())
+            var sorted = (models ?? Enumerable.Empty<string>())
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Select(m => m.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            LocalModels = sorted;
+            RebuildModelChoices();
+
+            if (userInitiated)
+            {
+                if (sorted.Count > 0)
+                {
+                    var count = sorted.Count;
+                    SetModelFetchStatus(() => AppLanguage.T(
+                        $"已获取 {count} 个可用模型",
+                        $"Fetched {count} available models"));
+                }
+                else if (normalized == "local")
+                {
+                    SetModelFetchStatus(() => AppLanguage.T(
+                        "未检测到可用模型，请确认本地服务已启动或直接手动输入模型名",
+                        "No local models found; make sure the local service is running or enter a model name manually"));
+                }
+                else
+                {
+                    SetModelFetchStatus(() => AppLanguage.T(
+                        "该服务商暂未返回模型列表，可直接选择推荐模型或手动输入",
+                        "No models returned by this endpoint; pick a recommended model or enter one manually"));
+                }
+            }
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (fetchCts.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
             Log.Debug(ex, "Model enumeration failed in settings");
+            if (userInitiated && epoch == _localModelsEpoch)
+            {
+                SetModelFetchStatus(() => AppLanguage.T(
+                    "模型列表拉取失败，可直接选择推荐模型或手动输入",
+                    "Failed to fetch models; pick a recommended model or enter one manually"));
+            }
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _modelFetchCts, null, fetchCts);
+            if (userInitiated && _activeUserModelFetchEpoch == epoch)
+            {
+                _activeUserModelFetchEpoch = 0;
+                IsFetchingModels = false;
+                RefreshModelsButtonText = AppLanguage.T("拉取模型", "Fetch models");
+            }
         }
     }
 
@@ -2958,52 +3352,78 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
             }
 
-            string providerToWrite, baseUrlToWrite, modelToWrite;
+            string providerToWrite, baseUrlToWrite, modelToWrite, activePresetToWrite;
             Dictionary<string, object>? profilesToWrite;
+            Dictionary<string, object>? presetProfilesToWrite;
             if (persistLlmFields)
             {
-                providerToWrite = SelectedProvider;
+                var activePreset = NormalizePresetId(ActivePresetId);
+                var activeProvider = NormalizeProvider(SelectedProvider);
+                var isCustomActive = string.Equals(activePreset, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase);
+
+                providerToWrite = activeProvider;
                 baseUrlToWrite = BaseUrl;
                 modelToWrite = Model;
+                activePresetToWrite = activePreset;
                 // active 服务以归一化后的字段值覆盖快照（字典本体不回写——切换处理器是
                 // 唯一写者，档案与扁平的暂时性不一致由"加载扁平权威+切走存回自愈"兜底）
                 profilesToWrite = BuildLlmProfilesSnapshot(
-                    NormalizeProvider(providerToWrite), baseUrlToWrite, modelToWrite);
+                    activeProvider, baseUrlToWrite, modelToWrite, overwriteActive: isCustomActive);
+                presetProfilesToWrite = BuildLlmPresetProfilesSnapshot(
+                    activePreset, SelectedEndpointId, activeProvider, baseUrlToWrite, modelToWrite);
 
                 // Key 预检（须在 NormalizeLlmInputs 之后：全角空格尾缀已被 Trim）：
-                // 当前服务的字段值与其余服务的档案缓存统一过 ASCII/长度校验，全部通过
+                // 当前服务的字段值与其余服务/预设的档案缓存统一过 ASCII/长度校验，全部通过
                 // 后才统一写槽——坏 Key 一旦入存，运行期 LLM 调用会以 HttpRequestException
                 //（"Request headers must contain only ASCII characters"）失败且被归类成
                 // 网络问题误导排查；超长 Key 会让 CredWrite 中途抛异常留下半写状态
-                var activeProvider = NormalizeProvider(SelectedProvider);
                 var slotWrites = new List<(string Slot, string Key)>();
                 foreach (var providerId in LlmProfileKeys)
                 {
-                    var key = (providerId == activeProvider ? ApiKey : GetProfile(providerId).ApiKey) ?? string.Empty;
-                    key = key.Trim();
-                    if (key.Length == 0)
-                        continue;
-                    if (!IsPrintableAscii(key))
-                    {
-                        SetStatusMessage(() => AppLanguage.T(
-                            "API Key 含非 ASCII 字符（复制时可能混入中文或全角符号），请重新粘贴",
-                            "The API key contains non-ASCII characters (likely pasted Chinese or full-width symbols); please re-paste it"));
+                    var rawKey = (isCustomActive && providerId == activeProvider)
+                        ? ApiKey
+                        : GetProfile(providerId).ApiKey;
+                    if (!TryValidateLlmKey(rawKey, out var key))
                         return;
-                    }
-                    if (key.Length > MaxLlmKeyLength)
-                    {
-                        SetStatusMessage(() => AppLanguage.T(
-                            $"API Key 过长（上限 {MaxLlmKeyLength} 字符），请检查是否粘贴了错误内容",
-                            $"The API key is too long (limit {MaxLlmKeyLength} characters); please check the pasted content"));
-                        return;
-                    }
                     // local 服务不需要 Key，不建专槽（空档案天然跳过）
-                    if (providerId != "local")
+                    if (key.Length > 0 && providerId != "local")
                         slotWrites.Add((LlmCredentialSlot(providerId), key));
                 }
+
+                var presetSlotCandidates = new Dictionary<string, string>(
+                    _llmPresetDomainKeys,
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var presetId in LlmProviderCatalog.NamedPresetIds)
+                {
+                    var isCurrentPreset = !isCustomActive &&
+                                          string.Equals(presetId, activePreset, StringComparison.OrdinalIgnoreCase);
+                    if (isCurrentPreset)
+                    {
+                        if (activeProvider != "local")
+                            presetSlotCandidates[LlmPresetCredentialSlot(presetId, SelectedEndpointId)] = ApiKey;
+                    }
+                    else if (_llmPresetProfiles.TryGetValue(presetId, out var presetProfile))
+                    {
+                        var presetProvider = NormalizeProvider(presetProfile.Provider);
+                        var slot = LlmPresetCredentialSlot(presetId, presetProfile.EndpointId);
+                        if (presetProvider != "local" && !presetSlotCandidates.ContainsKey(slot))
+                            presetSlotCandidates[slot] = presetProfile.ApiKey;
+                    }
+                }
+
+                foreach (var (slot, rawKey) in presetSlotCandidates)
+                {
+                    if (!TryValidateLlmKey(rawKey, out var key))
+                        return;
+                    if (key.Length > 0)
+                        slotWrites.Add((slot, key));
+                }
+
                 // 旧单槽镜像写当前服务的 Key：回滚到旧版仍可用，也是存量测试锚定的契约
-                if (!string.IsNullOrWhiteSpace(ApiKey))
-                    slotWrites.Add((LlmCredentialService, ApiKey.Trim()));
+                if (!TryValidateLlmKey(ApiKey, out var activeTrimmedKey))
+                    return;
+                if (activeTrimmedKey.Length > 0 && activeProvider != "local")
+                    slotWrites.Add((LlmCredentialService, activeTrimmedKey));
 
                 foreach (var (slot, key) in slotWrites)
                     await _secureStorage.SaveApiKeyAsync(slot, key);
@@ -3018,11 +3438,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 providerToWrite = persisted?.Provider ?? SelectedProvider;
                 baseUrlToWrite = persisted?.BaseUrl ?? BaseUrl;
                 modelToWrite = persisted?.Model ?? Model;
-                // 盘上 llm_profiles 原样透传，不从内存档案重建（内存含未保存的切换存回态）
+                activePresetToWrite = persisted?.ActivePreset ??
+                    LlmProviderCatalog.InferPresetFromConfig(providerToWrite, baseUrlToWrite).PresetId;
+                // 盘上 llm_profiles 与 llm_preset_profiles 原样透传，不从内存档案重建（内存含未保存的切换存回态）
                 profilesToWrite = persisted?.Profiles;
                 if (profilesToWrite == null)
                     profilesToWrite = BuildLlmProfilesSnapshot(
-                        NormalizeProvider(providerToWrite), baseUrlToWrite, modelToWrite);
+                        NormalizeProvider(providerToWrite), baseUrlToWrite, modelToWrite, overwriteActive: true);
+                presetProfilesToWrite = persisted?.PresetProfiles ?? new Dictionary<string, object>();
             }
 
             Directory.CreateDirectory(_settingsDir);
@@ -3051,7 +3474,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 llm_provider = providerToWrite,
                 llm_base_url = baseUrlToWrite,
                 llm_model = modelToWrite,
+                llm_active_preset = activePresetToWrite,
                 llm_profiles = profilesToWrite,
+                llm_preset_profiles = presetProfilesToWrite,
                 tts_enabled = TtsEnabled,
                 theme_mode = ThemeModes.Normalize(SelectedThemeMode),
                 is_dark_mode = IsDarkMode,
@@ -3164,9 +3589,14 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>盘上 LLM 字段的透传载体；Profiles 为 null 表示盘上无 llm_profiles。</summary>
+    /// <summary>盘上 LLM 字段的透传载体；Profiles/PresetProfiles 为 null 表示盘上无对应对象。</summary>
     private sealed record PersistedLlmState(
-        string Provider, string BaseUrl, string Model, Dictionary<string, object>? Profiles);
+        string Provider,
+        string BaseUrl,
+        string Model,
+        string? ActivePreset,
+        Dictionary<string, object>? Profiles,
+        Dictionary<string, object>? PresetProfiles);
 
     private async Task<PersistedLlmState?> ReadPersistedLlmFieldsAsync()
     {
@@ -3198,11 +3628,43 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     };
                 }
             }
+
+            Dictionary<string, object>? presetProfiles = null;
+            if (root.TryGetProperty("llm_preset_profiles", out var presetProfilesEl) &&
+                presetProfilesEl.ValueKind == JsonValueKind.Object)
+            {
+                presetProfiles = new Dictionary<string, object>();
+                foreach (var entry in presetProfilesEl.EnumerateObject())
+                {
+                    if (!LlmProviderCatalog.NamedPresetIds.Contains(entry.Name) ||
+                        entry.Value.ValueKind != JsonValueKind.Object)
+                        continue;
+                    presetProfiles[entry.Name] = new
+                    {
+                        endpoint_id = entry.Value.TryGetProperty("endpoint_id", out var ep) &&
+                                      ep.ValueKind == JsonValueKind.String ? ep.GetString() ?? "" : "",
+                        provider = entry.Value.TryGetProperty("provider", out var pv) &&
+                                   pv.ValueKind == JsonValueKind.String ? NormalizeProvider(pv.GetString()) : "openai",
+                        base_url = entry.Value.TryGetProperty("base_url", out var baseUrl) &&
+                                   baseUrl.ValueKind == JsonValueKind.String ? baseUrl.GetString() ?? "" : "",
+                        model = entry.Value.TryGetProperty("model", out var model) &&
+                                model.ValueKind == JsonValueKind.String ? model.GetString() ?? "" : ""
+                    };
+                }
+            }
+
+            var activePreset = root.TryGetProperty("llm_active_preset", out var ap) &&
+                               ap.ValueKind == JsonValueKind.String
+                ? NormalizePresetId(ap.GetString())
+                : null;
+
             return new PersistedLlmState(
                 root.TryGetProperty("llm_provider", out var p) ? NormalizeProvider(p.GetString()) : "openai",
                 root.TryGetProperty("llm_base_url", out var b) ? b.GetString() ?? string.Empty : string.Empty,
                 root.TryGetProperty("llm_model", out var m) ? m.GetString() ?? string.Empty : string.Empty,
-                profiles);
+                activePreset,
+                profiles,
+                presetProfiles);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -3221,6 +3683,12 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             return;
 
         _lifetimeCts.Cancel();
+        var fetchCts = Interlocked.Exchange(ref _modelFetchCts, null);
+        if (fetchCts != null)
+        {
+            try { fetchCts.Cancel(); } catch (ObjectDisposedException) { }
+            fetchCts.Dispose();
+        }
         _selectedCharacterSub.Dispose();
         _selectedYtdlpBrowserSub.Dispose();
         _openSubsonicQualitySub.Dispose();
@@ -3236,6 +3704,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _localModelSettingsSub.Dispose();
         _llmProfileSwapSub.Dispose();
         _llmWatermarkSub.Dispose();
+        _llmEndpointSub.Dispose();
+        _llmModelSelectionSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更
@@ -3250,18 +3720,92 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     }
 
     private static string LlmCredentialSlot(string provider) => $"{LlmCredentialService}.{provider}";
+    private static string LlmPresetCredentialSlot(string presetId, string? endpointId = null)
+    {
+        var normalizedPreset = presetId.Trim().ToLowerInvariant();
+        var domain = LlmProviderCatalog.ResolveCredentialDomain(endpointId);
+        return string.IsNullOrEmpty(domain)
+            ? $"{LlmCredentialService}.preset.{normalizedPreset}"
+            : $"{LlmCredentialService}.preset.{normalizedPreset}.{domain}";
+    }
+
+    private bool TryValidateLlmKey(string? rawKey, out string trimmed)
+    {
+        trimmed = (rawKey ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+            return true;
+
+        if (!IsPrintableAscii(trimmed))
+        {
+            SetStatusMessage(() => AppLanguage.T(
+                "API Key 含非 ASCII 字符（复制时可能混入中文或全角符号），请重新粘贴",
+                "The API key contains non-ASCII characters (likely pasted Chinese or full-width symbols); please re-paste it"));
+            return false;
+        }
+
+        if (trimmed.Length > MaxLlmKeyLength)
+        {
+            SetStatusMessage(() => AppLanguage.T(
+                $"API Key 过长（上限 {MaxLlmKeyLength} 字符），请检查是否粘贴了错误内容",
+                $"The API key is too long (limit {MaxLlmKeyLength} characters); please check the pasted content"));
+            return false;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// 构建 llm_profiles 的序列化快照（键名小写下划线：序列化无命名策略，
     /// PascalCase 会与加载白名单键分裂致档案静默清空）。快照是独立新对象，
     /// 不回写字典本体（切换处理器保持唯一写者）。
     /// </summary>
-    private Dictionary<string, object> BuildLlmProfilesSnapshot(string activeProvider, string baseUrl, string model)
+    private Dictionary<string, object> BuildLlmProfilesSnapshot(
+        string activeProvider,
+        string baseUrl,
+        string model,
+        bool overwriteActive)
     {
         var snapshot = new Dictionary<string, object>();
         foreach (var kv in _llmProfiles)
             snapshot[kv.Key] = new { base_url = kv.Value.BaseUrl ?? string.Empty, model = kv.Value.Model ?? string.Empty };
-        snapshot[activeProvider] = new { base_url = baseUrl ?? string.Empty, model = model ?? string.Empty };
+        if (overwriteActive)
+            snapshot[activeProvider] = new { base_url = baseUrl ?? string.Empty, model = model ?? string.Empty };
+        return snapshot;
+    }
+
+    private Dictionary<string, object> BuildLlmPresetProfilesSnapshot(
+        string activePreset,
+        string activeEndpointId,
+        string activeProvider,
+        string activeBaseUrl,
+        string activeModel)
+    {
+        var snapshot = new Dictionary<string, object>();
+        foreach (var kv in _llmPresetProfiles)
+        {
+            if (!LlmProviderCatalog.NamedPresetIds.Contains(kv.Key))
+                continue;
+            snapshot[kv.Key] = new
+            {
+                endpoint_id = kv.Value.EndpointId ?? string.Empty,
+                provider = NormalizeProvider(kv.Value.Provider),
+                base_url = kv.Value.BaseUrl ?? string.Empty,
+                model = kv.Value.Model ?? string.Empty
+            };
+        }
+
+        if (!string.Equals(activePreset, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase) &&
+            LlmProviderCatalog.NamedPresetIds.Contains(activePreset))
+        {
+            snapshot[activePreset] = new
+            {
+                endpoint_id = activeEndpointId ?? string.Empty,
+                provider = NormalizeProvider(activeProvider),
+                base_url = activeBaseUrl ?? string.Empty,
+                model = activeModel ?? string.Empty
+            };
+        }
+
         return snapshot;
     }
 
@@ -3287,6 +3831,49 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         return profiles;
     }
 
+    /// <summary>解析盘上 llm_preset_profiles：服务商 Id 白名单+逐项 String 过滤。</summary>
+    private static Dictionary<string, LlmPresetProfile>? ParseLlmPresetProfiles(JsonElement root)
+    {
+        if (!root.TryGetProperty("llm_preset_profiles", out var profilesEl) ||
+            profilesEl.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var profiles = new Dictionary<string, LlmPresetProfile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in profilesEl.EnumerateObject())
+        {
+            if (!LlmProviderCatalog.NamedPresetIds.Contains(entry.Name) ||
+                entry.Value.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var spec = LlmProviderCatalog.FindPreset(entry.Name);
+            if (spec == null || spec.IsCustom)
+                continue;
+
+            var endpointId = entry.Value.TryGetProperty("endpoint_id", out var epEl) &&
+                             epEl.ValueKind == JsonValueKind.String
+                ? epEl.GetString() ?? string.Empty
+                : string.Empty;
+            var provider = entry.Value.TryGetProperty("provider", out var provEl) &&
+                           provEl.ValueKind == JsonValueKind.String
+                ? NormalizeProvider(provEl.GetString())
+                : (LlmProviderCatalog.FindEndpoint(spec, endpointId)?.Protocol
+                   ?? spec.Endpoints.FirstOrDefault()?.Protocol
+                   ?? "openai");
+            var baseUrl = entry.Value.TryGetProperty("base_url", out var baseUrlEl) &&
+                          baseUrlEl.ValueKind == JsonValueKind.String
+                ? baseUrlEl.GetString() ?? string.Empty
+                : string.Empty;
+            var model = entry.Value.TryGetProperty("model", out var modelEl) &&
+                        modelEl.ValueKind == JsonValueKind.String
+                ? modelEl.GetString() ?? string.Empty
+                : string.Empty;
+
+            profiles[spec.Id] = new LlmPresetProfile(endpointId, provider, baseUrl, model, string.Empty);
+        }
+
+        return profiles;
+    }
+
     private LlmProfile GetProfile(string provider) =>
         _llmProfiles.TryGetValue(provider, out var profile) ? profile : new LlmProfile();
 
@@ -3294,45 +3881,482 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private void UpdateProfile(string provider, LlmProfile profile) =>
         _llmProfiles = new Dictionary<string, LlmProfile>(_llmProfiles) { [provider] = profile };
 
+    private void UpdatePresetProfile(string presetId, LlmPresetProfile profile) =>
+        _llmPresetProfiles = new Dictionary<string, LlmPresetProfile>(_llmPresetProfiles, StringComparer.OrdinalIgnoreCase)
+        {
+            [presetId] = profile
+        };
+
+    private void UpdatePresetDomainKey(string slot, string key) =>
+        _llmPresetDomainKeys = new Dictionary<string, string>(_llmPresetDomainKeys, StringComparer.OrdinalIgnoreCase)
+        {
+            [slot] = key ?? string.Empty
+        };
+
+    private static string NormalizePresetId(string? presetId)
+    {
+        var found = LlmProviderCatalog.FindPreset(presetId);
+        return found != null ? found.Id : LlmProviderCatalog.CustomId;
+    }
+
+    private LlmEndpointSpec? GetActiveEndpointSpec()
+    {
+        if (string.Equals(ActivePresetId, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var preset = LlmProviderCatalog.FindPreset(ActivePresetId);
+        if (preset == null || preset.IsCustom)
+            return null;
+        return LlmProviderCatalog.FindEndpoint(preset, SelectedEndpointId) ?? preset.Endpoints.FirstOrDefault();
+    }
+
+    private void UpdateSelectedPresetChipFlags()
+    {
+        foreach (var item in LlmPresets)
+            item.IsSelected = string.Equals(item.Id, ActivePresetId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void UpdateSelectedModelFlags()
+    {
+        var current = (Model ?? string.Empty).Trim();
+        foreach (var item in QuickModelOptions)
+            item.IsSelected = !string.IsNullOrEmpty(current) &&
+                              string.Equals(item.ModelId, current, StringComparison.OrdinalIgnoreCase);
+        foreach (var item in AvailableModelOptions)
+            item.IsSelected = !string.IsNullOrEmpty(current) &&
+                              string.Equals(item.ModelId, current, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void SetModelFetchStatus(Func<string> messageFactory)
+    {
+        _modelFetchStatusFactory = messageFactory;
+        ModelFetchStatus = messageFactory();
+        HasModelFetchStatus = !string.IsNullOrEmpty(ModelFetchStatus);
+    }
+
+    private void ClearModelFetchStatus()
+    {
+        _modelFetchStatusFactory = null;
+        ModelFetchStatus = string.Empty;
+        HasModelFetchStatus = false;
+    }
+
+    public void SelectModel(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+            return;
+        Model = modelId.Trim();
+    }
+
+    private void RebuildModelChoices()
+    {
+        var currentModel = (Model ?? string.Empty).Trim();
+        var endpoint = GetActiveEndpointSpec();
+        var remoteModels = LocalModels ?? new List<string>();
+        var recommendedModels = endpoint?.Models ?? Array.Empty<string>();
+
+        var mergedIds = new List<string>();
+        var mergedOptions = new List<LlmModelOption>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var id in remoteModels)
+        {
+            var trimmed = id?.Trim();
+            if (string.IsNullOrEmpty(trimmed) || !seen.Add(trimmed))
+                continue;
+            mergedIds.Add(trimmed);
+            mergedOptions.Add(new LlmModelOption(
+                trimmed,
+                isSelected: !string.IsNullOrEmpty(currentModel) &&
+                            string.Equals(trimmed, currentModel, StringComparison.OrdinalIgnoreCase),
+                isRemote: true));
+        }
+
+        foreach (var id in recommendedModels)
+        {
+            var trimmed = id?.Trim();
+            if (string.IsNullOrEmpty(trimmed) || !seen.Add(trimmed))
+                continue;
+            mergedIds.Add(trimmed);
+            mergedOptions.Add(new LlmModelOption(
+                trimmed,
+                isSelected: !string.IsNullOrEmpty(currentModel) &&
+                            string.Equals(trimmed, currentModel, StringComparison.OrdinalIgnoreCase),
+                isRemote: false));
+        }
+
+        AvailableModels = mergedIds;
+        AvailableModelOptions = mergedOptions;
+        HasAvailableModels = mergedIds.Count > 0;
+
+        var quickSource = recommendedModels.Count > 0
+            ? recommendedModels.Take(8)
+            : remoteModels.Take(6);
+        var quickList = new List<LlmModelOption>();
+        var quickSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in quickSource)
+        {
+            var trimmed = id?.Trim();
+            if (string.IsNullOrEmpty(trimmed) || !quickSeen.Add(trimmed))
+                continue;
+            quickList.Add(new LlmModelOption(
+                trimmed,
+                isSelected: !string.IsNullOrEmpty(currentModel) &&
+                            string.Equals(trimmed, currentModel, StringComparison.OrdinalIgnoreCase),
+                isRemote: recommendedModels.Count == 0));
+        }
+        QuickModelOptions = quickList;
+        HasQuickModelOptions = quickList.Count > 0;
+    }
+
+    private void SyncPresetChromeUi()
+    {
+        var wasSwapping = _isSwappingLlm;
+        _isSwappingLlm = true;
+        try
+        {
+            var activeSpec = LlmProviderCatalog.FindPreset(ActivePresetId);
+            if (activeSpec != null && !activeSpec.IsCustom)
+            {
+                var currentEpId = SelectedEndpointId;
+                PresetEndpoints = activeSpec.Endpoints
+                    .Select(e => new VoiceOption { Id = e.Id, DisplayName = e.DisplayName })
+                    .ToList();
+                HasMultiplePresetEndpoints = PresetEndpoints.Count > 1;
+                SelectedEndpointId = activeSpec.Endpoints.Any(e =>
+                    string.Equals(e.Id, currentEpId, StringComparison.OrdinalIgnoreCase))
+                    ? currentEpId
+                    : (activeSpec.Endpoints.FirstOrDefault()?.Id ?? string.Empty);
+                this.RaisePropertyChanged(nameof(SelectedEndpointId));
+            }
+            else
+            {
+                PresetEndpoints = new List<VoiceOption>();
+                HasMultiplePresetEndpoints = false;
+                SelectedEndpointId = string.Empty;
+            }
+
+            UpdateSelectedPresetChipFlags();
+        }
+        finally
+        {
+            _isSwappingLlm = wasSwapping;
+        }
+
+        UpdateBaseUrlWatermark();
+        UpdateModelWatermark();
+        UpdateEndpointHint();
+        RebuildModelChoices();
+    }
+
+    private void SaveCurrentFormToActiveProfile()
+    {
+        var currentProvider = _lastProvider;
+        if (string.Equals(ActivePresetId, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase))
+        {
+            UpdateProfile(currentProvider, new LlmProfile
+            {
+                BaseUrl = BaseUrl ?? string.Empty,
+                Model = Model ?? string.Empty,
+                ApiKey = ApiKey ?? string.Empty
+            });
+        }
+        else
+        {
+            var epId = SelectedEndpointId ?? string.Empty;
+            var key = ApiKey ?? string.Empty;
+            UpdatePresetProfile(ActivePresetId, new LlmPresetProfile(
+                epId,
+                currentProvider,
+                BaseUrl ?? string.Empty,
+                Model ?? string.Empty,
+                key));
+            if (RequiresApiKey(currentProvider))
+                UpdatePresetDomainKey(LlmPresetCredentialSlot(ActivePresetId, epId), key);
+        }
+    }
+
+    private void HandleProviderChanged(string to, bool triggerModelRefresh = true)
+    {
+        if (!string.Equals(ActivePresetId, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase) &&
+            LlmProviderCatalog.FindPreset(ActivePresetId) is { IsCustom: false } activeSpec)
+        {
+            var matchingEndpoint = LlmProviderCatalog.FindMatchingEndpointForProtocol(activeSpec, to, SelectedEndpointId);
+            if (matchingEndpoint != null)
+            {
+                ApplyPresetEndpointCore(activeSpec, matchingEndpoint, triggerModelRefresh);
+                return;
+            }
+
+            // 当前预设不支持目标协议：先存回当前预设档案，再切换回自定义模式下对应协议档案
+            SaveCurrentFormToActiveProfile();
+            var wasSwapping = _isSwappingLlm;
+            _isSwappingLlm = true;
+            try
+            {
+                ActivePresetId = LlmProviderCatalog.CustomId;
+                UpdateSelectedPresetChipFlags();
+                PresetEndpoints = new List<VoiceOption>();
+                HasMultiplePresetEndpoints = false;
+                SelectedEndpointId = string.Empty;
+
+                var target = GetProfile(to);
+                BaseUrl = target.BaseUrl;
+                Model = target.Model;
+                if (!string.IsNullOrEmpty(target.ApiKey))
+                {
+                    ApiKey = target.ApiKey;
+                }
+                else
+                {
+                    ApiKey = string.Empty;
+                    if (RequiresApiKey(to))
+                        _ = LoadProfileKeyFromSlotAsync(to);
+                }
+
+                _lastProvider = to;
+                LlmNeedsApiKey = RequiresApiKey(to);
+            }
+            finally
+            {
+                _isSwappingLlm = wasSwapping;
+            }
+
+            UpdateBaseUrlWatermark();
+            UpdateModelWatermark();
+            UpdateEndpointHint();
+            LocalModels = new();
+            ClearModelFetchStatus();
+            RebuildModelChoices();
+            if (triggerModelRefresh)
+                _ = RefreshLocalModelsAsync(debounce: true);
+            return;
+        }
+
+        SwapLlmProfile(_lastProvider, to);
+        _lastProvider = to;
+        UpdateBaseUrlWatermark();
+        UpdateModelWatermark();
+        UpdateEndpointHint();
+        RebuildModelChoices();
+    }
+
+    private void ApplyPresetEndpointCore(LlmPresetSpec spec, LlmEndpointSpec endpoint, bool triggerModelRefresh = true)
+    {
+        var allSpecModels = spec.Endpoints
+            .SelectMany(e => e.Models)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var previousEndpointId = _llmPresetProfiles.TryGetValue(spec.Id, out var previousProfile)
+            ? previousProfile.EndpointId
+            : SelectedEndpointId;
+        var oldSlot = LlmPresetCredentialSlot(spec.Id, previousEndpointId);
+        var newSlot = LlmPresetCredentialSlot(spec.Id, endpoint.Id);
+        if (RequiresApiKey(_lastProvider))
+            UpdatePresetDomainKey(oldSlot, ApiKey ?? string.Empty);
+
+        var wasSwapping = _isSwappingLlm;
+        _isSwappingLlm = true;
+        try
+        {
+            var targetProtocol = NormalizeProvider(endpoint.Protocol);
+            SelectedEndpointId = endpoint.Id;
+            SelectedProvider = targetProtocol;
+            _lastProvider = targetProtocol;
+            LlmNeedsApiKey = RequiresApiKey(targetProtocol);
+            BaseUrl = endpoint.BaseUrl;
+
+            var trimmedModel = (Model ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(trimmedModel))
+            {
+                Model = endpoint.Models.FirstOrDefault() ?? string.Empty;
+            }
+            else if (endpoint.Models.Count > 0 &&
+                     !endpoint.Models.Contains(trimmedModel, StringComparer.OrdinalIgnoreCase) &&
+                     allSpecModels.Contains(trimmedModel))
+            {
+                Model = endpoint.Models[0];
+            }
+
+            if (!string.Equals(oldSlot, newSlot, StringComparison.OrdinalIgnoreCase))
+            {
+                if (_llmPresetDomainKeys.TryGetValue(newSlot, out var cachedDomainKey) &&
+                    !string.IsNullOrEmpty(cachedDomainKey))
+                {
+                    ApiKey = cachedDomainKey;
+                }
+                else
+                {
+                    ApiKey = string.Empty;
+                    if (LlmNeedsApiKey)
+                        _ = LoadPresetKeyFromSlotAsync(spec.Id, endpoint.Id);
+                }
+            }
+
+            if (LlmNeedsApiKey)
+                UpdatePresetDomainKey(newSlot, ApiKey ?? string.Empty);
+
+            UpdatePresetProfile(spec.Id, new LlmPresetProfile(
+                endpoint.Id,
+                targetProtocol,
+                BaseUrl ?? string.Empty,
+                Model ?? string.Empty,
+                ApiKey ?? string.Empty));
+        }
+        finally
+        {
+            _isSwappingLlm = wasSwapping;
+        }
+
+        UpdateBaseUrlWatermark();
+        UpdateModelWatermark();
+        UpdateEndpointHint();
+        LocalModels = new();
+        ClearModelFetchStatus();
+        RebuildModelChoices();
+        if (triggerModelRefresh)
+            _ = RefreshLocalModelsAsync(debounce: true);
+    }
+
     /// <summary>
-    /// 切换 LLM 服务档案：当前字段存回旧服务、载入新服务自己的 Key/地址/模型。
-    /// 只改表单字段，不触碰运行中服务配置（ConfigureLlm 仅发生在保存/测试连接）。
-    /// </summary>
-    /// <summary>
-    /// 应用主流大模型极简预置：切协议并填入 BaseUrl 与推荐模型名。
-    /// 只改表单字段与对应档案缓存，不触碰运行中服务配置。
+    /// 应用主流大模型服务商预置：切换预设时保留旧服务商/自定义档案，并恢复目标服务商各自配置与 Key。
+    /// 只改表单字段与档案缓存，不触碰运行中服务配置。
     /// </summary>
     private void ApplyLlmPreset(string? presetId)
     {
         if (_isLoading || string.IsNullOrWhiteSpace(presetId))
             return;
 
-        var preset = LlmPresets.FirstOrDefault(p => string.Equals(p.Id, presetId, StringComparison.OrdinalIgnoreCase));
-        if (preset == null)
+        var spec = LlmProviderCatalog.FindPreset(presetId);
+        if (spec == null)
             return;
 
-        // 1. 切换协议（若此前处于不同协议，_llmProfileSwapSub 会先将旧表单存回原档案并载入目标槽）
-        SelectedProvider = preset.Provider;
+        SaveCurrentFormToActiveProfile();
 
-        // 2. 覆写 BaseUrl 与 Model，同时更新 _llmProfiles 档案缓存防异步凭据回填冲掉新设置
-        BaseUrl = preset.BaseUrl;
-        Model = preset.DefaultModel;
-
-        var currentProfile = GetProfile(preset.Provider);
-        UpdateProfile(preset.Provider, new LlmProfile
+        var wasSwapping = _isSwappingLlm;
+        _isSwappingLlm = true;
+        try
         {
-            BaseUrl = preset.BaseUrl,
-            Model = preset.DefaultModel,
-            ApiKey = currentProfile.ApiKey
-        });
+            ActivePresetId = spec.Id;
+            UpdateSelectedPresetChipFlags();
 
-        // 3. 引导提示（随语言动态刷新）
-        var targetId = preset.Id;
-        if (preset.Provider == "local")
+            if (spec.IsCustom)
+            {
+                PresetEndpoints = new List<VoiceOption>();
+                HasMultiplePresetEndpoints = false;
+                SelectedEndpointId = string.Empty;
+
+                var customTarget = GetProfile(_lastProvider);
+                BaseUrl = customTarget.BaseUrl;
+                Model = customTarget.Model;
+                if (!string.IsNullOrEmpty(customTarget.ApiKey))
+                {
+                    ApiKey = customTarget.ApiKey;
+                }
+                else
+                {
+                    ApiKey = string.Empty;
+                    if (RequiresApiKey(_lastProvider))
+                        _ = LoadProfileKeyFromSlotAsync(_lastProvider);
+                }
+                LlmNeedsApiKey = RequiresApiKey(_lastProvider);
+            }
+            else
+            {
+                PresetEndpoints = spec.Endpoints
+                    .Select(e => new VoiceOption { Id = e.Id, DisplayName = e.DisplayName })
+                    .ToList();
+                HasMultiplePresetEndpoints = PresetEndpoints.Count > 1;
+
+                if (_llmPresetProfiles.TryGetValue(spec.Id, out var saved))
+                {
+                    var endpoint = LlmProviderCatalog.FindEndpoint(spec, saved.EndpointId)
+                                   ?? LlmProviderCatalog.FindMatchingEndpointForProtocol(spec, NormalizeProvider(saved.Provider), null)
+                                   ?? spec.Endpoints[0];
+                    var targetProvider = NormalizeProvider(string.IsNullOrWhiteSpace(saved.Provider)
+                        ? endpoint.Protocol
+                        : saved.Provider);
+                    var targetSlot = LlmPresetCredentialSlot(spec.Id, endpoint.Id);
+                    var savedSlot = LlmPresetCredentialSlot(spec.Id, saved.EndpointId);
+                    var resolvedKey = _llmPresetDomainKeys.TryGetValue(targetSlot, out var domainKey) && !string.IsNullOrEmpty(domainKey)
+                        ? domainKey
+                        : (string.Equals(targetSlot, savedSlot, StringComparison.OrdinalIgnoreCase) ? saved.ApiKey : string.Empty);
+                    SelectedEndpointId = endpoint.Id;
+                    SelectedProvider = targetProvider;
+                    _lastProvider = targetProvider;
+                    LlmNeedsApiKey = RequiresApiKey(targetProvider);
+                    BaseUrl = saved.BaseUrl;
+                    Model = saved.Model;
+                    if (!string.IsNullOrEmpty(resolvedKey))
+                    {
+                        ApiKey = resolvedKey;
+                        if (LlmNeedsApiKey)
+                            UpdatePresetDomainKey(targetSlot, resolvedKey);
+                    }
+                    else
+                    {
+                        ApiKey = string.Empty;
+                        if (LlmNeedsApiKey)
+                            _ = LoadPresetKeyFromSlotAsync(spec.Id, endpoint.Id);
+                    }
+                }
+                else
+                {
+                    var endpoint = spec.Endpoints[0];
+                    var targetProvider = NormalizeProvider(endpoint.Protocol);
+                    var targetSlot = LlmPresetCredentialSlot(spec.Id, endpoint.Id);
+                    SelectedEndpointId = endpoint.Id;
+                    SelectedProvider = targetProvider;
+                    _lastProvider = targetProvider;
+                    LlmNeedsApiKey = RequiresApiKey(targetProvider);
+                    BaseUrl = endpoint.BaseUrl;
+                    Model = endpoint.Models.FirstOrDefault() ?? string.Empty;
+                    if (_llmPresetDomainKeys.TryGetValue(targetSlot, out var domainKey) && !string.IsNullOrEmpty(domainKey))
+                    {
+                        ApiKey = domainKey;
+                    }
+                    else
+                    {
+                        ApiKey = string.Empty;
+                        if (LlmNeedsApiKey)
+                            _ = LoadPresetKeyFromSlotAsync(spec.Id, endpoint.Id);
+                    }
+                }
+
+                // 同步写入档案缓存，防止异步凭据回填晚到时冲掉新填入的 BaseUrl/Model
+                UpdatePresetProfile(spec.Id, new LlmPresetProfile(
+                    SelectedEndpointId,
+                    _lastProvider,
+                    BaseUrl ?? string.Empty,
+                    Model ?? string.Empty,
+                    ApiKey ?? string.Empty));
+            }
+        }
+        finally
+        {
+            _isSwappingLlm = wasSwapping;
+        }
+
+        UpdateBaseUrlWatermark();
+        UpdateModelWatermark();
+        UpdateEndpointHint();
+        LocalModels = new();
+        ClearModelFetchStatus();
+        RebuildModelChoices();
+        _ = RefreshLocalModelsAsync(debounce: true);
+
+        // 引导提示（随语言动态刷新）
+        var targetId = spec.Id;
+        if (spec.IsCustom)
         {
             SetStatusMessage(() => AppLanguage.T(
-                "已切到本地 Ollama 预置，确保本机 Ollama 已运行后点击测试或保存",
-                "Applied Local Ollama preset; make sure Ollama is running locally, then Test or Save"));
+                "已切换到自定义配置，可自由选择协议格式并填写接口地址与模型",
+                "Switched to Custom configuration; choose a protocol format and enter your endpoint and model"));
+        }
+        else if (_lastProvider == "local")
+        {
+            SetStatusMessage(() => AppLanguage.T(
+                "已切到本地模型预置，确保 Ollama / LM Studio 已运行后点击测试或保存",
+                "Applied local model preset; make sure Ollama / LM Studio is running locally, then Test or Save"));
         }
         else
         {
@@ -3383,6 +4407,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             var key = await _secureStorage.GetApiKeyAsync(LlmCredentialSlot(provider));
             if (Volatile.Read(ref _disposed) != 0)
                 return;
+            if (!string.Equals(ActivePresetId, LlmProviderCatalog.CustomId, StringComparison.OrdinalIgnoreCase))
+                return;
             if (!string.Equals(NormalizeProvider(SelectedProvider), provider, StringComparison.Ordinal))
                 return;
             if (string.IsNullOrEmpty(key) || !string.IsNullOrEmpty(ApiKey))
@@ -3403,13 +4429,58 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// 从预设服务商凭据专槽回填表单 Key 字段。三守卫：回填时 ActivePresetId 与凭据计费域仍匹配且用户尚未手输。
+    /// </summary>
+    private async Task LoadPresetKeyFromSlotAsync(string presetId, string? endpointId = null)
+    {
+        try
+        {
+            var targetSlot = LlmPresetCredentialSlot(presetId, endpointId);
+            var key = await _secureStorage.GetApiKeyAsync(targetSlot);
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+            if (!string.Equals(ActivePresetId, presetId, StringComparison.OrdinalIgnoreCase))
+                return;
+            var activeSlot = LlmPresetCredentialSlot(ActivePresetId, SelectedEndpointId);
+            if (!string.Equals(activeSlot, targetSlot, StringComparison.OrdinalIgnoreCase))
+                return;
+            if (string.IsNullOrEmpty(key) || !string.IsNullOrEmpty(ApiKey))
+                return;
+            UpdatePresetDomainKey(targetSlot, key);
+            if (_llmPresetProfiles.TryGetValue(presetId, out var cached) && string.IsNullOrEmpty(cached.ApiKey))
+                UpdatePresetProfile(presetId, cached with { ApiKey = key });
+            ApiKey = key;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to load per-preset LLM key from credential slot");
+        }
+    }
+
+    /// <summary>
+    /// 解析当前生效的 Base URL：若用户显式输入非空地址则取用户输入；
+    /// 若留空且当前处于命名服务商预设，则回退该预设当前端点的内置默认地址（与 BaseUrlWatermark 承诺一致），
+    /// 防止命名预设留空时被 LLMService 兜底发往 OpenAI/Anthropic 官方域名。
+    /// </summary>
+    private string GetEffectiveBaseUrl()
+    {
+        var trimmed = (BaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (!string.IsNullOrEmpty(trimmed))
+            return trimmed;
+        var endpoint = GetActiveEndpointSpec();
+        if (endpoint != null && !string.IsNullOrWhiteSpace(endpoint.BaseUrl))
+            return endpoint.BaseUrl.Trim().TrimEnd('/');
+        return string.Empty;
+    }
+
     private void ConfigureLlm(string? apiKeyOverride = null)
     {
         _llmService.Configure(new LLMConfig
         {
             Provider = NormalizeProvider(SelectedProvider),
             ApiKey = (apiKeyOverride ?? ApiKey ?? string.Empty).Trim(),
-            BaseUrl = (BaseUrl ?? string.Empty).Trim(),
+            BaseUrl = GetEffectiveBaseUrl(),
             Model = (Model ?? string.Empty).Trim()
         });
     }

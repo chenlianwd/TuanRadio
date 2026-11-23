@@ -47,6 +47,14 @@
         <Style Selector="Button.citySuggestion:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
         </Style>
+        <Style Selector="Button.citySuggestion.active">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="Button.citySuggestion.active /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_3356F5C4}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+        </Style>
         <!-- AutoCompleteBox 水印：11.3.9 自带 Watermark 属性（Fluent 模板经 TemplateBinding
              转发到内嵌 TextBox）；早期"/template/ 样式恢复"路径实证不生效，勿再走 -->
         <!-- 版本更新按钮：下载态保留胶囊轮廓与可读字色，底层裁剪渲染进度填充 -->
@@ -73,6 +81,30 @@
         </Style>
         <Style Selector="Button.update-action.downloading TextBlock#UpdateActionButtonTextBlock">
             <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+        </Style>
+
+        <!-- 服务商与推荐模型快捷芯片：复用导航激活色对，确保 4 套配色主题与深浅变体对比度达标 -->
+        <Style Selector="Button.preset-chip">
+            <Setter Property="Background" Value="{DynamicResource C_11121620}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFB3B3B3}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_333A3D4A}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+        <Style Selector="Button.preset-chip:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_24212632}"/>
+        </Style>
+        <Style Selector="Button.preset-chip.active">
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+        </Style>
+        <Style Selector="Button.preset-chip.active /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_3356F5C4}"/>
+        </Style>
+        <Style Selector="Button.preset-chip.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_6656F5C4}"/>
         </Style>
     </UserControl.Styles>
 
@@ -115,7 +147,7 @@
                 <Grid Margin="0,0,16,0">
                     <!-- 页 0：AI 服务 -->
                     <StackPanel x:Name="PageAi" Spacing="16" IsVisible="{Binding TabIndex, Converter={StaticResource TabVisibleConverter}, ConverterParameter=0}">
-                        <StackPanel Spacing="6">
+                        <StackPanel Spacing="10">
                             <StackPanel Spacing="4">
                                 <TextBlock Text="{DynamicResource S_LlmPresetsLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
                                 <ItemsControl x:Name="LlmPresetItems" ItemsSource="{Binding LlmPresets}">
@@ -126,33 +158,144 @@
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="vm:LlmPresetOption">
-                                            <Button Content="{Binding DisplayName}"
+                                            <Button Classes="preset-chip"
+                                                    Classes.active="{Binding IsSelected}"
+                                                    Content="{Binding DisplayName}"
                                                     Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).ApplyLlmPresetCommand}"
                                                     CommandParameter="{Binding Id}"
-                                                    Padding="10,4" FontSize="11" Margin="0,0,6,6" CornerRadius="6"/>
+                                                    Margin="0,0,6,6"/>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </StackPanel>
-                            <ComboBox SelectedValue="{Binding SelectedProvider}"
-                                      ItemsSource="{Binding LlmProviders}"
-                                      SelectedValueBinding="{Binding Id}"
-                                      DisplayMemberBinding="{Binding DisplayName}"
-                                      HorizontalAlignment="Stretch"/>
-                            <TextBox Text="{Binding ApiKey, Mode=TwoWay}" Watermark="{DynamicResource S_ApiKeyWatermark}" PasswordChar="•"
-                                     IsVisible="{Binding LlmNeedsApiKey}"/>
-                            <TextBox x:Name="BaseUrlInput" Text="{Binding BaseUrl, Mode=TwoWay}" Watermark="{Binding BaseUrlWatermark}"/>
-                            <!-- AutoCompleteBox：下拉枚举可用模型（本地 Ollama /api/tags、云端 /models 按 Key
-                                 鉴权，Key 未配/拉取失败时空列表手填兜底），自由手填仍可。
-                                 11.3.9 下拉手势为输入任一字符（MPL=0 即出全表）/Down/F4，纯点击不弹
-                                 （issue #8903，程序化 IsDropDownOpen=true 会被内部复位，勿再试）；
-                                 若"点击即开"成为硬需求，正确路线是换 ComboBox 方案（原生点击展开，
-                                 代价是失去端点自由手填）。水印走控件自带 Watermark 属性 -->
-                            <AutoCompleteBox x:Name="ModelInputBox"
-                                             Text="{Binding Model, Mode=TwoWay}"
-                                             Watermark="{Binding ModelWatermark}"
-                                             ItemsSource="{Binding LocalModels}"
-                                             MinimumPrefixLength="0"/>
+
+                            <StackPanel Spacing="4" IsVisible="{Binding HasMultiplePresetEndpoints}">
+                                <TextBlock Text="{DynamicResource S_LlmEndpointLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <ComboBox x:Name="EndpointComboBox"
+                                          SelectedValue="{Binding SelectedEndpointId, Mode=TwoWay}"
+                                          ItemsSource="{Binding PresetEndpoints}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+                            <TextBlock x:Name="EndpointHintText"
+                                       Text="{Binding EndpointHint}"
+                                       IsVisible="{Binding HasEndpointHint}"
+                                       Foreground="{DynamicResource C_FF666666}"
+                                       FontSize="11"
+                                       Margin="0,-6,0,0"
+                                       TextWrapping="Wrap"/>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{DynamicResource S_LlmProtocolLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <ComboBox x:Name="ProviderComboBox"
+                                          SelectedValue="{Binding SelectedProvider, Mode=TwoWay}"
+                                          ItemsSource="{Binding LlmProviders}"
+                                          SelectedValueBinding="{Binding Id}"
+                                          DisplayMemberBinding="{Binding DisplayName}"
+                                          HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+                            <StackPanel Spacing="4" IsVisible="{Binding LlmNeedsApiKey}">
+                                <TextBlock Text="{DynamicResource S_LlmApiKeyLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <TextBox Text="{Binding ApiKey, Mode=TwoWay}"
+                                         Watermark="{DynamicResource S_ApiKeyWatermark}"
+                                         PasswordChar="•"/>
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{DynamicResource S_LlmBaseUrlLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <TextBox x:Name="BaseUrlInput"
+                                         Text="{Binding BaseUrl, Mode=TwoWay}"
+                                         Watermark="{Binding BaseUrlWatermark}"/>
+                            </StackPanel>
+                            <!-- AutoCompleteBox + ▾ 点击下拉选择 + 主动拉取远端模型 + 推荐芯片：
+                                 AutoCompleteBox 支持自由手填与输入匹配（11.3.9 纯点击不弹），右侧 ▾ 按钮
+                                 用 Flyout 解决"点击即展开全部模型"需求；下方芯片支持一键点选常用模型。 -->
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{DynamicResource S_LlmModelLabel}" Foreground="{DynamicResource C_FFB3B3B3}" FontSize="12"/>
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                    <AutoCompleteBox x:Name="ModelInputBox"
+                                                     Grid.Column="0"
+                                                     Text="{Binding Model, Mode=TwoWay}"
+                                                     Watermark="{Binding ModelWatermark}"
+                                                     ItemsSource="{Binding AvailableModels}"
+                                                     MinimumPrefixLength="0"/>
+                                    <Button x:Name="ModelPickerButton"
+                                            Grid.Column="1"
+                                            Content="▾"
+                                            IsEnabled="{Binding HasAvailableModels}"
+                                            ToolTip.Tip="{DynamicResource S_LlmPickModelTooltip}"
+                                            VerticalAlignment="Stretch"
+                                            VerticalContentAlignment="Center"
+                                            Padding="10,6"
+                                            FontSize="12">
+                                        <Button.Flyout>
+                                            <Flyout Placement="BottomEdgeAlignedRight">
+                                                <ScrollViewer MaxHeight="260" MinWidth="260" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl x:Name="ModelPickerItems" ItemsSource="{Binding AvailableModelOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate DataType="vm:LlmModelOption">
+                                                                <Button Classes="citySuggestion"
+                                                                        Classes.active="{Binding IsSelected}"
+                                                                        HorizontalAlignment="Stretch"
+                                                                        HorizontalContentAlignment="Stretch"
+                                                                        Margin="0,0,0,2"
+                                                                        Click="OnModelPickerItemClicked">
+                                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                                                        <TextBlock Grid.Column="0"
+                                                                                   Text="{Binding ModelId}"
+                                                                                   Foreground="{DynamicResource C_FFEDEDF5}"
+                                                                                   FontSize="12"
+                                                                                   VerticalAlignment="Center"/>
+                                                                        <TextBlock Grid.Column="1"
+                                                                                   Text="{Binding SourceLabel}"
+                                                                                   Foreground="{DynamicResource C_FF8A8A9E}"
+                                                                                   FontSize="11"
+                                                                                   VerticalAlignment="Center"/>
+                                                                    </Grid>
+                                                                </Button>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </Flyout>
+                                        </Button.Flyout>
+                                    </Button>
+                                    <Button x:Name="RefreshModelsButton"
+                                            Grid.Column="2"
+                                            Command="{Binding RefreshModelsCommand}"
+                                            Content="{Binding RefreshModelsButtonText}"
+                                            IsEnabled="{Binding !IsFetchingModels}"
+                                            VerticalAlignment="Stretch"
+                                            VerticalContentAlignment="Center"
+                                            Padding="12,6"
+                                            FontSize="12"/>
+                                </Grid>
+                                <ItemsControl x:Name="QuickModelChips"
+                                              ItemsSource="{Binding QuickModelOptions}"
+                                              IsVisible="{Binding HasQuickModelOptions}"
+                                              Margin="0,2,0,0">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="vm:LlmModelOption">
+                                            <Button Classes="preset-chip"
+                                                    Classes.active="{Binding IsSelected}"
+                                                    Content="{Binding ModelId}"
+                                                    Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).SelectModelCommand}"
+                                                    CommandParameter="{Binding ModelId}"
+                                                    Margin="0,0,6,6"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="ModelFetchStatusText"
+                                           Text="{Binding ModelFetchStatus}"
+                                           IsVisible="{Binding HasModelFetchStatus}"
+                                           Foreground="{DynamicResource C_FF666666}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
                             <Button Command="{Binding TestConnectionCommand}"
                                     Content="{Binding TestConnectionButtonText}"
                                     IsEnabled="{Binding !IsTesting}"

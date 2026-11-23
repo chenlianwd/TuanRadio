@@ -186,7 +186,13 @@ public static class AppLanguage
         // 设置页
         ["S_Settings"] = "设置",
         ["S_AiService"] = "AI 服务",
-        ["S_LlmPresetsLabel"] = "快速预置（一键填入地址与推荐模型）",
+        ["S_LlmPresetsLabel"] = "服务商预设（切换服务商自动记住各自配置与密钥）",
+        ["S_LlmEndpointLabel"] = "接口端点",
+        ["S_LlmProtocolLabel"] = "接口协议格式",
+        ["S_LlmApiKeyLabel"] = "API Key",
+        ["S_LlmBaseUrlLabel"] = "接口地址 (Base URL)",
+        ["S_LlmModelLabel"] = "模型名称",
+        ["S_LlmPickModelTooltip"] = "展开全部可用模型列表",
         // 设置页侧边导航
         ["S_SettingsNavMusic"] = "音乐音源",
         ["S_SettingsNavHost"] = "主播与语音",
@@ -454,7 +460,13 @@ public static class AppLanguage
         // Settings
         ["S_Settings"] = "Settings",
         ["S_AiService"] = "AI service",
-        ["S_LlmPresetsLabel"] = "Quick presets (one-click endpoint & model)",
+        ["S_LlmPresetsLabel"] = "Provider presets (remembers each provider's settings & key)",
+        ["S_LlmEndpointLabel"] = "API endpoint",
+        ["S_LlmProtocolLabel"] = "API protocol format",
+        ["S_LlmApiKeyLabel"] = "API Key",
+        ["S_LlmBaseUrlLabel"] = "Base URL",
+        ["S_LlmModelLabel"] = "Model",
+        ["S_LlmPickModelTooltip"] = "Show all available models",
         // Settings side navigation
         ["S_SettingsNavMusic"] = "Music sources",
         ["S_SettingsNavHost"] = "Host & voice",

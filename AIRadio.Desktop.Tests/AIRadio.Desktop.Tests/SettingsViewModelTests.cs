@@ -2188,10 +2188,15 @@ public class SettingsViewModelTests
 
     [Theory]
     [InlineData("deepseek", "openai", "https://api.deepseek.com/v1", "deepseek-chat")]
-    [InlineData("zhipu", "openai", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash")]
-    [InlineData("kimi", "openai", "https://api.moonshot.cn/v1", "moonshot-v1-8k")]
+    [InlineData("zhipu", "openai", "https://open.bigmodel.cn/api/paas/v4", "glm-4.5-flash")]
+    [InlineData("kimi", "openai", "https://api.moonshot.cn/v1", "kimi-k2.5")]
     [InlineData("qwen", "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus")]
-    [InlineData("siliconflow", "openai", "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct")]
+    [InlineData("minimax", "openai", "https://api.minimaxi.com/v1", "MiniMax-M2.5")]
+    [InlineData("siliconflow", "openai", "https://api.siliconflow.cn/v1", "deepseek-ai/DeepSeek-V3")]
+    [InlineData("doubao", "openai", "https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-1-6-250615")]
+    [InlineData("openai", "openai", "https://api.openai.com/v1", "gpt-4o-mini")]
+    [InlineData("anthropic", "anthropic", "https://api.anthropic.com/v1", "claude-sonnet-4-5")]
+    [InlineData("gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash")]
     [InlineData("ollama", "local", "http://localhost:11434/v1", "")]
     public void ApplyLlmPreset_SetsProviderBaseUrlAndModel_ForAllPresets(
         string presetId, string expectedProvider, string expectedBaseUrl, string expectedModel)
@@ -2199,6 +2204,7 @@ public class SettingsViewModelTests
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
         vm.ApplyLlmPresetCommand.Execute(presetId).Subscribe();
 
+        Assert.Equal(presetId, vm.ActivePresetId);
         Assert.Equal(expectedProvider, vm.SelectedProvider);
         Assert.Equal(expectedBaseUrl, vm.BaseUrl);
         Assert.Equal(expectedModel, vm.Model);
@@ -2208,21 +2214,32 @@ public class SettingsViewModelTests
     [Fact]
     public void ApplyLlmPreset_FromLocalToCloud_PreservesExistingKeyAndOverwritesProfile()
     {
+        _mockStorage.Setup(x => x.GetApiKeyAsync(It.IsAny<string>())).ReturnsAsync((string?)null);
         using var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, CreateTempSettingsFile());
-        vm.SelectedProvider = "openai";
-        vm.ApiKey = "sk-preset-test-key";
 
-        // 切到 local
-        vm.SelectedProvider = "local";
+        // 为 DeepSeek 填写 Key
+        vm.ApplyLlmPresetCommand.Execute("deepseek").Subscribe();
+        vm.ApiKey = "sk-deepseek-key";
+
+        // 切到本地模型，再切到智谱 GLM：智谱不应串入 DeepSeek 的 Key
+        vm.ApplyLlmPresetCommand.Execute("ollama").Subscribe();
         Assert.False(vm.LlmNeedsApiKey);
 
-        // 从 local 执行 deepseek 预置
-        vm.ApplyLlmPresetCommand.Execute("deepseek").Subscribe();
+        vm.ApplyLlmPresetCommand.Execute("zhipu").Subscribe();
+        Assert.Equal("zhipu", vm.ActivePresetId);
+        Assert.Equal("openai", vm.SelectedProvider);
+        Assert.Equal("https://open.bigmodel.cn/api/paas/v4", vm.BaseUrl);
+        Assert.Equal("glm-4.5-flash", vm.Model);
+        Assert.Equal(string.Empty, vm.ApiKey);
+        Assert.True(vm.LlmNeedsApiKey);
 
+        // 切回 DeepSeek：原服务商的配置与 Key 完整恢复
+        vm.ApplyLlmPresetCommand.Execute("deepseek").Subscribe();
+        Assert.Equal("deepseek", vm.ActivePresetId);
         Assert.Equal("openai", vm.SelectedProvider);
         Assert.Equal("https://api.deepseek.com/v1", vm.BaseUrl);
         Assert.Equal("deepseek-chat", vm.Model);
-        Assert.Equal("sk-preset-test-key", vm.ApiKey);
+        Assert.Equal("sk-deepseek-key", vm.ApiKey);
         Assert.True(vm.LlmNeedsApiKey);
         _mockLlm.Verify(x => x.Configure(It.IsAny<LLMConfig>()), Times.Never);
     }
