@@ -327,6 +327,7 @@ public class ClockStageLyricsCoexistenceTests
                 await Task.Delay(20);
             }
             Assert.True(persisted, "频谱样式应在超时内持久化到 settings.json");
+            await vm.SettingsVM.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {

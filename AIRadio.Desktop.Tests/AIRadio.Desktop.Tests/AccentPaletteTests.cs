@@ -248,6 +248,7 @@ public class AccentPaletteTests
                     }
                 });
                 Assert.NotNull(saved);
+                await vm.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
 
             using (var restored = new SettingsViewModel(mockLlm.Object, mockStorage.Object, settingsFile))

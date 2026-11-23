@@ -127,6 +127,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly object _uiSaveQueueLock = new();
     private bool _uiSaveRunning;
     private bool _uiSavePending;
+    private Task _uiSaveTask = Task.CompletedTask;
+    private readonly object _diskIoLock = new();
+    private Task _inFlightDiskIoTask = Task.CompletedTask;
     private readonly IDisposable _selectedCharacterSub;
     private readonly IDisposable _selectedYtdlpBrowserSub;
     private readonly IDisposable _openSubsonicQualitySub;
@@ -2588,7 +2591,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 continue;
             try
             {
-                var json = await File.ReadAllTextAsync(path, cancellationToken);
+                var json = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
                 return JsonDocument.Parse(json);
             }
             catch (JsonException ex)
@@ -3277,39 +3280,48 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 return;
             }
             _uiSaveRunning = true;
+            _uiSaveTask = RunCoalescedUiStateSaveAsync();
         }
+    }
 
-        _ = RunCoalescedUiStateSaveAsync();
+    /// <summary>等待当前已入队的后台 UI 状态合并保存循环全部落盘完成（供测试与确定性收尾使用）。</summary>
+    internal async Task WaitForPendingUiSaveAsync()
+    {
+        while (true)
+        {
+            Task task;
+            lock (_uiSaveQueueLock)
+            {
+                if (!_uiSaveRunning)
+                    return;
+                task = _uiSaveTask;
+            }
+            await task;
+        }
     }
 
     private async Task RunCoalescedUiStateSaveAsync()
     {
-        try
+        while (true)
         {
-            while (true)
+            try
             {
-                if (Volatile.Read(ref _disposed) != 0)
-                    return;
-
-                await SaveAsync(persistLlmFields: false);
-
-                lock (_uiSaveQueueLock)
-                {
-                    if (!_uiSavePending || Volatile.Read(ref _disposed) != 0)
-                        return;
-                    _uiSavePending = false;
-                }
+                if (Volatile.Read(ref _disposed) == 0)
+                    await SaveAsync(persistLlmFields: false);
             }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Unexpected failure in coalesced UI state save");
-        }
-        finally
-        {
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Unexpected failure in coalesced UI state save");
+            }
+
             lock (_uiSaveQueueLock)
             {
-                _uiSaveRunning = false;
+                if (!_uiSavePending || Volatile.Read(ref _disposed) != 0)
+                {
+                    _uiSaveRunning = false;
+                    _uiSavePending = false;
+                    return;
+                }
                 _uiSavePending = false;
             }
         }
@@ -3434,7 +3446,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                var persisted = await ReadPersistedLlmFieldsAsync();
+                var persisted = await StartReadPersistedLlmFieldsAsync();
+                if (Volatile.Read(ref _disposed) != 0)
+                    return;
                 providerToWrite = persisted?.Provider ?? SelectedProvider;
                 baseUrlToWrite = persisted?.BaseUrl ?? BaseUrl;
                 modelToWrite = persisted?.Model ?? Model;
@@ -3512,30 +3526,42 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager.
             // 序列化与写盘移出 UI 线程：主题切换等 UI 事件触发的保存不得挂住界面
             var settingsFile = _settingsFile;
-            await Task.Run(() =>
+            Task writeTask;
+            lock (_diskIoLock)
             {
-                var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-                var json = JsonSerializer.Serialize(settingsData, jsonOptions);
-                json = MergeWithUnknownDiskKeys(settingsFile, json, jsonOptions);
-                var tempPath = settingsFile + ".tmp";
-                File.WriteAllText(tempPath, json);
-                // 旧配置轮转为 .bak：settings.json 被外部进程覆盖或写坏时留有恢复途径；
-                // .bak 被占用等备份失败只降级为直接覆盖，不能阻塞保存
-                if (File.Exists(settingsFile))
+                if (Volatile.Read(ref _disposed) != 0)
+                    return;
+
+                writeTask = Task.Run(() =>
                 {
-                    try
+                    var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+                    var json = JsonSerializer.Serialize(settingsData, jsonOptions);
+                    json = MergeWithUnknownDiskKeys(settingsFile, json, jsonOptions);
+                    var tempPath = settingsFile + ".tmp";
+                    File.WriteAllText(tempPath, json);
+                    // 旧配置轮转为 .bak：settings.json 被外部进程覆盖或写坏时留有恢复途径；
+                    // .bak 被占用等备份失败只降级为直接覆盖，不能阻塞保存
+                    if (File.Exists(settingsFile))
                     {
-                        File.Replace(tempPath, settingsFile, settingsFile + ".bak");
+                        try
+                        {
+                            File.Replace(tempPath, settingsFile, settingsFile + ".bak");
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            Log.Warning(ex, "Failed to rotate settings backup, overwriting directly");
+                            File.Move(tempPath, settingsFile, overwrite: true);
+                        }
                     }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        Log.Warning(ex, "Failed to rotate settings backup, overwriting directly");
-                        File.Move(tempPath, settingsFile, overwrite: true);
-                    }
-                }
-                else
-                    File.Move(tempPath, settingsFile);
-            }, _lifetimeCts.Token);
+                    else
+                        File.Move(tempPath, settingsFile);
+                }, _lifetimeCts.Token);
+                _inFlightDiskIoTask = writeTask;
+            }
+            await writeTask;
+
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
 
             if (characterSettingsChanged)
                 CharacterSettingsChanged?.Invoke();
@@ -3543,7 +3569,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             SetStatusMessage(() => AppLanguage.T("设置已保存", "Settings saved"));
             Log.Information("Settings saved to {Path}", _settingsFile);
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
         {
             // 关闭时取消排队保存，避免 Dispose 后继续写盘。
         }
@@ -3598,6 +3624,19 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         Dictionary<string, object>? Profiles,
         Dictionary<string, object>? PresetProfiles);
 
+    private Task<PersistedLlmState?> StartReadPersistedLlmFieldsAsync()
+    {
+        lock (_diskIoLock)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                return Task.FromCanceled<PersistedLlmState?>(new CancellationToken(true));
+
+            var readTask = ReadPersistedLlmFieldsAsync();
+            _inFlightDiskIoTask = readTask;
+            return readTask;
+        }
+    }
+
     private async Task<PersistedLlmState?> ReadPersistedLlmFieldsAsync()
     {
         try
@@ -3605,7 +3644,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             if (!File.Exists(_settingsFile))
                 return null;
 
-            var json = await File.ReadAllTextAsync(_settingsFile, _lifetimeCts.Token);
+            var json = await File.ReadAllTextAsync(_settingsFile, _lifetimeCts.Token).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             Dictionary<string, object>? profiles = null;
@@ -3707,6 +3746,21 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _llmEndpointSub.Dispose();
         _llmModelSelectionSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
+        Task diskIoTask;
+        lock (_diskIoLock)
+        {
+            diskIoTask = _inFlightDiskIoTask;
+        }
+        try
+        {
+            // 纯后台文件读写任务不回切任何 SynchronizationContext（UI 线程调用 Dispose 也不会死锁）；
+            // 必须等待在途 Task.Run / 读盘彻底结束，避免返回后立刻删临时文件或重开时触发占用冲突。
+            if (!diskIoTask.Wait(TimeSpan.FromSeconds(5)))
+                Log.Warning("Settings disk I/O still in flight during shutdown; last change may be lost");
+        }
+        catch (AggregateException)
+        {
+        }
         // 给在途 SaveAsync 一个短窗口退出：改完设置立即关窗时最后一次保存
         // 可能停在 gate/写盘的 await 上，被取消吞掉后静默丢变更
         try

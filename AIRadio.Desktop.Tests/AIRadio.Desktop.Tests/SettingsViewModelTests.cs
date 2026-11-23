@@ -36,6 +36,26 @@ public class SettingsViewModelTests
     private static string CreateTempSettingsFile()
         => Path.Combine(Path.GetTempPath(), $"airadio-settings-{Guid.NewGuid():N}.json");
 
+    private static void DeleteTempSettingsFiles(string settingsFile)
+    {
+        foreach (var path in new[] { settingsFile, settingsFile + ".bak", settingsFile + ".tmp" })
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                        File.Delete(path);
+                    break;
+                }
+                catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 5)
+                {
+                    Thread.Sleep(20);
+                }
+            }
+        }
+    }
+
     [Fact]
     public async Task MusicProviderOrderAndDisabledState_RoundTripThroughSettings()
     {
@@ -2437,6 +2457,7 @@ public class SettingsViewModelTests
                 await vm.LoadAsync();
                 vm.SelectedThemeMode = ThemeModes.Dark;
                 await vm.SaveUiStateCommand.Execute();
+                await vm.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
 
             using (var loaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
@@ -2451,6 +2472,7 @@ public class SettingsViewModelTests
                 await vm.LoadAsync();
                 vm.SelectedThemeMode = ThemeModes.Light;
                 await vm.SaveUiStateCommand.Execute();
+                await vm.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
 
             // 锁定写键：文件必须落 theme_mode（防保存通道静默退化为仅写 is_dark_mode）
@@ -2468,7 +2490,7 @@ public class SettingsViewModelTests
         }
         finally
         {
-            File.Delete(settingsFile);
+            DeleteTempSettingsFiles(settingsFile);
         }
     }
 
@@ -2558,6 +2580,8 @@ public class SettingsViewModelTests
             // 3) 放行首轮 SaveCommand；合并队列必须自动补写最终状态而非静默丢失
             releaseSave.SetResult();
             await inFlightSave.WaitAsync(TimeSpan.FromSeconds(5));
+            // 等待合并保存后台循环彻底写盘退出，避免外层断言命中首轮写入后在 finally 与在途写盘抢占文件句柄
+            await vm.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             var persisted = false;
@@ -2592,8 +2616,42 @@ public class SettingsViewModelTests
         }
         finally
         {
-            File.Delete(settingsFile);
-            File.Delete(settingsFile + ".bak");
+            DeleteTempSettingsFiles(settingsFile);
+        }
+    }
+
+    [Fact]
+    public async Task RequestUiStateSave_DisposeDrainsBackgroundDiskIo_AllowsImmediateCleanup()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            await File.WriteAllTextAsync(settingsFile, """{"theme_mode": "dark", "custom_preserved_key": 42}""");
+            var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            try
+            {
+                await vm.LoadAsync();
+                vm.SelectedThemeMode = ThemeModes.Light;
+                vm.SelectedAccentPalette = AccentPalettes.IceId;
+                vm.SelectedSpectrumStyle = "wave";
+                vm.RequestUiStateSave();
+            }
+            finally
+            {
+                // 即使调用方未先 await WaitForPendingUiSaveAsync 就立即 Dispose，
+                // 在途写盘任务也应被可靠收敛，避免立刻清理临时文件时发生句柄占用冲突
+                vm.Dispose();
+            }
+
+            DeleteTempSettingsFiles(settingsFile);
+            Assert.False(File.Exists(settingsFile));
+            Assert.False(File.Exists(settingsFile + ".bak"));
+            Assert.False(File.Exists(settingsFile + ".tmp"));
+            await vm.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            DeleteTempSettingsFiles(settingsFile);
         }
     }
 }
