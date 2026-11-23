@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using AIRadio.Desktop.Converters;
 using AIRadio.Desktop.Models;
+using Avalonia.Headless.XUnit;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Xunit;
@@ -40,7 +41,7 @@ public class ConverterEquivalenceTests
     public void RadioStateToText_MapsCorrectly(RadioState state, string expected)
         => Assert.Equal(expected, RadioStateToTextConverter.Instance.Convert(state, typeof(string), null, CultureInfo.InvariantCulture));
 
-    [Theory]
+    [AvaloniaTheory]
     [InlineData(RadioState.Idle)]
     [InlineData(RadioState.Curating)]
     [InlineData(RadioState.Searching)]

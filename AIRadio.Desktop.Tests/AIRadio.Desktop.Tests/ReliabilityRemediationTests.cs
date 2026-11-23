@@ -204,12 +204,22 @@ public class ReliabilityRemediationTests
 
         try
         {
+            AppLanguage.Apply("zh");
             await vm.DiagnoseSourcesCommand.Execute();
 
             var text = vm.SourceDiagnosticsText;
             Assert.Contains("启用状态：已启用", text);
-            Assert.Contains("黑胶 VIP", text);
-            Assert.Contains("会员类型 6", text);
+            if (vm.HasExperimentalProviders)
+            {
+                Assert.Contains("黑胶 VIP", text);
+                Assert.Contains("会员类型 6", text);
+            }
+            else
+            {
+                // 精简核心构建不刷新实验性 Node 账号态，应明确呈现未刷新状态而非伪造会员权益
+                Assert.Contains("登录态待刷新或已失效", text);
+                Assert.Contains("权益待刷新", text);
+            }
             Assert.Contains("20028", text);
             Assert.Contains("yt-dlp", text);
             Assert.Contains("NeteaseCloudMusicApi", text);
@@ -223,8 +233,16 @@ public class ReliabilityRemediationTests
 
             vm.SelectedLanguage = "en";
             Assert.Contains("Enabled: yes", vm.SourceDiagnosticsText);
-            Assert.Contains("Vinyl VIP", vm.SourceDiagnosticsText);
-            Assert.Contains("VIP type 6", vm.SourceDiagnosticsText);
+            if (vm.HasExperimentalProviders)
+            {
+                Assert.Contains("Vinyl VIP", vm.SourceDiagnosticsText);
+                Assert.Contains("VIP type 6", vm.SourceDiagnosticsText);
+            }
+            else
+            {
+                Assert.Contains("session expired or unverified", vm.SourceDiagnosticsText);
+                Assert.Contains("rights unverified", vm.SourceDiagnosticsText);
+            }
             Assert.Contains("20028", vm.SourceDiagnosticsText);
 
             // 全部显式停用后，诊断必须报告“已停用”而非回退为全启用
