@@ -11,9 +11,9 @@ using ReactiveUI.SourceGenerators;
 namespace AIRadio.Desktop.ViewModels;
 
 /// <summary>
-/// 时钟舞台角落的环境指示器（天气图标，docs/plans/2026-09-17-weather-calendar-design.md）。
-/// 默认只有图标，详情经悬停 Tooltip 展示；天气失败只隐藏图标，不打扰播放主流程。
-/// 日历徽标（农历/节气/节日）2026-10-13 按用户裁决整体移除。
+/// 时钟舞台角落的环境指示器（天气图标与精简文字，docs/plans/2026-09-17-weather-calendar-design.md）。
+/// 舞台右下角常显天气图标与精简描述/温度（{description} {temp}°C），完整详情（{city} · {description} {temp}°C）经悬停 Tooltip 展示；
+/// 天气失败只隐藏指示器，不打扰播放主流程。日历徽标（农历/节气/节日）2026-10-13 按用户裁决整体移除。
 /// </summary>
 public partial class WeatherViewModel : ViewModelBase, IDisposable
 {
@@ -31,6 +31,7 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
 
     [Reactive] public partial bool IsWeatherVisible { get; private set; }
     [Reactive] public partial string WeatherGlyph { get; private set; } = string.Empty;
+    [Reactive] public partial string WeatherCompactText { get; private set; } = string.Empty;
     [Reactive] public partial string WeatherTooltip { get; private set; } = string.Empty;
 
     /// <summary>设置页"当前生效"回显（与 Tooltip 同源，无数据时给出占位文案）。</summary>
@@ -89,7 +90,7 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
         }, _uiScheduler).ToTask().ConfigureAwait(false);
     }
 
-    /// <summary>语言切换时经主窗口回调重建双语 Tooltip。</summary>
+    /// <summary>语言切换时经主窗口回调重建双语常显简述与悬停 Tooltip。</summary>
     public void RebuildTooltips()
     {
         ApplyWeather();
@@ -100,6 +101,8 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
         if (_lastWeather == null)
         {
             IsWeatherVisible = false;
+            WeatherGlyph = string.Empty;
+            WeatherCompactText = string.Empty;
             WeatherTooltip = string.Empty;
             WeatherSummary = AppLanguage.T("暂未获取", "Not fetched yet");
             return;
@@ -131,6 +134,7 @@ public partial class WeatherViewModel : ViewModelBase, IDisposable
         var temperature = double.IsNaN(_lastWeather.TemperatureC)
             ? string.Empty
             : $" {_lastWeather.TemperatureC:0}°C";
+        WeatherCompactText = $"{description}{temperature}";
         WeatherTooltip = $"{_lastWeather.LocationName} · {description}{temperature}";
         WeatherSummary = WeatherTooltip;
     }

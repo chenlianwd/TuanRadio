@@ -37,7 +37,11 @@ namespace AIRadio.Desktop.Tests;
 /// </summary>
 public class ClockStageLyricsCoexistenceTests
 {
-    private static MainWindowViewModel CreateViewModel(Track? currentTrack, out string settingsFile, Subject<Track?>? trackChanged = null)
+    private static MainWindowViewModel CreateViewModel(
+        Track? currentTrack,
+        out string settingsFile,
+        Subject<Track?>? trackChanged = null,
+        IWeatherService? weatherService = null)
     {
         var audio = new Mock<IAudioService>();
         audio.Setup(x => x.TrackEnded).Returns(new Subject<Track?>());
@@ -66,11 +70,15 @@ public class ClockStageLyricsCoexistenceTests
             new Mock<ISttService>().Object,
             Path.Combine(dir, "playlist.json"),
             settingsFile: settingsFile,
-            recommendationService: rec.Object);
+            recommendationService: rec.Object,
+            weatherService: weatherService);
     }
 
-    private static MainWindowViewModel CreateViewModel(Track? currentTrack, Subject<Track?>? trackChanged = null)
-        => CreateViewModel(currentTrack, out _, trackChanged);
+    private static MainWindowViewModel CreateViewModel(
+        Track? currentTrack,
+        Subject<Track?>? trackChanged = null,
+        IWeatherService? weatherService = null)
+        => CreateViewModel(currentTrack, out _, trackChanged, weatherService);
 
     private static T FindNamed<T>(ClockStage stage, string name) where T : Control
         => stage.GetVisualDescendants().OfType<T>()
@@ -481,6 +489,93 @@ public class ClockStageLyricsCoexistenceTests
             window?.Close();
             Dispatcher.UIThread.RunJobs();
             vm.Dispose();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task WeatherIndicator_ShowsAlwaysVisibleCompactText_AboveBothLayers_AndAbsorbsTap()
+    {
+        var weather = new Mock<IWeatherService>();
+        weather
+            .Setup(x => x.GetWeatherAsync("上海", null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherInfo(WeatherKind.Sunny, 22.3, "上海"));
+
+        var track = new Track { Title = "晴天", Artist = "周杰伦", SourceId = "src-1" };
+        var trackChanged = new Subject<Track?>();
+        var vm = CreateViewModel(track, out var settingsFile, trackChanged, weatherService: weather.Object);
+        var tempDir = Path.GetDirectoryName(settingsFile);
+        Window? window = null;
+        try
+        {
+            var stage = new ClockStage { DataContext = vm };
+            window = new Window { Content = stage, Width = 760, Height = 168 };
+            window.Show();
+
+            trackChanged.OnNext(track);
+            await vm.WeatherVM.RefreshWeatherAsync("上海");
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.HasCurrentTrack);
+
+            var stageRoot = FindNamed<Grid>(stage, "StageRoot");
+            var clockLayer = FindNamed<Grid>(stage, "ClockLayer");
+            var lyricsLayer = FindNamed<Grid>(stage, "LyricsLayer");
+            var indicators = FindNamed<StackPanel>(stage, "EnvironmentIndicators");
+            var weatherIndicator = FindNamed<StackPanel>(stage, "WeatherIndicator");
+            var weatherGlyphText = FindNamed<TextBlock>(stage, "WeatherGlyphText");
+            var weatherCompactText = FindNamed<TextBlock>(stage, "WeatherCompactText");
+
+            // 置于 ClockLayer 与 LyricsLayer 之后，保证两种模式下都在最上层可触发悬停
+            Assert.True(stageRoot.Children.IndexOf(indicators) > stageRoot.Children.IndexOf(clockLayer));
+            Assert.True(stageRoot.Children.IndexOf(indicators) > stageRoot.Children.IndexOf(lyricsLayer));
+
+            Assert.True(weatherIndicator.IsVisible);
+            Assert.Equal("☀", weatherGlyphText.Text);
+            Assert.False(string.IsNullOrWhiteSpace(weatherCompactText.Text));
+            Assert.Equal(vm.WeatherVM.WeatherCompactText, weatherCompactText.Text);
+            Assert.Contains("22°C", weatherCompactText.Text);
+            Assert.Equal(vm.WeatherVM.WeatherTooltip, ToolTip.GetTip(weatherIndicator));
+            Assert.Contains("上海", vm.WeatherVM.WeatherTooltip);
+            Assert.True(weatherCompactText.Bounds.Width > 0);
+            Assert.True(weatherCompactText.Bounds.Height > 0);
+
+            void ClickControlCenter(Control target)
+            {
+                var center = target.TranslatePoint(
+                    new Point(target.Bounds.Width / 2, target.Bounds.Height / 2), window)!.Value;
+                window.MouseMove(center);
+                Dispatcher.UIThread.RunJobs();
+                window.MouseDown(center, MouseButton.Left);
+                window.MouseUp(center, MouseButton.Left);
+                Dispatcher.UIThread.RunJobs();
+            }
+
+            var initialStyle = vm.SettingsVM.SelectedSpectrumStyle;
+            stage.RouteStageTap(weatherCompactText, vm);
+            Assert.False(vm.IsLyricsMode);
+            Assert.Equal(initialStyle, vm.SettingsVM.SelectedSpectrumStyle);
+
+            // 时钟模式下真实指针点击精简天气文字：须由指示器吸收，不穿透右侧频谱列
+            ClickControlCenter(weatherCompactText);
+            Assert.False(vm.IsLyricsMode);
+            Assert.Equal(initialStyle, vm.SettingsVM.SelectedSpectrumStyle);
+
+            // 歌词模式下同样常显且在最上层吸收点击，不穿透 LyricsSpectrumRight
+            vm.IsLyricsMode = true;
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(weatherIndicator.IsVisible);
+            ClickControlCenter(weatherCompactText);
+            Assert.True(vm.IsLyricsMode);
+            Assert.Equal(initialStyle, vm.SettingsVM.SelectedSpectrumStyle);
+        }
+        finally
+        {
+            window?.Close();
+            Dispatcher.UIThread.RunJobs();
+            vm.Dispose();
+            if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
         }
     }
 }

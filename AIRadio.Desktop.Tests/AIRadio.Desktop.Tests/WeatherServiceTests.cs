@@ -431,6 +431,7 @@ public class WeatherViewModelTests
 
         Assert.True(vm.IsWeatherVisible);
         Assert.Equal("❄", vm.WeatherGlyph);
+        Assert.Equal(AppLanguage.T("雪 -3°C", "Snow -3°C"), vm.WeatherCompactText);
         Assert.Contains("哈尔滨", vm.WeatherTooltip);
         Assert.Contains("雪", vm.WeatherTooltip);
         Assert.Contains("-3°C", vm.WeatherTooltip);
@@ -447,7 +448,58 @@ public class WeatherViewModelTests
         await vm.RefreshWeatherAsync(null);
 
         Assert.False(vm.IsWeatherVisible);
+        Assert.Equal(string.Empty, vm.WeatherGlyph);
+        Assert.Equal(string.Empty, vm.WeatherCompactText);
         Assert.Equal(string.Empty, vm.WeatherTooltip);
         Assert.Equal(AppLanguage.T("暂未获取", "Not fetched yet"), vm.WeatherSummary);
+    }
+
+    [Fact]
+    public async Task RefreshWeather_NaNTemperature_OmitsTemperatureInCompactTextAndTooltip()
+    {
+        var weather = new FakeWeatherService
+        {
+            Result = new WeatherInfo(WeatherKind.Sunny, double.NaN, "上海")
+        };
+        using var vm = new WeatherViewModel(weather, ImmediateScheduler.Instance);
+
+        await vm.RefreshWeatherAsync("上海");
+
+        Assert.True(vm.IsWeatherVisible);
+        Assert.Equal("☀", vm.WeatherGlyph);
+        Assert.Equal(AppLanguage.T("晴", "Clear"), vm.WeatherCompactText);
+        Assert.DoesNotContain("NaN", vm.WeatherCompactText);
+        Assert.DoesNotContain("°C", vm.WeatherCompactText);
+        Assert.DoesNotContain("NaN", vm.WeatherTooltip);
+        Assert.DoesNotContain("°C", vm.WeatherTooltip);
+    }
+
+    [Fact]
+    public async Task RebuildTooltips_UpdatesCompactTextAndTooltipForLanguageSwitch()
+    {
+        var originalLanguage = AppLanguage.Current;
+        AppLanguage.Apply("zh");
+        try
+        {
+            var weather = new FakeWeatherService
+            {
+                Result = new WeatherInfo(WeatherKind.Cloudy, 22.1, "成都")
+            };
+            using var vm = new WeatherViewModel(weather, ImmediateScheduler.Instance);
+
+            await vm.RefreshWeatherAsync("成都");
+            Assert.Equal("多云 22°C", vm.WeatherCompactText);
+            Assert.Equal("成都 · 多云 22°C", vm.WeatherTooltip);
+
+            AppLanguage.Apply("en");
+            vm.RebuildTooltips();
+
+            Assert.Equal("Partly cloudy 22°C", vm.WeatherCompactText);
+            Assert.Equal("成都 · Partly cloudy 22°C", vm.WeatherTooltip);
+        }
+        finally
+        {
+            AppLanguage.Apply(originalLanguage);
+        }
     }
 }
