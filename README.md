@@ -180,4 +180,4 @@ tools/                      tools/publish.ps1 自动化出包流水线、品牌�
 
 ## 许可证
 
-本项目以 **GPL-3.0-only** 许可证发布（见 [LICENSE](LICENSE)），Copyright (C) 2026 陈亮。随包分发的第三方开源组件（LibVLC、LibVLCSharp、TagLibSharp、Velopack、npm 依赖等）许可声明与版权见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+本项目以 **GPL-3.0-only** 许可证发布（见 [LICENSE](LICENSE)），Copyright (C) 2026 chenlianwd。随包分发的第三方开源组件（LibVLC、LibVLCSharp、TagLibSharp、Velopack、npm 依赖等）许可声明与版权见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

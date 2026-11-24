@@ -46,7 +46,7 @@
 
 ## 3. UI 与交互细节
 
-- **抽屉页签**：[PlaylistDrawer.axaml](file:///d:/WorkProject/TuanRadio/AIRadio.Desktop/Views/PlaylistDrawer.axaml) 顶栏按钮簇在网络电台之后新增 `TabIndex = 6` 播客图标按钮（`OpenPodcastsCommand`）。
+- **抽屉页签**：[PlaylistDrawer.axaml](../../AIRadio.Desktop/Views/PlaylistDrawer.axaml) 顶栏按钮簇在网络电台之后新增 `TabIndex = 6` 播客图标按钮（`OpenPodcastsCommand`）。
 - **页签内容**：
   - 顶部栏：订阅播客 `ComboBox`（展示播客名 + 作者）+ 刷新 `↻` + 订阅 `+` + 取消订阅 `✕`；
   - 次行：单集关键字即时过滤输入框；

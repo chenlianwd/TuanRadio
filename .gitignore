@@ -40,6 +40,9 @@ Desktop.ini
 # ZCode agent session workspace
 .zcode/
 
+# Claude Code local settings
+.claude/
+
 # Test results (trx)
 TestResults/
 

@@ -3,7 +3,7 @@
 > **文件路径**：`docs/plans/2026-11-18-podcast-opml-and-transcription-digest-design.md`  
 > **创建日期**：2026-11-18  
 > **状态**：已实施  
-> **前置基础**：[2026-11-17-podcast-rss-and-ai-digest-design.md](file:///d:/WorkProject/TuanRadio/docs/plans/2026-11-17-podcast-rss-and-ai-digest-design.md)
+> **前置基础**：[2026-11-17-podcast-rss-and-ai-digest-design.md](2026-11-17-podcast-rss-and-ai-digest-design.md)
 
 ---
 

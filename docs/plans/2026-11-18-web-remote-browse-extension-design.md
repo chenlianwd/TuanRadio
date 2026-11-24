@@ -25,7 +25,7 @@
 ### 2.1 接口与路由扩展（`IWebRemoteService` / `WebRemoteService`）
 
 - `IWebRemoteService` 新增带默认空实现的 `ConfigureBrowseHandler(Func<WebRemoteBrowseRequest, CancellationToken, Task<WebRemoteBrowseResponse>>)`，保持既有单测与 Stub 零破坏兼容。
-- [WebRemoteService.cs](file:///d:/WorkProject/TuanRadio/AIRadio.Desktop/Services/WebRemote/WebRemoteService.cs) 的 `ReadHttpRequestAsync` 保留完整 query 参数字典解析（支持大小写不敏感查参、`+` 与 `%` 解码，遇畸形转义跳过且保留 `ExtractTokenFromQuery` 触发 `401` 的既定行为），新增受令牌鉴权保护的路由：
+- [WebRemoteService.cs](../../AIRadio.Desktop/Services/WebRemote/WebRemoteService.cs) 的 `ReadHttpRequestAsync` 保留完整 query 参数字典解析（支持大小写不敏感查参、`+` 与 `%` 解码，遇畸形转义跳过且保留 `ExtractTokenFromQuery` 触发 `401` 的既定行为），新增受令牌鉴权保护的路由：
   - **`GET /api/browse?section=<...>&category=<...>&feed=<...>&q=<...>&force=<0|1>`**
   - 为 `/api/browse` 绑定 15 秒超时 `CancellationTokenSource`（与服务 `_runCts.Token` 级联），防止慢网络挂死 HTTP 连接。
   - 严格沿用现有 `IsAuthorized`（`X-Remote-Token` / `Authorization: Bearer` 常量时间比对）、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY` 与 `Referrer-Policy: no-referrer`。
