@@ -36,6 +36,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _commandQueueSub;
     private readonly IDisposable _ttsErrorSub;
     private readonly IDisposable _stateSub;
+    private readonly IDisposable _sttProgressSub;
     private readonly Action _onLanguageChanged;
     private string? _pendingCommand;
     // 指令挂起后、对应 TTS 真实开播（PlayTtsAudio 同步发出 true）前置位；
@@ -43,11 +44,14 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private bool _pendingCommandSpeechStarted;
     private Track? _pendingRecommendedTrack;
 
-    private IWaveIn? _waveIn;
-    private WaveFileWriter? _waveWriter;
-    private string? _tempWavPath;
+    private RecordingSession? _activeRecording;
     // 录音设备注入点：headless 测试注入假设备，避免触碰真实麦克风（会打开设备直到进程退出）
     internal Func<IWaveIn>? RecordingDeviceFactory { get; set; }
+    // 最短录音时长与有效音量门限（internal 供测试覆盖，默认防误触点击与静音幻觉）
+    internal TimeSpan MinRecordingDuration { get; set; } = TimeSpan.FromMilliseconds(300);
+    internal int MinRecordedBytes { get; set; } = 3200; // 16kHz 16-bit mono 约 100ms
+    internal int MinPeakAmplitude { get; set; } = 180;
+    internal TimeSpan MaxRecordingDuration { get; set; } = TimeSpan.FromSeconds(60);
     private bool _isPlayingSong;
     private bool _sendAfterHoldToTalk;
     // 对话模式空识别后待 IsRecognizing 复位再重启监听：识别未结束时直接调
@@ -60,14 +64,32 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
     private bool _isStatusNoticeDismissed;
     // 保留未本地化的原始失败信息，语言切换时按当前语言重译常驻/可召回通知
     private ApiFailureInfo? _failureInfo;
+    private SttProgress _lastSttProgress = new(SttStage.Idle);
     private IDisposable? _statusAutoDismissSub;
+
+    private sealed class RecordingSession
+    {
+        public required IWaveIn WaveIn { get; init; }
+        public required WaveFileWriter Writer { get; init; }
+        public required string WavPath { get; init; }
+        public object WriteGate { get; } = new();
+        public long StartTimestamp { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
+        public long RecordedBytes;
+        public int PeakAmplitude;
+        public volatile bool CancelRequested;
+        public volatile bool StopInitiated;
+        public volatile bool WriterDisposed;
+        public Timer? MaxDurationTimer;
+    }
 
     public ObservableCollection<ChatMessage> Messages { get; } = new();
 
     [Reactive] public partial string InputText { get; set; } = string.Empty;
     [Reactive] public partial bool IsProcessing { get; set; }
     [Reactive] public partial bool IsListening { get; set; }
+    [Reactive] public partial bool IsCancellingVoice { get; set; }
     [Reactive] public partial bool IsRecognizing { get; set; }
+    [Reactive] public partial string RecognizingStatusText { get; set; } = string.Empty;
     [Reactive] public partial bool IsSpeaking { get; set; }
     [Reactive] public partial bool IsConversationMode { get; set; }
     [Reactive] public partial string DjEmotion { get; set; } = "neutral";
@@ -177,6 +199,15 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 }
             });
 
+        RecognizingStatusText = AppLanguage.Get("S_Transcribing");
+        _sttProgressSub = (_sttService.ProgressChanged ?? Observable.Empty<SttProgress>())
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(progress =>
+            {
+                _lastSttProgress = progress;
+                RecognizingStatusText = FormatSttProgressText(progress);
+            });
+
         _onLanguageChanged = () =>
         {
             foreach (var message in Messages)
@@ -188,6 +219,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 StatusDetail = localized.Detail;
                 StatusRecoveryHint = localized.RecoveryHint;
             }
+            RecognizingStatusText = FormatSttProgressText(_lastSttProgress);
             RefreshStatus();
         };
         AppLanguage.Changed += _onLanguageChanged;
@@ -272,8 +304,18 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
 
     public void EndHoldToTalk()
     {
+        IsCancellingVoice = false;
         if (IsListening)
-            StopListening();
+            StopListening(cancel: false);
+    }
+
+    /// <summary>取消本次按住说话：丢弃录音文件，不进入识别与发送链路。</summary>
+    public void CancelHoldToTalk()
+    {
+        IsCancellingVoice = false;
+        _sendAfterHoldToTalk = false;
+        if (IsListening)
+            StopListening(cancel: true);
     }
 
     private void ToggleConversationMode()
@@ -281,13 +323,51 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         if (IsConversationMode)
         {
             IsConversationMode = false;
-            StopListening();
+            StopListening(cancel: true);
         }
         else
         {
             IsConversationMode = true;
             StartListening();
         }
+    }
+
+    private static string FormatSttProgressText(SttProgress progress) => progress.Stage switch
+    {
+        SttStage.DownloadingModel when progress.DownloadProgress is { } p =>
+            AppLanguage.T(
+                $"正在下载语音模型 ({Math.Clamp((int)Math.Round(p * 100), 0, 100)}%)…",
+                $"Downloading speech model ({Math.Clamp((int)Math.Round(p * 100), 0, 100)}%)…"),
+        SttStage.DownloadingModel =>
+            AppLanguage.T("正在下载语音模型…", "Downloading speech model…"),
+        SttStage.LoadingModel =>
+            AppLanguage.T("正在加载语音模型…", "Loading speech model…"),
+        _ => AppLanguage.Get("S_Transcribing")
+    };
+
+    private static Task RunOnUiThreadAsync(Action action)
+    {
+        if (Avalonia.Application.Current == null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        return Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(action).GetTask();
+    }
+
+    private static int ComputePeakAmplitude16Bit(byte[] buffer, int bytesRecorded)
+    {
+        var peak = 0;
+        var sampleBytes = bytesRecorded & ~1;
+        for (var i = 0; i < sampleBytes; i += 2)
+        {
+            var sample = (short)(buffer[i] | (buffer[i + 1] << 8));
+            var abs = sample == short.MinValue ? short.MaxValue : Math.Abs(sample);
+            if (abs > peak)
+                peak = abs;
+        }
+        return peak;
     }
 
     private void StartListening()
@@ -302,57 +382,216 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         IWaveIn? waveIn = null;
         WaveFileWriter? writer = null;
         string? wavPath = null;
+        RecordingSession? session = null;
         EventHandler<WaveInEventArgs>? dataHandler = null;
         EventHandler<StoppedEventArgs>? stoppedHandler = null;
         try
         {
+            // 按住说话即刻打断正在播报的 DJ TTS 并压低背景音乐，避免外放回声污染识别
+            _audioService.StopTts();
+            _audioService.SetVoiceCaptureActive(true);
+
             wavPath = Path.Combine(Path.GetTempPath(), $"stt_{Guid.NewGuid():N}.wav");
 
             // 工厂返回 null 一律按"启动失败"走异常清理，绝不静默回退真实麦克风
             waveIn = RecordingDeviceFactory is null
                 ? new WaveInEvent { WaveFormat = new WaveFormat(16000, 16, 1) }
-                : RecordingDeviceFactory();
+                : RecordingDeviceFactory()
+                    ?? throw new InvalidOperationException("Recording device factory returned null.");
             writer = new WaveFileWriter(wavPath, waveIn.WaveFormat);
-            _tempWavPath = wavPath;
-            _waveIn = waveIn;
-            _waveWriter = writer;
+            session = new RecordingSession
+            {
+                WaveIn = waveIn,
+                Writer = writer,
+                WavPath = wavPath
+            };
+            _activeRecording = session;
 
             dataHandler = (_, e) =>
             {
-                try { writer.Write(e.Buffer, 0, e.BytesRecorded); }
-                catch (ObjectDisposedException) { }
+                if (e.BytesRecorded <= 0)
+                    return;
+
+                lock (session.WriteGate)
+                {
+                    if (session.WriterDisposed)
+                        return;
+
+                    try
+                    {
+                        session.Writer.Write(e.Buffer, 0, e.BytesRecorded);
+                        session.RecordedBytes += e.BytesRecorded;
+                        var peak = ComputePeakAmplitude16Bit(e.Buffer, e.BytesRecorded);
+                        if (peak > session.PeakAmplitude)
+                            session.PeakAmplitude = peak;
+                    }
+                    catch (ObjectDisposedException) { }
+                }
             };
 
-            stoppedHandler = (_, _) =>
+            stoppedHandler = (_, e) =>
             {
-                waveIn.DataAvailable -= dataHandler;
-                waveIn.RecordingStopped -= stoppedHandler;
-                try { writer.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to close WAV writer"); }
-                try { waveIn.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to close recording device"); }
+                session.WaveIn.DataAvailable -= dataHandler;
+                session.WaveIn.RecordingStopped -= stoppedHandler;
+                session.MaxDurationTimer?.Dispose();
+                session.MaxDurationTimer = null;
 
-                if (ReferenceEquals(_waveIn, waveIn))
+                lock (session.WriteGate)
                 {
-                    _waveIn = null;
-                    _waveWriter = null;
-                    _tempWavPath = null;
+                    if (!session.WriterDisposed)
+                    {
+                        session.WriterDisposed = true;
+                        try { session.Writer.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to close WAV writer"); }
+                    }
+                }
+                try { session.WaveIn.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to close recording device"); }
+
+                if (ReferenceEquals(_activeRecording, session))
+                    _activeRecording = null;
+
+                _audioService.SetVoiceCaptureActive(false);
+
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    TryDeleteFile(session.WavPath);
+                    return;
                 }
 
-                if (Volatile.Read(ref _disposed) == 0)
+                if (session.CancelRequested)
                 {
-                    _ = RecognizeFromWavAsync(wavPath, _lifetimeCts.Token).ContinueWith(
-                        t => Log.Warning(t.Exception, "RecognizeFromWav failed"),
-                        TaskContinuationOptions.OnlyOnFaulted);
+                    TryDeleteFile(session.WavPath);
+                    _ = RunOnUiThreadAsync(() =>
+                    {
+                        if (Volatile.Read(ref _disposed) != 0)
+                            return;
+                        IsListening = false;
+                        IsCancellingVoice = false;
+                        IsRecognizing = false;
+                        _sendAfterHoldToTalk = false;
+                        RefreshStatus();
+                    });
+                    return;
                 }
-                else
+
+                if (e.Exception != null)
                 {
-                    try { File.Delete(wavPath); } catch { }
+                    Log.Warning(e.Exception, "Mic recording stopped unexpectedly");
+                    TryDeleteFile(session.WavPath);
+                    _ = RunOnUiThreadAsync(() =>
+                    {
+                        if (Volatile.Read(ref _disposed) != 0)
+                            return;
+                        IsListening = false;
+                        IsCancellingVoice = false;
+                        IsRecognizing = false;
+                        _sendAfterHoldToTalk = false;
+                        SetFailureNotice(new ApiFailureInfo(
+                            ApiFailureKind.Unknown,
+                            AppLanguage.T("录音意外中断", "Recording interrupted"),
+                            AppLanguage.T("麦克风连接意外断开或录音设备出错。", "The microphone disconnected or encountered an error during recording."),
+                            AppLanguage.T("请检查麦克风设备连接后重试。", "Check your microphone connection and try again.")));
+                    });
+                    return;
                 }
+
+                var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(session.StartTimestamp);
+                long recordedBytes;
+                int peakAmplitude;
+                lock (session.WriteGate)
+                {
+                    recordedBytes = session.RecordedBytes;
+                    peakAmplitude = session.PeakAmplitude;
+                }
+
+                var tooShort = elapsed < MinRecordingDuration || recordedBytes < MinRecordedBytes;
+                var tooQuiet = !tooShort && peakAmplitude < MinPeakAmplitude;
+                if (tooShort || tooQuiet)
+                {
+                    Log.Information(
+                        "Skipping STT for {Reason}: elapsed={ElapsedMs}ms bytes={Bytes} peak={Peak}",
+                        tooShort ? "short-press" : "silence",
+                        (int)elapsed.TotalMilliseconds,
+                        recordedBytes,
+                        peakAmplitude);
+                    TryDeleteFile(session.WavPath);
+                    _ = RunOnUiThreadAsync(() =>
+                    {
+                        if (Volatile.Read(ref _disposed) != 0)
+                            return;
+                        IsListening = false;
+                        IsCancellingVoice = false;
+                        IsRecognizing = false;
+                        _sendAfterHoldToTalk = false;
+                        if (tooShort)
+                        {
+                            SetFailureNotice(new ApiFailureInfo(
+                                ApiFailureKind.InvalidResponse,
+                                AppLanguage.T("说话时间太短", "Recording too short"),
+                                AppLanguage.T("按住麦克风按钮说话后再松开，轻触不会触发识别。", "Hold the microphone button while speaking, then release."),
+                                AppLanguage.T("按住按钮说一句话后再松开。", "Press and hold the button while speaking.")));
+                        }
+                        else
+                        {
+                            SetFailureNotice(new ApiFailureInfo(
+                                ApiFailureKind.InvalidResponse,
+                                AppLanguage.T("未检测到声音", "No sound detected"),
+                                AppLanguage.T("录音中没有采集到明显人声。", "No clear voice audio was captured."),
+                                AppLanguage.T("请检查麦克风是否静音、系统输入音量或默认录音设备。", "Check that your microphone is not muted and is set as the default input device.")));
+                        }
+                    });
+                    return;
+                }
+
+                if (!session.StopInitiated)
+                {
+                    // 设备在用户松手前自行停止且录到了有效音频：主动切到识别态避免界面滞留录音中
+                    _ = RunOnUiThreadAsync(() =>
+                    {
+                        if (Volatile.Read(ref _disposed) != 0)
+                            return;
+                        IsListening = false;
+                        IsCancellingVoice = false;
+                        IsRecognizing = true;
+                        RecognizingStatusText = AppLanguage.Get("S_Transcribing");
+                        RefreshStatus();
+                    });
+                }
+
+                _ = RecognizeFromWavAsync(session.WavPath, _lifetimeCts.Token).ContinueWith(
+                    t => Log.Warning(t.Exception, "RecognizeFromWav failed"),
+                    TaskContinuationOptions.OnlyOnFaulted);
             };
 
             waveIn.DataAvailable += dataHandler;
             waveIn.RecordingStopped += stoppedHandler;
             waveIn.StartRecording();
+
+            if (MaxRecordingDuration > TimeSpan.Zero && MaxRecordingDuration != Timeout.InfiniteTimeSpan)
+            {
+                session.MaxDurationTimer = new Timer(_ =>
+                {
+                    if (Volatile.Read(ref _disposed) != 0 || !ReferenceEquals(_activeRecording, session))
+                        return;
+                    _ = RunOnUiThreadAsync(() =>
+                    {
+                        if (Volatile.Read(ref _disposed) == 0 && ReferenceEquals(_activeRecording, session) && IsListening)
+                        {
+                            Log.Information("Max recording duration reached ({Seconds}s); auto-stopping", MaxRecordingDuration.TotalSeconds);
+                            EndHoldToTalk();
+                        }
+                    });
+                }, null, MaxRecordingDuration, Timeout.InfiniteTimeSpan);
+            }
+
+            // 开启新一轮语音输入即翻篇旧失败通知，避免用户随后取消录音时旧提示复活
+            _statusAutoDismissSub?.Dispose();
+            _statusAutoDismissSub = null;
+            HasFailure = false;
+            _failureInfo = null;
+            _isStatusNoticeDismissed = false;
+
             IsListening = true;
+            IsCancellingVoice = false;
             IsRecognizing = false;
             RefreshStatus();
             Log.Information("Mic recording started");
@@ -360,6 +599,12 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to start mic recording");
+            _audioService.SetVoiceCaptureActive(false);
+            if (session != null)
+            {
+                session.MaxDurationTimer?.Dispose();
+                session.MaxDurationTimer = null;
+            }
             if (waveIn != null)
             {
                 if (dataHandler != null)
@@ -367,41 +612,96 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 if (stoppedHandler != null)
                     waveIn.RecordingStopped -= stoppedHandler;
             }
-            try { writer?.Dispose(); } catch { }
+            if (session != null)
+            {
+                lock (session.WriteGate)
+                {
+                    if (!session.WriterDisposed)
+                    {
+                        session.WriterDisposed = true;
+                        try { writer?.Dispose(); } catch { }
+                    }
+                }
+            }
+            else
+            {
+                try { writer?.Dispose(); } catch { }
+            }
             try { waveIn?.Dispose(); } catch { }
             if (!string.IsNullOrWhiteSpace(wavPath))
-            {
-                try { File.Delete(wavPath); } catch { }
-            }
-            if (ReferenceEquals(_waveIn, waveIn))
-            {
-                _waveIn = null;
-                _waveWriter = null;
-                _tempWavPath = null;
-            }
+                TryDeleteFile(wavPath);
+            if (session != null && ReferenceEquals(_activeRecording, session))
+                _activeRecording = null;
             IsListening = false;
+            IsCancellingVoice = false;
             IsRecognizing = false;
+            SetFailureNotice(new ApiFailureInfo(
+                ApiFailureKind.Unknown,
+                AppLanguage.T("无法启动麦克风", "Unable to start microphone"),
+                AppLanguage.T("未能打开系统录音设备，可能未接入麦克风或系统隐私权限未允许访问。", "Could not open a recording device. No microphone may be connected or microphone permission is denied."),
+                AppLanguage.T("检查麦克风连接及 Windows 设置 → 隐私和安全性 → 麦克风权限后重试。", "Check your microphone connection and Windows Settings → Privacy & security → Microphone, then retry.")));
         }
     }
 
-    private void StopListening()
+    private void StopListening(bool cancel = false)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
+        var session = _activeRecording;
+        if (session == null)
+        {
+            // 设备已提前断开清理：直接复位，切忌把 IsRecognizing 置 true 导致永久卡死
+            IsListening = false;
+            IsCancellingVoice = false;
+            _audioService.SetVoiceCaptureActive(false);
+            RefreshStatus();
+            return;
+        }
+
         try
         {
-            _waveIn?.StopRecording();
+            session.MaxDurationTimer?.Dispose();
+            session.MaxDurationTimer = null;
+            if (cancel)
+                session.CancelRequested = true;
+            session.StopInitiated = true;
+
+            // 先切换状态再调 StopRecording()：防止同步触发 RecordingStopped 的实现反向覆盖 IsRecognizing
             IsListening = false;
-            IsRecognizing = true;
+            IsCancellingVoice = false;
+            if (!cancel)
+            {
+                IsRecognizing = true;
+                RecognizingStatusText = AppLanguage.Get("S_Transcribing");
+            }
+            _audioService.SetVoiceCaptureActive(false);
             RefreshStatus();
-            Log.Information("Mic recording stopped");
+
+            session.WaveIn.StopRecording();
+            Log.Information(cancel ? "Mic recording cancelled" : "Mic recording stopped");
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Error stopping mic");
+            _audioService.SetVoiceCaptureActive(false);
             IsListening = false;
+            IsCancellingVoice = false;
             IsRecognizing = false;
+            RefreshStatus();
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to delete temp file");
         }
     }
 
@@ -423,7 +723,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 }
 
                 var sendAfterRecognition = false;
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                await RunOnUiThreadAsync(() =>
                 {
                     if (Volatile.Read(ref _disposed) != 0)
                         return;
@@ -436,7 +736,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 // Hold-to-talk should feel like talking to the DJ directly.
                 if (sendAfterRecognition)
                 {
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    await RunOnUiThreadAsync(() =>
                     {
                         if (Volatile.Read(ref _disposed) != 0)
                             return;
@@ -456,13 +756,28 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                Log.Warning("No speech recognized");
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                var sttFailure = _sttService.LastFailure;
+                Log.Warning("No speech recognized (hasFailure={HasFailure})", sttFailure != null);
+                await RunOnUiThreadAsync(() =>
                 {
-                    if (Volatile.Read(ref _disposed) == 0)
+                    if (Volatile.Read(ref _disposed) != 0)
+                        return;
+
+                    if (sttFailure != null)
                     {
-                        if (IsConversationMode)
-                            _restartConversationListening = true; // 复位 IsRecognizing 后由 finally 重启
+                        SetFailureNotice(sttFailure);
+                    }
+                    else if (IsConversationMode)
+                    {
+                        _restartConversationListening = true; // 复位 IsRecognizing 后由 finally 重启
+                    }
+                    else
+                    {
+                        SetFailureNotice(new ApiFailureInfo(
+                            ApiFailureKind.InvalidResponse,
+                            AppLanguage.T("未识别到清晰语音", "No clear speech recognized"),
+                            AppLanguage.T("未能从这段录音中识别出有效文字。", "Could not recognize any clear speech from the recording."),
+                            AppLanguage.T("请靠近麦克风清晰说话后重试。", "Move closer to the microphone and try speaking clearly again.")));
                     }
                 });
             }
@@ -474,24 +789,27 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.Warning(ex, "Speech recognition failed");
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            var failure = ApiFailureInfo.FromException(ex);
+            await RunOnUiThreadAsync(() =>
             {
                 if (Volatile.Read(ref _disposed) != 0)
                     return;
 
-                RefreshStatus();
+                SetFailureNotice(failure);
             });
         }
         finally
         {
             try
             {
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                await RunOnUiThreadAsync(() =>
                 {
                     if (Volatile.Read(ref _disposed) != 0)
                         return;
 
                     IsRecognizing = false;
+                    _lastSttProgress = new SttProgress(SttStage.Idle);
+                    RecognizingStatusText = AppLanguage.Get("S_Transcribing");
                     RefreshStatus();
                     _sendAfterHoldToTalk = false;
                     if (_restartConversationListening && IsConversationMode)
@@ -502,7 +820,7 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
                 });
             }
             catch (Exception ex) { Log.Debug(ex, "Failed to update STT state during shutdown"); }
-            try { File.Delete(wavPath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete temp file"); }
+            TryDeleteFile(wavPath);
         }
     }
 
@@ -1577,19 +1895,28 @@ public partial class ChatViewModel : ViewModelBase, IDisposable
         _commandQueue.Dispose();
         _ttsErrorSub.Dispose();
         _stateSub.Dispose();
+        _sttProgressSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         _statusAutoDismissSub?.Dispose();
 
-        try { _waveIn?.StopRecording(); } catch (Exception ex) { Log.Debug(ex, "Failed to stop recording during shutdown"); }
-        try { _waveWriter?.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to dispose WAV writer during shutdown"); }
-        try { _waveIn?.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to dispose recording device during shutdown"); }
-        _waveWriter = null;
-        _waveIn = null;
-        if (!string.IsNullOrWhiteSpace(_tempWavPath))
+        _audioService.SetVoiceCaptureActive(false);
+        var session = Interlocked.Exchange(ref _activeRecording, null);
+        if (session != null)
         {
-            try { File.Delete(_tempWavPath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete temp file"); }
+            session.MaxDurationTimer?.Dispose();
+            session.MaxDurationTimer = null;
+            try { session.WaveIn.StopRecording(); } catch (Exception ex) { Log.Debug(ex, "Failed to stop recording during shutdown"); }
+            lock (session.WriteGate)
+            {
+                if (!session.WriterDisposed)
+                {
+                    session.WriterDisposed = true;
+                    try { session.Writer.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to dispose WAV writer during shutdown"); }
+                }
+            }
+            try { session.WaveIn.Dispose(); } catch (Exception ex) { Log.Debug(ex, "Failed to dispose recording device during shutdown"); }
+            TryDeleteFile(session.WavPath);
         }
-        _tempWavPath = null;
     }
 }
 

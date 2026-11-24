@@ -92,6 +92,91 @@ public class WhisperSttServiceTests : IDisposable
         Assert.Null(ex);
     }
 
+    [Fact]
+    public void DefaultLanguage_IsAuto()
+    {
+        using var service = new WhisperSttService(_tempDir);
+        Assert.Equal("auto", service.Language);
+    }
+
+    [Theory]
+    [InlineData("[BLANK_AUDIO]", "")]
+    [InlineData("  (音乐)  ", "")]
+    [InlineData("[Music] ... ♪", "")]
+    [InlineData("放一首周杰伦的晴天 [音乐]", "放一首周杰伦的晴天")]
+    [InlineData("Play Yesterday by The Beatles", "Play Yesterday by The Beatles")]
+    public void CleanTranscript_FiltersNoiseTagsAndKeepsValidSpeech(string raw, string expected)
+        => Assert.Equal(expected, WhisperSttService.CleanTranscript(raw));
+
+    [Fact]
+    public async Task TranscribeAsync_DownloadFailure_SetsNetworkFailureAndEmitsProgress()
+    {
+        var stages = new System.Collections.Generic.List<SttStage>();
+        using var service = new WhisperSttService(
+            _tempDir,
+            _ => Task.FromException<Stream>(new System.Net.Http.HttpRequestException("offline")));
+        using var sub = service.ProgressChanged.Subscribe(p => stages.Add(p.Stage));
+
+        var wavPath = Path.Combine(_tempDir, "sample.wav");
+        File.WriteAllBytes(wavPath, CreateMinimalWav());
+
+        var result = await service.TranscribeAsync(wavPath);
+
+        Assert.Equal(string.Empty, result);
+        Assert.NotNull(service.LastFailure);
+        Assert.Equal(ApiFailureKind.Network, service.LastFailure!.Kind);
+        Assert.Contains(SttStage.DownloadingModel, stages);
+        Assert.Equal(SttStage.Idle, stages[^1]);
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_DownloadTimeout_SetsTimeoutFailureAndCleansTempFile()
+    {
+        using var service = new WhisperSttService(
+            _tempDir,
+            async ct =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                return new MemoryStream(new byte[16]);
+            },
+            downloadTimeout: TimeSpan.FromMilliseconds(50));
+
+        var wavPath = Path.Combine(_tempDir, "sample.wav");
+        File.WriteAllBytes(wavPath, CreateMinimalWav());
+
+        var result = await service.TranscribeAsync(wavPath);
+
+        Assert.Equal(string.Empty, result);
+        Assert.NotNull(service.LastFailure);
+        Assert.Equal(ApiFailureKind.Timeout, service.LastFailure!.Kind);
+        Assert.False(File.Exists(Path.Combine(_tempDir, "ggml-base.bin.tmp")));
+        Assert.False(File.Exists(Path.Combine(_tempDir, "ggml-base.bin")));
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_CorruptDownloadedModel_DeletesBadFileAndSetsFailure()
+    {
+        var downloadProgresses = new System.Collections.Generic.List<double>();
+        using var service = new WhisperSttService(
+            _tempDir,
+            _ => Task.FromResult<Stream>(new MemoryStream(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 })));
+        using var sub = service.ProgressChanged.Subscribe(p =>
+        {
+            if (p.Stage == SttStage.DownloadingModel && p.DownloadProgress.HasValue)
+                downloadProgresses.Add(p.DownloadProgress.Value);
+        });
+
+        var wavPath = Path.Combine(_tempDir, "sample.wav");
+        File.WriteAllBytes(wavPath, CreateMinimalWav());
+
+        var result = await service.TranscribeAsync(wavPath);
+
+        Assert.Equal(string.Empty, result);
+        Assert.NotNull(service.LastFailure);
+        Assert.Contains(1.0, downloadProgresses);
+        Assert.False(File.Exists(Path.Combine(_tempDir, "ggml-base.bin")));
+    }
+
     private static bool IsModelAlreadyDownloaded()
         => File.Exists(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

@@ -79,4 +79,6 @@ public interface IAudioService
     void PlayRadioSoundFx(RadioFxKind kind);
     void SetUrlResolver(Func<string, Task<string?>> resolver);
     void SetSpeechMixMode(string mode);
+    /// <summary>按住说话录音期间临时压低背景音乐音量（避免外放回声污染识别），结束时恢复。</summary>
+    void SetVoiceCaptureActive(bool active) { }
 }

@@ -64,7 +64,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly ISceneModeService _sceneModeService;
     private readonly IDisposable _sceneModeSub;
     private string? _preSleepMoodBias;
-    private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
     private readonly Action _onLanguageChanged;
     private readonly EventHandler _onKugouCredentialChanged;
@@ -650,12 +649,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         AppLanguage.Changed += _onLanguageChanged;
         RefreshLocalizedClockText();
 
-        // Sync STT language with settings
+        // Whisper 默认 "auto" 自动检测中英文，不再强行绑定界面语言（避免中文界面说英文歌名被强转汉字）
         if (_sttService is WhisperSttService whisper)
         {
-            whisper.Language = SettingsVM.SelectedLanguage == "en" ? "en" : "zh";
-            _sttLanguageSub = SettingsVM.WhenAnyValue(x => x.SelectedLanguage)
-                .Subscribe(lang => whisper.Language = lang == "en" ? "en" : "zh");
+            whisper.Language = "auto";
         }
 
         _trackEndedSub = _audioService.TrackEnded
@@ -2451,7 +2448,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _speechMixSub?.Dispose();
         _spectrumStyleSub?.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
-        _sttLanguageSub?.Dispose();
         _clockSub?.Dispose();
         _weatherCitySub.Dispose();
         _settingsOpenSub.Dispose();

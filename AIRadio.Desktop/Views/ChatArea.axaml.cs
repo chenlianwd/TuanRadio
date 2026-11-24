@@ -11,7 +11,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -24,7 +23,8 @@ public partial class ChatArea : UserControl
 
     internal sealed record ChatMenuEntry(string Header, ChatMenuAction Action);
 
-    private Button? _micButton;
+    private bool _isMicPointerActive;
+    private IPointer? _activeMicPointer;
     private NotifyCollectionChangedEventHandler? _messagesHandler;
     private PropertyChangedEventHandler? _statusRowHandler;
     private MainWindowViewModel? _currentVm;
@@ -35,7 +35,9 @@ public partial class ChatArea : UserControl
         // Button 的类处理器会把左键按下/释放标记为 Handled，XAML 属性挂载默认跳过已 handled 事件，
         // 必须以 handledEventsToo:true 订阅，否则按住说话的按下/释放永远收不到
         MicButton.AddHandler(InputElement.PointerPressedEvent, OnMicPointerPressed, RoutingStrategies.Bubble, handledEventsToo: true);
+        MicButton.AddHandler(InputElement.PointerMovedEvent, OnMicPointerMoved, RoutingStrategies.Bubble, handledEventsToo: true);
         MicButton.AddHandler(InputElement.PointerReleasedEvent, OnMicPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
+        MicButton.AddHandler(InputElement.KeyDownEvent, OnMicKeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
         ChatScrollViewer.AddHandler(Control.ContextRequestedEvent, OnChatContextRequested, RoutingStrategies.Bubble, handledEventsToo: true);
         FillRoomDots();
         DataContextChanged += OnDataContextChanged;
@@ -161,58 +163,84 @@ public partial class ChatArea : UserControl
             vm.ChatVM.SendMessageCommand.Execute(Unit.Default).Subscribe();
     }
 
+    private const double MicCancelInflatePx = 16;
+
     private void OnMicPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (DataContext is MainWindowViewModel vm)
+        if (DataContext is not MainWindowViewModel vm)
+            return;
+
+        // 仅响应鼠标左键（或触控主指针），屏蔽右键/中键误触开始录音
+        if (!e.GetCurrentPoint(MicButton).Properties.IsLeftButtonPressed)
+            return;
+
+        // 仅在真正开始录音时进入按压视觉与捕获：AI 回复中/识别中被拒时不捕获，
+        // 让用户立即看出这次按住没有生效，而不是按下后石沉大海
+        if (vm.ChatVM.BeginHoldToTalk())
         {
-            _micButton = sender as Button;
-            // 仅在真正开始录音时进入按压视觉：AI 回复中/识别中被拒时按钮不变色、不捕获，
-            // 让用户立即看出这次按住没有生效，而不是按下后石沉大海
-            if (vm.ChatVM.BeginHoldToTalk())
-            {
-                if (_micButton != null)
-                {
-                    _micButton.Background = ResolveBrush(_micButton, "C_FF56F5C4");
-                    _micButton.Foreground = ResolveBrush(_micButton, "C_FF050507");
-                }
-                (sender as Control)?.Focus();
-                e.Pointer.Capture(sender as IInputElement);
-            }
-            e.Handled = true;
+            _isMicPointerActive = true;
+            _activeMicPointer = e.Pointer;
+            vm.ChatVM.IsCancellingVoice = false;
+            (sender as Control)?.Focus();
+            e.Pointer.Capture(sender as IInputElement);
         }
+        e.Handled = true;
+    }
+
+    private void OnMicPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isMicPointerActive || DataContext is not MainWindowViewModel vm || !vm.ChatVM.IsListening)
+            return;
+
+        var pos = e.GetPosition(MicButton);
+        var hitArea = new Rect(MicButton.Bounds.Size).Inflate(MicCancelInflatePx);
+        vm.ChatVM.IsCancellingVoice = !hitArea.Contains(pos);
     }
 
     private void OnMicPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (!_isMicPointerActive)
+            return;
+
+        _isMicPointerActive = false;
+        _activeMicPointer = null;
+        e.Pointer.Capture(null);
         if (DataContext is MainWindowViewModel vm)
         {
-            ResetMicButton();
-            vm.ChatVM.EndHoldToTalk();
-            e.Pointer.Capture(null);
-            e.Handled = true;
+            if (vm.ChatVM.IsCancellingVoice)
+                vm.ChatVM.CancelHoldToTalk();
+            else
+                vm.ChatVM.EndHoldToTalk();
         }
+        e.Handled = true;
     }
 
     private void OnMicPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
     {
-        ResetMicButton();
+        if (!_isMicPointerActive)
+            return;
+
+        _isMicPointerActive = false;
+        _activeMicPointer = null;
         if (DataContext is MainWindowViewModel vm)
-            vm.ChatVM.EndHoldToTalk();
-    }
-
-    private void ResetMicButton()
-    {
-        if (_micButton == null) return;
-        _micButton.Background = ResolveBrush(_micButton, "C_33262835");
-        _micButton.Foreground = ResolveBrush(_micButton, "C_FFEDEDF5");
-    }
-
-    // 主题资源是 Color 而非 IBrush，直接强转会抛 InvalidCastException
-    private static IBrush? ResolveBrush(Control control, string key)
-        => control.FindResource(key) switch
         {
-            Color c => new SolidColorBrush(c),
-            IBrush b => b,
-            _ => null
-        };
+            if (vm.ChatVM.IsCancellingVoice)
+                vm.ChatVM.CancelHoldToTalk();
+            else
+                vm.ChatVM.EndHoldToTalk();
+        }
+    }
+
+    private void OnMicKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && _isMicPointerActive && DataContext is MainWindowViewModel vm && vm.ChatVM.IsListening)
+        {
+            _isMicPointerActive = false;
+            var pointer = _activeMicPointer;
+            _activeMicPointer = null;
+            pointer?.Capture(null);
+            vm.ChatVM.CancelHoldToTalk();
+            e.Handled = true;
+        }
+    }
 }

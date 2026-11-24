@@ -4,6 +4,52 @@
              xmlns:conv="using:AIRadio.Desktop.Converters"
              x:Class="AIRadio.Desktop.Views.ChatArea"
              x:DataType="vm:MainWindowViewModel">
+    <UserControl.Styles>
+        <!-- 按住说话按钮：通过样式类驱动状态，保留 DynamicResource 绑定以跟随主题/色板切换，
+             并同步图标 Path.Stroke 保证亮绿/警示底色下的对比度 -->
+        <Style Selector="Button#MicButton">
+            <Setter Property="Background" Value="{DynamicResource C_33262835}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FFEDEDF5}"/>
+        </Style>
+        <Style Selector="Button#MicButton Path">
+            <Setter Property="Stroke" Value="{DynamicResource C_FFEDEDF5}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening">
+            <Setter Property="Background" Value="{DynamicResource C_FF56F5C4}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FF050507}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_FF56F5C4}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_FF56F5C4}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_FF56F5C4}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening Path">
+            <Setter Property="Stroke" Value="{DynamicResource C_FF050507}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening.cancel">
+            <Setter Property="Background" Value="{DynamicResource C_FFFFC86B}"/>
+            <Setter Property="Foreground" Value="{DynamicResource C_FF050507}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening.cancel /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_FFFFC86B}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening.cancel:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_FFFFC86B}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening.cancel:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource C_FFFFC86B}"/>
+        </Style>
+        <Style Selector="Button#MicButton.listening.cancel Path">
+            <Setter Property="Stroke" Value="{DynamicResource C_FF050507}"/>
+        </Style>
+        <Style Selector="Border#ListeningBadge.cancel">
+            <Setter Property="BorderBrush" Value="{DynamicResource C_FFFFC86B}"/>
+        </Style>
+    </UserControl.Styles>
     <Grid RowDefinitions="*,Auto">
         <!-- Radio room -->
         <Grid Grid.Row="0" Background="{DynamicResource C_E9161623}" RowDefinitions="Auto,*">
@@ -78,19 +124,27 @@
                 </StackPanel>
             </Button>
 
-            <Border Grid.Row="1" IsVisible="{Binding ChatVM.IsListening}"
+            <Border x:Name="ListeningBadge" Grid.Row="1" IsVisible="{Binding ChatVM.IsListening}"
+                    Classes.cancel="{Binding ChatVM.IsCancellingVoice}"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="22,0,22,14"
                     Background="{DynamicResource C_EE050507}" BorderBrush="{DynamicResource C_6656F5C4}" BorderThickness="1"
                     CornerRadius="4" Padding="12,8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
+                                IsVisible="{Binding !ChatVM.IsCancellingVoice}">
                         <Border Width="3" Height="8" Background="{DynamicResource C_FF56F5C4}"/>
                         <Border Width="3" Height="16" Background="{DynamicResource C_FF56F5C4}"/>
                         <Border Width="3" Height="11" Background="{DynamicResource C_FF56F5C4}"/>
                         <Border Width="3" Height="19" Background="{DynamicResource C_FF56F5C4}"/>
                     </StackPanel>
-                    <TextBlock Text="{DynamicResource S_ReleaseToTranscribe}" FontSize="12"
+                    <TextBlock Text="{DynamicResource S_ReleaseToTranscribe}"
+                               IsVisible="{Binding !ChatVM.IsCancellingVoice}"
+                               FontSize="12"
                                FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFB9FFE8}"/>
+                    <TextBlock Text="{DynamicResource S_ReleaseToCancelVoice}"
+                               IsVisible="{Binding ChatVM.IsCancellingVoice}"
+                               FontSize="12"
+                               FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFC86B}"/>
                 </StackPanel>
             </Border>
 
@@ -100,7 +154,7 @@
                     CornerRadius="4" Padding="12,8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Ellipse Width="6" Height="6" Fill="{DynamicResource C_FFA783FF}" VerticalAlignment="Center"/>
-                    <TextBlock Text="{DynamicResource S_Transcribing}" FontSize="12"
+                    <TextBlock Text="{Binding ChatVM.RecognizingStatusText}" FontSize="12"
                                FontFamily="Consolas, Microsoft YaHei UI" Foreground="{DynamicResource C_FFE4D9FF}"/>
                 </StackPanel>
             </Border>
@@ -129,10 +183,11 @@
                          Watermark="{DynamicResource S_ChatWatermark}" KeyDown="OnChatInputKeyDown" TabIndex="10"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
                     <Button x:Name="MicButton" FontSize="10"
-                            Background="{DynamicResource C_33262835}"
+                            Classes.listening="{Binding ChatVM.IsListening}"
+                            Classes.cancel="{Binding ChatVM.IsCancellingVoice}"
                             PointerCaptureLost="OnMicPointerCaptureLost"
                             ToolTip.Tip="{DynamicResource S_HoldToTalk}" AutomationProperties.Name="{DynamicResource S_HoldToTalk}">
-                        <Path Width="18" Height="18" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
+                        <Path Width="18" Height="18" Stretch="Uniform" StrokeThickness="2" Data="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z M5,10 C5,13.9 8.1,17 12,17 C15.9,17 19,13.9 19,10 M12,17 L12,22 M8,22 L16,22"/>
                     </Button>
                     <!-- 发送按键：芯片壳与 VOICE/NOPE 同族（主题感知 token，替换原紫灰圆钮的
                          硬编码 C_FF7F7896），图标用箭头——语言无关（须考虑不识英文的用户，

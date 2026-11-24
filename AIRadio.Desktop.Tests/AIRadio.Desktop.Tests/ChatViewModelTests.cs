@@ -1104,4 +1104,234 @@ public class ChatViewModelTests
         audioMock.Verify(x => x.PlayOneShot(It.Is<Track>(t => t.Title == "晴天"), It.IsAny<string?>()), Times.Once);
         searchMock.Verify(x => x.SearchAsync("一首歌", It.IsAny<int>()), Times.Never);
     }
+
+    private static (ChatViewModel vm, Mock<IDJService> djMock, Mock<IAudioService> audioMock, Mock<ISttService> sttMock, Subject<SttProgress> progress)
+        CreateVoiceVm()
+    {
+        var djMock = new Mock<IDJService>();
+        djMock.SetupGet(x => x.TtsEnabled).Returns(false);
+        djMock.SetupGet(x => x.CurrentEmotion).Returns("neutral");
+        djMock.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        djMock.Setup(x => x.CorrectTranscriptionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string s, CancellationToken _) => s);
+        djMock.Setup(x => x.GenerateChatResponseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("好的，马上安排！[happy]");
+
+        var audioMock = new Mock<IAudioService>();
+        audioMock.Setup(x => x.TtsStateChanged).Returns(new Subject<bool>());
+        audioMock.Setup(x => x.TtsError).Returns(new Subject<string>());
+        audioMock.Setup(x => x.StateChanged).Returns(new Subject<PlaybackState>());
+        audioMock.Setup(x => x.Playlist).Returns(new List<Track>().AsReadOnly());
+
+        var progress = new Subject<SttProgress>();
+        var sttMock = new Mock<ISttService>();
+        sttMock.SetupGet(x => x.ProgressChanged).Returns(progress);
+
+        var vm = new ChatViewModel(djMock.Object, audioMock.Object, new Mock<IMusicSearchService>().Object, sttMock.Object);
+        return (vm, djMock, audioMock, sttMock, progress);
+    }
+
+    [Fact]
+    public async Task HoldToTalk_FullFlow_DucksAudioStopsTtsRecognizesCorrectsAndSends()
+    {
+        var (vm, djMock, audioMock, sttMock, _) = CreateVoiceVm();
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        sttMock.Setup(x => x.TranscribeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(tcs.Task);
+        djMock.Setup(x => x.CorrectTranscriptionAsync("拿手青音樂", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("来点轻音乐");
+
+        vm.MinRecordingDuration = TimeSpan.Zero;
+        vm.RecordingDeviceFactory = () => new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateTonePcm16(500) };
+
+        try
+        {
+            Assert.True(vm.BeginHoldToTalk());
+            audioMock.Verify(x => x.StopTts(), Times.Once);
+            audioMock.Verify(x => x.SetVoiceCaptureActive(true), Times.Once);
+
+            vm.EndHoldToTalk();
+            Assert.False(vm.IsListening);
+            Assert.True(vm.IsRecognizing);
+            audioMock.Verify(x => x.SetVoiceCaptureActive(false), Times.AtLeastOnce);
+
+            tcs.SetResult("拿手青音樂");
+
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while ((vm.IsRecognizing || vm.Messages.Count < 2) && DateTime.UtcNow < deadline)
+                await Task.Delay(15);
+
+            Assert.False(vm.IsRecognizing);
+            Assert.Contains(vm.Messages, m => m.Role == MessageRole.User && m.Content == "来点轻音乐");
+            djMock.Verify(x => x.CorrectTranscriptionAsync("拿手青音樂", It.IsAny<CancellationToken>()), Times.Once);
+            djMock.Verify(x => x.GenerateChatResponseAsync("来点轻音乐", It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task HoldToTalk_ShortPress_SkipsSttAndShowsHint()
+    {
+        var (vm, _, audioMock, sttMock, _) = CreateVoiceVm();
+        // 默认 MinRecordingDuration = 300ms；立即松开属于误触轻点
+        vm.RecordingDeviceFactory = () => new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateTonePcm16(100) };
+
+        try
+        {
+            Assert.True(vm.BeginHoldToTalk());
+            vm.EndHoldToTalk();
+            await Task.Delay(50);
+
+            Assert.False(vm.IsListening);
+            Assert.False(vm.IsRecognizing);
+            Assert.True(vm.HasFailure);
+            sttMock.Verify(x => x.TranscribeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+            audioMock.Verify(x => x.SetVoiceCaptureActive(false), Times.AtLeastOnce);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task HoldToTalk_SilenceOnly_SkipsSttAndShowsHint()
+    {
+        var (vm, _, _, sttMock, _) = CreateVoiceVm();
+        vm.MinRecordingDuration = TimeSpan.Zero;
+        vm.RecordingDeviceFactory = () => new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateSilentPcm16(500) };
+
+        try
+        {
+            Assert.True(vm.BeginHoldToTalk());
+            vm.EndHoldToTalk();
+            await Task.Delay(50);
+
+            Assert.False(vm.IsRecognizing);
+            Assert.True(vm.HasFailure);
+            sttMock.Verify(x => x.TranscribeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task CancelHoldToTalk_DiscardsAudioAndDoesNotCallStt()
+    {
+        var (vm, _, audioMock, sttMock, _) = CreateVoiceVm();
+        vm.MinRecordingDuration = TimeSpan.Zero;
+        vm.RecordingDeviceFactory = () => new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateTonePcm16(500) };
+
+        try
+        {
+            // 模拟上一轮遗留失败提示，新一轮按住说话后取消，旧提示不得复活
+            vm.HasFailure = true;
+            Assert.True(vm.BeginHoldToTalk());
+            Assert.False(vm.HasFailure);
+            vm.CancelHoldToTalk();
+            await Task.Delay(50);
+
+            Assert.False(vm.IsListening);
+            Assert.False(vm.IsRecognizing);
+            Assert.False(vm.HasFailure);
+            Assert.False(vm.ShowStatusNotice);
+            Assert.Empty(vm.Messages);
+            sttMock.Verify(x => x.TranscribeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+            audioMock.Verify(x => x.SetVoiceCaptureActive(false), Times.AtLeastOnce);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public void StartListening_WhenMicUnavailable_RestoresDuckAndShowsFailureNotice()
+    {
+        var (vm, _, audioMock, _, _) = CreateVoiceVm();
+        vm.RecordingDeviceFactory = () => throw new InvalidOperationException("No microphone");
+
+        try
+        {
+            Assert.False(vm.BeginHoldToTalk());
+            Assert.False(vm.IsListening);
+            Assert.True(vm.HasFailure);
+            Assert.False(string.IsNullOrWhiteSpace(vm.StatusHeadline));
+            audioMock.Verify(x => x.SetVoiceCaptureActive(false), Times.AtLeastOnce);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RecognizeFromWav_WhenSttReportsFailure_SurfacesFailureNotice()
+    {
+        var (vm, _, _, sttMock, _) = CreateVoiceVm();
+        var downloadFailure = new ApiFailureInfo(
+            ApiFailureKind.Network,
+            "语音模型下载失败",
+            "网络异常",
+            "请检查网络后重试。");
+        sttMock.Setup(x => x.TranscribeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(string.Empty);
+        sttMock.SetupGet(x => x.LastFailure).Returns(downloadFailure);
+
+        vm.MinRecordingDuration = TimeSpan.Zero;
+        vm.RecordingDeviceFactory = () => new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateTonePcm16(500) };
+
+        try
+        {
+            Assert.True(vm.BeginHoldToTalk());
+            vm.EndHoldToTalk();
+
+            var deadline = DateTime.UtcNow.AddSeconds(2);
+            while ((vm.IsRecognizing || !vm.HasFailure) && DateTime.UtcNow < deadline)
+                await Task.Delay(15);
+
+            Assert.False(vm.IsRecognizing);
+            Assert.True(vm.HasFailure);
+            Assert.Contains("下载", vm.StatusHeadline);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RecordingStopped_UnexpectedDisconnect_DoesNotDeadlockOnSubsequentRelease()
+    {
+        var (vm, _, audioMock, sttMock, _) = CreateVoiceVm();
+        var fakeMic = new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateTonePcm16(500) };
+        vm.MinRecordingDuration = TimeSpan.Zero;
+        vm.RecordingDeviceFactory = () => fakeMic;
+
+        try
+        {
+            Assert.True(vm.BeginHoldToTalk());
+            fakeMic.SimulateUnexpectedStop(new System.IO.IOException("USB mic unplugged"));
+            await Task.Delay(50);
+
+            Assert.False(vm.IsListening);
+            Assert.False(vm.IsRecognizing);
+            Assert.True(vm.HasFailure);
+
+            // 用户松开按钮再次调用 EndHoldToTalk 不得把 IsRecognizing 锁死为 true
+            vm.EndHoldToTalk();
+            Assert.False(vm.IsRecognizing);
+            sttMock.Verify(x => x.TranscribeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+            audioMock.Verify(x => x.SetVoiceCaptureActive(false), Times.AtLeastOnce);
+        }
+        finally
+        {
+            vm.Dispose();
+        }
+    }
 }

@@ -67,7 +67,7 @@ public class ChatAreaMicButtonTests
 
     // 回归：Button 的类处理器会把 PointerPressed/PointerReleased 标记为 Handled，
     // XAML 属性挂载（handledEventsToo:false）收不到这两个事件，按住说话入口会整体失效。
-    // 按压视觉态由 ChatArea 处理器直接驱动：空闲按住=变色+捕获；被拒按住=不变色不捕获。
+    // 按压视觉态由样式类 Classes.listening 驱动，保留 DynamicResource 绑定以跟随主题切换。
     [AvaloniaFact]
     public void MicButton_PointerPressAndRelease_ReachesHoldToTalkHandlers()
     {
@@ -78,13 +78,14 @@ public class ChatAreaMicButtonTests
         try
         {
             var view = new ChatArea { DataContext = vm };
-            // 直接在 view 上提供处理器用到的 4 个颜色键，避开主题字典在 headless 下的解析差异
+            // 直接在 view 上提供样式用到的颜色键，避开主题字典在 headless 下的解析差异
             var brushes = new ResourceDictionary
             {
-                ["C_FF56F5C4"] = Color.FromUInt32(0xFF56F5C4),
-                ["C_FF050507"] = Color.FromUInt32(0xFF050507),
-                ["C_33262835"] = Color.FromUInt32(0x33262835),
-                ["C_FFEDEDF5"] = Color.FromUInt32(0xFFEDEDF5)
+                ["C_FF56F5C4"] = new SolidColorBrush(Color.FromUInt32(0xFF56F5C4)),
+                ["C_FF050507"] = new SolidColorBrush(Color.FromUInt32(0xFF050507)),
+                ["C_33262835"] = new SolidColorBrush(Color.FromUInt32(0x33262835)),
+                ["C_FFEDEDF5"] = new SolidColorBrush(Color.FromUInt32(0xFFEDEDF5)),
+                ["C_FFFFC86B"] = new SolidColorBrush(Color.FromUInt32(0xFFFFC86B))
             };
             view.Resources.MergedDictionaries.Add(brushes);
             window = new Window { Content = view };
@@ -101,22 +102,34 @@ public class ChatAreaMicButtonTests
                 mic, pointer, mic, new Point(5, 5), 0,
                 new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
                 KeyModifiers.None, 1));
+            Dispatcher.UIThread.RunJobs();
             Assert.Null(pointer.Captured);
-            Assert.NotEqual(Color.FromUInt32(0xFF56F5C4), (mic.Background as SolidColorBrush)?.Color);
+            Assert.DoesNotContain("listening", mic.Classes);
             mic.RaiseEvent(new PointerReleasedEventArgs(
                 mic, pointer, mic, new Point(5, 5), 0,
                 new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
                 KeyModifiers.None, MouseButton.Left));
 
-            // —— 空闲路径：真正开始录音才有按压视觉与捕获（假录音设备，headless 不碰系统麦克风） ——
+            // —— 右键不触发录音 ——
             vm.ChatVM.IsProcessing = false;
+            mic.RaiseEvent(new PointerPressedEventArgs(
+                mic, pointer, mic, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.RightMouseButton, PointerUpdateKind.RightButtonPressed),
+                KeyModifiers.None, 1));
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.ChatVM.IsListening);
+            Assert.Null(pointer.Captured);
+
+            // —— 空闲左键路径：真正开始录音才有 listening 样式类与指针捕获 ——
             mic.RaiseEvent(new PointerPressedEventArgs(
                 mic, pointer, mic, new Point(5, 5), 0,
                 new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
                 KeyModifiers.None, 1));
+            Dispatcher.UIThread.RunJobs();
 
             Assert.True(vm.ChatVM.IsListening);
             Assert.Same(mic, pointer.Captured);
+            Assert.Contains("listening", mic.Classes);
             var pressedBrush = Assert.IsType<SolidColorBrush>(mic.Background);
             Assert.Equal(Color.FromUInt32(0xFF56F5C4), pressedBrush.Color);
 
@@ -124,10 +137,92 @@ public class ChatAreaMicButtonTests
                 mic, pointer, mic, new Point(5, 5), 0,
                 new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
                 KeyModifiers.None, MouseButton.Left));
+            Dispatcher.UIThread.RunJobs();
 
             Assert.Null(pointer.Captured);
+            Assert.DoesNotContain("listening", mic.Classes);
             var releasedBrush = Assert.IsType<SolidColorBrush>(mic.Background);
             Assert.Equal(Color.FromUInt32(0x33262835), releasedBrush.Color);
+
+            // —— 回归：使用一次按住说话后切换主题资源，按钮背景仍应动态更新 ——
+            brushes["C_33262835"] = new SolidColorBrush(Color.FromUInt32(0xFFCCCCCC));
+            Dispatcher.UIThread.RunJobs();
+            var themedBrush = Assert.IsType<SolidColorBrush>(mic.Background);
+            Assert.Equal(Color.FromUInt32(0xFFCCCCCC), themedBrush.Color);
+        }
+        finally
+        {
+            window?.Close();
+            vm.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [AvaloniaFact]
+    public void MicButton_DragOutsideAndRelease_CancelsWithoutRecognizing()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+        var vm = CreateViewModel();
+        vm.ChatVM.MinRecordingDuration = TimeSpan.Zero;
+        vm.ChatVM.RecordingDeviceFactory = () => new FakeWaveIn { InitialAudioBytes = FakeWaveIn.CreateTonePcm16(500) };
+        Window? window = null;
+        try
+        {
+            var view = new ChatArea { DataContext = vm };
+            window = new Window { Content = view, Width = 600, Height = 400 };
+            window.Show();
+
+            var mic = view.FindNameScope()?.Find<Button>("MicButton")
+                ?? throw new InvalidOperationException("MicButton not found in ChatArea");
+
+            var pointer = new Pointer(1, PointerType.Mouse, true);
+            mic.RaiseEvent(new PointerPressedEventArgs(
+                mic, pointer, mic, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
+                KeyModifiers.None, 1));
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.ChatVM.IsListening);
+
+            // 拖到按钮上方很远处：进入取消态
+            mic.RaiseEvent(new PointerEventArgs(
+                InputElement.PointerMovedEvent, mic, pointer, mic, new Point(5, -120), 0,
+                new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.Other),
+                KeyModifiers.None));
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.ChatVM.IsCancellingVoice);
+            Assert.Contains("cancel", mic.Classes);
+
+            // 在区域外松开：取消录音，不进入识别态
+            mic.RaiseEvent(new PointerReleasedEventArgs(
+                mic, pointer, mic, new Point(5, -120), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased),
+                KeyModifiers.None, MouseButton.Left));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.False(vm.ChatVM.IsListening);
+            Assert.False(vm.ChatVM.IsCancellingVoice);
+            Assert.False(vm.ChatVM.IsRecognizing);
+
+            // Esc 取消：同样取消录音并释放指针捕获
+            mic.RaiseEvent(new PointerPressedEventArgs(
+                mic, pointer, mic, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed),
+                KeyModifiers.None, 1));
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.ChatVM.IsListening);
+            Assert.Same(mic, pointer.Captured);
+
+            mic.RaiseEvent(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Escape,
+                Source = mic
+            });
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(vm.ChatVM.IsListening);
+            Assert.False(vm.ChatVM.IsRecognizing);
+            Assert.Null(pointer.Captured);
         }
         finally
         {

@@ -113,6 +113,8 @@ public class AudioService : IAudioService, IDisposable
     private float _userVolume = 0.8f;
     private const double CrossfadeSeconds = 2.0;
     private const float TtsDuckVolumeRatio = 0.35f;
+    private const float VoiceCaptureDuckVolumeRatio = 0.12f;
+    private volatile bool _isVoiceCaptureActive;
     private static readonly TimeSpan PlaybackCallbackReleaseDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan UrlRefreshTimeout = TimeSpan.FromSeconds(8);
     // 后台预刷新新鲜度窗口：刚解析的 URL（首播 ToTrack(result) 或刷新回写）无需再同源解析，
@@ -167,14 +169,9 @@ public class AudioService : IAudioService, IDisposable
             if (IsDisposed)
                 return;
 
-            // TTS 播报期间调整音量不打破 duck 电平，恢复全音量由 TTS 结束路径负责
+            // TTS 播报或录音期间调整音量不打破 duck 电平，恢复全音量由对应结束路径负责
             if (!_isFading)
-            {
-                if (IsTtsPlaybackActive && _speechMixMode != "pause")
-                    QueuePlayerVolume((int)(_userVolume * TtsDuckVolumeRatio * 100));
-                else
-                    QueuePlayerVolume((int)(_userVolume * 100));
-            }
+                QueuePlayerVolume((int)(_userVolume * GetEffectiveVolumeRatio() * 100));
 
             lock (_ttsStateGate)
             {
@@ -243,6 +240,25 @@ public class AudioService : IAudioService, IDisposable
             _speechMixMode = mode == "pause" ? "pause" : "duck";
     }
 
+    public void SetVoiceCaptureActive(bool active)
+    {
+        if (IsDisposed || _isVoiceCaptureActive == active)
+            return;
+
+        _isVoiceCaptureActive = active;
+        if (!_isFading)
+            QueuePlayerVolume((int)(_userVolume * GetEffectiveVolumeRatio() * 100));
+    }
+
+    private float GetEffectiveVolumeRatio()
+    {
+        if (_isVoiceCaptureActive)
+            return VoiceCaptureDuckVolumeRatio;
+        if (IsTtsPlaybackActive && _speechMixMode != "pause")
+            return TtsDuckVolumeRatio;
+        return 1.0f;
+    }
+
     public bool IsRadioSoundFxEnabled
     {
         get => _soundFxService.IsEnabled;
@@ -299,7 +315,7 @@ public class AudioService : IAudioService, IDisposable
                 else
                 {
                     _resumeAfterTts = false;
-                    QueuePlayerVolume((int)(_userVolume * TtsDuckVolumeRatio * 100));
+                    QueuePlayerVolume((int)(_userVolume * GetEffectiveVolumeRatio() * 100));
                 }
             }
             else
@@ -311,7 +327,7 @@ public class AudioService : IAudioService, IDisposable
                 }
 
                 if (!_isFading)
-                    QueuePlayerVolume((int)(_userVolume * 100));
+                    QueuePlayerVolume((int)(_userVolume * GetEffectiveVolumeRatio() * 100));
             }
         });
 
@@ -2488,16 +2504,13 @@ public class AudioService : IAudioService, IDisposable
             var elapsed = (Environment.TickCount64 - _fadeStepStart) / 1000.0;
             var progress = Math.Clamp(elapsed / CrossfadeSeconds, 0.0, 1.0);
 
-            // TTS 播报期间淡入不能把音量拉过 duck 电平，否则串场人声被音乐盖住
-            var effectiveProgress = IsTtsPlaybackActive
-                ? Math.Min(progress, TtsDuckVolumeRatio)
-                : progress;
+            // TTS 播报或录音期间淡入不能把音量拉过 duck 电平，否则人声/录音被音乐盖住
+            var effectiveProgress = Math.Min(progress, GetEffectiveVolumeRatio());
             QueuePlayerVolume((int)(_userVolume * effectiveProgress * 100));
             if (progress >= 1.0)
             {
                 _isFading = false;
-                if (!IsTtsPlaybackActive)
-                    QueuePlayerVolume((int)(_userVolume * 100));
+                QueuePlayerVolume((int)(_userVolume * GetEffectiveVolumeRatio() * 100));
                 _fadeTimer.Change(Timeout.Infinite, Timeout.Infinite);
             }
         }

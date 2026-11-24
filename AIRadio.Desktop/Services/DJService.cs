@@ -1302,10 +1302,10 @@ Requirements:
             // 两个 LLM 路径统一取消语义：mock/非 LLMService 路径没有前置 token 检查
             cancellationToken.ThrowIfCancellationRequested();
 
-            // 英文界面下 Whisper 也切到英文识别：提示词必须语言中立，否则会把流利英文当"坏中文"往中文改写
+            // Whisper 默认自动检测中英文：提示词必须保留原有语种、不得翻译，避免中文界面下说英文歌名被强行翻成中文
             var prompt = AppLanguage.T(
-                $"以下是中文语音识别的原始输出，可能包含同音或近音错别字（例如“拿手青音樂”应为“来点轻音乐”）。请结合中文常见歌曲名、歌手名和电台点歌的口语表达，推断用户真正想说的原话。只修正错别字，不要改写语气、不要增删内容；识别结果已通顺时原样输出。只输出修正后的原话，不要任何解释。\n识别结果：{transcript}",
-                $"The following is raw speech recognition output and may contain misrecognized words. Infer what the user actually said based on common song titles, artist names and radio-request phrasing. Fix wrong words only without rephrasing or translating, and without adding or removing content; output as-is when already fluent. Output only the corrected sentence, no explanations.\nTranscript: {transcript}");
+                $"以下是语音识别的原始输出（可能为中文、英文或中英混合），可能包含同音或近音错别字（例如“拿手青音樂”应为“来点轻音乐”）。请结合常见歌曲名、歌手名和电台点歌的口语表达，推断用户真正想说的原话。只修正错别字并将繁体中文转为简体中文，保留原有语种不要翻译、不要改写语气、不要增删内容；识别结果已通顺时原样输出。只输出修正后的原话，不要任何解释。\n识别结果：{transcript}",
+                $"The following is raw speech recognition output (Chinese, English, or mixed) and may contain misrecognized words. Infer what the user actually said based on common song titles, artist names and radio-request phrasing. Fix wrong words only without rephrasing or translating, and without adding or removing content; output as-is when already fluent. Output only the corrected sentence, no explanations.\nTranscript: {transcript}");
 
             // 纠错是体验增强而非关键路径：短超时快速回退原文，不拖慢按住说话的后续链路
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
