@@ -35,10 +35,18 @@
                             IsEnabled="{Binding PlaylistVM.IsSearching, Converter={StaticResource InverseBoolConverter}}"
                             Command="{Binding PlaylistVM.SearchCommand}"/>
                 </Grid>
-                <TextBlock Text="{Binding PlaylistVM.SearchStatusMessage}"
-                           IsVisible="{Binding PlaylistVM.SearchStatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                           Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
-                           FontSize="11" TextWrapping="Wrap"/>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
+                      IsVisible="{Binding PlaylistVM.SearchStatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                    <TextBlock Text="{Binding PlaylistVM.SearchStatusMessage}"
+                               Foreground="{DynamicResource C_FFFFC86B}" FontFamily="Microsoft YaHei UI"
+                               FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    <Button x:Name="KugouSearchLoginButton"
+                            Grid.Column="1"
+                            Content="{DynamicResource S_GoToQrLogin}"
+                            Command="{Binding OpenMusicAccountSettingsCommand}"
+                            IsVisible="{Binding PlaylistVM.HasKugouNotSignedInSearchHint}"
+                            Padding="8,3" FontSize="11" VerticalAlignment="Center"/>
+                </Grid>
             </StackPanel>
 
             <ListBox Grid.Row="2" x:Name="SearchResultsList"

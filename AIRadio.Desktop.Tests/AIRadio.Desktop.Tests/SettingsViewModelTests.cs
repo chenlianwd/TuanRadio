@@ -314,7 +314,10 @@ public class SettingsViewModelTests
             vm.SelectedLanguage = "en";
 
             Assert.Equal("Test", vm.TestConnectionButtonText);
-            Assert.Equal("Not signed in", vm.NeteaseAccountStatus);
+            Assert.StartsWith("Not signed in", vm.NeteaseAccountStatus);
+            Assert.Contains("free catalog", vm.NeteaseAccountStatus);
+            Assert.StartsWith("Not signed in", vm.KugouAccountStatus);
+            Assert.Contains("inactive", vm.KugouAccountStatus);
             Assert.Contains(vm.SpectrumStyles, option => option.DisplayName == "Neon wave");
             Assert.Contains(vm.SpeechMixModes, option => option.DisplayName == "Duck volume while speaking");
             Assert.StartsWith("You are Lumen", vm.CharacterPersonality);

@@ -81,6 +81,7 @@ public sealed class LlmModelOption : ReactiveObject
 public sealed class MusicProviderOption : ReactiveObject
 {
     private bool _enabled;
+    private bool _needsQrLogin;
     public string Id { get; }
     public string DisplayName => AppLanguage.MusicSourceName(Id);
     public bool Enabled
@@ -89,13 +90,35 @@ public sealed class MusicProviderOption : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _enabled, value);
     }
 
+    public bool NeedsQrLogin
+    {
+        get => _needsQrLogin;
+        internal set
+        {
+            if (_needsQrLogin == value)
+                return;
+            _needsQrLogin = value;
+            this.RaisePropertyChanged();
+            this.RaisePropertyChanged(nameof(StatusBadge));
+            this.RaisePropertyChanged(nameof(HasStatusBadge));
+        }
+    }
+
+    public string StatusBadge => _needsQrLogin ? AppLanguage.T("需扫码", "QR required") : string.Empty;
+    public bool HasStatusBadge => _needsQrLogin;
+
     public MusicProviderOption(string id, bool enabled)
     {
         Id = id;
         _enabled = enabled;
     }
 
-    public void RefreshLanguage() => this.RaisePropertyChanged(nameof(DisplayName));
+    public void RefreshLanguage()
+    {
+        this.RaisePropertyChanged(nameof(DisplayName));
+        this.RaisePropertyChanged(nameof(StatusBadge));
+        this.RaisePropertyChanged(nameof(HasStatusBadge));
+    }
 }
 
 /// <summary>「不爱听的歌」展示条目（Title/Artist 供移除回传，DisplayText 供列表渲染）。</summary>
@@ -204,6 +227,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _webRemoteToggleSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
+    private readonly EventHandler _onKugouCredentialChanged;
     private string? _lastCharacterSignature;
     private bool _lastSaveSucceeded;
     // 本会话是否完整跑完过一次设置加载（LoadCoreAsync try 尾部置位，异常中断会跳过）：
@@ -401,10 +425,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     [Reactive] public partial int TabIndex { get; set; }
 
     // 音源账号（网易扫码/酷狗扫码/yt-dlp cookies）
-    [Reactive] public partial string NeteaseAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
+    [Reactive] public partial string NeteaseAccountStatus { get; set; } = FormatNeteaseSignedOutStatus();
     [Reactive] public partial IImage? NeteaseQrImage { get; set; }
     [Reactive] public partial bool IsNeteaseQrVisible { get; set; }
-    [Reactive] public partial string KugouAccountStatus { get; set; } = AppLanguage.T("未登录", "Not signed in");
+    [Reactive] public partial string KugouAccountStatus { get; set; } = FormatKugouSignedOutStatus();
     [Reactive] public partial IImage? KugouQrImage { get; set; }
     [Reactive] public partial bool IsKugouQrVisible { get; set; }
     [Reactive] public partial VoiceOption? SelectedYtdlpBrowser { get; set; }
@@ -547,8 +571,10 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _appUpdate = appUpdateService ?? new AppUpdateService(http);
         _openExternalUrl = openExternalUrl ?? OpenExternalUrlSafe;
         RefreshUpdateTexts();
-        SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
-        SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
+        SetNeteaseAccountStatus(FormatNeteaseSignedOutStatus);
+        SetKugouAccountStatus(FormatKugouSignedOutStatus);
+        _onKugouCredentialChanged = (_, _) => RunOnUiThread(RefreshMusicProviderBadges);
+        _accounts.KugouCredentialChanged += _onKugouCredentialChanged;
 
         TestConnectionCommand = ReactiveCommand.CreateFromTask(TestConnectionAsync);
         UpdateActionCommand = ReactiveCommand.CreateFromTask(
@@ -870,13 +896,58 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             .ToList();
         broker.ConfigureProviders(MusicProviders.Select(item => item.Id).ToArray(),
             MusicProviders.Where(item => !item.Enabled).Select(item => item.Id).ToArray());
+        RefreshMusicProviderBadges();
     }
+
+    public bool IsKugouProviderEnabled
+        => HasExperimentalProviders &&
+           MusicProviders.Any(item => item.Id.Equals("Kugou", StringComparison.OrdinalIgnoreCase) && item.Enabled);
+
+    private void RefreshMusicProviderBadges()
+    {
+        var kugouNeedsQr = HasExperimentalProviders && string.IsNullOrEmpty(_accounts.KugouCookie);
+        foreach (var option in MusicProviders)
+        {
+            option.NeedsQrLogin = kugouNeedsQr &&
+                                  option.Enabled &&
+                                  option.Id.Equals("Kugou", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        if (Avalonia.Application.Current != null && !Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (Volatile.Read(ref _disposed) == 0)
+                    action();
+            });
+            return;
+        }
+
+        action();
+    }
+
+    private static string FormatNeteaseSignedOutStatus()
+        => AppLanguage.T(
+            "未登录（可听免费曲库 · 黑胶 VIP 扫码解锁付费曲）",
+            "Not signed in (free catalog works; Vinyl VIP unlocks paid tracks)");
+
+    private static string FormatKugouSignedOutStatus()
+        => AppLanguage.T(
+            "未登录（未生效 · 扫码解锁曲库与歌单）",
+            "Not signed in (inactive; scan QR to enable catalog & playlists)");
 
     public async Task ApplyMusicProviderOptionsAsync()
     {
         if (_musicSearch is not IMusicSourceBroker broker) return;
         broker.ConfigureProviders(MusicProviders.Select(item => item.Id).ToArray(),
             MusicProviders.Where(item => !item.Enabled).Select(item => item.Id).ToArray());
+        RefreshMusicProviderBadges();
         await SaveAsync(persistLlmFields: false);
     }
 
@@ -2923,7 +2994,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     {
                         // 刷新期间用户登出：按登出口径显示，不拿旧会话再查快照
                         _lastKugouSnapshot = null;
-                        SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
+                        SetKugouAccountStatus(FormatKugouSignedOutStatus);
+                        RefreshMusicProviderBadges();
                         return;
                     }
                     refreshed = latest;
@@ -2941,6 +3013,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             {
                 _lastKugouSnapshot = null;
             }
+            RefreshMusicProviderBadges();
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -3130,7 +3203,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _lastNeteaseSnapshot = null;
         IsNeteaseQrVisible = false;
         SetNeteaseQrImage(null);
-        SetNeteaseAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
+        SetNeteaseAccountStatus(FormatNeteaseSignedOutStatus);
     }
 
     /// <summary>
@@ -3232,7 +3305,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _lastKugouSnapshot = null;
         IsKugouQrVisible = false;
         SetKugouQrImage(null);
-        SetKugouAccountStatus(() => AppLanguage.T("未登录", "Not signed in"));
+        SetKugouAccountStatus(FormatKugouSignedOutStatus);
     }
 
     private static IImage? CreateBitmap(byte[] png)
@@ -3746,6 +3819,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _llmEndpointSub.Dispose();
         _llmModelSelectionSub.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
+        _accounts.KugouCredentialChanged -= _onKugouCredentialChanged;
         Task diskIoTask;
         lock (_diskIoLock)
         {

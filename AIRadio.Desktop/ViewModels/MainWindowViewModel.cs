@@ -67,6 +67,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private IDisposable? _sttLanguageSub;
     private readonly Action _characterSettingsHandler;
     private readonly Action _onLanguageChanged;
+    private readonly EventHandler _onKugouCredentialChanged;
+    private readonly EventHandler? _onProviderConfigChanged;
+    private readonly IDisposable _showKugouPromptSub;
+    private int _kugouLoginPromptShownThisSession;
     private int _autoRadioAdvancing;
     private int _disposed;
     private readonly SemaphoreSlim _ttsLock = new(1, 1);
@@ -131,6 +135,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         "Open Program and the DJ will curate the next set from your current listening style.");
     [Reactive] public partial string PlaybackRecoveryMessage { get; private set; } = string.Empty;
     [Reactive] public partial bool HasPlaybackRecoveryFailure { get; private set; }
+    [Reactive] public partial bool IsKugouLoginPromptVisible { get; private set; }
+    [Reactive] public partial string KugouLoginPromptMessage { get; private set; } = string.Empty;
+    [Reactive] public partial bool ShowKugouLoginPrompt { get; private set; }
     [Reactive] public partial bool IsCompactLyricsVisible { get; private set; }
 
     /// <summary>当前时间，1s 推进，供 ClockStage 绑定（spec §5.5）。</summary>
@@ -151,6 +158,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
            : RadioState.Idle;
 
     public ReactiveCommand<Unit, Unit> ToggleSettingsCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenMusicAccountSettingsCommand { get; }
+    public ReactiveCommand<Unit, Unit> DismissKugouLoginPromptCommand { get; }
     public ReactiveCommand<Unit, Unit> ToggleLibraryCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenPlaylistCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenFavoritesCommand { get; }
@@ -344,6 +353,32 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 CloseTransientOverlays();
             IsSettingsOpen = next;
         });
+        OpenMusicAccountSettingsCommand = ReactiveCommand.Create(OpenMusicAccountSettings);
+        DismissKugouLoginPromptCommand = ReactiveCommand.Create(DismissKugouLoginPrompt);
+        _showKugouPromptSub = this.WhenAnyValue(
+                x => x.IsKugouLoginPromptVisible,
+                x => x.HasPlaybackRecoveryFailure,
+                (visible, hasFailure) => visible && !hasFailure)
+            .Subscribe(show => ShowKugouLoginPrompt = show);
+        _onKugouCredentialChanged = (_, _) => RunOnUiThread(() =>
+        {
+            if (!string.IsNullOrEmpty(_accountStore?.KugouCookie))
+            {
+                IsKugouLoginPromptVisible = false;
+                PlaylistVM.ClearKugouNotSignedInSearchHint();
+            }
+        });
+        if (_accountStore != null)
+            _accountStore.KugouCredentialChanged += _onKugouCredentialChanged;
+        if (_musicSearchService is IMusicSourceBroker configBroker)
+        {
+            _onProviderConfigChanged = (_, _) => RunOnUiThread(() =>
+            {
+                if (!SettingsVM.IsKugouProviderEnabled)
+                    IsKugouLoginPromptVisible = false;
+            });
+            configBroker.ProviderConfigurationChanged += _onProviderConfigChanged;
+        }
         ConfirmCloseDialogCommand = ReactiveCommand.Create(() =>
         {
             IsCloseConfirmOpen = false;
@@ -607,6 +642,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             UpdateFocusModeTooltip();
             UpdateSleepTimerState();
             UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
+            if (IsKugouLoginPromptVisible)
+                KugouLoginPromptMessage = BuildKugouLoginPromptMessage();
             RefreshWebRemoteUiState();
             UpdateWebRemoteSnapshot(immediate: true);
         };
@@ -733,6 +770,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 HasPlaybackRecoveryFailure = notice.IsBlocked;
                 PlaybackRecoveryMessage = notice.Message;
+                if (notice.ConsecutiveFailures > 0)
+                    TryShowKugouLoginPrompt(_audioService.CurrentTrack);
             });
 
         // 统一电台状态机：从子 VM flags 派生 CurrentState（spec §5.2）。
@@ -842,9 +881,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 return null;
 
             var directUrl = await _musicSearchService.GetPlayUrlAsync(sourceId, cancellationToken);
-            return string.IsNullOrWhiteSpace(directUrl)
-                ? null
-                : new TrackUrlResolution(directUrl, sourceId, track.ProviderMetadata);
+            if (string.IsNullOrWhiteSpace(directUrl))
+            {
+                TryShowKugouLoginPrompt(track);
+                return null;
+            }
+            return new TrackUrlResolution(directUrl, sourceId, track.ProviderMetadata);
         }
 
         var onlineTrack = new OnlineTrack
@@ -879,9 +921,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             url = resolved?.Url;
         }
 
-        return string.IsNullOrWhiteSpace(url)
-            ? null
-            : new TrackUrlResolution(
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            TryShowKugouLoginPrompt(track);
+            return null;
+        }
+
+        return new TrackUrlResolution(
                 url,
                 onlineTrack.Id,
                 onlineTrack.ProviderMetadata,
@@ -943,6 +989,72 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         CloseTransientOverlays();
         IsSearchOpen = true;
+    }
+
+    private void OpenMusicAccountSettings()
+    {
+        DismissKugouLoginPrompt();
+        CloseTransientOverlays();
+        SettingsVM.TabIndex = 1;
+        IsSettingsOpen = true;
+    }
+
+    private void DismissKugouLoginPrompt()
+        => IsKugouLoginPromptVisible = false;
+
+    internal void TryShowKugouLoginPrompt(Track? failedTrack)
+    {
+        if (IsDisposed || !SettingsVM.HasExperimentalProviders)
+            return;
+
+        if (_accountStore == null || !string.IsNullOrEmpty(_accountStore.KugouCookie))
+            return;
+
+        if (!SettingsVM.IsKugouProviderEnabled)
+            return;
+
+        if (failedTrack != null &&
+            (failedTrack.IsLiveStream ||
+             failedTrack.IsPodcastEpisode ||
+             (string.IsNullOrWhiteSpace(failedTrack.SourceId) && !string.IsNullOrWhiteSpace(failedTrack.FilePath))))
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _kugouLoginPromptShownThisSession, 1, 0) != 0)
+            return;
+
+        RunOnUiThread(() =>
+        {
+            if (!string.IsNullOrEmpty(_accountStore?.KugouCookie))
+                return;
+
+            KugouLoginPromptMessage = BuildKugouLoginPromptMessage();
+            IsKugouLoginPromptVisible = true;
+        });
+    }
+
+    private static string BuildKugouLoginPromptMessage()
+        => AppLanguage.T(
+            "部分曲目受版权限制已跳过；扫码登录酷狗（免费账号即可）可扩充曲库",
+            "Some tracks were skipped due to rights; sign in to Kugou (free account works) to expand playback");
+
+    private void RunOnUiThread(Action action)
+    {
+        if (IsDisposed)
+            return;
+
+        if (Avalonia.Application.Current != null && !Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsDisposed)
+                    action();
+            });
+            return;
+        }
+
+        action();
     }
 
     private async Task OpenProgramAsync()
@@ -2322,6 +2434,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _profileTrackChangedSub?.Dispose();
         _playbackHistorySub?.Dispose();
         _playbackRecoverySub?.Dispose();
+        _showKugouPromptSub?.Dispose();
+        if (_accountStore != null)
+            _accountStore.KugouCredentialChanged -= _onKugouCredentialChanged;
+        if (_musicSearchService is IMusicSourceBroker configBroker && _onProviderConfigChanged != null)
+            configBroker.ProviderConfigurationChanged -= _onProviderConfigChanged;
         _darkModePersistSub?.Dispose();
         _themeModeSub?.Dispose();
         if (Avalonia.Application.Current is { } app)

@@ -114,6 +114,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     [Reactive] public partial bool IsSearching { get; set; }
     [Reactive] public partial bool HasSearchStatus { get; set; }
     [Reactive] public partial string SearchStatusMessage { get; set; } = string.Empty;
+    [Reactive] public partial bool HasKugouNotSignedInSearchHint { get; private set; }
     [Reactive] public partial string SearchButtonText { get; set; } = AppLanguage.T("搜索", "Search");
     [Reactive] public partial string LocalLibraryStatus { get; set; } = string.Empty;
     [Reactive] public partial bool IsLocalLibraryScanning { get; set; }
@@ -1592,6 +1593,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
 
         _isSearching = true;
         IsSearching = true;
+        HasKugouNotSignedInSearchHint = false;
         SearchButtonText = AppLanguage.T("搜索中...", "Searching...");
         SetSearchStatus(() => AppLanguage.T($"正在搜索“{query}”...", $"Searching \"{query}\"..."));
         try
@@ -1604,17 +1606,19 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             {
                 SearchResults.Add(track);
             }
+            HasKugouNotSignedInSearchHint = report.Any(status =>
+                status.FailureKind == MusicSourceFailureKind.NotSignedIn && IsKugouSourceName(status.Name));
             if (results.Count == 0 && _musicSearchService is Services.Music.IMusicSourceBroker broker)
             {
                 SetSearchStatus(() => AppLanguage.T(
                     $"快速音源未找到“{query}”，正在后台尝试慢源。",
-                    $"No fast-source results for \"{query}\"; checking slow sources in the background."));
+                    $"No fast-source results for \"{query}\"; checking slow sources in the background."), preserveKugouHint: true);
                 var slowCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
                 Interlocked.Exchange(ref _slowSearchCts, slowCts);
                 _ = SearchSlowAndPublishAsync(broker, query, 20, generation, report, slowCts);
             }
             else
-                SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count, report));
+                SetSearchStatus(() => BuildSearchStatusMessage(SearchResults.Count, report), preserveKugouHint: true);
             Log.Information("Search '{Query}' returned {Count} fast result(s)", query, results.Count);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -1650,7 +1654,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             foreach (var track in outcome.Tracks)
                 SearchResults.Add(track);
             var combinedReport = fastReport.Concat(outcome.Report).ToArray();
-            SetSearchStatus(() => BuildSearchStatusMessage(outcome.Tracks.Count, combinedReport));
+            SetSearchStatus(() => BuildSearchStatusMessage(outcome.Tracks.Count, combinedReport), preserveKugouHint: true);
         }
         catch (OperationCanceledException) when (source.IsCancellationRequested)
         {
@@ -1787,12 +1791,21 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>写搜索状态行并登记工厂委托（语言切换时按新语言重算，code-behind 复制反馈共用）。</summary>
-    internal void SetSearchStatus(Func<string> messageFactory)
+    internal void SetSearchStatus(Func<string> messageFactory, bool preserveKugouHint = false)
     {
         _searchStatusFactory = messageFactory;
         SearchStatusMessage = messageFactory();
+        if (!preserveKugouHint)
+            HasKugouNotSignedInSearchHint = false;
         HasSearchStatus = !string.IsNullOrWhiteSpace(SearchStatusMessage);
     }
+
+    public void ClearKugouNotSignedInSearchHint()
+        => HasKugouNotSignedInSearchHint = false;
+
+    private static bool IsKugouSourceName(string? name)
+        => !string.IsNullOrWhiteSpace(name) &&
+           name.Trim().ToLowerInvariant() is "酷狗音乐" or "酷狗" or "kugou" or "kugou music";
 
     private void SetKugouStatus(Func<string> messageFactory)
     {

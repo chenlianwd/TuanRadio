@@ -489,8 +489,16 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="vm:MusicProviderOption">
                                             <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5" Margin="0,2">
-                                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="12"
-                                                           Foreground="{DynamicResource C_FFB3B3B3}"/>
+                                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" FontSize="12"
+                                                               Foreground="{DynamicResource C_FFB3B3B3}"/>
+                                                    <Border IsVisible="{Binding HasStatusBadge}"
+                                                            BorderBrush="{DynamicResource C_FFFFC86B}" BorderThickness="1"
+                                                            CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding StatusBadge}" FontSize="10"
+                                                                   Foreground="{DynamicResource C_FFFFC86B}" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                </StackPanel>
                                                 <ToggleSwitch Grid.Column="1" IsChecked="{Binding Enabled, Mode=TwoWay}"
                                                               OnContent="{DynamicResource S_On}" OffContent="{DynamicResource S_Off}"
                                                               Click="OnMusicProviderToggle"/>
