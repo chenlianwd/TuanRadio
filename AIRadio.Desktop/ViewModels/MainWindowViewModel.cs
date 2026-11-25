@@ -1688,6 +1688,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _audioService.Play();
     }
 
+    /// <summary>开台欢迎语 LLM 生成预算：与首曲推荐预取并行执行，超时立即回退分角色兜底文案。</summary>
+    private static readonly TimeSpan StartupWelcomeBudget = TimeSpan.FromSeconds(4);
+
     private async System.Threading.Tasks.Task AnnounceWelcomeAsync(CancellationToken cancellationToken)
     {
         if (IsDisposed || cancellationToken.IsCancellationRequested)
@@ -1698,42 +1701,115 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (_audioService.IsPlaying || ChatVM.Messages.Count > 0)
             return;
 
-        var text = AppLanguage.T(
-            $"这里是 {SelectedCharacter.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。",
-            $"This is {SelectedCharacter.DisplayName}. The station is online. I'll keep you company and tune the music to your mood.");
+        // 开台即播 DJ 推荐新歌：推荐搜索与欢迎语生成/TTS 并行，说完衔接介绍词开播。
+        // LoadTracks 后 CurrentTrack 默认指向歌单第 1 首（未播放态），以它为开台基线（空歌单为 null）：
+        // staleness 守卫按"基线未被用户换掉"判定；预取挂独立 linked CTS，让位/超时时显式取消
+        var isEmptyPlaylist = PlaylistVM.Tracks.Count == 0;
+        var initialCharacterId = SelectedCharacter.Id;
+        var baseline = isEmptyPlaylist ? null : _audioService.CurrentTrack;
+        using var prefetchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var prefetched = GetRecommendedTrackAsync(baseline, prefetchCts.Token);
+
+        var text = await ResolveStationWelcomeTextAsync(cancellationToken);
+
+        // 等待 LLM 欢迎语期间用户可能已手动点歌、发起聊天或切换主播，再次让位并取消预取
+        if (IsDisposed || cancellationToken.IsCancellationRequested || _audioService.IsPlaying ||
+            ChatVM.Messages.Count > 0 || !string.Equals(SelectedCharacter.Id, initialCharacterId, StringComparison.OrdinalIgnoreCase))
+        {
+            prefetchCts.Cancel();
+            return;
+        }
 
         ChatVM.AddAssistantMessage(text);
         DjVisualCue?.Invoke("smile", "wave");
 
-        if (PlaylistVM.Tracks.Count == 0)
+        await SpeakDjTextAsync(text, cancellationToken);
+        if (IsDisposed || cancellationToken.IsCancellationRequested)
         {
-            // 空歌单也走 DJ 推荐开台（画像/收藏驱动），冷启动拿不到推荐才回落引导文案；
-            // 无基线曲，staleness 守卫以 CurrentTrack 保持 null 判定
-            using var emptyPrefetchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var emptyPrefetched = GetRecommendedTrackAsync(null, emptyPrefetchCts.Token);
-            await SpeakDjTextAsync(text, cancellationToken);
-            if (IsDisposed || cancellationToken.IsCancellationRequested)
-                return;
-
-            var played = await StartStationPlaybackAsync(null, emptyPrefetched, emptyPrefetchCts, cancellationToken);
-            if (!played && !IsDisposed && !cancellationToken.IsCancellationRequested)
-                await AnnounceEmptyLibraryAsync(cancellationToken);
+            prefetchCts.Cancel();
             return;
         }
 
-        // 开台即播 DJ 推荐新歌：推荐搜索与欢迎语 TTS 并行，说完衔接介绍词开播。
-        // LoadTracks 后 CurrentTrack 默认指向歌单第 1 首（未播放态），以它为开台基线：
-        // staleness 守卫按"基线未被用户换掉"判定，若传 null 会在真实语义下全程短路。
-        // 预取挂独立 linked CTS：链条放弃（让位/超时）时显式取消，
-        // 防止迟到结果经 staleness 闸门（兜底播的正是基线曲，CurrentTrack 未变）推节目单气泡/台呼
-        var baseline = _audioService.CurrentTrack;
-        using var prefetchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var prefetched = GetRecommendedTrackAsync(baseline, prefetchCts.Token);
-        await SpeakDjTextAsync(text, cancellationToken);
-        if (IsDisposed || cancellationToken.IsCancellationRequested)
-            return;
+        var played = await StartStationPlaybackAsync(baseline, prefetched, prefetchCts, cancellationToken);
+        if (isEmptyPlaylist && !played && !IsDisposed && !cancellationToken.IsCancellationRequested)
+            await AnnounceEmptyLibraryAsync(cancellationToken);
+    }
 
-        await StartStationPlaybackAsync(baseline, prefetched, prefetchCts, cancellationToken);
+    private async System.Threading.Tasks.Task<string> ResolveStationWelcomeTextAsync(CancellationToken cancellationToken)
+    {
+        var character = SelectedCharacter;
+        if (_djService.IsLlmConfigured)
+        {
+            try
+            {
+                using var welcomeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                welcomeCts.CancelAfter(StartupWelcomeBudget);
+                var generated = await _djService.GenerateStationWelcomeAsync(welcomeCts.Token);
+                if (!string.IsNullOrWhiteSpace(generated))
+                    return generated.Trim();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Information("Startup welcome LLM generation exceeded {Budget:F0}s budget, falling back to character template",
+                    StartupWelcomeBudget.TotalSeconds);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Startup welcome LLM generation failed, falling back to character template");
+            }
+        }
+
+        return BuildFallbackWelcomeText(character, DateTime.Now);
+    }
+
+    internal static string BuildFallbackWelcomeText(CharacterProfile character, DateTime now)
+    {
+        var timeBand = DJService.GetTimeBand(now.Hour);
+        var greetingZh = timeBand switch
+        {
+            0 => "早安",
+            1 => "上午好",
+            2 => "午后好",
+            3 => "傍晚好",
+            4 => "晚上好",
+            _ => "夜深了"
+        };
+        var greetingEn = timeBand switch
+        {
+            0 or 1 => "Good morning",
+            2 => "Good afternoon",
+            3 or 4 => "Good evening",
+            _ => "Late night already"
+        };
+
+        return character.Id switch
+        {
+            "haru" => AppLanguage.T(
+                $"{greetingZh}！这里是 Lumen，电台已经上线啦。先深呼吸一下，今天的好心情交给音乐来点亮。",
+                $"{greetingEn}! This is Lumen, and the station is live. Take a breath — let's brighten up the day with some great music."),
+            "hiyori" => AppLanguage.T(
+                $"{greetingZh}，我是 Aster。电台已经轻声上线，不急不躁，我在这里陪你慢慢听歌。",
+                $"{greetingEn}, this is Aster. The station is softly on air — no rush at all, I'm here to keep you company."),
+            "mao" => AppLanguage.T(
+                $"{greetingZh}，这里是 Noir。频道已接通，话不多说，直接把耳朵留给挑好的声音。",
+                $"{greetingEn}. Noir here. The channel is live — less talk, more carefully chosen sound."),
+            "mark" => AppLanguage.T(
+                $"{greetingZh}，老朋友！我是 Atlas，电台开张了。先歇会儿，下一首放什么包在我身上。",
+                $"{greetingEn}, friend! Atlas on the mic — the station is open. Kick back and leave the next track to me."),
+            "natori" => AppLanguage.T(
+                $"{greetingZh}，我是 Sonnet。电台已经上线，无论此刻你在忙什么，我都认真陪你听一会儿歌。",
+                $"{greetingEn}, I'm Sonnet. The station is live — whatever you're up to right now, I'm right here with you and the music."),
+            "ren" => AppLanguage.T(
+                $"{greetingZh}，这里是 Vega，频道正式上线。把音量推上去一点，我们直接开播。",
+                $"{greetingEn}, Vega here — channel's live. Turn it up a notch, we're getting straight into the music."),
+            _ => AppLanguage.T(
+                $"{greetingZh}，这里是 {character.DisplayName}，电台已经上线。我会陪你听一会儿歌，也会按今天的心情帮你找下一首。",
+                $"{greetingEn}, this is {character.DisplayName}. The station is online — I'll keep you company and tune the music to your mood.")
+        };
     }
 
     /// <summary>开台推荐预取预算：欢迎语 TTS 已并行消化大半，超时不再等待，交给歌单轮换先出声。</summary>

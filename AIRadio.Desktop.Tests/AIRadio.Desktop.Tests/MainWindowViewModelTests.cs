@@ -1733,4 +1733,116 @@ public class MainWindowViewModelTests
             try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
         }
     }
+
+    [Fact]
+    public void BuildFallbackWelcomeText_DiffersAcrossCharactersAndMatchesTimeOfDay()
+    {
+        var afternoon = new DateTime(2026, 11, 25, 14, 30, 0);
+        var lateNight = new DateTime(2026, 11, 25, 23, 30, 0);
+
+        var afternoonLines = CharacterProfile.Presets
+            .Select(c => MainWindowViewModel.BuildFallbackWelcomeText(c, afternoon))
+            .ToList();
+
+        Assert.Equal(CharacterProfile.Presets.Count, afternoonLines.Distinct().Count());
+        Assert.All(afternoonLines, line => Assert.StartsWith("午后好", line));
+
+        var asterNight = MainWindowViewModel.BuildFallbackWelcomeText(
+            CharacterProfile.Presets.Single(c => c.Id == "hiyori"), lateNight);
+        Assert.StartsWith("夜深了", asterNight);
+        Assert.Contains("Aster", asterNight);
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_UsesLlmStationWelcomeWhenConfigured_AndFallsBackWhenNull()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+        dj.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        dj.Setup(x => x.GenerateStationWelcomeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("午后好，我是 Aster，今天也慢慢听歌吧。");
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            await vm.StartSessionAsync();
+
+            Assert.Contains(vm.ChatVM.Messages, m => m.Content == "午后好，我是 Aster，今天也慢慢听歌吧。");
+            dj.Verify(x => x.GenerateStationWelcomeAsync(It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            vm?.Dispose();
+        }
+
+        var fallbackPlaylist = new List<Track>();
+        var fallbackAudio = CreateAudioMock(fallbackPlaylist, () => fallbackPlaylist.FirstOrDefault());
+        var fallbackDj = new Mock<IDJService>();
+        var fallbackRecommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(fallbackDj, fallbackRecommendations);
+        fallbackDj.SetupGet(x => x.IsLlmConfigured).Returns(true);
+        fallbackDj.Setup(x => x.GenerateStationWelcomeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        MainWindowViewModel? fallbackVm = null;
+        try
+        {
+            fallbackVm = CreateStartupSessionViewModel(fallbackAudio, fallbackDj, fallbackRecommendations);
+            await fallbackVm.StartSessionAsync();
+
+            Assert.Contains(fallbackVm.ChatVM.Messages, m => m.Content.Contains(fallbackVm.SelectedCharacter.DisplayName));
+            fallbackDj.Verify(x => x.GenerateStationWelcomeAsync(It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            fallbackVm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public async Task StartSessionAsync_YieldsWhenCharacterSwitchedDuringWelcomeGeneration()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+        dj.SetupGet(x => x.IsLlmConfigured).Returns(true);
+
+        var welcomeGate = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        dj.Setup(x => x.GenerateStationWelcomeAsync(It.IsAny<CancellationToken>()))
+            .Returns(welcomeGate.Task);
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations);
+            var startTask = vm.StartSessionAsync();
+
+            // 模拟等待 LLM 开台欢迎语期间用户切换主播
+            vm.SelectedCharacter = CharacterProfile.Presets.Single(c => c.Id == "ren");
+            welcomeGate.SetResult("旧主播迟到的开台欢迎语");
+
+            await startTask;
+
+            Assert.DoesNotContain(vm.ChatVM.Messages, m => m.Content == "旧主播迟到的开台欢迎语");
+            dj.Verify(x => x.GenerateSpeechAsync(It.IsAny<string>()), Times.Never);
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
 }

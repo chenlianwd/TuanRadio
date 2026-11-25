@@ -38,6 +38,9 @@ public interface IDJService
     Task<string> GenerateChatResponseAsync(string userMessage);
     Task<string> GenerateChatResponseAsync(string userMessage, CancellationToken cancellationToken)
         => GenerateChatResponseAsync(userMessage);
+    /// <summary>生成电台上线开场欢迎语（按当前主播人设与真实时段由 LLM 动态生成；未配置或失败返回 null 由调用方回退分角色兜底文案）。</summary>
+    Task<string?> GenerateStationWelcomeAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
     /// <summary>语音识别结果的同音近音纠错，失败时应返回原文。</summary>
     Task<string> CorrectTranscriptionAsync(string transcript, CancellationToken cancellationToken);
     Task<byte[]?> GenerateSpeechAsync(string text);

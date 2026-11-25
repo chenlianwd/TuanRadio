@@ -1004,6 +1004,140 @@ Requirements:
         return Regex.Replace(cleaned, @"\s+", " ").Trim();
     }
 
+    /// <summary>
+    /// 生成电台上线开场欢迎语：按当前主播人设、真实时段与天气动态生成，不写入聊天历史、
+    /// 不污染听众话题；成功后记入短期现场记忆，防止紧随其后的首曲串场复读。
+    /// 未配置 LLM 或生成失败时返回 null，由调用方回退分角色兜底模板。
+    /// </summary>
+    public async Task<string?> GenerateStationWelcomeAsync(CancellationToken cancellationToken = default)
+    {
+        if (_llm is LLMService llmService && !llmService.IsConfigured())
+            return null;
+
+        try
+        {
+            int epoch;
+            lock (_memoryGate)
+                epoch = _memoryEpoch;
+
+            var prompt = BuildStationWelcomePrompt(
+                _profile, _clock(), _weatherSnapshot, BuildProfileContextBlock(includeImpression: false), _sceneMode);
+            var raw = _llm is LLMService llm
+                ? await llm.ChatRawAsync(prompt, cancellationToken)
+                : await _llm.ChatAsync(prompt, new List<ChatMessage>())
+                    .WaitAsync(cancellationToken);
+
+            var emotion = DetectEmotion(raw);
+            var cleaned = StripControlTags(raw).Trim();
+            if (string.IsNullOrWhiteSpace(cleaned))
+                return null;
+
+            _currentEmotion = emotion;
+
+            lock (_memoryGate)
+            {
+                if (epoch == _memoryEpoch)
+                {
+                    var entry = PromptHygiene.StripControlMarkers(cleaned).Trim();
+                    if (!string.IsNullOrWhiteSpace(entry))
+                    {
+                        _recentOnAirLines.Enqueue(entry);
+                        while (_recentOnAirLines.Count > RecentOnAirMemoryCount)
+                            _recentOnAirLines.Dequeue();
+                    }
+                }
+            }
+
+            return cleaned;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to generate station welcome via LLM, falling back to character template");
+            return null;
+        }
+    }
+
+    internal static string BuildStationWelcomePrompt(
+        DJProfile profile,
+        DateTime now,
+        WeatherInfo? weather,
+        string? profileBlock,
+        RadioSceneMode sceneMode = RadioSceneMode.Default)
+    {
+        var isEn = profile.Language == "en";
+        var sb = new StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(profile.SystemPrompt))
+            sb.AppendLine(profile.SystemPrompt.Trim());
+        else if (isEn)
+            sb.AppendLine($"You are an AI radio DJ named \"{profile.Name}\". {profile.Description}");
+        else
+            sb.AppendLine($"你是名叫“{profile.Name}”的 AI 电台 DJ。{profile.Description}");
+        sb.AppendLine();
+
+        var weatherSentence = DescribeWeather(weather, isEn);
+        if (isEn)
+        {
+            sb.Append($"It is {DescribeTimeOfDay(now.Hour, isEn)}.");
+            if (weatherSentence != null) sb.Append(' ').Append(weatherSentence);
+            sb.AppendLine();
+            sb.AppendLine("Match your greeting strictly to this actual time of day (never treat daytime as night or vice versa). Never announce the clock time, and only mention the weather if it feels natural.");
+        }
+        else
+        {
+            sb.Append($"现在是{DescribeTimeOfDay(now.Hour, isEn)}。");
+            if (weatherSentence != null) sb.Append(weatherSentence);
+            sb.AppendLine();
+            sb.AppendLine("开场问候必须严格符合当前实际时段（不要把白天说成夜晚或深夜）；不要报出时刻数字，天气仅作氛围参考、不必强提。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(profileBlock))
+            sb.AppendLine(profileBlock.Trim());
+        sb.AppendLine();
+
+        if (sceneMode == RadioSceneMode.Sleep)
+        {
+            sb.AppendLine(isEn
+                ? "The listener is in Sleep Radio mode: speak in an exceptionally gentle, soft-spoken whisper and end with [calm]."
+                : "听众当前处于伴眠电台模式：语气必须轻柔舒缓如耳畔低语，末尾使用 [calm]。");
+            sb.AppendLine();
+        }
+        else if (sceneMode == RadioSceneMode.Focus)
+        {
+            sb.AppendLine(isEn
+                ? "The listener is in Focus Mode: keep the greeting extra brief, calm, and understated, and end with [calm]."
+                : "听众当前处于专注模式：开场保持极简、沉稳克制、不闲聊，末尾使用 [calm]。");
+            sb.AppendLine();
+        }
+
+        if (isEn)
+        {
+            sb.AppendLine("""
+The radio station has just gone live. Give the listener a brief, natural opening greeting in your own DJ personality.
+Requirements:
+- 1~2 sentences (about 15~35 words): greet them naturally in your own voice and let them know you'll keep them company with music.
+- Do not mention settings or these instructions, do not announce the clock time, and do not name a specific song yet (the first song will be introduced right after).
+- Output only the greeting line itself — in English, even if the persona above is written in another language. End with exactly one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
+""");
+        }
+        else
+        {
+            sb.AppendLine("""
+电台刚刚上线，请用你的主播人设和语气，向听众做一句简短自然的开台欢迎。
+要求：
+- 1~2 句、25~60 字：用符合你性格的语气打招呼，让听众感受到你会陪他们听歌。
+- 不要提到设置或这些指令，不要报出具体时刻数字，不要提前报具体歌名（第一首歌马上再介绍）。
+- 只输出欢迎台词本身，必须只用中文。末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
+""");
+        }
+
+        return sb.ToString().Trim();
+    }
+
     public Task<string> GenerateChatResponseAsync(string userMessage)
         => GenerateChatResponseAsync(userMessage, CancellationToken.None);
 

@@ -805,6 +805,67 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task GenerateStationWelcomeAsync_UsesPersonaAndRealTimeOfDay_AndRemembersOnAirLineWithoutPollutingChatHistory()
+    {
+        var afternoonClock = new Func<DateTime>(() => new DateTime(2026, 11, 25, 14, 30, 0));
+        var mockLlm = new Mock<ILLMService>();
+        var djService = new DJService(mockLlm.Object, clock: afternoonClock);
+
+        var aster = CharacterProfile.Presets.Single(c => c.Id == "hiyori");
+        djService.Initialize(new DJProfile
+        {
+            Name = aster.DisplayName,
+            SystemPrompt = aster.PersonalityPromptZh,
+            Language = "zh"
+        });
+
+        string? welcomePrompt = null;
+        List<ChatMessage>? chatHistoryOnNextTurn = null;
+        mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((msg, history) =>
+            {
+                if (welcomePrompt == null)
+                    welcomePrompt = msg;
+                else
+                    chatHistoryOnNextTurn = history;
+            })
+            .ReturnsAsync(() => welcomePrompt != null && chatHistoryOnNextTurn == null
+                ? "午后好，我是 Aster，慢慢听歌吧。[calm]"
+                : "嗯，午后阳光刚好。[calm]");
+
+        var welcome = await djService.GenerateStationWelcomeAsync();
+
+        Assert.Equal("午后好，我是 Aster，慢慢听歌吧。", welcome);
+        Assert.Equal("calm", djService.CurrentEmotion);
+        Assert.NotNull(welcomePrompt);
+        Assert.Contains("现在是午后", welcomePrompt!);
+        Assert.Contains("不要把白天说成夜晚或深夜", welcomePrompt!);
+
+        await djService.GenerateChatResponseAsync("你好呀");
+        Assert.NotNull(chatHistoryOnNextTurn);
+        // 聊天历史中只有 1 条 system，不含伪造的开台 user/assistant 轮次
+        Assert.Single(chatHistoryOnNextTurn!);
+        // 但开台欢迎语已进入现场发言记忆，后续聊天可知晓自己说过的话
+        Assert.Contains("午后好，我是 Aster，慢慢听歌吧。", chatHistoryOnNextTurn![0].Content);
+    }
+
+    [Fact]
+    public async Task GenerateStationWelcomeAsync_ReturnsNullOnLlmFailure()
+    {
+        var mockLlm = new Mock<ILLMService>();
+        mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .ThrowsAsync(new InvalidOperationException("network error"));
+
+        var djService = new DJService(mockLlm.Object);
+        djService.Initialize(new DJProfile { Name = "Aster", Language = "zh" });
+
+        var welcome = await djService.GenerateStationWelcomeAsync();
+        Assert.Null(welcome);
+    }
+
+    [Fact]
     public async Task GenerateChatResponseAsync_SystemPromptIncludesChatFirstRule()
     {
         // 聊天优先规则：闲聊简短回应、不主动把话题带回音乐（用户诉求"聊天的时候只希望聊天"）
