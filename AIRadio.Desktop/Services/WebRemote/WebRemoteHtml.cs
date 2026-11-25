@@ -617,7 +617,9 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 
     el("playBtn").textContent = s.isPlaying ? "\u23F8" : "\u25B6";
     el("shuffleBtn").classList.toggle("active", !!s.isShuffled);
-    el("repeatBtn").textContent = s.repeatLabel || s.repeatMode || "DJ";
+    const repeatEl = el("repeatBtn");
+    repeatEl.textContent = s.repeatLabel || s.repeatMode || "DJ";
+    repeatEl.classList.toggle("active", s.repeatMode !== "none");
     el("sleepTrackEnd").disabled = !s.canStopAfterCurrentTrack;
 
     const isPod = !!s.isPodcast;

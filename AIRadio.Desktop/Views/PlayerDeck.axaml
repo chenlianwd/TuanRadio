@@ -146,6 +146,17 @@
 
             <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Button x:Name="ShuffleButton" Width="34" Height="34" Command="{Binding PlayerVM.ToggleShuffleCommand}"
+                        ToolTip.Tip="{Binding PlayerVM.ShuffleTip}" AutomationProperties.Name="{Binding PlayerVM.ShuffleTip}">
+                    <Grid>
+                        <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Opacity="0.55"
+                              IsVisible="{Binding PlayerVM.IsShuffled, Converter={StaticResource InverseBoolConverter}}"
+                              Data="M16,3 L21,3 L21,8 M4,20 L21,3 M21,16 L21,21 L16,21 M15,15 L21,21 M4,4 L9,9"/>
+                        <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FF56F5C4}" StrokeThickness="2"
+                              IsVisible="{Binding PlayerVM.IsShuffled}"
+                              Data="M16,3 L21,3 L21,8 M4,20 L21,3 M21,16 L21,21 L16,21 M15,15 L21,21 M4,4 L9,9"/>
+                    </Grid>
+                </Button>
                 <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}"
                         ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="{DynamicResource S_Prev}">
                     <PathIcon Width="16" Height="16" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
@@ -163,11 +174,22 @@
                         ToolTip.Tip="{DynamicResource S_Next}" AutomationProperties.Name="{DynamicResource S_Next}">
                     <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                 </Button>
-                <Button Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
+                <Button x:Name="RepeatButton" Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
                         ToolTip.Tip="{Binding PlayerVM.RepeatModeTip}" AutomationProperties.Name="{Binding PlayerVM.RepeatModeTip}">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
-                        <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9"/>
+                    <StackPanel Orientation="Horizontal" Spacing="4" Opacity="{Binding PlayerVM.RepeatButtonOpacity}">
+                        <Grid>
+                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2"
+                                  IsVisible="{Binding PlayerVM.IsRepeatSingle, Converter={StaticResource InverseBoolConverter}}"
+                                  Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
+                            <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FF56F5C4}" StrokeThickness="2"
+                                  IsVisible="{Binding PlayerVM.IsRepeatSingle}"
+                                  Data="M17,1 L21,5 L17,9 M3,11 L3,9 C3,6.8 4.8,5 7,5 L21,5 M7,23 L3,19 L7,15 M21,13 L21,15 C21,17.2 19.2,19 17,19 L3,19"/>
+                        </Grid>
+                        <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9" VerticalAlignment="Center"
+                                   IsVisible="{Binding PlayerVM.IsRepeatSingle, Converter={StaticResource InverseBoolConverter}}"/>
+                        <TextBlock Text="{Binding PlayerVM.RepeatText}" FontSize="9" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource C_FF56F5C4}"
+                                   IsVisible="{Binding PlayerVM.IsRepeatSingle}"/>
                     </StackPanel>
                 </Button>
                 <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}"

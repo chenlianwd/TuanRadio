@@ -61,6 +61,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _sleepTimerSub;
     private readonly IDisposable _sleepTimerCloseAppSub;
     private readonly Action<float> _onPodcastPlaybackRateChanged;
+    private readonly Action<string> _onRepeatModeChanged;
+    private readonly Action<bool> _onShuffleChanged;
     private readonly ISceneModeService _sceneModeService;
     private readonly IDisposable _sceneModeSub;
     private string? _preSleepMoodBias;
@@ -561,6 +563,32 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         PlayerVM.PodcastPlaybackRateChanged += _onPodcastPlaybackRateChanged;
 
+        _onRepeatModeChanged = mode =>
+        {
+            if (IsDisposed) return;
+            var normalized = AudioService.NormalizeRepeatMode(mode);
+            if (!string.Equals(SettingsVM.RepeatMode, normalized, StringComparison.Ordinal))
+            {
+                SettingsVM.RepeatMode = normalized;
+                SettingsVM.RequestUiStateSave();
+            }
+        };
+        PlayerVM.RepeatModeChanged += _onRepeatModeChanged;
+
+        _onShuffleChanged = shuffled =>
+        {
+            if (IsDisposed) return;
+            if (SettingsVM.IsShuffled != shuffled)
+            {
+                SettingsVM.IsShuffled = shuffled;
+                SettingsVM.RequestUiStateSave();
+            }
+        };
+        PlayerVM.ShuffleChanged += _onShuffleChanged;
+
+        // 同步拦截任意模式/上下文下的自然播完自动续播，使「播完当前曲后停止」在单曲/列表/歌单下均可靠生效
+        _audioService.SetBeforeAutoAdvanceCallback(_ => _sleepTimerService.CheckAndConsumeEndOfTrack());
+
         UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
         UpdateSleepTimerState();
         UpdateFocusModeTooltip();
@@ -660,9 +688,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .Subscribe(current =>
             {
                 if (current == null) return;
-                // 自然播完先结算画像（Completed + 清除跳过待判态），再走自动续播
                 MarkPodcastEpisodeCompleted(current);
-                _listeningProfile?.NotifyPlaybackEndedNaturally(current);
                 _ = HandleAutoRadioTrackEndedAsync(current);
             });
 
@@ -670,8 +696,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(completed =>
             {
-                if (completed != null)
-                    MarkPodcastEpisodeCompleted(completed);
+                if (completed == null) return;
+                // 任意循环模式（单曲/列表/上下文/电台）自然播完均结算播客进度与收听画像，防止非电台模式漏记
+                MarkPodcastEpisodeCompleted(completed);
+                _listeningProfile?.NotifyPlaybackEndedNaturally(completed);
             });
 
         _trackChangedSub = _audioService.TrackChanged
@@ -1565,6 +1593,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SleepTimerCloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;
         _audioService.SetPlaybackRate(SettingsVM.PodcastPlaybackRate);
         PlayerVM.SyncPlaybackRateFromService();
+        _audioService.SetRepeatMode(SettingsVM.RepeatMode);
+        _audioService.SetShuffle(SettingsVM.IsShuffled);
+        PlayerVM.SyncPlaybackModesFromService();
         await RestoreWebRemoteAfterLoadAsync(cancellationToken);
     }
 
@@ -2459,6 +2490,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _sleepTimerSub?.Dispose();
         _sleepTimerCloseAppSub?.Dispose();
         PlayerVM.PodcastPlaybackRateChanged -= _onPodcastPlaybackRateChanged;
+        PlayerVM.RepeatModeChanged -= _onRepeatModeChanged;
+        PlayerVM.ShuffleChanged -= _onShuffleChanged;
+        _audioService.SetBeforeAutoAdvanceCallback(null);
         _sceneModeSub?.Dispose();
         _sceneModeService?.Dispose();
         _sleepTimerService?.Dispose();

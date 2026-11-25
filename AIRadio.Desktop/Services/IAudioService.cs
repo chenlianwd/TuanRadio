@@ -44,8 +44,15 @@ public interface IAudioService
     void SetPlaybackRate(float rate) { }
     void Next();
     void SetNextCallback(Func<CancellationToken, Task<Track?>>? callback);
+    /// <summary>自然播完进入自动续播前调用；返回 true 时拦截本次自动续播（如睡眠定时播完当前曲停止）。</summary>
+    void SetBeforeAutoAdvanceCallback(Func<Track?, bool>? callback) { }
     void Previous();
     void Shuffle();
+    void SetShuffle(bool shuffled)
+    {
+        if (IsShuffled != shuffled)
+            Shuffle();
+    }
     void SetRepeatMode(string mode);
     void PlayAtIndex(int index);
     void PlayTrack(Track track);

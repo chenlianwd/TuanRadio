@@ -69,6 +69,7 @@ public class AudioService : IAudioService, IDisposable
     private int _currentIndex = -1;
     private bool _shuffle;
     private string _repeatMode = "radio";
+    private Func<Track?, bool>? _beforeAutoAdvanceCallback;
     private string _speechMixMode = "duck";
     private volatile bool _resumeAfterTts;
     private bool _ttsWasPlayingWhenMusicPaused;
@@ -647,22 +648,52 @@ public class AudioService : IAudioService, IDisposable
             if (!IsCurrentPlaybackIntent(endReachedIntentVersion) && _nextGate.CurrentCount == 0)
                 return;
 
-            _naturalTrackCompletedSubject.OnNext(CurrentTrack);
+            var completedTrack = CurrentTrack;
+            _naturalTrackCompletedSubject.OnNext(completedTrack);
 
-            if (_repeatMode == "single" && CurrentTrack != null)
-                PlayTrack(_currentIndex);
-            else if (TryAdvancePlaybackContext(allowWrap: _repeatMode == "list", out var hadContext))
+            // 睡眠定时「播完当前曲后停止」等前置拦截：必须在单曲循环/上下文/列表循环续播前同步裁决，
+            // 否则这些分支不会发射 TrackEnded，会导致停播失效。
+            if (_beforeAutoAdvanceCallback?.Invoke(completedTrack) == true)
+            {
+                Log.Information("Auto-advance intercepted after natural completion of {Track}", completedTrack?.Title);
                 return;
+            }
+
+            if (_repeatMode == "single")
+            {
+                if (TryReplayCurrentTrackForSingleLoop(completedTrack))
+                    return;
+            }
+            else if (TryAdvancePlaybackContextCore(allowWrap: _repeatMode == "list", clearOnExhausted: true, out var hadContext))
+            {
+                return;
+            }
             else if (_repeatMode == "radio")
             {
                 // 电台链路可观测：自然结束经 TrackEnded 交由 VM 推荐串场（无此日志=被上下文/单曲循环旁路）
-                Log.Debug("Radio track ended; handing off to auto-radio handler for {Track}", CurrentTrack?.Title);
-                _trackEndedSubject.OnNext(CurrentTrack);
+                Log.Debug("Radio track ended; handing off to auto-radio handler for {Track}", completedTrack?.Title);
+                _trackEndedSubject.OnNext(completedTrack);
             }
             else if (_repeatMode == "list" && !hadContext)
+            {
                 Next();
+            }
+            else if (_repeatMode == "none" && !hadContext)
+            {
+                // 关闭循环（顺序播放）：无上下文时沿主歌单顺序播完剩余曲目，到达末尾后再自然停止，
+                // 与有播放上下文时的耗尽即止语义保持一致。
+                bool advanced;
+                lock (_playbackIntentGate)
+                {
+                    advanced = TryPlayNextCanonicalTrack(allowWrap: false);
+                }
+                if (!advanced)
+                    OnTrackEndReached();
+            }
             else
+            {
                 OnTrackEndReached();
+            }
         });
     }
 
@@ -980,11 +1011,24 @@ public class AudioService : IAudioService, IDisposable
             _shuffle = !_shuffle;
     }
 
+    public void SetShuffle(bool shuffled)
+    {
+        if (!IsDisposed)
+            _shuffle = shuffled;
+    }
+
+    public static string NormalizeRepeatMode(string? mode)
+    {
+        var normalized = mode?.Trim().ToLowerInvariant();
+        return normalized is "radio" or "list" or "single" or "none" ? normalized : "radio";
+    }
+
     public void SetRepeatMode(string mode)
     {
         if (IsDisposed)
             return;
 
+        mode = NormalizeRepeatMode(mode);
         var previous = _repeatMode;
         _repeatMode = mode;
         if (previous == mode)
@@ -1004,6 +1048,12 @@ public class AudioService : IAudioService, IDisposable
     {
         if (!IsDisposed)
             _nextCallback = callback;
+    }
+
+    public void SetBeforeAutoAdvanceCallback(Func<Track?, bool>? callback)
+    {
+        if (!IsDisposed)
+            _beforeAutoAdvanceCallback = callback;
     }
 
     public void Next()
@@ -1035,7 +1085,10 @@ public class AudioService : IAudioService, IDisposable
             lock (_playbackIntentGate)
             {
                 intentVersion = ++_playbackIntentVersion;
-                if (TryAdvancePlaybackContext(allowWrap: _repeatMode == "list", out hadContext))
+                if (TryAdvancePlaybackContextCore(
+                    allowWrap: _repeatMode == "list",
+                    clearOnExhausted: _repeatMode == "radio",
+                    out hadContext))
                     return;
             }
 
@@ -1118,7 +1171,7 @@ public class AudioService : IAudioService, IDisposable
             lock (_playbackIntentGate)
             {
                 if (intentVersion != _playbackIntentVersion) return;
-                PlayNextCanonicalTrack();
+                TryPlayNextCanonicalTrack(allowWrap: _repeatMode != "none");
             }
         }
         catch (Exception ex)
@@ -1315,7 +1368,61 @@ public class AudioService : IAudioService, IDisposable
         RemoveInactiveTransientTracks(keep: CurrentTrack);
     }
 
+    private bool TryReplayCurrentTrackForSingleLoop(Track? completedTrack)
+    {
+        int replayIndex;
+        Track? targetTrack;
+        lock (_playbackIntentGate)
+        {
+            lock (_playlistGate)
+            {
+                if (_currentIndex >= 0 && _currentIndex < _playlist.Count)
+                {
+                    replayIndex = _currentIndex;
+                    targetTrack = _playlist[_currentIndex];
+                }
+                else if (completedTrack != null)
+                {
+                    replayIndex = FindTrackIndexUnsafe(completedTrack);
+                    targetTrack = replayIndex >= 0 ? _playlist[replayIndex] : null;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            if (targetTrack == null || replayIndex < 0)
+                return false;
+
+            // 播客单曲循环必须从头开始：同步移除 resume_ms，避免 UI 线程异步结算尚未执行时带着旧断点重播。
+            if (targetTrack.IsPodcastEpisode)
+            {
+                lock (targetTrack.ProviderMetadata)
+                {
+                    targetTrack.ProviderMetadata.Remove("resume_ms");
+                }
+            }
+
+            PlayTrack(replayIndex);
+            return true;
+        }
+    }
+
+    private int FindTrackIndexUnsafe(Track track)
+    {
+        for (var i = 0; i < _playlist.Count; i++)
+        {
+            if (ReferenceEquals(_playlist[i], track) || IsSameTrackIdentity(_playlist[i], track))
+                return i;
+        }
+        return -1;
+    }
+
     private bool TryAdvancePlaybackContext(bool allowWrap, out bool hadContext)
+        => TryAdvancePlaybackContextCore(allowWrap, clearOnExhausted: true, out hadContext);
+
+    private bool TryAdvancePlaybackContextCore(bool allowWrap, bool clearOnExhausted, out bool hadContext)
     {
         Track? next = null;
         lock (_contextGate)
@@ -1323,22 +1430,33 @@ public class AudioService : IAudioService, IDisposable
             hadContext = _playbackQueue.Count > 0;
             if (!hadContext) return false;
 
-            var nextIndex = _playbackQueueIndex + 1;
-            if (nextIndex >= _playbackQueue.Count)
+            int nextIndex;
+            if (_shuffle && allowWrap && _playbackQueue.Count > 1)
             {
-                // 单元素队列 wrap 只会重播自己：主歌单有可回落曲目时视为耗尽（列表循环回主歌单、
-                // 手动 Next 进主歌单），主歌单为空时保持 wrap 兜底，防单曲瞬态 + 空歌单静默停摆
-                if (!allowWrap || (_playbackQueue.Count == 1 && HasCanonicalTrack()))
+                nextIndex = PickRandomOtherIndex(_playbackQueue.Count, _playbackQueueIndex);
+            }
+            else
+            {
+                nextIndex = _playbackQueueIndex + 1;
+                if (nextIndex >= _playbackQueue.Count)
                 {
-                    // 非 wrap 耗尽维持 hadContext=true（手动 Next 不跳资料库的既有语义）；
-                    // 单元素 wrap 护栏则按无上下文回落（列表循环回主歌单）
-                    hadContext = !allowWrap;
-                    _playbackQueue.Clear();
-                    _playbackQueueIndex = -1;
-                    _playbackContextName = string.Empty;
-                    return false;
+                    // 单元素队列 wrap 只会重播自己：主歌单有可回落曲目时视为耗尽（列表循环回主歌单、
+                    // 手动 Next 进主歌单），主歌单为空时保持 wrap 兜底，防单曲瞬态 + 空歌单静默停摆
+                    if (!allowWrap || (_playbackQueue.Count == 1 && HasCanonicalTrack()))
+                    {
+                        // 非 wrap 耗尽维持 hadContext=true（手动 Next 不跳资料库的既有语义）；
+                        // 单元素 wrap 护栏则按无上下文回落（列表循环回主歌单）
+                        hadContext = !allowWrap;
+                        if (clearOnExhausted || allowWrap)
+                        {
+                            _playbackQueue.Clear();
+                            _playbackQueueIndex = -1;
+                            _playbackContextName = string.Empty;
+                        }
+                        return false;
+                    }
+                    nextIndex = 0;
                 }
-                nextIndex = 0;
             }
 
             _playbackQueueIndex = nextIndex;
@@ -1400,21 +1518,50 @@ public class AudioService : IAudioService, IDisposable
     }
 
     private void PlayNextCanonicalTrack()
+        => TryPlayNextCanonicalTrack(allowWrap: true);
+
+    private bool TryPlayNextCanonicalTrack(bool allowWrap)
     {
         Track? target;
         lock (_playlistGate)
         {
             var canonical = _playlist.Where(track => !_transientContextTracks.Contains(track)).ToList();
-            if (canonical.Count == 0) return;
+            if (canonical.Count == 0) return false;
             var current = CurrentTrackUnsafe();
             var currentIndex = current == null ? -1 : canonical.FindIndex(track => IsSameTrackIdentity(track, current));
-            var nextIndex = _shuffle
-                ? _rng.Next(canonical.Count)
-                : (currentIndex + 1 + canonical.Count) % canonical.Count;
+
+            int nextIndex;
+            if (_shuffle && allowWrap)
+            {
+                nextIndex = PickRandomOtherIndex(canonical.Count, currentIndex);
+            }
+            else if (allowWrap)
+            {
+                nextIndex = (currentIndex + 1 + canonical.Count) % canonical.Count;
+            }
+            else
+            {
+                // 不回绕（关闭循环）：顺序推进到主歌单末尾后返回 false 停止播放
+                nextIndex = currentIndex + 1;
+                if (nextIndex < 0 || nextIndex >= canonical.Count)
+                    return false;
+            }
+
             target = canonical[nextIndex];
         }
         ClearPlaybackContextCore();
         PlayTrackInstance(target, isContextTrack: false);
+        return true;
+    }
+
+    private int PickRandomOtherIndex(int count, int currentIndex)
+    {
+        if (count <= 1)
+            return 0;
+        if (currentIndex < 0 || currentIndex >= count)
+            return _rng.Next(count);
+        var pick = _rng.Next(count - 1);
+        return pick >= currentIndex ? pick + 1 : pick;
     }
 
     private void PlayPreviousCanonicalTrack()

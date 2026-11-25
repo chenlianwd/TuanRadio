@@ -53,9 +53,14 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string PositionText { get; set; } = "0:00";
     [Reactive] public partial string DurationText { get; set; } = "0:00";
     [Reactive] public partial bool IsShuffled { get; set; }
+    [Reactive] public partial string ShuffleTip { get; set; } = AppLanguage.T("随机播放：关", "Shuffle: off");
     [Reactive] public partial string RepeatMode { get; set; } = "radio";
     [Reactive] public partial string RepeatText { get; set; } = "DJ";
     [Reactive] public partial string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
+    [Reactive] public partial bool IsRepeatActive { get; set; } = true;
+    [Reactive] public partial bool IsRepeatOff { get; set; }
+    [Reactive] public partial bool IsRepeatSingle { get; set; }
+    [Reactive] public partial double RepeatButtonOpacity { get; set; } = 1.0;
 
     private bool _isDragging;
     private string? _liveStreamNowPlaying;
@@ -72,6 +77,10 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
 
     /// <summary>用户主动调整播客倍速时触发，供宿主持久化至 settings.json。</summary>
     public event Action<float>? PodcastPlaybackRateChanged;
+    /// <summary>用户主动切换循环模式时触发，供宿主持久化至 settings.json。</summary>
+    public event Action<string>? RepeatModeChanged;
+    /// <summary>用户主动切换随机播放时触发，供宿主持久化至 settings.json。</summary>
+    public event Action<bool>? ShuffleChanged;
 
     public PlayerViewModel(IAudioService audioService)
     {
@@ -79,7 +88,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         UpdateRepeatMode(_audioService.RepeatMode);
         // 与服务端的当前状态对齐（音量/随机），避免启动瞬间两端不同步
         Volume = _audioService.Volume;
-        IsShuffled = _audioService.IsShuffled;
+        UpdateShuffleState(_audioService.IsShuffled);
 
         PlayCommand = ReactiveCommand.Create(() =>
         {
@@ -92,7 +101,8 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         ToggleShuffleCommand = ReactiveCommand.Create(() =>
         {
             _audioService.Shuffle();
-            IsShuffled = _audioService.IsShuffled;
+            UpdateShuffleState(_audioService.IsShuffled);
+            ShuffleChanged?.Invoke(IsShuffled);
         });
 
         ToggleRepeatCommand = ReactiveCommand.Create(() =>
@@ -106,6 +116,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             };
             _audioService.SetRepeatMode(next);
             UpdateRepeatMode(next);
+            RepeatModeChanged?.Invoke(next);
         });
 
         SkipBackwardCommand = ReactiveCommand.Create(() => SkipRelative(-PodcastSkipBackwardSeconds));
@@ -217,6 +228,7 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         _onLanguageChanged = () =>
         {
             UpdateRepeatMode(RepeatMode);
+            UpdateShuffleState(IsShuffled);
             TrackPreviewText = AppLanguage.T("试听片段", "Preview");
             if (_audioService.CurrentTrack is { } currentTrack)
             {
@@ -431,9 +443,29 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
             : $"{ts.Minutes}:{ts.Seconds:D2}";
     }
 
+    /// <summary>启动加载持久化设置后，将 AudioService 当前循环模式与随机状态同步到 UI。</summary>
+    public void SyncPlaybackModesFromService()
+    {
+        UpdateRepeatMode(_audioService.RepeatMode);
+        UpdateShuffleState(_audioService.IsShuffled);
+    }
+
+    private void UpdateShuffleState(bool shuffled)
+    {
+        IsShuffled = shuffled;
+        ShuffleTip = shuffled
+            ? AppLanguage.T("随机播放：开", "Shuffle: on")
+            : AppLanguage.T("随机播放：关", "Shuffle: off");
+    }
+
     private void UpdateRepeatMode(string mode)
     {
+        mode = Services.AudioService.NormalizeRepeatMode(mode);
         RepeatMode = mode;
+        IsRepeatOff = mode == "none";
+        IsRepeatActive = !IsRepeatOff;
+        IsRepeatSingle = mode == "single";
+        RepeatButtonOpacity = IsRepeatOff ? 0.45 : 1.0;
         (RepeatText, RepeatModeTip) = mode switch
         {
             "radio" => ("DJ", AppLanguage.T("电台模式", "Radio mode")),

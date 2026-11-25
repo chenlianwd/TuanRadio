@@ -35,7 +35,11 @@ public sealed class SleepTimerService : ReactiveObject, ISleepTimerService
         _timeScheduler = scheduler ?? DefaultScheduler.Instance;
         _uiScheduler = uiScheduler ?? (scheduler ?? RxApp.MainThreadScheduler);
 
-        _trackEndedSubscription = _audioService.TrackEnded
+        var endEvents = _audioService.NaturalTrackCompleted != null
+            ? _audioService.TrackEnded.Merge(_audioService.NaturalTrackCompleted)
+            : _audioService.TrackEnded;
+
+        _trackEndedSubscription = endEvents
             .ObserveOn(_uiScheduler)
             .Subscribe(_ =>
             {
