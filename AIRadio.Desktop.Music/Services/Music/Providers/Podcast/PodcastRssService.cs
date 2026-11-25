@@ -128,7 +128,7 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to fetch podcast RSS feed {Url}", normalizedKey);
+            Log.Warning(ex, "Failed to fetch podcast RSS feed {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(normalizedKey));
             return new PodcastFeedParseResult(
                 false, null, Array.Empty<PodcastEpisode>(),
                 AppLanguage.T("播客源拉取失败，请检查网络或地址", "Failed to fetch podcast feed; check network or URL"));
@@ -267,7 +267,7 @@ public sealed class PodcastRssService : IPodcastRssService, IDisposable
         }
         catch (XmlException ex)
         {
-            Log.Warning(ex, "Rejected or malformed podcast XML for {Url}", feedUrl);
+            Log.Warning(ex, "Rejected or malformed podcast XML for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(feedUrl));
             return new PodcastFeedParseResult(
                 false, null, Array.Empty<PodcastEpisode>(),
                 AppLanguage.T("RSS XML 解析失败或包含不安全声明", "Failed to parse RSS XML or unsafe declaration rejected"));

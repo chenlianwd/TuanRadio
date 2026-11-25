@@ -142,6 +142,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 #endif
     private const string LlmCredentialService = "llm";
     private const string LegacyMinimaxCredentialService = "minimax";
+    private const string WebRemoteTokenCredentialService = "web-remote-token-v1";
+    private static readonly HashSet<string> MigratedSecretDiskKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "web_remote_token"
+    };
     private readonly ILLMService _llmService;
     private readonly ISecureStorage _secureStorage;
     private readonly string _settingsDir;
@@ -153,6 +158,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private Task _uiSaveTask = Task.CompletedTask;
     private readonly object _diskIoLock = new();
     private Task _inFlightDiskIoTask = Task.CompletedTask;
+    private string? _persistedWebRemoteToken;
+    private bool _webRemoteTokenDirty;
     private readonly IDisposable _selectedCharacterSub;
     private readonly IDisposable _selectedYtdlpBrowserSub;
     private readonly IDisposable _openSubsonicQualitySub;
@@ -225,6 +232,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _closeActionSub;
     private bool _loadingWebRemote;
     private readonly IDisposable _webRemoteToggleSub;
+    private readonly IDisposable _webRemoteTokenSub;
     // 常驻文案/选项列表随语言切换重建；静态事件必须持委托在 Dispose 退订
     private readonly Action _onLanguageChanged;
     private readonly EventHandler _onKugouCredentialChanged;
@@ -701,6 +709,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     return;
                 _ = enabled;
                 RequestUiStateSave();
+            });
+        _webRemoteTokenSub = this.WhenAnyValue(x => x.WebRemoteToken)
+            .Skip(1)
+            .Subscribe(_ =>
+            {
+                if (!_loadingWebRemote)
+                    _webRemoteTokenDirty = true;
             });
         NeteaseQrLoginCommand = ReactiveCommand.CreateFromTask(() => RunNeteaseQrLoginAsync());
         NeteaseLogoutCommand = ReactiveCommand.CreateFromTask(() => LogoutNeteaseAsync());
@@ -1284,6 +1299,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             Dictionary<string, LlmProfile>? parsedProfiles = null;
             Dictionary<string, LlmPresetProfile>? parsedPresetProfiles = null;
             string? diskActivePreset = null;
+            string? legacyWebRemoteToken = null;
             var diskActiveProvider = NormalizeProvider(SelectedProvider);
             using var doc = await OpenSettingsDocumentAsync(cancellationToken);
             if (doc != null)
@@ -1403,7 +1419,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     WebRemotePortText = WebRemotePort.ToString();
                 }
                 if (root.TryGetProperty("web_remote_token", out var webRemoteToken))
-                    WebRemoteToken = webRemoteToken.GetString() ?? string.Empty;
+                    legacyWebRemoteToken = webRemoteToken.GetString();
                 _loadingWebRemote = false;
 
                 if (root.TryGetProperty("weather_city", out var weatherCity))
@@ -1474,8 +1490,29 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
             RebuildMusicProviders(savedMusicOrder, disabledMusicProviders);
 
-            if (string.IsNullOrWhiteSpace(WebRemoteToken))
-                WebRemoteToken = Services.WebRemote.LanAddressResolver.GenerateAccessToken();
+            var secureWebRemoteToken = await _secureStorage.GetApiKeyAsync(WebRemoteTokenCredentialService);
+            string resolvedWebRemoteToken;
+            if (!string.IsNullOrWhiteSpace(secureWebRemoteToken))
+            {
+                resolvedWebRemoteToken = secureWebRemoteToken.Trim();
+                _persistedWebRemoteToken = resolvedWebRemoteToken;
+            }
+            else if (!string.IsNullOrWhiteSpace(legacyWebRemoteToken))
+            {
+                resolvedWebRemoteToken = legacyWebRemoteToken.Trim();
+                await _secureStorage.SaveApiKeyAsync(WebRemoteTokenCredentialService, resolvedWebRemoteToken);
+                _persistedWebRemoteToken = resolvedWebRemoteToken;
+            }
+            else
+            {
+                resolvedWebRemoteToken = Services.WebRemote.LanAddressResolver.GenerateAccessToken();
+                _persistedWebRemoteToken = null;
+            }
+
+            _loadingWebRemote = true;
+            WebRemoteToken = resolvedWebRemoteToken;
+            _webRemoteTokenDirty = false;
+            _loadingWebRemote = false;
 
             // 画像开关初值在设置加载完成后同步给服务（主窗口加载路径也会再同步一次）
             if (_listeningProfile != null)
@@ -3578,6 +3615,13 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 WebRemotePortText = WebRemotePort.ToString();
             if (string.IsNullOrWhiteSpace(WebRemoteToken))
                 WebRemoteToken = Services.WebRemote.LanAddressResolver.GenerateAccessToken();
+            var tokenChanged = !string.Equals(WebRemoteToken, _persistedWebRemoteToken, StringComparison.Ordinal);
+            if ((persistLlmFields || WebRemoteEnabled || _webRemoteTokenDirty) && tokenChanged)
+            {
+                await _secureStorage.SaveApiKeyAsync(WebRemoteTokenCredentialService, WebRemoteToken);
+                _persistedWebRemoteToken = WebRemoteToken;
+                _webRemoteTokenDirty = false;
+            }
 
             var settingsData = new
             {
@@ -3607,7 +3651,6 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 listener_profile_enabled = ListenerProfileEnabled,
                 web_remote_enabled = WebRemoteEnabled,
                 web_remote_port = WebRemotePort,
-                web_remote_token = WebRemoteToken,
                 weather_city = WeatherCity,
                 weather_latitude = WeatherLatitude,
                 weather_longitude = WeatherLongitude,
@@ -3703,6 +3746,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 return payloadJson;
             foreach (var key in existing.Select(kv => kv.Key).ToArray())
             {
+                if (MigratedSecretDiskKeys.Contains(key))
+                    continue;
                 if (!fresh.ContainsKey(key))
                     fresh[key] = existing[key]?.DeepClone();
             }
@@ -3838,6 +3883,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         _selectedLanguageSub.Dispose();
         _closeActionSub.Dispose();
         _webRemoteToggleSub.Dispose();
+        _webRemoteTokenSub.Dispose();
         _listenerProfileToggleSub.Dispose();
         _localModelSettingsSub.Dispose();
         _llmProfileSwapSub.Dispose();

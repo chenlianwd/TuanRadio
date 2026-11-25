@@ -17,6 +17,7 @@ namespace AIRadio.Desktop.Services.Music;
 public sealed class RadioStreamProbeService : IRadioStreamProbeService, IDisposable
 {
     private const string UserAgent = "TuanRadio/1.0";
+    private const int MaxRedirectHops = 5;
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3.5);
 
     private readonly HttpClient _httpClient;
@@ -31,7 +32,7 @@ public sealed class RadioStreamProbeService : IRadioStreamProbeService, IDisposa
         }
         else
         {
-            _httpClient = new HttpClient();
+            _httpClient = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false });
             _ownsClient = true;
         }
     }
@@ -65,47 +66,92 @@ public sealed class RadioStreamProbeService : IRadioStreamProbeService, IDisposa
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.TryAddWithoutValidation("Icy-MetaData", "1");
-            request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
-
-            // 仅读取响应头后立即释放 response，强行切断底层直播流，防止内存与连接泄漏
-            using var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                timeoutCts.Token).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
+            var currentUri = uri;
+            HttpResponseMessage? response = null;
+            try
             {
-                return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
-                    AppLanguage.T($"服务器返回状态 {(int)response.StatusCode}", $"Server returned status {(int)response.StatusCode}"));
+                for (var hop = 0; hop <= MaxRedirectHops; hop++)
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get, currentUri);
+                    request.Headers.TryAddWithoutValidation("Icy-MetaData", "1");
+                    request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+
+                    // 仅读取响应头后立即释放 response，强行切断底层直播流，防止内存与连接泄漏
+                    response = await _httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeoutCts.Token).ConfigureAwait(false);
+
+                    var statusCode = (int)response.StatusCode;
+                    if (statusCode is >= 300 and <= 399 && response.Headers.Location is { } location)
+                    {
+                        var nextUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+                        response.Dispose();
+                        response = null;
+
+                        if (hop == MaxRedirectHops)
+                        {
+                            return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
+                                AppLanguage.T("重定向次数过多，探测已中止", "Too many redirects; probe aborted"));
+                        }
+
+                        if ((nextUri.Scheme != Uri.UriSchemeHttp && nextUri.Scheme != Uri.UriSchemeHttps) ||
+                            !await MediaUriPolicy.ValidateCustomRadioAsync(nextUri, timeoutCts.Token).ConfigureAwait(false))
+                        {
+                            Log.Warning("Stream probe redirect blocked for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(nextUri));
+                            return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
+                                AppLanguage.T("重定向目标被安全策略拒绝（禁止本机回环或受限地址）", "Redirect target blocked by security policy"));
+                        }
+
+                        currentUri = nextUri;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                if (response == null)
+                {
+                    return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
+                        AppLanguage.T("探测异常，仍可手动保存", "Probe error; you can still save manually"));
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
+                        AppLanguage.T($"服务器返回状态 {(int)response.StatusCode}", $"Server returned status {(int)response.StatusCode}"));
+                }
+
+                var icyName = GetHeaderValue(response, "icy-name");
+                var icyGenre = GetHeaderValue(response, "icy-genre");
+                var icyBrRaw = GetHeaderValue(response, "icy-br");
+
+                var bitrate = ParseBitrateKbps(icyBrRaw);
+
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                var codec = MapContentTypeToCodec(contentType) ?? fallbackCodec;
+
+                var hasIcyHeaders = !string.IsNullOrEmpty(icyName) || !string.IsNullOrEmpty(icyGenre) || bitrate.HasValue;
+                var isChunked = response.Headers.TransferEncodingChunked == true;
+                var contentLength = response.Content.Headers.ContentLength;
+                var looksLikeStaticFile = !hasIcyHeaders &&
+                                          !isChunked &&
+                                          contentLength is > 0 &&
+                                          !string.Equals(codec, "HLS", StringComparison.OrdinalIgnoreCase);
+
+                return new StreamProbeResult(
+                    Success: true,
+                    StationName: string.IsNullOrWhiteSpace(icyName) ? null : WebUtility.HtmlDecode(icyName.Trim()),
+                    Codec: codec,
+                    BitrateKbps: bitrate,
+                    Tags: string.IsNullOrWhiteSpace(icyGenre) ? null : WebUtility.HtmlDecode(icyGenre.Trim()),
+                    LooksLikeStaticFile: looksLikeStaticFile,
+                    ErrorMessage: null);
             }
-
-            var icyName = GetHeaderValue(response, "icy-name");
-            var icyGenre = GetHeaderValue(response, "icy-genre");
-            var icyBrRaw = GetHeaderValue(response, "icy-br");
-
-            var bitrate = ParseBitrateKbps(icyBrRaw);
-
-            var contentType = response.Content.Headers.ContentType?.MediaType;
-            var codec = MapContentTypeToCodec(contentType) ?? fallbackCodec;
-
-            var hasIcyHeaders = !string.IsNullOrEmpty(icyName) || !string.IsNullOrEmpty(icyGenre) || bitrate.HasValue;
-            var isChunked = response.Headers.TransferEncodingChunked == true;
-            var contentLength = response.Content.Headers.ContentLength;
-            var looksLikeStaticFile = !hasIcyHeaders &&
-                                      !isChunked &&
-                                      contentLength is > 0 &&
-                                      !string.Equals(codec, "HLS", StringComparison.OrdinalIgnoreCase);
-
-            return new StreamProbeResult(
-                Success: true,
-                StationName: string.IsNullOrWhiteSpace(icyName) ? null : WebUtility.HtmlDecode(icyName.Trim()),
-                Codec: codec,
-                BitrateKbps: bitrate,
-                Tags: string.IsNullOrWhiteSpace(icyGenre) ? null : WebUtility.HtmlDecode(icyGenre.Trim()),
-                LooksLikeStaticFile: looksLikeStaticFile,
-                ErrorMessage: null);
+            finally
+            {
+                response?.Dispose();
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -114,13 +160,13 @@ public sealed class RadioStreamProbeService : IRadioStreamProbeService, IDisposa
         }
         catch (HttpRequestException ex)
         {
-            Log.Debug(ex, "Stream probe failed for {Url}", streamUrl);
+            Log.Debug(ex, "Stream probe failed for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(streamUrl));
             return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
                 AppLanguage.T("无法探测元数据（可能为非标 ICY 协议或网络受限），仍可保存", "Could not probe metadata; you can still save manually"));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.Debug(ex, "Unexpected error probing {Url}", streamUrl);
+            Log.Debug(ex, "Unexpected error probing {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(streamUrl));
             return new StreamProbeResult(false, null, fallbackCodec, null, null, false,
                 AppLanguage.T("探测异常，仍可手动保存", "Probe error; you can still save manually"));
         }

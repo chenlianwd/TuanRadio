@@ -22,6 +22,7 @@ namespace AIRadio.Desktop.Services.WebRemote;
 public sealed class WebRemoteService : IWebRemoteService
 {
     private const int MaxClients = 8;
+    private const int MaxConcurrentConnections = 32;
     private const int MaxHttpHeaderBytes = 8 * 1024;
     private const int MaxHttpBodyBytes = 32 * 1024;
     private const int MaxWsFrameBytes = 16 * 1024;
@@ -86,6 +87,7 @@ public sealed class WebRemoteService : IWebRemoteService
     private readonly SemaphoreSlim _broadcastGate = new(1, 1);
     private readonly ConcurrentDictionary<Guid, WsClient> _clients = new();
     private readonly object _broadcastLock = new();
+    private int _activeConnections;
     private int _broadcastDirty;
 
     private Func<WebRemoteSnapshot> _snapshotProvider = () => new WebRemoteSnapshot();
@@ -463,6 +465,13 @@ public sealed class WebRemoteService : IWebRemoteService
                 continue;
             }
 
+            if (Interlocked.Increment(ref _activeConnections) > MaxConcurrentConnections)
+            {
+                Interlocked.Decrement(ref _activeConnections);
+                try { tcp.Dispose(); } catch { }
+                continue;
+            }
+
             _ = Task.Run(() => HandleConnectionAsync(tcp, ct), CancellationToken.None);
         }
     }
@@ -516,6 +525,13 @@ public sealed class WebRemoteService : IWebRemoteService
             if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) &&
                 path == "/ws")
             {
+                if (!IsAllowedWebSocketOrigin(headers))
+                {
+                    await WriteJsonResponseAsync(stream, 403, "Forbidden",
+                        new { ok = false, error = "forbidden_origin" }, ct);
+                    return;
+                }
+
                 if (!headers.TryGetValue("Upgrade", out var upgrade) ||
                     !string.Equals(upgrade, "websocket", StringComparison.OrdinalIgnoreCase) ||
                     !headers.TryGetValue("Sec-WebSocket-Key", out var wsKey) ||
@@ -681,7 +697,30 @@ public sealed class WebRemoteService : IWebRemoteService
                 try { stream?.Dispose(); } catch { }
                 try { tcp.Dispose(); } catch { }
             }
+            Interlocked.Decrement(ref _activeConnections);
         }
+    }
+
+    internal static bool IsAllowedWebSocketOrigin(IReadOnlyDictionary<string, string> headers)
+    {
+        if (!headers.TryGetValue("Origin", out var origin) || string.IsNullOrWhiteSpace(origin))
+            return true;
+
+        if (!Uri.TryCreate(origin.Trim(), UriKind.Absolute, out var originUri))
+            return false;
+
+        if (!string.Equals(originUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(originUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!headers.TryGetValue("Host", out var host) || string.IsNullOrWhiteSpace(host))
+            return false;
+
+        if (!Uri.TryCreate($"{originUri.Scheme}://{host.Trim()}", UriKind.Absolute, out var hostUri))
+            return false;
+
+        return string.Equals(originUri.Host, hostUri.Host, StringComparison.OrdinalIgnoreCase) &&
+               originUri.Port == hostUri.Port;
     }
 
     private async Task RunWebSocketSessionAsync(TcpClient tcp, NetworkStream stream, WebSocket ws, CancellationToken ct)

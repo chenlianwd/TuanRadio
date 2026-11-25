@@ -172,7 +172,7 @@ public sealed class PodcastTranscriptionService : IPodcastTranscriptionService, 
                 var next = location.IsAbsoluteUri ? location : new Uri(current, location);
                 if (!await _uriValidator(next, ct).ConfigureAwait(false))
                 {
-                    Log.Warning("Podcast transcription redirect blocked for {Url}", next);
+                    Log.Warning("Podcast transcription redirect blocked for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(next));
                     return null;
                 }
                 current = next;
@@ -188,7 +188,7 @@ public sealed class PodcastTranscriptionService : IPodcastTranscriptionService, 
 
             if (!response.IsSuccessStatusCode)
             {
-                Log.Warning("Podcast transcription download returned status {Status} for {Url}", statusCode, current);
+                Log.Warning("Podcast transcription download returned status {Status} for {Url}", statusCode, SensitiveDataSanitizer.SanitizeUrlForLog(current));
                 return null;
             }
 
@@ -214,7 +214,7 @@ public sealed class PodcastTranscriptionService : IPodcastTranscriptionService, 
             return total > 0 ? targetPath : null;
         }
 
-        Log.Warning("Podcast transcription exceeded max redirect hops for {Url}", initialUri);
+        Log.Warning("Podcast transcription exceeded max redirect hops for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(initialUri));
         return null;
     }
 

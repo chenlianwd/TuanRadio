@@ -39,7 +39,7 @@ public class YouTubeMusicService : IMusicSearchService
         try
         {
             // Use --dump-json for structured output (one JSON object per line)
-            var args = $"\"ytsearch{limit}:{EscapeArg(keyword)}\" --dump-json --no-download --no-warnings{BuildCookieArgs()}";
+            var args = BuildSearchArguments(keyword, limit, _accounts?.YtdlpCookieBrowser);
             var output = await RunYtdlpAsync(args, cancellationToken);
 
             if (string.IsNullOrWhiteSpace(output))
@@ -80,7 +80,7 @@ public class YouTubeMusicService : IMusicSearchService
 
             var url = $"https://www.youtube.com/watch?v={videoId}";
 
-            var args = $"-f ba --get-url --no-warnings --ignore-errors{BuildCookieArgs()} {EscapeArg(url)}";
+            var args = BuildPlayUrlArguments(url, _accounts?.YtdlpCookieBrowser);
             var output = await RunYtdlpAsync(args, cancellationToken);
 
             var playUrl = output?.Trim();
@@ -150,7 +150,7 @@ public class YouTubeMusicService : IMusicSearchService
         return tracks;
     }
 
-    private async Task<string?> RunYtdlpAsync(string args, CancellationToken cancellationToken)
+    private async Task<string?> RunYtdlpAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
     {
         // 不再兜底吞异常：执行失败若塌缩成 null 会被聚合层记 success("ok(0)")，
         // YouTube 源永远不熔断、逐源状态失真；异常上抛由聚合层统一记账
@@ -159,12 +159,15 @@ public class YouTubeMusicService : IMusicSearchService
         var psi = new ProcessStartInfo
         {
             FileName = ytdlpPath,
-            Arguments = args,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        foreach (var arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
 
         using var process = Process.Start(psi);
         if (process == null) return null;
@@ -235,13 +238,55 @@ public class YouTubeMusicService : IMusicSearchService
     }
 
     /// <summary>
-    /// YouTube 对匿名流量默认弹出 "Sign in to confirm you're not a bot" 风控，
-    /// 配置了浏览器来源 cookies 时透传给 yt-dlp 复用真实登录态。
+    /// 构建搜索命令的参数列表，经由 ProcessStartInfo.ArgumentList 逐项传递以彻底杜绝命令行参数注入。
     /// </summary>
-    private string BuildCookieArgs()
+    internal static List<string> BuildSearchArguments(string keyword, int limit, string? cookieBrowser)
     {
-        var browser = _accounts?.YtdlpCookieBrowser;
-        return string.IsNullOrEmpty(browser) ? "" : $" --cookies-from-browser {EscapeArg(browser)}";
+        var safeKeyword = StripControlChars(keyword);
+        var args = new List<string>
+        {
+            $"ytsearch{limit}:{safeKeyword}",
+            "--dump-json",
+            "--no-download",
+            "--no-warnings"
+        };
+        AppendCookieArgs(args, cookieBrowser);
+        return args;
+    }
+
+    /// <summary>
+    /// 构建播放 URL 解析命令的参数列表，经由 ProcessStartInfo.ArgumentList 逐项传递。
+    /// </summary>
+    internal static List<string> BuildPlayUrlArguments(string url, string? cookieBrowser)
+    {
+        var args = new List<string>
+        {
+            "-f",
+            "ba",
+            "--get-url",
+            "--no-warnings",
+            "--ignore-errors"
+        };
+        AppendCookieArgs(args, cookieBrowser);
+        args.Add(StripControlChars(url));
+        return args;
+    }
+
+    private static void AppendCookieArgs(List<string> args, string? cookieBrowser)
+    {
+        var browser = StripControlChars(cookieBrowser);
+        if (!string.IsNullOrWhiteSpace(browser))
+        {
+            args.Add("--cookies-from-browser");
+            args.Add(browser);
+        }
+    }
+
+    private static string StripControlChars(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+        return value.Replace("\r", "").Replace("\n", "").Replace("\0", "");
     }
 
     internal static string EscapeArg(string arg)

@@ -306,7 +306,16 @@ public class WebRemoteViewModelTests
 
         try
         {
+            var store = new Dictionary<string, string>(StringComparer.Ordinal);
             var secure = new Mock<ISecureStorage>();
+            secure.Setup(s => s.GetApiKeyAsync(It.IsAny<string>()))
+                .ReturnsAsync((string key) => store.TryGetValue(key, out var v) ? v : null);
+            secure.Setup(s => s.SaveApiKeyAsync(It.IsAny<string>(), It.IsAny<string>()))
+                .Returns((string key, string val) =>
+                {
+                    store[key] = val;
+                    return Task.CompletedTask;
+                });
             using (var s1 = new SettingsViewModel(
                 new Mock<ILLMService>().Object,
                 secure.Object,

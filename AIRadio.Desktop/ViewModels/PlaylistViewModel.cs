@@ -2497,7 +2497,11 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
             ImportPreviewStations.Add(s);
 
         HasImportPreview = ImportPreviewStations.Count > 0;
-        if (result.Stations.Count == 0)
+        if (result.Stations.Count == 0 && result.WasTruncated)
+        {
+            ImportSummaryText = AppLanguage.T("播放列表文件过大（上限 5 MB）", "Playlist file is too large (max 5 MB)");
+        }
+        else if (result.Stations.Count == 0)
         {
             ImportSummaryText = AppLanguage.T("未在文件中识别到有效的 http/https 电台流", "No valid http/https streams found in file");
         }
@@ -2674,7 +2678,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load podcast episodes for {Url}", feed.RssUrl);
+            Log.Warning(ex, "Failed to load podcast episodes for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(feed.RssUrl));
             _allPodcastEpisodes.Clear();
             PodcastEpisodes.Clear();
             HasPodcastEpisodes = false;
@@ -2779,7 +2783,7 @@ public partial class PlaylistViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Subscribe podcast failed for {Url}", url);
+            Log.Warning(ex, "Subscribe podcast failed for {Url}", SensitiveDataSanitizer.SanitizeUrlForLog(url));
             PodcastSubscribeError = AppLanguage.Get("S_PodcastInvalidUrl");
         }
         finally

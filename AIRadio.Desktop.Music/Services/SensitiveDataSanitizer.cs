@@ -1,3 +1,4 @@
+using System;
 using System.Text.RegularExpressions;
 
 namespace AIRadio.Desktop.Services;
@@ -28,5 +29,34 @@ public static class SensitiveDataSanitizer
 
         var masked = SensitivePairs.Replace(text, "$1=<redacted>");
         return BearerTokens.Replace(masked, "$1 <redacted>");
+    }
+
+    /// <summary>
+    /// 用于日志输出的 URL 脱敏：仅保留 scheme://host[:port]/path，彻底剥离 userinfo、query string 与 fragment，
+    /// 防止私密/付费订阅链接或带签名参数的音频直链把凭据写入日志文件。
+    /// </summary>
+    public static string SanitizeUrlForLog(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return string.Empty;
+
+        if (Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+            return SanitizeUrlForLog(uri);
+
+        var q = url.IndexOfAny(['?', '#']);
+        var truncated = q >= 0 ? url[..q] : url;
+        return Sanitize(truncated) ?? string.Empty;
+    }
+
+    public static string SanitizeUrlForLog(Uri? uri)
+    {
+        if (uri == null)
+            return string.Empty;
+
+        if (!uri.IsAbsoluteUri)
+            return SanitizeUrlForLog(uri.OriginalString);
+
+        var portPart = uri.IsDefaultPort ? string.Empty : $":{uri.Port}";
+        return $"{uri.Scheme}://{uri.Host}{portPart}{uri.AbsolutePath}";
     }
 }

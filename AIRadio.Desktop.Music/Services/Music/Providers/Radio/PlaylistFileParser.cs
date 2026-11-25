@@ -14,6 +14,7 @@ namespace AIRadio.Desktop.Services.Music;
 public sealed class PlaylistFileParser : IPlaylistFileParser
 {
     public const int MaxImportStations = 500;
+    public const long MaxFileSizeBytes = 5 * 1024 * 1024;
 
     static PlaylistFileParser()
     {
@@ -24,6 +25,10 @@ public sealed class PlaylistFileParser : IPlaylistFileParser
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return new PlaylistParseResult([], 0, false);
+
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length > MaxFileSizeBytes)
+            return new PlaylistParseResult([], 0, true);
 
         var bytes = await File.ReadAllBytesAsync(filePath, ct).ConfigureAwait(false);
         var content = DecodeWithFallback(bytes);

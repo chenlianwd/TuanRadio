@@ -200,7 +200,7 @@ public class MusicApiServer : IDisposable
                     process.ErrorDataReceived += (_, e) =>
                     {
                         if (!string.IsNullOrEmpty(e.Data))
-                            Log.Warning("{Tag} ERR: {Line}", _logTag, e.Data);
+                            Log.Warning("{Tag} ERR: {Line}", _logTag, SensitiveDataSanitizer.Sanitize(e.Data));
                     };
 
                     cancellationToken.ThrowIfCancellationRequested();
