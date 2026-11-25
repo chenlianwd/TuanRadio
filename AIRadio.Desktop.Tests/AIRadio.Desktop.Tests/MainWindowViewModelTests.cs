@@ -1658,4 +1658,79 @@ public class MainWindowViewModelTests
             try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
         }
     }
+
+    [Fact]
+    public async Task SelectCharacterCommand_PersistsSelectionAndRestoresOnRestart()
+    {
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var dir = Path.Combine(Path.GetTempPath(), $"airadio_char_persist_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var playlistFile = Path.Combine(dir, "playlist.json");
+        var settingsFile = Path.Combine(dir, "settings.json");
+
+        try
+        {
+            var playlist = new List<Track>();
+            var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+            var dj1 = new Mock<IDJService>();
+            DJProfile? initializedProfile1 = null;
+            dj1.Setup(x => x.Initialize(It.IsAny<DJProfile>())).Callback<DJProfile>(p => initializedProfile1 = p);
+            dj1.Setup(x => x.GenerateSpeechAsync(It.IsAny<string>())).ReturnsAsync((byte[]?)null);
+
+            using (var vm1 = new MainWindowViewModel(
+                audio.Object,
+                dj1.Object,
+                new Mock<ILLMService>().Object,
+                new Mock<ISecureStorage>().Object,
+                new Mock<IMusicSearchService>().Object,
+                new Mock<ISttService>().Object,
+                playlistFile,
+                settingsFile))
+            {
+                await vm1.LoadLocalStateAsync();
+                Assert.Equal("haru", vm1.SelectedCharacter.Id);
+
+                var noir = vm1.Characters.First(c => c.Id == "mao");
+                await vm1.SelectCharacterCommand.Execute(noir).FirstAsync();
+                await vm1.SettingsVM.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.Equal("mao", vm1.SelectedCharacter.Id);
+                Assert.Equal("mao", vm1.SettingsVM.SelectedCharacterId);
+                Assert.Equal("mao", vm1.SettingsVM.SelectedCharacter?.Id);
+                Assert.Equal("Noir", initializedProfile1?.Name);
+                // 启动 1 次 + 切换 1 次：轻量 UI 持久化不得误触发 CharacterSettingsChanged 造成二次初始化
+                dj1.Verify(x => x.Initialize(It.IsAny<DJProfile>()), Times.Exactly(2));
+            }
+
+            // 模拟重启：新建 MainWindowViewModel 加载同一份 settings.json
+            var dj2 = new Mock<IDJService>();
+            DJProfile? initializedProfile2 = null;
+            dj2.Setup(x => x.Initialize(It.IsAny<DJProfile>())).Callback<DJProfile>(p => initializedProfile2 = p);
+
+            using (var vm2 = new MainWindowViewModel(
+                audio.Object,
+                dj2.Object,
+                new Mock<ILLMService>().Object,
+                new Mock<ISecureStorage>().Object,
+                new Mock<IMusicSearchService>().Object,
+                new Mock<ISttService>().Object,
+                playlistFile,
+                settingsFile))
+            {
+                await vm2.LoadLocalStateAsync();
+
+                Assert.Equal("mao", vm2.SelectedCharacter.Id);
+                Assert.Equal("Noir", vm2.SelectedCharacter.DisplayName);
+                Assert.Equal("Noir", initializedProfile2?.Name);
+                Assert.Equal("mao", vm2.SettingsVM.SelectedCharacter?.Id);
+            }
+        }
+        finally
+        {
+            RxApp.MainThreadScheduler = originalScheduler;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+        }
+    }
 }

@@ -429,6 +429,7 @@ public class CharacterProfile : INotifyPropertyChanged
     internal string DescriptionEn { get; set; } = "";
     internal string PersonalityPromptZh { get; set; } = "";
     internal string PersonalityPromptEn { get; set; } = "";
+    internal IReadOnlyList<string> LegacyPersonalityPrompts { get; set; } = Array.Empty<string>();
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -455,9 +456,14 @@ public class CharacterProfile : INotifyPropertyChanged
             DescriptionZh = "温柔安静的深夜 DJ",
             DescriptionEn = "A gentle, quiet late-night DJ",
             VoiceId = "female-yujie",
-            PersonalityPrompt = "你是名叫 Aster 的中文深夜电台 DJ。气质温柔、安静、松弛，善于陪伴听众慢慢安静下来。",
-            PersonalityPromptZh = "你是名叫 Aster 的中文深夜电台 DJ。气质温柔、安静、松弛，善于陪伴听众慢慢安静下来。",
-            PersonalityPromptEn = "You are Aster, a gentle and relaxed late-night radio DJ who helps listeners slowly unwind."
+            PersonalityPrompt = "你是名叫 Aster 的中文电台 DJ。气质像深夜电台主播一样温柔、安静、松弛，善于陪伴听众慢慢安静下来；无论白天还是夜晚开播，都按当前真实时段自然交流。",
+            PersonalityPromptZh = "你是名叫 Aster 的中文电台 DJ。气质像深夜电台主播一样温柔、安静、松弛，善于陪伴听众慢慢安静下来；无论白天还是夜晚开播，都按当前真实时段自然交流。",
+            PersonalityPromptEn = "You are Aster, a gentle, quiet, and relaxed radio DJ with a soothing late-night style who helps listeners unwind; always match the actual time of day whether on air during the day or at night.",
+            LegacyPersonalityPrompts = new[]
+            {
+                "你是名叫 Aster 的中文深夜电台 DJ。气质温柔、安静、松弛，善于陪伴听众慢慢安静下来。",
+                "You are Aster, a gentle and relaxed late-night radio DJ who helps listeners slowly unwind."
+            }
         },
         new()
         {
@@ -522,7 +528,8 @@ public class CharacterProfile : INotifyPropertyChanged
     {
         var profile = Presets.FirstOrDefault(item =>
             string.Equals(value, item.PersonalityPromptZh, StringComparison.Ordinal) ||
-            string.Equals(value, item.PersonalityPromptEn, StringComparison.Ordinal));
+            string.Equals(value, item.PersonalityPromptEn, StringComparison.Ordinal) ||
+            item.LegacyPersonalityPrompts.Any(legacy => string.Equals(value, legacy, StringComparison.Ordinal)));
         return profile == null
             ? value
             : AppLanguage.T(profile.PersonalityPromptZh, profile.PersonalityPromptEn);

@@ -440,6 +440,8 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
 
     // Character customization
     public List<CharacterProfile> Characters { get; } = CharacterProfile.Presets;
+    /// <summary>当前电台选中的 DJ 主播 ID（持久化到 settings.json，与设置页编辑目标 SelectedCharacter 分离）。</summary>
+    [Reactive] public partial string SelectedCharacterId { get; set; } = CharacterProfile.Presets[0].Id;
     [Reactive] public partial CharacterProfile? SelectedCharacter { get; set; }
     [Reactive] public partial VoiceOption? CharacterVoice { get; set; }
     [Reactive] public partial string CharacterPersonality { get; set; } = string.Empty;
@@ -1454,6 +1456,11 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                     _loadingYtdlpBrowser = false;
                 }
 
+                SelectedCharacterId = root.TryGetProperty("selected_character_id", out var selectedCharElem) &&
+                    selectedCharElem.ValueKind == JsonValueKind.String
+                    ? NormalizeCharacterId(selectedCharElem.GetString())
+                    : CharacterProfile.Presets[0].Id;
+
                 if (root.TryGetProperty("character_overrides", out var ovElem))
                 {
                     foreach (var prop in ovElem.EnumerateObject())
@@ -1474,7 +1481,9 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             if (_listeningProfile != null)
                 _listeningProfile.Enabled = ListenerProfileEnabled;
 
-            // Apply first character
+            // Align settings editor selection with persisted active character and apply overrides
+            SelectedCharacter = Characters.Find(c =>
+                string.Equals(c.Id, SelectedCharacterId, StringComparison.OrdinalIgnoreCase)) ?? Characters[0];
             if (SelectedCharacter != null)
                 LoadCharacterOverrides(SelectedCharacter);
 
@@ -3440,12 +3449,15 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             }
 
             if (persistLlmFields)
+            {
                 NormalizeLlmInputs();
 
-            // Save current character overrides
-            if (SelectedCharacter != null && CharacterVoice != null)
-            {
-                _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
+                // 仅显式保存时提交设置页主播音色/人设表单草稿：
+                // 轻量 UI 状态保存（主题/简洁模式/切主播等）不得偷偷落盘未提交草稿或触发 CharacterSettingsChanged
+                if (SelectedCharacter != null && CharacterVoice != null)
+                {
+                    _overrides[SelectedCharacter.Id] = (CharacterVoice.Id, CharacterPersonality);
+                }
             }
 
             string providerToWrite, baseUrlToWrite, modelToWrite, activePresetToWrite;
@@ -3607,6 +3619,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
                 music_provider_order = MusicProviders.Select(item => item.Id).ToArray(),
                 music_provider_disabled = MusicProviders.Where(item => !item.Enabled)
                     .Select(item => item.Id).ToArray(),
+                selected_character_id = NormalizeCharacterId(SelectedCharacterId),
                 character_overrides = overridesJson
             };
             // Settings stored as plaintext JSON in %APPDATA%; API key is in Windows Credential Manager.
@@ -4661,6 +4674,18 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         "ask" => "ask",
         _ => "tray"
     };
+
+    internal static string NormalizeCharacterId(string? id)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            var matched = CharacterProfile.Presets.Find(c =>
+                string.Equals(c.Id, id.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (matched != null)
+                return matched.Id;
+        }
+        return CharacterProfile.Presets[0].Id;
+    }
 
     private static bool RequiresApiKey(string provider)
         => !string.Equals(NormalizeProvider(provider), "local", StringComparison.OrdinalIgnoreCase);

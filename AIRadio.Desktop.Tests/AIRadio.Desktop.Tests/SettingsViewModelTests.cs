@@ -2657,4 +2657,64 @@ public class SettingsViewModelTests
             DeleteTempSettingsFiles(settingsFile);
         }
     }
+
+    [Fact]
+    public async Task SelectedCharacterId_PersistsAcrossSaveAndLoad_AndFallsBackOnUnknown()
+    {
+        var settingsFile = CreateTempSettingsFile();
+        try
+        {
+            using (var vm = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await vm.LoadAsync();
+                Assert.Equal("haru", vm.SelectedCharacterId);
+
+                vm.SelectedCharacterId = "hiyori";
+                vm.RequestUiStateSave();
+                await vm.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
+            var json = await File.ReadAllTextAsync(settingsFile);
+            using (var doc = System.Text.Json.JsonDocument.Parse(json))
+            {
+                Assert.Equal("hiyori", doc.RootElement.GetProperty("selected_character_id").GetString());
+            }
+
+            using (var reloaded = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await reloaded.LoadAsync();
+                Assert.Equal("hiyori", reloaded.SelectedCharacterId);
+                Assert.Equal("hiyori", reloaded.SelectedCharacter?.Id);
+
+                // 轻量 UI 保存不得把未提交的主播人设草稿落盘，也不得误触发 CharacterSettingsChanged
+                var characterChangedCount = 0;
+                reloaded.CharacterSettingsChanged += () => characterChangedCount++;
+                reloaded.CharacterPersonality = "unsaved draft personality";
+                reloaded.SelectedCharacterId = "mao";
+                reloaded.RequestUiStateSave();
+                await reloaded.WaitForPendingUiSaveAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(0, characterChangedCount);
+                Assert.Null(reloaded.GetOverride("hiyori"));
+
+                // 同一实例重载缺失 selected_character_id 的配置时应重置回默认 haru
+                await File.WriteAllTextAsync(settingsFile, """{"theme_mode": "dark"}""");
+                await reloaded.LoadAsync();
+                Assert.Equal("haru", reloaded.SelectedCharacterId);
+                Assert.Equal("haru", reloaded.SelectedCharacter?.Id);
+            }
+
+            // 未知或非法主播 ID 应回退到默认主播 haru (Lumen)
+            await File.WriteAllTextAsync(settingsFile, """{"selected_character_id": "nonexistent_dj"}""");
+            using (var fallback = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile))
+            {
+                await fallback.LoadAsync();
+                Assert.Equal("haru", fallback.SelectedCharacterId);
+                Assert.Equal("haru", fallback.SelectedCharacter?.Id);
+            }
+        }
+        finally
+        {
+            DeleteTempSettingsFiles(settingsFile);
+        }
+    }
 }

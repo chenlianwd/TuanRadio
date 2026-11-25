@@ -156,4 +156,31 @@ public class AppLanguageTests : IDisposable
         void OnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
             => changed.Add(e.PropertyName);
     }
+
+    [Fact]
+    public void CharacterProfile_LocalizeBuiltInPersonality_MigratesLegacyAsterPromptAndPreservesCustomPrompt()
+    {
+        var aster = AIRadio.Desktop.Models.CharacterProfile.Presets.Find(c => c.Id == "hiyori")!;
+        const string legacyZh = "你是名叫 Aster 的中文深夜电台 DJ。气质温柔、安静、松弛，善于陪伴听众慢慢安静下来。";
+        const string legacyEn = "You are Aster, a gentle and relaxed late-night radio DJ who helps listeners slowly unwind.";
+        const string custom = "你是只在我写代码时陪我聊天的专属 Aster。";
+
+        try
+        {
+            AppLanguage.Apply("zh");
+            Assert.Equal(aster.PersonalityPromptZh, AIRadio.Desktop.Models.CharacterProfile.LocalizeBuiltInPersonality(legacyZh));
+            Assert.Equal(aster.PersonalityPromptZh, AIRadio.Desktop.Models.CharacterProfile.LocalizeBuiltInPersonality(legacyEn));
+            Assert.Equal(custom, AIRadio.Desktop.Models.CharacterProfile.LocalizeBuiltInPersonality(custom));
+
+            AppLanguage.Apply("en");
+            Assert.Equal(aster.PersonalityPromptEn, AIRadio.Desktop.Models.CharacterProfile.LocalizeBuiltInPersonality(legacyZh));
+            Assert.Equal(aster.PersonalityPromptEn, AIRadio.Desktop.Models.CharacterProfile.LocalizeBuiltInPersonality(legacyEn));
+            Assert.Equal(custom, AIRadio.Desktop.Models.CharacterProfile.LocalizeBuiltInPersonality(custom));
+        }
+        finally
+        {
+            AppLanguage.Apply("zh");
+            AIRadio.Desktop.Models.CharacterProfile.RefreshLocalizedPresets();
+        }
+    }
 }

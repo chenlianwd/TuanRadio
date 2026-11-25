@@ -143,7 +143,7 @@ Suggesting or mentioning a song yourself is not a listener request; never attach
 
 Response rules:
 1. Always respond in English only.
-2. Speak naturally like a real late-night radio DJ.
+2. Speak naturally like a real radio DJ, matching the actual time of day.
 3. End with one emotion tag: [happy] [sad] [calm] [neutral] [angry] [surprised].
 4. Use a JSON control block ONLY when the listener explicitly asks to change playback; for questions and small talk, reply with no control block.
 5. When just chatting, answer what they asked in 1-3 natural sentences; don't steer the topic back to music or push songs unless they ask.";
@@ -157,7 +157,7 @@ Response rules:
 
 回复规则：
 1. 必须只用中文回复。
-2. 像真实深夜电台 DJ 一样自然说话，可以有铺垫、画面感和情绪。
+2. 像真实电台 DJ 一样自然说话，契合当前时段，可以有铺垫、画面感和情绪。
 3. 末尾附加一个情绪标签：[happy] [sad] [calm] [neutral] [angry] [surprised]。
 4. 只有听众明确要求改变播放时，才在情绪标签后追加 JSON 控制块；问答与闲聊只聊天，不附控制块。
 5. 闲聊问答直接回应对方问的事，简短自然（一到三句），不要总把话题带回音乐；对方没要歌就不推歌。";
@@ -206,7 +206,7 @@ Response rules:
             }
 
             var prompt = BuildTransitionPrompt(
-                _profile, current, next, DateTime.Now, _weatherSnapshot, BuildProfileContextBlock(includeImpression: false),
+                _profile, current, next, _clock(), _weatherSnapshot, BuildProfileContextBlock(includeImpression: false),
                 recentOnAirLines, listenerTopic, _sceneMode);
             var text = _llm is LLMService llm
                 ? await llm.ChatRawAsync(prompt, cancellationToken)
@@ -534,7 +534,7 @@ Requirements:
     private DJScript BuildFallbackIntroduction(Track? current, Track next)
     {
         var variant = Interlocked.Increment(ref _fallbackVariantCounter);
-        return BuildFallbackIntroduction(_profile, current, next, DateTime.Now, _weatherSnapshot, variant, _sceneMode);
+        return BuildFallbackIntroduction(_profile, current, next, _clock(), _weatherSnapshot, variant, _sceneMode);
     }
 
     internal static DJScript BuildFallbackIntroduction(
@@ -1104,10 +1104,10 @@ Requirements:
     }
 
     /// <summary>
-    /// 聊天现场段：在播曲目 + 最近播放 + 自己最近的广播发言。聊天 LLM 此前对"正在放什么"和
-    /// "DJ 刚说过什么"零感知（串场/开场白不进聊天历史），听众说"这首歌 / X 的版本"时无从指代
-    /// （实测反馈：DJ 反问"你说的是哪一首"）。每次调用取最新快照、不落持久历史；
-    /// 文案跟随 DJ 人设语言（与画像段一致）。
+    /// 聊天现场段：当前本地时间与时段 + 在播曲目 + 实时天气 + 最近播放 + 自己最近的广播发言。
+    /// 聊天 LLM 此前对当前时段、"正在放什么"和"DJ 刚说过什么"零感知（串场/开场白不进聊天历史），
+    /// 容易在白天按人设误判成深夜，或在听众说"这首歌 / X 的版本"时无从指代。每次调用取最新快照、
+    /// 不落持久历史；文案跟随 DJ 人设语言（与画像段一致）。
     /// </summary>
     private string BuildStationContextBlock()
     {
@@ -1123,6 +1123,12 @@ Requirements:
 
         var isEn = _profile.Language == "en";
         var lines = new List<string>();
+
+        var now = _clock();
+        var timeOfDay = DescribeTimeOfDay(now.Hour, isEn);
+        lines.Add(isEn
+            ? $"Current local time: {now:HH:mm} ({timeOfDay}). Match your greetings and references strictly to the actual time of day (never treat daytime as night or vice versa); do not announce the clock time unless asked."
+            : $"当前本地时间：{now:HH:mm}（{timeOfDay}）。问候和交流请严格符合当前实际时段（不要把白天说成夜晚或深夜），除非听众问起，不必主动报出具体时刻。");
 
         // 元数据消毒：第三方音源标题可能携带控制块标记，进提示词前剥除（纵深防御）
         if (nowPlaying != null)

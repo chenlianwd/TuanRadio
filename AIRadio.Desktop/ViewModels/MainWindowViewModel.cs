@@ -644,7 +644,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         TellSongStoryCommand = ReactiveCommand.CreateFromTask(TellSongStoryAsync);
         SelectCharacterCommand = ReactiveCommand.Create<CharacterProfile>(character =>
         {
-            SwitchCharacter(character);
+            SwitchCharacter(character, persist: true);
             _ = AnnounceCharacterGreetingAsync(_lifetimeCts.Token);
         });
 
@@ -1491,11 +1491,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         return _audioService.Playlist.Any(track => !IsSameTrackIdentity(track, current));
     }
 
-    private void SwitchCharacter(CharacterProfile character)
+    private void SwitchCharacter(CharacterProfile character, bool persist = false)
     {
         if (character == null) return;
         SelectedCharacter = character;
         IsCharacterPickerOpen = false;
+
+        if (persist && !string.Equals(SettingsVM.SelectedCharacterId, character.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            SettingsVM.SelectedCharacterId = character.Id;
+            if (!IsSettingsOpen)
+                SettingsVM.SelectedCharacter = character;
+            SettingsVM.RequestUiStateSave();
+        }
 
         // Apply per-character overrides from settings if available
         var ov = SettingsVM.GetOverride(character.Id);
@@ -1585,8 +1593,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // 启动时恢复上次的窗口模式（简洁/标准）与歌词模式
         IsCompactMode = SettingsVM.StartInCompactMode;
         IsLyricsMode = SettingsVM.ShowLyricsInStage;
-        // Apply initial character
-        SwitchCharacter(SelectedCharacter);
+        // Apply initial character (restore persisted selection, fallback to default Lumen)
+        var restoredCharacter = Characters.Find(c =>
+            string.Equals(c.Id, SettingsVM.SelectedCharacterId, StringComparison.OrdinalIgnoreCase))
+            ?? Characters[0];
+        SwitchCharacter(restoredCharacter);
         _audioService.SetSpeechMixMode(SettingsVM.SpeechMixMode);
 
         _sleepTimerService.CloseAppOnExpiry = SettingsVM.SleepTimerCloseApp;

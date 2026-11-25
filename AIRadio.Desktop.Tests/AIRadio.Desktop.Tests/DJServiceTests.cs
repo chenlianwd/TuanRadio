@@ -761,6 +761,50 @@ public class DJServiceTests
     }
 
     [Fact]
+    public async Task GenerateChatResponseAsync_InjectsCurrentLocalTimeAndTimeOfDay()
+    {
+        var afternoonClock = new Func<DateTime>(() => new DateTime(2026, 11, 25, 14, 5, 0));
+        var mockLlm = new Mock<ILLMService>();
+        var djService = new DJService(mockLlm.Object, clock: afternoonClock);
+
+        var aster = CharacterProfile.Presets.Single(c => c.Id == "hiyori");
+        djService.Initialize(new DJProfile
+        {
+            Name = aster.DisplayName,
+            SystemPrompt = aster.PersonalityPromptZh,
+            Language = "zh"
+        });
+
+        List<ChatMessage>? captured = null;
+        mockLlm
+            .Setup(m => m.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
+            .Callback<string, List<ChatMessage>>((_, history) => captured = history)
+            .ReturnsAsync("午安，我是 Aster。[calm]");
+
+        await djService.GenerateChatResponseAsync("你刚刚接管这个电台。请用你的主播人设和语气，主动向我打个招呼，不要提到设置。");
+
+        Assert.NotNull(captured);
+        var zhSystem = captured![0].Content;
+        Assert.Contains("当前本地时间：14:05（午后）", zhSystem);
+        Assert.Contains("不要把白天说成夜晚或深夜", zhSystem);
+        Assert.Contains("无论白天还是夜晚开播，都按当前真实时段自然交流", zhSystem);
+
+        djService.Initialize(new DJProfile
+        {
+            Name = aster.DisplayName,
+            SystemPrompt = aster.PersonalityPromptEn,
+            Language = "en"
+        });
+        await djService.GenerateChatResponseAsync("Greet me.");
+
+        Assert.NotNull(captured);
+        var enSystem = captured![0].Content;
+        Assert.Contains("Current local time: 14:05 (afternoon)", enSystem);
+        Assert.Contains("never treat daytime as night", enSystem);
+        Assert.Contains("always match the actual time of day", enSystem);
+    }
+
+    [Fact]
     public async Task GenerateChatResponseAsync_SystemPromptIncludesChatFirstRule()
     {
         // 聊天优先规则：闲聊简短回应、不主动把话题带回音乐（用户诉求"聊天的时候只希望聊天"）
