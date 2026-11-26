@@ -36,6 +36,12 @@
             <Color x:Key="C_FFA783FF">#FF6BF5C4</Color>
             <Color x:Key="C_66A783FF">#666BF5C4</Color>
             <Color x:Key="C_FFE4D9FF">#FFC8FFE9</Color>
+            <!-- 复古电台视觉语义色 -->
+            <Color x:Key="StudioOnAirColor">#FFFF5E6C</Color>
+            <Color x:Key="VfdPeakColor">#FFFF7A85</Color>
+            <Color x:Key="FmDialNeedleColor">#FFFF7A85</Color>
+            <Color x:Key="FmDialTickColor">#99B3CFE0</Color>
+            <Color x:Key="StageGlassHighlightColor">#0ADCF4FF</Color>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <!-- 底色 tint：冷白 -->
@@ -69,6 +75,12 @@
             <Color x:Key="C_FFA783FF">#FF0F6B57</Color>
             <Color x:Key="C_66A783FF">#660F6B57</Color>
             <Color x:Key="C_FFE4D9FF">#FF0C624F</Color>
+            <!-- 复古电台视觉语义色 -->
+            <Color x:Key="StudioOnAirColor">#FFC21D32</Color>
+            <Color x:Key="VfdPeakColor">#FFCC2B42</Color>
+            <Color x:Key="FmDialNeedleColor">#FFC21D32</Color>
+            <Color x:Key="FmDialTickColor">#B33E5466</Color>
+            <Color x:Key="StageGlassHighlightColor">#14FFFFFF</Color>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

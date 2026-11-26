@@ -27,9 +27,11 @@ public partial class MainWindow : Window, IDisposable
     private Action<string, string>? _djVisualCueHandler;
     private Action<float>? _ttsLevelHandler;
     private IDisposable? _speakingSub;
+    private IDisposable? _playingSub;
     private CancellationTokenSource? _glowCts;
     private CancellationTokenSource? _spinCts;
     private volatile float _ttsTargetLevel;
+    private double _spinTargetDegreesPerSecond;
     private float _glowCurrent;
     private IDisposable? _compactModeSub;
     private IDisposable? _compactTopmostSub;
@@ -56,6 +58,7 @@ public partial class MainWindow : Window, IDisposable
         _avatarBorder = this.FindControl<Border>("AvatarBorder");
         _avatarDisc = this.FindControl<Grid>("AvatarDisc");
         Opened += OnOpenedScheduleTaskbarIconReassert;
+        PropertyChanged += OnWindowVisualStateChanged;
 
         DataContextChanged += (_, _) =>
         {
@@ -69,8 +72,10 @@ public partial class MainWindow : Window, IDisposable
                     _compactTopmostSub = null;
                     _speakingSub?.Dispose();
                     _speakingSub = null;
+                    _playingSub?.Dispose();
+                    _playingSub = null;
                     StopGlow();
-                    StopSpin();
+                    StopSpin(resetAngle: true);
                     if (_djVisualCueHandler != null)
                     {
                         _activeVm.ChatVM.DjVisualCue -= _djVisualCueHandler;
@@ -93,15 +98,23 @@ public partial class MainWindow : Window, IDisposable
                 _ttsLevelHandler = OnTtsLevelChanged;
                 vm.ChatVM.TtsLevelChanged += _ttsLevelHandler;
 
-                // 说话中徽章辉光随 TTS 播放链真实音量起伏；停止说话复位常亮
+                // 说话中徽章辉光随 TTS 播放链真实音量起伏；黑胶盘按 30°/s（说话）与 15°/s（播歌）无缝双速运转
                 _speakingSub = vm.ChatVM.WhenAnyValue(x => x.IsSpeaking)
                     .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(OnSpeakingChanged);
+                    .Subscribe(_ => UpdateAvatarVisualLoops());
 
-                // 简洁模式切换时收缩/还原窗口尺寸；订阅先于 InitializeAsync 的模式恢复
+                _playingSub = vm.PlayerVM.WhenAnyValue(x => x.IsPlaying)
+                    .ObserveOn(RxApp.MainThreadScheduler)
+                    .Subscribe(_ => UpdateAvatarVisualLoops());
+
+                // 简洁模式切换时收缩/还原窗口尺寸并同步视觉活跃门控；订阅先于 InitializeAsync 的模式恢复
                 _compactModeSub = vm.WhenAnyValue(x => x.IsCompactMode)
                     .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(ApplyCompactMode);
+                    .Subscribe(compact =>
+                    {
+                        ApplyCompactMode(compact);
+                        UpdateAvatarVisualLoops();
+                    });
 
                 // 简洁模式下置顶开关变化时实时生效（标准模式不置顶）
                 _compactTopmostSub = vm.SettingsVM.WhenAnyValue(x => x.CompactModeTopmost)
@@ -288,17 +301,45 @@ public partial class MainWindow : Window, IDisposable
     // 播放线程调用：只写目标值，UI 侧由辉光循环轮询消费，不触碰控件
     internal void OnTtsLevelChanged(float level) => _ttsTargetLevel = level;
 
-    private void OnSpeakingChanged(bool speaking)
+    /// <summary>视觉活跃门控：窗口可见、未最小化且处于标准模式时才运转黑胶与辉光动效。</summary>
+    internal bool IsAvatarVisualActive
+        => IsVisible && WindowState != WindowState.Minimized && (_activeVm == null || !_activeVm.IsCompactMode);
+
+    private void OnWindowVisualStateChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
-        if (speaking)
-        {
+        if (e.Property == IsVisibleProperty || e.Property == WindowStateProperty)
+            UpdateAvatarVisualLoops();
+    }
+
+    private void UpdateAvatarVisualLoops()
+    {
+        var speaking = _activeVm?.ChatVM.IsSpeaking ?? false;
+        var playing = _activeVm?.PlayerVM.IsPlaying ?? false;
+        var visualActive = IsAvatarVisualActive;
+
+        // 1. TTS 音量辉光仅在说话且视觉活跃时运行
+        if (speaking && visualActive)
             StartGlow();
-            StartSpin();
+        else
+            StopGlow();
+
+        // 2. 黑胶单一角速度状态机：说话 30°/s、播歌 15°/s、空闲 0°/s；
+        //    从 30°/s 切回 15°/s 时无缝降速不跳零，仅彻底停转（targetSpeed == 0）时回正 Angle = 0；
+        //    隐藏/最小化/简洁模式仅暂停循环不回正，恢复可见后平滑续转。
+        var targetSpeed = speaking ? 30.0 : playing ? 15.0 : 0.0;
+        _spinTargetDegreesPerSecond = targetSpeed;
+
+        if (targetSpeed <= 0)
+        {
+            StopSpin(resetAngle: true);
+        }
+        else if (!visualActive)
+        {
+            StopSpin(resetAngle: false);
         }
         else
         {
-            StopGlow();
-            StopSpin();
+            EnsureSpinRunning();
         }
     }
 
@@ -306,7 +347,9 @@ public partial class MainWindow : Window, IDisposable
     {
         if (_avatarBorder is not Border badge)
             return;
-        _glowCts?.Cancel(); // 串场分段 true→false→true 快速翻转时避免双循环交错写
+        if (_glowCts is { IsCancellationRequested: false })
+            return;
+        _glowCts?.Dispose();
         _glowCts = new CancellationTokenSource();
         _ = RunGlowAsync(badge, _glowCts.Token);
     }
@@ -314,39 +357,45 @@ public partial class MainWindow : Window, IDisposable
     private void StopGlow()
     {
         _glowCts?.Cancel();
+        _glowCts?.Dispose();
+        _glowCts = null;
         if (_avatarBorder is Border badge)
             badge.Opacity = 1;
     }
 
-    // 说话期黑胶唱片旋转（电唱机隐喻，2026-11-03 用户裁决的头像方案 A）：
+    // 黑胶唱片旋转（电唱机隐喻）：
     // 旋转挂在内层 AvatarDisc 的 RotateTransform 上，与外层徽章的辉光（Opacity）、
-    // 弹跳（TranslateTransform）各占各的通道互不干扰；30°/s 慢转与辉光同 33ms 节拍
-    private void StartSpin()
+    // 弹跳（TranslateTransform）各占各的通道互不干扰；按 _spinTargetDegreesPerSecond 双速平滑运转
+    private void EnsureSpinRunning()
     {
         if (_avatarDisc is not Grid disc || disc.RenderTransform is not RotateTransform spin)
             return;
-        _spinCts?.Cancel();
+        if (_spinCts is { IsCancellationRequested: false })
+            return;
+        _spinCts?.Dispose();
         _spinCts = new CancellationTokenSource();
         _ = RunSpinAsync(spin, _spinCts.Token);
     }
 
-    private void StopSpin()
+    private void StopSpin(bool resetAngle)
     {
         _spinCts?.Cancel();
+        _spinCts?.Dispose();
+        _spinCts = null;
         // 停转回正：闲置态标签字母若停在任意角度会歪着，观感像缺陷
-        if (_avatarDisc is Grid { RenderTransform: RotateTransform spinAfter })
+        if (resetAngle && _avatarDisc is Grid { RenderTransform: RotateTransform spinAfter })
             spinAfter.Angle = 0;
     }
 
-    private static async Task RunSpinAsync(RotateTransform spin, CancellationToken token)
+    private async Task RunSpinAsync(RotateTransform spin, CancellationToken token)
     {
-        // 30°/s（12s/圈）：网易云黑胶约 18°/s 的慢转观感，34px 小盘稍快以保旋转可辨
-        const double degreesPerSecond = 30;
         try
         {
             while (!token.IsCancellationRequested)
             {
-                spin.Angle = (spin.Angle + degreesPerSecond * 0.033) % 360;
+                var speed = _spinTargetDegreesPerSecond;
+                if (speed > 0)
+                    spin.Angle = (spin.Angle + speed * 0.033) % 360;
                 await Task.Delay(33, token);
             }
         }
@@ -365,7 +414,6 @@ public partial class MainWindow : Window, IDisposable
     // 线性趋近——有声抬向 1、句间停顿落回 0.55 基线，徽章随 DJ 真实音量呼吸而非常亮
     private async Task RunGlowAsync(Border badge, CancellationToken token)
     {
-
         try
         {
             while (!token.IsCancellationRequested)
@@ -413,13 +461,15 @@ public partial class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
+        PropertyChanged -= OnWindowVisualStateChanged;
         _compactModeSub?.Dispose();
         _compactTopmostSub?.Dispose();
         _speakingSub?.Dispose();
+        _playingSub?.Dispose();
         foreach (var timer in _iconReassertTimers) timer.Stop();
         _iconReassertTimers.Clear();
         StopGlow();
-        StopSpin();
+        StopSpin(resetAngle: false);
         if (_activeVm != null)
         {
             if (_djVisualCueHandler != null)

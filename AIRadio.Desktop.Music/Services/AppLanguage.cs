@@ -88,7 +88,7 @@ public static class AppLanguage
         // 聊天区
         ["S_TipCollapse"] = "收起提示",
         ["S_TipVoiceHint"] = "查看语音播放提示",
-        ["S_ChatWatermark"] = "和主播说点什么…",
+        ["S_ChatWatermark"] = "给值班主播递张点歌纸条…",
         ["S_ReleaseToTranscribe"] = "松开结束说话…",
         ["S_ReleaseToCancelVoice"] = "松开取消录音",
         ["S_Transcribing"] = "正在识别语音…",
@@ -366,7 +366,7 @@ public static class AppLanguage
         // Chat area
         ["S_TipCollapse"] = "Hide tips",
         ["S_TipVoiceHint"] = "Show voice playback tips",
-        ["S_ChatWatermark"] = "Say something to the DJ…",
+        ["S_ChatWatermark"] = "Send a song request note to the DJ…",
         ["S_ReleaseToTranscribe"] = "Release to transcribe…",
         ["S_ReleaseToCancelVoice"] = "Release to cancel",
         ["S_Transcribing"] = "Transcribing speech…",

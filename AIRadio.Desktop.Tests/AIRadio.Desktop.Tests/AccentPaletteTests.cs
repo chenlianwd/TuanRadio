@@ -344,6 +344,10 @@ public class AccentPaletteTests
         // 画像展示卡标签芯片（描边+文字同色 AccentGreen）：最薄余量在 Light 档
         // （薄荷绿 4.75 / 琥珀 4.67），调色板 AccentGreen 或卡底 tint 变更都会破线
         ("AccentGreen", "profileCard", 4.5, "画像标签芯片文本"),
+        // 复古电台视觉增强语义色门禁
+        ("StudioOnAirColor", "footer", 4.5, "演播室 ON AIR 红灯文字"),
+        ("VfdPeakColor", "stage", 3.0, "VFD 频谱峰值图形"),
+        ("FmDialNeedleColor", "stage", 3.0, "FM 刻度尺指针图形"),
     };
 
     private static Dictionary<string, Color> BuildBackgrounds(Dictionary<string, Color> table)
@@ -356,6 +360,7 @@ public class AccentPaletteTests
             ["window"] = table["WindowBg"],
             ["shell"] = Over("SurfaceShell"),
             ["footer"] = Over("SurfaceFooter"),
+            ["stage"] = Over("C_F008080D"),
             ["chat"] = Over("C_E9161623"),
             ["bubble"] = Over("C_EE050507"),
             ["navChip"] = CompositeOver(table["C_3356F5C4"], overlayPanel),

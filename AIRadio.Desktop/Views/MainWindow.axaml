@@ -166,9 +166,10 @@
                 CornerRadius="18"
                 ClipToBounds="True">
             <Grid>
-            <Grid RowDefinitions="64,168,124,*,66,28">
-                <!-- Brand header -->
-                <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}" Padding="22,0">
+            <Grid RowDefinitions="64,184,124,*,66,28">
+                <!-- Brand header（底边双线微浮雕接缝） -->
+                <Border x:Name="BrandHeader" Grid.Row="0" Background="{DynamicResource SurfaceHeader}"
+                        BorderBrush="{DynamicResource C_223D3D4F}" BorderThickness="0,0,0,1" Padding="22,0">
                     <Grid ColumnDefinitions="*,Auto">
                         <!-- 点徽章即切换主播（2026-11-03 用户裁决：省去右侧独立按钮，
                              「要切换谁就点谁」语义直觉）；hover 由 Window 按钮 pointerover 样式提供 -->

@@ -348,10 +348,20 @@ public class ChatMessage : System.ComponentModel.INotifyPropertyChanged
         _ => string.Empty
     };
 
+    public bool IsUser => Role == MessageRole.User;
+    public bool IsAssistant => Role == MessageRole.Assistant;
+    public string TimeText => Timestamp.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+    public string HeaderText => string.IsNullOrWhiteSpace(SenderName)
+        ? TimeText
+        : $"{SenderName} · {TimeText}";
+
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     public void RefreshLocalization()
-        => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(SenderName)));
+    {
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(SenderName)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HeaderText)));
+    }
 }
 
 public enum MessageRole

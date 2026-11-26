@@ -106,15 +106,34 @@
             <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
+        <!-- 物理琴键按压触感：仅作用于显式标记 deck-key 的播控与反馈键，纯视觉 1px 下沉零布局抖动 -->
+        <Style Selector="Button.deck-key:pressed">
+            <Setter Property="RenderTransform" Value="translateY(1px)"/>
+        </Style>
     </UserControl.Styles>
 
     <Border x:Name="DeckRoot" Background="{DynamicResource C_E91B1B2A}" BorderBrush="{DynamicResource C_223D3D4F}" BorderThickness="0,1" Padding="22,8" ClipToBounds="True">
         <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="165,*,Auto">
             <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                    <Border Width="3" Height="11" Background="{DynamicResource C_FF56F5C4}" CornerRadius="2"/>
-                    <Border Width="3" Height="17" Background="{DynamicResource C_FF56F5C4}" CornerRadius="2"/>
-                    <Border Width="3" Height="9" Background="{DynamicResource C_FF56F5C4}" CornerRadius="2"/>
+                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" Height="18">
+                    <Border x:Name="MiniMeterBar0" Width="3" Height="11" VerticalAlignment="Bottom"
+                            Background="{DynamicResource C_FF56F5C4}" CornerRadius="2" RenderTransformOrigin="0.5,1">
+                        <Border.RenderTransform>
+                            <ScaleTransform ScaleY="1"/>
+                        </Border.RenderTransform>
+                    </Border>
+                    <Border x:Name="MiniMeterBar1" Width="3" Height="17" VerticalAlignment="Bottom"
+                            Background="{DynamicResource C_FF56F5C4}" CornerRadius="2" RenderTransformOrigin="0.5,1">
+                        <Border.RenderTransform>
+                            <ScaleTransform ScaleY="1"/>
+                        </Border.RenderTransform>
+                    </Border>
+                    <Border x:Name="MiniMeterBar2" Width="3" Height="9" VerticalAlignment="Bottom"
+                            Background="{DynamicResource C_FF56F5C4}" CornerRadius="2" RenderTransformOrigin="0.5,1">
+                        <Border.RenderTransform>
+                            <ScaleTransform ScaleY="1"/>
+                        </Border.RenderTransform>
+                    </Border>
                 </StackPanel>
                 <StackPanel>
                     <TextBlock Text="{Binding PlayerVM.TrackTitle}" FontSize="14" FontWeight="700"
@@ -146,7 +165,7 @@
 
             <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Button x:Name="ShuffleButton" Width="34" Height="34" Command="{Binding PlayerVM.ToggleShuffleCommand}"
+                <Button x:Name="ShuffleButton" Classes="deck-key" Width="34" Height="34" Command="{Binding PlayerVM.ToggleShuffleCommand}"
                         ToolTip.Tip="{Binding PlayerVM.ShuffleTip}" AutomationProperties.Name="{Binding PlayerVM.ShuffleTip}">
                     <Grid>
                         <Path Width="15" Height="15" Stretch="Uniform" Stroke="{DynamicResource C_FFEDEDF5}" StrokeThickness="2" Opacity="0.55"
@@ -157,11 +176,11 @@
                               Data="M16,3 L21,3 L21,8 M4,20 L21,3 M21,16 L21,21 L16,21 M15,15 L21,21 M4,4 L9,9"/>
                     </Grid>
                 </Button>
-                <Button Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}"
+                <Button Classes="deck-key" Width="34" Height="34" Command="{Binding PlayerVM.PreviousCommand}"
                         ToolTip.Tip="{DynamicResource S_Prev}" AutomationProperties.Name="{DynamicResource S_Prev}">
                     <PathIcon Width="16" Height="16" Data="M6,5 L6,19 M18,6 L9,12 L18,18 Z"/>
                 </Button>
-                <Button Width="38" Height="38" Background="{DynamicResource C_302B2E3C}" Command="{Binding PlayerVM.PlayCommand}"
+                <Button Classes="deck-key" Width="38" Height="38" Background="{DynamicResource C_302B2E3C}" Command="{Binding PlayerVM.PlayCommand}"
                         ToolTip.Tip="{DynamicResource S_PlayPause}" AutomationProperties.Name="{DynamicResource S_PlayPause}">
                     <Grid>
                         <PathIcon Width="15" Height="15" IsVisible="{Binding PlayerVM.IsPlaying, Converter={StaticResource InverseBoolConverter}}"
@@ -170,11 +189,11 @@
                                   Data="M7,5 L10,5 L10,19 L7,19 Z M14,5 L17,5 L17,19 L14,19 Z"/>
                     </Grid>
                 </Button>
-                <Button Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}"
+                <Button Classes="deck-key" Width="34" Height="34" Command="{Binding PlayerVM.NextCommand}"
                         ToolTip.Tip="{DynamicResource S_Next}" AutomationProperties.Name="{DynamicResource S_Next}">
                     <PathIcon Width="16" Height="16" Data="M18,5 L18,19 M6,6 L15,12 L6,18 Z"/>
                 </Button>
-                <Button x:Name="RepeatButton" Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
+                <Button x:Name="RepeatButton" Classes="deck-key" Width="62" Height="34" Command="{Binding PlayerVM.ToggleRepeatCommand}"
                         ToolTip.Tip="{Binding PlayerVM.RepeatModeTip}" AutomationProperties.Name="{Binding PlayerVM.RepeatModeTip}">
                     <StackPanel Orientation="Horizontal" Spacing="4" Opacity="{Binding PlayerVM.RepeatButtonOpacity}">
                         <Grid>
@@ -192,7 +211,7 @@
                                    IsVisible="{Binding PlayerVM.IsRepeatSingle}"/>
                     </StackPanel>
                 </Button>
-                <Button Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}"
+                <Button Classes="deck-key" Width="34" Height="34" Command="{Binding ToggleCurrentFavoriteCommand}"
                         ToolTip.Tip="{DynamicResource S_FavCurrent}" AutomationProperties.Name="{DynamicResource S_FavCurrent}">
                     <Grid>
                         <PathIcon Width="17" Height="17" IsVisible="{Binding IsCurrentFavorite, Converter={StaticResource InverseBoolConverter}}"
@@ -230,19 +249,19 @@
             <StackPanel x:Name="FeedbackRow" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6"
                         HorizontalAlignment="Center" Margin="0,6,0,0"
                         IsVisible="{Binding PlayerVM.IsPodcast, Converter={StaticResource InverseBoolConverter}}">
-                <Button Width="42" Height="24" Padding="0" Content="NOPE"
+                <Button Classes="deck-key" Width="42" Height="24" Padding="0" Content="NOPE"
                         FontSize="9" Command="{Binding DislikeCurrentTrackCommand}"
                         ToolTip.Tip="{DynamicResource S_Dislike}" AutomationProperties.Name="{DynamicResource S_Dislike}"/>
-                <Button Width="42" Height="24" Padding="0" Content="SIM"
+                <Button Classes="deck-key" Width="42" Height="24" Padding="0" Content="SIM"
                         FontSize="9" Command="{Binding SimilarToCurrentTrackCommand}"
                         ToolTip.Tip="{DynamicResource S_Similar}" AutomationProperties.Name="{DynamicResource S_Similar}"/>
-                <Button Width="42" Height="24" Padding="0" Content="CALM"
+                <Button Classes="deck-key" Width="42" Height="24" Padding="0" Content="CALM"
                         FontSize="9" Command="{Binding CalmerRecommendationCommand}"
                         ToolTip.Tip="{DynamicResource S_Calmer}" AutomationProperties.Name="{DynamicResource S_Calmer}"/>
-                <Button Width="42" Height="24" Padding="0" Content="FIRE"
+                <Button Classes="deck-key" Width="42" Height="24" Padding="0" Content="FIRE"
                         FontSize="9" Command="{Binding EnergeticRecommendationCommand}"
                         ToolTip.Tip="{DynamicResource S_Energetic}" AutomationProperties.Name="{DynamicResource S_Energetic}"/>
-                <Button Width="48" Height="24" Padding="0" Content="STORY"
+                <Button Classes="deck-key" Width="48" Height="24" Padding="0" Content="STORY"
                         FontSize="9" Command="{Binding TellSongStoryCommand}"
                         ToolTip.Tip="{DynamicResource S_SongStory}" AutomationProperties.Name="{DynamicResource S_SongStory}"/>
             </StackPanel>
@@ -251,20 +270,20 @@
             <StackPanel x:Name="PodcastControlRow" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Center" Margin="0,6,0,0"
                         IsVisible="{Binding PlayerVM.IsPodcast}">
-                <Button x:Name="PodcastRewindButton" Width="46" Height="24" Padding="0" Content="-15s"
+                <Button x:Name="PodcastRewindButton" Classes="deck-key" Width="46" Height="24" Padding="0" Content="-15s"
                         FontSize="10" FontFamily="Consolas"
                         Command="{Binding PlayerVM.SkipBackwardCommand}"
                         ToolTip.Tip="{DynamicResource S_PodcastSkipBack}"
                         AutomationProperties.Name="{DynamicResource S_PodcastSkipBack}"/>
                 <Button x:Name="PodcastSpeedButton" Width="54" Height="24" Padding="0"
-                        Classes="podcast-speed-btn"
+                        Classes="podcast-speed-btn deck-key"
                         Classes.active="{Binding PlayerVM.IsNonDefaultPlaybackRate}"
                         Content="{Binding PlayerVM.PlaybackRateText}"
                         FontSize="10" FontFamily="Consolas" FontWeight="600"
                         Command="{Binding PlayerVM.CyclePlaybackRateCommand}"
                         ToolTip.Tip="{DynamicResource S_PodcastSpeedTip}"
                         AutomationProperties.Name="{DynamicResource S_PodcastSpeedTip}"/>
-                <Button x:Name="PodcastForwardButton" Width="46" Height="24" Padding="0" Content="+30s"
+                <Button x:Name="PodcastForwardButton" Classes="deck-key" Width="46" Height="24" Padding="0" Content="+30s"
                         FontSize="10" FontFamily="Consolas"
                         Command="{Binding PlayerVM.SkipForwardCommand}"
                         ToolTip.Tip="{DynamicResource S_PodcastSkipForward}"

@@ -1131,6 +1131,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
             new() { Id = "mirror", DisplayName = AppLanguage.T("镜像脉冲", "Mirrored pulse") },
             new() { Id = "wave", DisplayName = AppLanguage.T("霓虹波形", "Neon wave") },
             new() { Id = "particles", DisplayName = AppLanguage.T("星点粒子", "Star particles") },
+            new() { Id = "vfd", DisplayName = AppLanguage.T("复古荧光", "Retro VFD") },
         };
 
         OpenSubsonicQualities = new List<VoiceOption>
@@ -4711,6 +4712,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         "mirror" => "mirror",
         "wave" => "wave",
         "particles" => "particles",
+        "vfd" => "vfd",
         _ => "bars"
     };
 

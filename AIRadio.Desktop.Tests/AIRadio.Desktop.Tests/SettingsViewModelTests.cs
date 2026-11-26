@@ -1361,7 +1361,14 @@ public class SettingsViewModelTests
             await reloaded.LoadAsync();
 
             Assert.Equal("wave", reloaded.SelectedSpectrumStyle);
-            Assert.Equal(4, reloaded.SpectrumStyles.Count);
+            Assert.Equal(5, reloaded.SpectrumStyles.Count);
+            Assert.Contains(reloaded.SpectrumStyles, s => s.Id == "vfd");
+
+            reloaded.SelectedSpectrumStyle = "vfd";
+            await reloaded.SaveCommand.Execute();
+            var reloadedVfd = new SettingsViewModel(_mockLlm.Object, _mockStorage.Object, settingsFile);
+            await reloadedVfd.LoadAsync();
+            Assert.Equal("vfd", reloadedVfd.SelectedSpectrumStyle);
         }
         finally
         {

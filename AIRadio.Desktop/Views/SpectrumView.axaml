@@ -22,6 +22,7 @@
                                 StyleName="{Binding SelectedStyle}"
                                 Height="118" VerticalAlignment="Center"
                                 PrimaryBrush="{StaticResource SpectrumPrimary}"
-                                SecondaryBrush="{DynamicResource C_FFA783FF}"/>
+                                SecondaryBrush="{DynamicResource C_FFA783FF}"
+                                PeakBrush="{DynamicResource VfdPeakColor}"/>
     </Grid>
 </UserControl>

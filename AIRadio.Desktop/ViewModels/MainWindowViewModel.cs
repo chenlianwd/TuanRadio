@@ -57,6 +57,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IDisposable _languageTtsSub;
     private readonly IDisposable _speechMixSub;
     private readonly IDisposable _spectrumStyleSub;
+    private IDisposable? _studioLiveSub;
     private readonly ISleepTimerService _sleepTimerService;
     private readonly IDisposable _sleepTimerSub;
     private readonly IDisposable _sleepTimerCloseAppSub;
@@ -145,6 +146,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [Reactive] public partial DateTimeOffset Now { get; private set; } = DateTimeOffset.Now;
     [Reactive] public partial string LocalizedDayOfWeek { get; private set; } = string.Empty;
     [Reactive] public partial string LocalizedDate { get; private set; } = string.Empty;
+
+    /// <summary>模拟 FM 刻度尺当前频点（88.0–108.0 MHz）、频段后缀与状态栏台标。</summary>
+    [Reactive] public partial double CurrentFmFrequency { get; private set; } = 98.0;
+    [Reactive] public partial string CurrentFmBandLabel { get; private set; } = string.Empty;
+    [Reactive] public partial string StationCallSign { get; private set; } = "TUANRADIO FM";
+
+    /// <summary>演播室 ON AIR 开麦红灯态：AI DJ 正在说话或听众正在按住录音。</summary>
+    [Reactive] public partial bool IsStudioLive { get; private set; }
+
+    /// <summary>时钟冒号 1Hz 呼吸节拍（偶数秒满亮、奇数秒柔和暗淡）。</summary>
+    [Reactive] public partial bool IsClockColonDim { get; private set; }
 
     /// <summary>统一电台状态，由子 VM flags 派生（spec §5.2）。</summary>
     [ObservableAsProperty] public partial RadioState CurrentState { get; }
@@ -510,6 +522,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 UpdateSleepTimerTooltip();
                 UpdateFocusModeTooltip();
+                UpdateFmDialState(_audioService.CurrentTrack);
             });
 
         ToggleFocusModeCommand = ReactiveCommand.Create(() =>
@@ -590,6 +603,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _audioService.SetBeforeAutoAdvanceCallback(_ => _sleepTimerService.CheckAndConsumeEndOfTrack());
 
         UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
+        UpdateFmDialState(_audioService.CurrentTrack);
         UpdateSleepTimerState();
         UpdateFocusModeTooltip();
 
@@ -669,6 +683,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             UpdateFocusModeTooltip();
             UpdateSleepTimerState();
             UpdateCanStopAfterCurrentTrack(_audioService.CurrentTrack);
+        UpdateFmDialState(_audioService.CurrentTrack);
             if (IsKugouLoginPromptVisible)
                 KugouLoginPromptMessage = BuildKugouLoginPromptMessage();
             RefreshWebRemoteUiState();
@@ -712,6 +727,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     (PlaylistVM.FindMatchingTrack(track) ?? track).IsFavorite;
                 HasCurrentTrack = track != null;
                 UpdateCanStopAfterCurrentTrack(track);
+                UpdateFmDialState(track);
                 var nextPodcastKey = track is { IsPodcastEpisode: true } &&
                                      track.ProviderMetadata.TryGetValue("episode_key", out var epKey)
                     ? epKey
@@ -814,6 +830,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             .ObserveOn(RxApp.MainThreadScheduler)
             .ToProperty(this, nameof(CurrentState));
 
+        _studioLiveSub = this.WhenAnyValue(
+                x => x.CurrentState,
+                x => x.ChatVM.IsListening,
+                (state, listening) => state == RadioState.Speaking || listening)
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(live => IsStudioLive = live);
+
         // 1s 时钟推进（spec §5.5）
         _clockSub = Observable.Interval(TimeSpan.FromSeconds(1))
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -841,7 +864,73 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsDisposed)
             return;
         Now = DateTimeOffset.Now;
+        IsClockColonDim = (Now.Second & 1) == 1;
         RefreshLocalizedClockText();
+    }
+
+    private void UpdateFmDialState(Track? track)
+    {
+        var (freq, bandLabel, hasTrack) = ComputeFmDial(track, CurrentSceneMode);
+        CurrentFmFrequency = freq;
+        CurrentFmBandLabel = bandLabel;
+        StationCallSign = hasTrack
+            ? $"TUANRADIO FM · {freq.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)} MHz"
+            : "TUANRADIO FM";
+    }
+
+    /// <summary>
+    /// 纯确定性 FM 频点映射（FNV-1a 32-bit 哈希，避免 .NET string.GetHashCode 跨进程加盐漂移）。
+    /// 优先级：无曲目(98.0) > 直播电台(88.5–91.9) > 播客(107.1–107.9) > 场景专属(Focus 102.4 / Sleep 98.7) > 常规单曲(90.0–106.8)。
+    /// </summary>
+    internal static (double Frequency, string BandLabel, bool HasTrack) ComputeFmDial(Track? track, RadioSceneMode sceneMode)
+    {
+        if (track is null)
+            return (98.0, string.Empty, false);
+
+        var key = !string.IsNullOrWhiteSpace(track.SourceId)
+            ? track.SourceId
+            : !string.IsNullOrWhiteSpace(track.Title)
+                ? track.Title
+                : track.Id ?? "track";
+
+        if (track.IsLiveStream)
+        {
+            // 88.5 – 91.9 MHz（35 档，步进 0.1）
+            var steps = (int)(ComputeFnv1a32(key) % 35u);
+            return (Math.Round(88.5 + steps * 0.1, 1), "LIVE", true);
+        }
+
+        if (track.IsPodcastEpisode)
+        {
+            // 107.1 – 107.9 MHz（9 档，步进 0.1）
+            var steps = (int)(ComputeFnv1a32(key) % 9u);
+            return (Math.Round(107.1 + steps * 0.1, 1), "PODCAST", true);
+        }
+
+        if (sceneMode == RadioSceneMode.Focus)
+            return (102.4, "FOCUS", true);
+
+        if (sceneMode == RadioSceneMode.Sleep)
+            return (98.7, "NIGHT", true);
+
+        // 常规单曲：90.0 – 106.8 MHz（169 档，步进 0.1）
+        var regularSteps = (int)(ComputeFnv1a32(key) % 169u);
+        return (Math.Round(90.0 + regularSteps * 0.1, 1), string.Empty, true);
+    }
+
+    internal static uint ComputeFnv1a32(string text)
+    {
+        const uint offsetBasis = 2166136261u;
+        const uint prime = 16777619u;
+        var hash = offsetBasis;
+        foreach (var ch in text)
+        {
+            hash ^= (byte)(ch & 0xFF);
+            hash *= prime;
+            hash ^= (byte)(ch >> 8);
+            hash *= prime;
+        }
+        return hash;
     }
 
     internal async Task<TrackUrlResolution?> ResolveTrackUrlAsync(
@@ -2565,6 +2654,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _languageTtsSub?.Dispose();
         _speechMixSub?.Dispose();
         _spectrumStyleSub?.Dispose();
+        _studioLiveSub?.Dispose();
         AppLanguage.Changed -= _onLanguageChanged;
         _clockSub?.Dispose();
         _weatherCitySub.Dispose();

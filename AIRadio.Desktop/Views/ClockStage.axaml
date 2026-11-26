@@ -16,9 +16,40 @@
         <Style Selector="StackPanel.clickable">
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
+        <!-- 时钟冒号 1Hz 柔和呼吸（由现有 1s 时钟源驱动，零额外定时器） -->
+        <Style Selector="TextBlock#ClockColon">
+            <Setter Property="Opacity" Value="1"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.35"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="TextBlock#ClockColon.dim">
+            <Setter Property="Opacity" Value="0.35"/>
+        </Style>
+        <!-- 深色变体 VFD 微辉光（固定柔和暖白光晕，避免 Style 内 DropShadowEffect 不随 DynamicResource 重算；Light 变体关闭） -->
+        <Style Selector="StackPanel#ClockTimeRow.dark-glow">
+            <Setter Property="Effect">
+                <DropShadowEffect Color="#FFFFFFFF" BlurRadius="8" Opacity="0.16" OffsetX="0" OffsetY="0"/>
+            </Setter>
+        </Style>
     </UserControl.Styles>
 
     <Grid x:Name="StageRoot" Background="{DynamicResource C_F008080D}">
+        <!-- 内嵌玻璃表窗斜向高光与底缘高光线（IsHitTestVisible="False"，零命中干扰，不与 BrandHeader 底线重叠加粗） -->
+        <Border x:Name="StageGlassBezel"
+                IsHitTestVisible="False">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                    <GradientStop Offset="0" Color="{DynamicResource StageGlassHighlightColor}"/>
+                    <GradientStop Offset="0.45" Color="#00000000"/>
+                    <GradientStop Offset="1" Color="#00000000"/>
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+        <Border IsHitTestVisible="False" VerticalAlignment="Bottom" Height="1"
+                Background="{DynamicResource StageGlassHighlightColor}"/>
         <TextBlock x:Name="ClockDots"
                    IsHitTestVisible="False"
                    Opacity="0.20"
@@ -29,15 +60,22 @@
                    TextWrapping="Wrap"/>
         <local:StarfieldView x:Name="Starfield"
                              IsHitTestVisible="False"/>
-        <Grid x:Name="ClockLayer" ColumnDefinitions="*,Auto,*" Margin="24,10" IsVisible="{Binding !IsLyricsMode}">
+        <Grid x:Name="ClockLayer" ColumnDefinitions="*,Auto,*" Margin="24,6,24,26" IsVisible="{Binding !IsLyricsMode}">
             <local:SpectrumView x:Name="ClockSpectrumLeft" Grid.Column="0" DataContext="{Binding SpectrumVM}"
                                 HorizontalAlignment="Stretch" Cursor="Hand"
                                 Margin="0,0,18,0"/>
             <StackPanel x:Name="ClockPanel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4"
                         Background="Transparent" Classes.clickable="{Binding HasCurrentTrack}">
-                <TextBlock Text="{Binding Now, StringFormat='HH:mm'}" FontSize="56" FontWeight="700"
-                           FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"
-                           HorizontalAlignment="Center"/>
+                <StackPanel x:Name="ClockTimeRow" Orientation="Horizontal" HorizontalAlignment="Center"
+                            Classes.dark-glow="{Binding IsDarkMode}">
+                    <TextBlock Text="{Binding Now, StringFormat='HH'}" FontSize="56" FontWeight="700"
+                               FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"/>
+                    <TextBlock x:Name="ClockColon" Text=":" FontSize="56" FontWeight="700"
+                               FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"
+                               Classes.dim="{Binding IsClockColonDim}"/>
+                    <TextBlock Text="{Binding Now, StringFormat='mm'}" FontSize="56" FontWeight="700"
+                               FontFamily="Consolas" Foreground="{DynamicResource C_FFFFFFFF}"/>
+                </StackPanel>
                 <TextBlock Text="{Binding LocalizedDayOfWeek}" FontSize="13" FontFamily="Consolas"
                            Foreground="{DynamicResource C_FFE5E5EC}" HorizontalAlignment="Center"/>
                 <TextBlock Text="{Binding LocalizedDate}" FontSize="10" FontFamily="Consolas"
@@ -75,6 +113,21 @@
                                 HorizontalAlignment="Stretch" Cursor="Hand"
                                 Margin="18,0,0,0"/>
         </Grid>
+
+        <!-- 模拟 FM 频率刻度尺：独立停靠底带、左对齐留出右侧 WeatherIndicator 安全边距，
+             歌词模式下隐藏，且 IsHitTestVisible="False" 不干扰中栏与频谱列点击路由 -->
+        <local:FmDialView x:Name="FmDial"
+                          Height="20"
+                          MaxWidth="420"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Bottom"
+                          Margin="18,0,200,5"
+                          IsHitTestVisible="False"
+                          IsVisible="{Binding !IsLyricsMode}"
+                          Frequency="{Binding CurrentFmFrequency}"
+                          BandLabel="{Binding CurrentFmBandLabel}"
+                          NeedleBrush="{DynamicResource FmDialNeedleColor}"
+                          TickBrush="{DynamicResource FmDialTickColor}"/>
 
         <!-- 环境指示器（天气）：时钟/歌词两种模式常显（位于 LyricsLayer 之后保证两种模式下均在最上层可悬停）；
              常显图标与精简天气（天气描述 + 温度），悬停出完整详情（含城市名）。

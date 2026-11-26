@@ -298,7 +298,7 @@ public class ClockStageLyricsCoexistenceTests
             await vm.SettingsVM.LoadAsync();
             Assert.Equal("bars", vm.SettingsVM.SelectedSpectrumStyle);
 
-            foreach (var expected in new[] { "mirror", "wave", "particles", "bars" })
+            foreach (var expected in new[] { "mirror", "wave", "particles", "vfd", "bars" })
             {
                 Execute(vm.CycleSpectrumStyleCommand);
                 Assert.Equal(expected, vm.SettingsVM.SelectedSpectrumStyle);

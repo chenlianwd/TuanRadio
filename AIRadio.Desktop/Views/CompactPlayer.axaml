@@ -207,7 +207,8 @@
                     <local:SpectrumRenderer x:Name="CompactSpectrum"
                                             StyleName="{Binding SpectrumVM.SelectedStyle}"
                                             PrimaryBrush="{StaticResource MiniSpectrumPrimary}"
-                                            SecondaryBrush="{DynamicResource C_FFA783FF}"/>
+                                            SecondaryBrush="{DynamicResource C_FFA783FF}"
+                                            PeakBrush="{DynamicResource VfdPeakColor}"/>
                 </Grid>
             </Grid>
         </Grid>

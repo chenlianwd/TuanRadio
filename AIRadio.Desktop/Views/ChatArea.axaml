@@ -49,6 +49,18 @@
         <Style Selector="Border#ListeningBadge.cancel">
             <Setter Property="BorderBrush" Value="{DynamicResource C_FFFFC86B}"/>
         </Style>
+        <!-- 演播室场记条（AI DJ）与听众点歌纸条（User）语汇区分 -->
+        <Style Selector="TextBlock.msg-header.user">
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+        </Style>
+        <Style Selector="Border.msg-bubble.assistant">
+            <Setter Property="BorderThickness" Value="2,0,0,0"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+        </Style>
+        <Style Selector="Border.msg-bubble.user">
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource C_3356F5C4}"/>
+        </Style>
     </UserControl.Styles>
     <Grid RowDefinitions="*,Auto">
         <!-- Radio room -->
@@ -65,10 +77,15 @@
                             <DataTemplate>
                                 <StackPanel Margin="0,8"
                                             HorizontalAlignment="{Binding Role, Converter={x:Static conv:MessageAlignConverter.Instance}}">
-                                    <TextBlock Text="{Binding SenderName}" FontSize="10"
+                                    <TextBlock Text="{Binding HeaderText}" FontSize="10"
+                                               Classes="msg-header"
+                                               Classes.user="{Binding IsUser}"
                                                FontFamily="Consolas, Microsoft YaHei UI"
                                                Foreground="{DynamicResource C_FFA783FF}" Margin="0,0,0,4"/>
-                                    <Border Background="{DynamicResource C_EE050507}" CornerRadius="4" Padding="14,10" MaxWidth="380">
+                                    <Border Background="{DynamicResource C_EE050507}" CornerRadius="4" Padding="14,10" MaxWidth="380"
+                                            Classes="msg-bubble"
+                                            Classes.assistant="{Binding IsAssistant}"
+                                            Classes.user="{Binding IsUser}">
                                         <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
                                                              FontSize="13" LineHeight="21"
                                                              FontFamily="Microsoft YaHei UI" Foreground="{DynamicResource C_FFFFFFFF}"
@@ -174,8 +191,9 @@
             </Border>
         </Grid>
 
-        <!-- Input -->
-        <Border Grid.Row="1" Background="{DynamicResource C_E91B1B2A}" Padding="22,10">
+        <!-- Input（顶边双线微浮雕接缝） -->
+        <Border Grid.Row="1" Background="{DynamicResource C_E91B1B2A}"
+                BorderBrush="{DynamicResource C_223D3D4F}" BorderThickness="0,1,0,0" Padding="22,10">
             <!-- 麦克风+SEND 同簇按键组（簇内 4px、与输入框 9px）：等宽 Grid 列下两按钮
                  中心距被列距+按钮内边距放大，观感间隔过开（用户反馈）；收窄为贴内容宽度的紧凑簇 -->
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="9">
