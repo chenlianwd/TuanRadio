@@ -59,7 +59,7 @@ dotnet run --project AIRadio.Desktop/AIRadio.Desktop.csproj
 # 或构建不含 Node / 实验性流媒体代理的轻量纯净核心版本：
 dotnet build AIRadio.Desktop/AIRadio.Desktop.csproj -p:TuanRadioEnableNodeProviders=false -v:minimal
 
-# 3. 运行自动化测试套件（1470+ xUnit 与 Avalonia Headless 测试）
+# 3. 运行自动化测试套件（1580+ xUnit 与 Avalonia Headless 测试）
 dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```
 
@@ -90,7 +90,7 @@ dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.cs
 ## 功能亮点
 
 - 🎙️ **AI DJ 双模交互**：文字畅聊或按住麦克风离线语音点歌（Whisper 本地识别 + LLM 同音纠错）；自动曲目串场与 `STORY` 现曲讲述，全部经 Edge TTS 高质量多音色播报（完全免费，零 API 账单）；主播角色（名称/声音/人设）可自由定制。
-- 📻 **复古电台视听美学与专注/伴眠场景**：纯数学算法程序化合成调频静电杂音与台呼（零外部音频体积）、WASAPI 回环硬件采集 1024 点真实 FFT 频谱（点击循环切换柱状/镜像/波形/粒子）、时钟/歌词双模切换、简洁迷你卡与系统托盘、**专注伴学模式**（偏向纯音乐、曲间静默免打扰）以及**睡眠定时渐弱淡出与深夜伴眠柔声模式**。
+- 📻 **复古电台视听美学与专注/伴眠场景**：纯数学算法程序化合成调频静电杂音与台呼（零外部音频体积）、确定性模拟 FM 频率刻度尺（88–108 MHz）、WASAPI 回环硬件采集 1024 点真实 FFT 频谱（点击循环切换柱状 / 镜像 / 波形 / 粒子 / **复古荧光 VFD 峰值保持** 5 种样式）、时钟/歌词双模切换、简洁迷你卡与系统托盘、**专注伴学模式**（偏向纯音乐、曲间静默免打扰）以及**睡眠定时渐弱淡出与深夜伴眠柔声模式**。
 - 🌍 **全球网络电台与自定义流导入**：集成全球开源网络电台与 8 大离线精选流派保底库，支持单流 URL 手动录入（含 ICY 流可用性探测与局域网自建电台直连）及 M3U / M3U8 / PLS 批量列表导入与收藏隔离。
 - 🎧 **播客 RSS / OPML 订阅与 AI 一分钟速读**：曲库抽屉内置精选公开播客与自定义 RSS / Atom 订阅，支持标准 OPML 文件批量导入导出、长音频断点续播持久化以及专属 **0.75x–2.0x 倍速播放与 -15s / +30s 快捷跳转**；每期提供独立「AI 速读」按钮由 AI DJ 基于 Shownotes 语音导听，无文字简介时自动安全截取开头音频经内置 Whisper 转写后再提炼导听。
 - 📱 **局域网 Web 遥控器（Web Remote）**：零第三方依赖内嵌 HTTP/WebSocket 局域网服务与令牌鉴权，同一 Wi-Fi 下手机扫码直连离线 SPA 遥控台；支持播控、音量、进度拖拽、播客倍速与快退快进、专注/睡眠模式切换、实时滚动点击跳转歌词、AI DJ 点歌对话，以及按需浏览点播节目单、歌单、收藏夹、网络电台与播客单集。
@@ -106,10 +106,10 @@ dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.cs
 
 ### 主界面四大区域
 
-- **品牌头（Brand Header）**：黑胶唱片主播徽章（播报时辉光随 TTS 音量呼吸，点击切换主播）、功能按钮簇（多源搜索、专注模式、睡眠定时、局域网 Web 遥控器、设置）以及一键收缩至简洁播放模式按钮。
-- **时钟舞台（Clock Stage & Lyrics）**：中央复古大字时钟与逐行同步滚动歌词轻点切换，两侧 1024 点真实 FFT 动态频谱（点击切换 4 种样式），右下角常驻 Open-Meteo 实时天气指示器。
-- **播放甲板（Player Deck）**：曲目信息与真声音质徽标、播控与红心收藏、曲库/电台/播客抽屉入口、复古调谐针音量滑条、即时反馈行（`NOPE` / `SIM` / `CALM` / `FIRE` / `STORY`；播客模式下自动切换为倍速与 `-15s / +30s` 控制条）与无缝发丝线进度轨道。
-- **聊天交互区与状态栏（Chat & Status Bar）**：文字聊天与按住麦克风离线语音点歌，底部统一状态机指示灯（`ON AIR` / `CURATING` / `SEARCHING` / `SPEAKING` / `ERROR`）。
+- **品牌头（Brand Header）**：黑胶唱片主播徽章（播歌慢转 / 播报双速旋转，播报时辉光随 TTS 音量呼吸，点击切换主播）、功能按钮簇（多源搜索、专注模式、睡眠定时、局域网 Web 遥控器、设置）以及一键收缩至简洁播放模式按钮。
+- **时钟舞台（Clock Stage & Lyrics）**：内嵌玻璃表窗承载中央复古大字时钟（冒号 1Hz 柔和呼吸、深色态微辉光）与逐行同步滚动歌词轻点切换，两侧 1024 点真实 FFT 动态频谱（点击循环切换 5 种样式，含复古荧光 VFD），底部集成模拟 FM 频率刻度尺与右下角 Open-Meteo 实时天气指示器。
+- **播放甲板（Player Deck）**：左侧三连播放电平条微动、曲目信息与真声音质徽标、带按压触感的播控与红心收藏、曲库/电台/播客抽屉入口、复古调谐针音量滑条、即时反馈行（`NOPE` / `SIM` / `CALM` / `FIRE` / `STORY`；播客模式下自动切换为倍速与 `-15s / +30s` 控制条）与无缝发丝线进度轨道。
+- **聊天交互区与状态栏（Chat & Status Bar）**：演播室场记条（AI DJ）与点歌纸条（听众）对话样式及按住麦克风离线语音点歌；底部展示动态 FM 频点台标与统一状态机灯箱（`ON AIR` / `CURATING` / `SEARCHING` / `SPEAKING` / `ERROR`，AI 播报或录音时切入演播室红灯态）。
 
 ### 设置页 5 大分组
 
@@ -142,7 +142,7 @@ AIRadio.Desktop.Music/      音乐领域独立类库（宿主单向引用）
   Services/Music/           Contracts、Broker（中枢聚合、策略编排与解析缓存）、
                             Providers（本地/OpenSubsonic/Audius/Jamendo/SoundCloud、Radio/ 网络电台、Podcast/ RSS 与 OPML）、
                             Adapters、Playback（MediaUriPolicy 安全白名单与重定向复检）
-AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1470+ 测试用例）
+AIRadio.Desktop.Tests/      xUnit 自动化测试套件（1580+ 测试用例）
 tools/                      publish.ps1 自动化出包流水线、品牌图标导出与截图工具
 ```
 

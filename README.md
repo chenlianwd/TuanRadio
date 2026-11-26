@@ -58,7 +58,7 @@ dotnet run --project AIRadio.Desktop/AIRadio.Desktop.csproj
 # Or build the slim core variant without Node.js / experimental streaming proxies:
 dotnet build AIRadio.Desktop/AIRadio.Desktop.csproj -p:TuanRadioEnableNodeProviders=false -v:minimal
 
-# 3. Run the automated test suite (1,470+ xUnit & Avalonia headless tests)
+# 3. Run the automated test suite (1,580+ xUnit & Avalonia headless tests)
 dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.csproj -v:minimal -p:UseSharedCompilation=false
 ```
 
@@ -89,7 +89,7 @@ dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.cs
 ## Key Features
 
 - 🎙️ **Conversational AI DJ & Offline Voice Requests**: Chat naturally or hold the mic button for offline Whisper speech recognition (with LLM homophone correction). Enjoy automatic track transitions and on-demand `STORY` song trivia voiced via free **Edge TTS** with customizable DJ personas and voices.
-- 📻 **Retro Radio Aesthetics & Scene Modes**: Procedurally synthesized FM static and station chimes (zero bundled audio bloat), 1024-point WASAPI hardware loopback FFT spectrum (4 clickable styles: Bar / Mirror / Wave / Particle), **Focus Mode** (instrumental-friendly, uninterrupted playback), and **Sleep Timer + Bedtime Mode** (gentle fade-out, calmer curation, softer DJ whisper cadence).
+- 📻 **Retro Radio Aesthetics & Scene Modes**: Procedurally synthesized FM static and station chimes (zero bundled audio bloat), deterministic analog FM tuning scale (88–108 MHz), 1024-point WASAPI hardware loopback FFT spectrum (5 clickable styles: Bar / Mirror / Wave / Particle / **Retro VFD** with peak-hold decay), **Focus Mode** (instrumental-friendly, uninterrupted playback), and **Sleep Timer + Bedtime Mode** (gentle fade-out, calmer curation, softer DJ whisper cadence).
 - 🌍 **Global Internet Radio & Custom Streams**: Built-in global open radio directory with 8 curated offline fallback genres, custom stream URL entry with ICY metadata probing (supports LAN streams), and batch M3U / M3U8 / PLS playlist import.
 - 🎧 **Podcast RSS / OPML & AI 1-Minute Digests**: Subscribe to RSS/Atom feeds, import/export OPML, persist episode resume positions, and control playback with dedicated **0.75x–2.0x speed** and **-15s / +30s** skip buttons. Tap **AI Digest** for a 1-minute spoken briefing from Shownotes—automatically falling back to built-in Whisper transcription when Shownotes are missing.
 - 📱 **Zero-Dependency LAN Web Remote**: Embedded HTTP/WebSocket server with QR code pairing and constant-time token auth. Control playback, volume, seeking, podcast speed, Focus/Sleep modes, live synced lyrics, AI DJ chat, and browse playlists/radio/podcasts right from your phone on the same Wi-Fi.
@@ -105,10 +105,10 @@ dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.cs
 
 ### Main Window Regions
 
-- **Brand Header**: Vinyl DJ badge (halo pulses with live Edge TTS output; click to switch DJ personas), action cluster (multi-source search overlay, Focus Mode, Sleep Timer, LAN Web Remote QR pairing, Settings), and one-click Compact Mode toggle.
-- **Clock Stage & Lyrics**: Center retro digital clock and line-by-line synced lyrics toggled with a single click, flanked by 1024-point real-time WASAPI loopback spectrums (click to cycle 4 styles) and an Open-Meteo ambient weather indicator.
-- **Player Deck**: Track metadata and true audio quality badge, transport controls and heart favorite, library/radio/podcast drawer button, retro tuning-needle volume slider, instant feedback row (`NOPE` / `SIM` / `CALM` / `FIRE` / `STORY`; automatically switches to podcast speed & `-15s / +30s` controls during podcast episodes), and seamless hairline progress rail.
-- **Chat & Status Bar**: Text chat and hold-to-talk offline Whisper voice requests, paired with a unified state-machine broadcast indicator (`ON AIR` / `CURATING` / `SEARCHING` / `SPEAKING` / `ERROR`).
+- **Brand Header**: Vinyl DJ badge (dual-speed spin during playback/hosting with live Edge TTS volume halo; click to switch DJ personas), action cluster (multi-source search overlay, Focus Mode, Sleep Timer, LAN Web Remote QR pairing, Settings), and one-click Compact Mode toggle.
+- **Clock Stage & Lyrics**: Recessed glass stage featuring a pulsing-colon retro digital clock (subtle dark-mode VFD glow) and line-by-line synced lyrics toggled with a single click, flanked by 1024-point real-time WASAPI loopback spectrums (click to cycle 5 styles including Retro VFD), an analog FM tuning scale along the bottom edge, and an Open-Meteo ambient weather indicator.
+- **Player Deck**: Live 3-bar mini level meter, track metadata and true audio quality badge, tactile transport controls and heart favorite, library/radio/podcast drawer button, retro tuning-needle volume slider, instant feedback row (`NOPE` / `SIM` / `CALM` / `FIRE` / `STORY`; automatically switches to podcast speed & `-15s / +30s` controls during podcast episodes), and seamless hairline progress rail.
+- **Chat & Status Bar**: Studio logbook DJ subtitles and song-request note bubbles with hold-to-talk offline Whisper voice requests, paired with a dynamic FM callsign and unified broadcast indicator (`ON AIR` / `CURATING` / `SEARCHING` / `SPEAKING` / `ERROR`, switching to studio red when the DJ speaks or the mic is live).
 
 ### Settings Navigation (5 Sections)
 
@@ -142,7 +142,7 @@ AIRadio.Desktop.Music/      Standalone music domain library (one-way reference f
   Services/Music/           Contracts, Broker (orchestration, policy, cache),
                             Providers (Local, OpenSubsonic, Audius, Jamendo, SoundCloud, Radio, Podcast),
                             Adapters, and Playback security (MediaUriPolicy & redirect guard)
-AIRadio.Desktop.Tests/      xUnit & Avalonia headless test suite (1,470+ tests)
+AIRadio.Desktop.Tests/      xUnit & Avalonia headless test suite (1,580+ tests)
 tools/                      Release pipeline (publish.ps1), branding scripts, screenshot utilities
 ```
 
