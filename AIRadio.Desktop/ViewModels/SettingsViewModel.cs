@@ -2501,7 +2501,7 @@ public partial class SettingsViewModel : ViewModelBase, IDisposable
         var hasBlacklist = snapshot.DislikeBlacklist.Count > 0;
         var hasLanguageMix = snapshot.LanguageDistribution.Count > 0;
         var hasTimeBandPreferences = snapshot.TimeBandPreferences.Count > 0;
-        // 性格印象与口味是独立水位（16 条消息 vs 30 事件）：只聊天不收听的新用户
+        // 性格印象与口味是独立水位（8 条消息 vs 30 事件）：只聊天不收听的新用户
         // 攒出印象时卡片也必须可见，否则印象段恰好在它的目标场景不可达
         var hasImpression = !string.IsNullOrWhiteSpace(snapshot.Impression?.Text);
         if (!hasDigest && !hasTopArtists && !hasBlacklist && !hasImpression &&

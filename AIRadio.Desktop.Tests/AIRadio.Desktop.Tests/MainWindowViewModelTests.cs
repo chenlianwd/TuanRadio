@@ -416,7 +416,8 @@ public class MainWindowViewModelTests
     private static MainWindowViewModel CreateStartupSessionViewModel(
         Mock<IAudioService> audio,
         Mock<IDJService> dj,
-        Mock<IRecommendationService> recommendations)
+        Mock<IRecommendationService> recommendations,
+        IListeningProfileService? listeningProfile = null)
         => new(
             audio.Object,
             dj.Object,
@@ -426,7 +427,8 @@ public class MainWindowViewModelTests
             new Mock<ISttService>().Object,
             CreateTempPlaylistFile(),
             settingsFile: CreateTempSettingsFile(),
-            recommendationService: recommendations.Object);
+            recommendationService: recommendations.Object,
+            listeningProfile: listeningProfile);
 
     private static Track CreateStartupPlaylistTrack(string suffix)
         => new()
@@ -656,6 +658,43 @@ public class MainWindowViewModelTests
                     It.Is<Track?>(t => t!.Title == "来生缘"),
                     It.IsAny<IReadOnlyList<Track>>()),
                 Times.Exactly(2));
+        }
+        finally
+        {
+            vm?.Dispose();
+            RxApp.MainThreadScheduler = originalScheduler;
+        }
+    }
+
+    [Fact]
+    public void PlaybackStart_TriggersProfileDigestAndImpressionRefresh()
+    {
+        // 口味/印象归纳不再只靠节目单推荐触发：进入播放态时也要检查（内部自带水位/退避）
+        var originalScheduler = RxApp.MainThreadScheduler;
+        RxApp.MainThreadScheduler = CurrentThreadScheduler.Instance;
+
+        var playlist = new List<Track>();
+        var audio = CreateAudioMock(playlist, () => playlist.FirstOrDefault());
+        var stateChanged = (Subject<PlaybackState>)audio.Object.StateChanged;
+        var dj = new Mock<IDJService>();
+        var recommendations = new Mock<IRecommendationService>();
+        SetupStartupSessionMocks(dj, recommendations);
+        var profile = new Mock<IListeningProfileService>();
+        profile.Setup(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+        profile.Setup(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
+
+        MainWindowViewModel? vm = null;
+        try
+        {
+            vm = CreateStartupSessionViewModel(audio, dj, recommendations, profile.Object);
+            profile.Verify(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+
+            stateChanged.OnNext(PlaybackState.Playing);
+
+            profile.Verify(x => x.RefreshDigestAsync(It.IsAny<CancellationToken>(), false), Times.Once);
+            profile.Verify(x => x.RefreshImpressionAsync(It.IsAny<CancellationToken>(), false), Times.Once);
         }
         finally
         {

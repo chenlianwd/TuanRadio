@@ -1078,15 +1078,15 @@ public class ListeningProfileServiceTests : IDisposable
         _llm.Setup(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()))
             .ReturnsAsync("{\"summary\":\"直接爽快，偏好点歌。\",\"traits\":[\"直接\",\"爱点歌\"]}");
 
-        // 15 条：不足水位不归纳
-        for (var i = 0; i < 15; i++)
+        // 7 条：不足水位不归纳
+        for (var i = 0; i < 7; i++)
         {
             service.RecordListenerChat($"消息{i}");
             await service.RefreshImpressionAsync(CancellationToken.None);
         }
         _llm.Verify(x => x.ChatAsync(It.IsAny<string>(), It.IsAny<List<ChatMessage>>()), Times.Never);
 
-        service.RecordListenerChat("消息15");
+        service.RecordListenerChat("消息7");
         await service.RefreshImpressionAsync(CancellationToken.None);
 
         var impression = service.GetSnapshot().Impression;

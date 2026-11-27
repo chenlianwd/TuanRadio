@@ -1475,7 +1475,7 @@ public class DJServiceTests
     [Fact]
     public async Task ChatProfileInjection_ImpressionInjectedWithoutThreshold()
     {
-        // 性格印象与口味是独立水位（16 条消息 vs 30 事件）：只聊天不收听的新用户
+        // 性格印象与口味是独立水位（8 条消息 vs 30 事件）：只聊天不收听的新用户
         // 也必须被接住——印象段不走冷启动门槛
         var mock = new Mock<ILLMService>();
         var captured = SetupHistoryCapture(mock);

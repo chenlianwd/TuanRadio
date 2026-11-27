@@ -63,7 +63,7 @@ public interface IListeningProfileService
     void RecordListenerChat(string userMessage);
 
     /// <summary>
-    /// 后台刷新 LLM 性格印象（从聊天素材窗口归纳）。内部自带水位（≥16 条）/语言触发、
+    /// 后台刷新 LLM 性格印象（从聊天素材窗口归纳）。内部自带水位（≥8 条）/语言触发、
     /// 并发互斥与失败退避，全异常内吞不抛出；聊天喂料路径可安全 fire-and-forget。
     /// 归纳成功后素材窗口清到本次归纳时的水位（在途新消息保留待下轮）。
     /// force=true（设置页手动重新归纳）跳过触发条件与失败退避，仍保留素材要求、

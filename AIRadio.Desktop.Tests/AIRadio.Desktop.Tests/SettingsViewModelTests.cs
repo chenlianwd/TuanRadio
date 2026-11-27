@@ -1845,7 +1845,7 @@ public class SettingsViewModelTests
     [Fact]
     public void ProfileCard_OnlyImpression_ShowsCard()
     {
-        // 只聊天不收听的新用户：性格印象有（16 条消息水位）但口味三态全空（30 事件门槛未到）
+        // 只聊天不收听的新用户：性格印象有（8 条消息水位）但口味三态全空（30 事件门槛未到）
         // ——卡片必须可见，否则印象段恰好在它的目标场景不可达
         var profile = new Mock<IListeningProfileService>();
         profile.Setup(x => x.GetSnapshot()).Returns(new ListenerProfileSnapshot

@@ -47,7 +47,7 @@ public sealed class ListeningProfileService : IListeningProfileService, IDisposa
     private static readonly TimeSpan BehaviorWindow = TimeSpan.FromDays(30);
     // 聊天性格印象：素材窗口滚动上限/归纳触发水位/原文截断
     private const int ChatWindowMaxEntries = 20;
-    private const int ImpressionTriggerMessages = 16;
+    private const int ImpressionTriggerMessages = 8;
     private const int ChatMessageMaxLength = 200;
     private const int ImpressionMaxLength = 200;
     private const int ImpressionMaxTraits = 6;

@@ -760,6 +760,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                         _recommendationService.RecordPlayedTrack(current);
                     if (current != null)
                         _listeningProfile?.NotifyPlaybackStarted(current);
+                    // 口味/印象归纳不再只靠节目单推荐触发：开播时顺带检查（内部自带水位/退避/互斥，调用廉价）
+                    if (_listeningProfile != null && !_lifetimeCts.IsCancellationRequested)
+                    {
+                        _ = _listeningProfile.RefreshDigestAsync(_lifetimeCts.Token);
+                        _ = _listeningProfile.RefreshImpressionAsync(_lifetimeCts.Token);
+                    }
                     // 播放历史刚更新（RecordPlayedTrack），现场快照同步刷新
                     PushStationContext();
                 }
