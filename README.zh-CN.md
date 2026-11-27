@@ -21,7 +21,7 @@
 TuanRadio 是一个基于 **.NET 10** 与 **Avalonia** 构建的 Windows 桌面 AI 电台播放器：复古电台界面、AI DJ 对话与串场、Edge TTS 零成本播报、离线 Whisper 语音点歌、多音源搜索自愈、全球网络电台与播客订阅（含 OPML 迁移与 AI 一分钟速读）、局域网 Web 手机遥控器、节目单智能推荐、长期收听画像、逐行同步歌词、真实硬件回环频谱以及无感知应用内自动更新。
 
 <div align="center">
-  <img src="docs/screenshots/demo.gif" alt="TuanRadio 运行效果演示：复古时钟舞台、实时频谱、逐行歌词与 AI DJ 点歌对话" width="520" />
+  <img src="docs/screenshots/zh/demo.gif" alt="TuanRadio 运行效果演示：复古时钟舞台、实时频谱、逐行歌词与 AI DJ 点歌对话" width="520" />
   <br />
   <sub><em>实机运行效果：实时硬件回环频谱律动、时钟 ↔ 逐行同步歌词无缝切换、AI DJ 拟人点歌对话。</em></sub>
 </div>
@@ -71,16 +71,16 @@ dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.cs
 
 | 主界面：时钟舞台（默认） | 主界面：逐行同步歌词模式 |
 | :---: | :---: |
-| ![时钟舞台](docs/screenshots/main-stage.png) | ![歌词模式](docs/screenshots/main-lyrics.png) |
+| ![时钟舞台](docs/screenshots/zh/main-stage.png) | ![歌词模式](docs/screenshots/zh/main-lyrics.png) |
 
 *左：中央大字号复古时钟 + 两侧真实硬件回环频谱 + 右下角实时天气 + AI DJ 互动对话，播报时主播徽章辉光随真实音量呼吸；右：点击中栏无缝在时钟与逐行同步歌词间切换（自动记忆偏好），两侧动态频谱常驻。*
 
 | 设置：AI 服务与快捷预置 | 设置：音乐音源与治理 |
 | :---: | :---: |
-| ![设置：AI 服务](docs/screenshots/settings-top.png) | ![设置：音源与曲库](docs/screenshots/settings-bottom.png) |
+| ![设置：AI 服务](docs/screenshots/zh/settings-top.png) | ![设置：音源与曲库](docs/screenshots/zh/settings-bottom.png) |
 
 <div align="center">
-  <img src="docs/screenshots/compact-mode.png" alt="简洁播放模式" />
+  <img src="docs/screenshots/zh/compact-mode.png" alt="简洁播放模式" />
   <br />
   <sub><em>简洁播放模式（Compact Mode）：标题栏一键收缩为两行紧凑卡，实时滚动单行动态歌词（无词时退回曲目信息），迷你频谱与无损徽标实时同步，支持窗口置顶。</em></sub>
 </div>

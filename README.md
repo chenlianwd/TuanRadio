@@ -20,7 +20,7 @@
 TuanRadio is a Windows desktop AI radio player built with **.NET 10** and **Avalonia**. It pairs a tactile retro radio aesthetic with conversational AI DJs, free Edge TTS voice hosting, offline Whisper voice requests, real-time WASAPI hardware loopback spectrum visuals, multi-source self-healing playback, global internet radio, podcasts with AI 1-minute digests, and a zero-dependency LAN Web Remote.
 
 <div align="center">
-  <img src="docs/screenshots/demo.gif" alt="TuanRadio live demo — retro clock stage, real-time spectrum, synced lyrics, and AI DJ chat" width="520" />
+  <img src="docs/screenshots/en/demo.gif" alt="TuanRadio live demo — retro clock stage, real-time spectrum, synced lyrics, and AI DJ chat" width="520" />
   <br />
   <sub><em>Live demo: real-time spectrum visuals, seamless Clock ↔ Synced Lyrics stage switching, and conversational AI DJ song requests.</em></sub>
 </div>
@@ -70,16 +70,16 @@ dotnet test AIRadio.Desktop.Tests/AIRadio.Desktop.Tests/AIRadio.Desktop.Tests.cs
 
 | Clock Stage (Default) | Synced Lyrics Mode |
 | :---: | :---: |
-| ![Clock Stage](docs/screenshots/main-stage.png) | ![Lyrics Mode](docs/screenshots/main-lyrics.png) |
+| ![Clock Stage](docs/screenshots/en/main-stage.png) | ![Lyrics Mode](docs/screenshots/en/main-lyrics.png) |
 
 *Left: Retro digital clock + real-time 1024-point WASAPI loopback spectrum + ambient weather + conversational AI DJ chat. Right: Click the center stage to toggle between the clock and line-by-line synced lyrics while keeping live dual-side spectrums active.*
 
 | Settings: AI Service & Presets | Settings: Music Sources & Governance |
 | :---: | :---: |
-| ![Settings AI](docs/screenshots/settings-top.png) | ![Settings Sources](docs/screenshots/settings-bottom.png) |
+| ![Settings AI](docs/screenshots/en/settings-top.png) | ![Settings Sources](docs/screenshots/en/settings-bottom.png) |
 
 <div align="center">
-  <img src="docs/screenshots/compact-mode.png" alt="Compact Mode" />
+  <img src="docs/screenshots/en/compact-mode.png" alt="Compact Mode" />
   <br />
   <sub><em>Compact Mode: one-click collapse to a 2-row mini player with live single-line lyrics, synced mini spectrum, lossless badge, and optional always-on-top pinning.</em></sub>
 </div>
