@@ -288,30 +288,4 @@ public class YouTubeMusicService : IMusicSearchService
             return string.Empty;
         return value.Replace("\r", "").Replace("\n", "").Replace("\0", "");
     }
-
-    internal static string EscapeArg(string arg)
-    {
-        // Strip control characters and escape for safe process arguments (CRT parsing rules)：
-        // 嵌入引号翻倍为 ""，且紧邻任意引号（含嵌入与闭合）前的连续反斜杠必须翻倍，
-        // 否则结尾的 \" 被解析为字面引号、其后拼接的固定参数会全部并入同一参数
-        var sanitized = arg.Replace("\r", "").Replace("\n", "").Replace("\0", "");
-        var sb = new System.Text.StringBuilder(sanitized.Length + 2);
-        var pendingBackslashes = 0;
-        foreach (var c in sanitized)
-        {
-            if (c == '\\')
-            {
-                pendingBackslashes++;
-                continue;
-            }
-
-            if (c == '"')
-                sb.Append('\\', pendingBackslashes * 2).Append("\"\"");
-            else
-                sb.Append('\\', pendingBackslashes).Append(c);
-            pendingBackslashes = 0;
-        }
-        sb.Append('\\', pendingBackslashes * 2); // 闭合引号前的结尾反斜杠翻倍
-        return $"\"{sb}\"";
-    }
 }

@@ -124,18 +124,6 @@ public class ReviewFixRegressionTests
         Assert.Contains("&apos;&lt;&amp;&gt;", ssml);
     }
 
-    // ---------- L-M7: yt-dlp 参数结尾反斜杠 ----------
-
-    [Theory]
-    [InlineData("abc\\", "\"abc\\\\\"")]
-    [InlineData("abc", "\"abc\"")]
-    [InlineData("a\"b", "\"a\"\"b\"")]
-    [InlineData("a\\\"b", "\"a\\\\\"\"b\"")] // 引号前的反斜杠同样翻倍
-    public void EscapeArg_TrailingBackslash_IsDoubled(string input, string expected)
-    {
-        Assert.Equal(expected, YouTubeMusicService.EscapeArg(input));
-    }
-
     // ---------- M13/M14/L-M5: 音源 data:null 形状防御 ----------
 
     private static HttpClient CreateJsonClient(string json)

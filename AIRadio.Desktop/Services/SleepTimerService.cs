@@ -35,11 +35,11 @@ public sealed class SleepTimerService : ReactiveObject, ISleepTimerService
         _timeScheduler = scheduler ?? DefaultScheduler.Instance;
         _uiScheduler = uiScheduler ?? (scheduler ?? RxApp.MainThreadScheduler);
 
-        var endEvents = _audioService.NaturalTrackCompleted != null
-            ? _audioService.TrackEnded.Merge(_audioService.NaturalTrackCompleted)
-            : _audioService.TrackEnded;
-
-        _trackEndedSubscription = endEvents
+        // 「播完当前曲后停止」的唯一消费入口是宿主经 SetBeforeAutoAdvanceCallback 安装的拦截
+        // （在自动续播前同步裁决）。服务不得再合并消费 NaturalTrackCompleted：两者会成为
+        // 无序的一次性标志竞争消费者，UI 线程先消费时拦截拿到 false，定时被清掉而音乐照常续播。
+        // 这里只保留电台交接用的 TrackEnded，供未安装拦截的宿主兜底
+        _trackEndedSubscription = _audioService.TrackEnded
             .ObserveOn(_uiScheduler)
             .Subscribe(_ =>
             {

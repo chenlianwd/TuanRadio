@@ -57,7 +57,6 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
     [Reactive] public partial string RepeatMode { get; set; } = "radio";
     [Reactive] public partial string RepeatText { get; set; } = "DJ";
     [Reactive] public partial string RepeatModeTip { get; set; } = AppLanguage.T("电台模式", "Radio mode"); // 语言切换时由 _onLanguageChanged 重算
-    [Reactive] public partial bool IsRepeatActive { get; set; } = true;
     [Reactive] public partial bool IsRepeatOff { get; set; }
     [Reactive] public partial bool IsRepeatSingle { get; set; }
     [Reactive] public partial double RepeatButtonOpacity { get; set; } = 1.0;
@@ -463,7 +462,6 @@ public partial class PlayerViewModel : ViewModelBase, IDisposable
         mode = Services.AudioService.NormalizeRepeatMode(mode);
         RepeatMode = mode;
         IsRepeatOff = mode == "none";
-        IsRepeatActive = !IsRepeatOff;
         IsRepeatSingle = mode == "single";
         RepeatButtonOpacity = IsRepeatOff ? 0.45 : 1.0;
         (RepeatText, RepeatModeTip) = mode switch

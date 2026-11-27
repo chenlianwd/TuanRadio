@@ -69,6 +69,9 @@ public class AudioService : IAudioService, IDisposable
     private int _currentIndex = -1;
     private bool _shuffle;
     private string _repeatMode = "radio";
+    // 关闭循环 + 随机的本轮已播集合（引用相等，持 _playlistGate 读写）：
+    // 未播尽不重复、播尽即停；切循环/随机、手动选歌、重载歌单时清空
+    private readonly HashSet<Track> _sequentialShufflePlayed = new();
     private Func<Track?, bool>? _beforeAutoAdvanceCallback;
     private string _speechMixMode = "duck";
     private volatile bool _resumeAfterTts;
@@ -743,6 +746,7 @@ public class AudioService : IAudioService, IDisposable
             _transientContextTracks.Clear();
             _playlist.AddRange(tracks);
             _currentIndex = _playlist.Count > 0 ? 0 : -1;
+            _sequentialShufflePlayed.Clear();
         }
         NotifyTrackChanged();
     }
@@ -765,6 +769,7 @@ public class AudioService : IAudioService, IDisposable
             _transientContextTracks.Clear();
             _playlist.AddRange(tracks);
             _currentIndex = _playlist.Count > 0 ? 0 : -1;
+            _sequentialShufflePlayed.Clear();
         }
         NotifyTrackChanged();
     }
@@ -1008,13 +1013,27 @@ public class AudioService : IAudioService, IDisposable
     public void Shuffle()
     {
         if (!IsDisposed)
-            _shuffle = !_shuffle;
+        {
+            lock (_playlistGate)
+            {
+                _shuffle = !_shuffle;
+                _sequentialShufflePlayed.Clear();
+            }
+        }
     }
 
     public void SetShuffle(bool shuffled)
     {
         if (!IsDisposed)
-            _shuffle = shuffled;
+        {
+            lock (_playlistGate)
+            {
+                if (_shuffle == shuffled)
+                    return;
+                _shuffle = shuffled;
+                _sequentialShufflePlayed.Clear();
+            }
+        }
     }
 
     public static string NormalizeRepeatMode(string? mode)
@@ -1035,6 +1054,8 @@ public class AudioService : IAudioService, IDisposable
             return;
 
         Log.Information("Repeat mode changed: {Previous} -> {Mode}", previous, mode);
+        lock (_playlistGate)
+            _sequentialShufflePlayed.Clear();
         if (mode == "radio")
         {
             // 切入电台模式即由 DJ 接管后续选曲：残留的播放上下文（如歌单队列）会在
@@ -1247,6 +1268,8 @@ public class AudioService : IAudioService, IDisposable
             lock (_playlistGate)
                 target = index >= 0 && index < _playlist.Count ? _playlist[index] : null;
             if (target == null) return;
+            lock (_playlistGate)
+                _sequentialShufflePlayed.Clear();
             ClearPlaybackContextCore();
             PlayTrackInstance(target, isContextTrack: false);
         }
@@ -1259,6 +1282,8 @@ public class AudioService : IAudioService, IDisposable
         lock (_playbackIntentGate)
         {
             _playbackIntentVersion++;
+            lock (_playlistGate)
+                _sequentialShufflePlayed.Clear();
             ClearPlaybackContextCore();
             PlayTrackInstance(track, isContextTrack: false);
         }
@@ -1535,6 +1560,21 @@ public class AudioService : IAudioService, IDisposable
             {
                 nextIndex = PickRandomOtherIndex(canonical.Count, currentIndex);
             }
+            else if (_shuffle)
+            {
+                // 关闭循环 + 随机：当前曲记入已播，只在未播曲目中抽取，播尽返回 false 停止
+                if (currentIndex >= 0)
+                    _sequentialShufflePlayed.Add(canonical[currentIndex]);
+                var unplayed = new List<int>(canonical.Count);
+                for (var i = 0; i < canonical.Count; i++)
+                {
+                    if (i != currentIndex && !_sequentialShufflePlayed.Contains(canonical[i]))
+                        unplayed.Add(i);
+                }
+                if (unplayed.Count == 0)
+                    return false;
+                nextIndex = unplayed[_rng.Next(unplayed.Count)];
+            }
             else if (allowWrap)
             {
                 nextIndex = (currentIndex + 1 + canonical.Count) % canonical.Count;
@@ -1574,6 +1614,9 @@ public class AudioService : IAudioService, IDisposable
             var current = CurrentTrackUnsafe();
             var currentIndex = current == null ? 0 : canonical.FindIndex(track => IsSameTrackIdentity(track, current));
             if (currentIndex < 0) currentIndex = 0;
+            // 关闭循环不回绕：已在第一首时保持当前曲，与「下一首到末尾不绕回首曲」对称
+            if (_repeatMode == "none" && currentIndex <= 0)
+                return;
             target = canonical[(currentIndex - 1 + canonical.Count) % canonical.Count];
         }
         ClearPlaybackContextCore();

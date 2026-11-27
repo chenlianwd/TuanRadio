@@ -183,27 +183,238 @@ public class RepeatModeRemediationTests
         }
     }
 
+    private static readonly MethodInfo TryPlayNextCanonicalTrackMethod = typeof(AudioService).GetMethod(
+        "TryPlayNextCanonicalTrack", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+    private static bool TryAdvanceWithoutWrap(AudioService svc)
+        => (bool)TryPlayNextCanonicalTrackMethod.Invoke(svc, new object[] { false })!;
+
     [Fact]
-    public void SleepTimer_EndOfTrack_ConsumesOnNaturalTrackCompletedEvenWithoutTrackEnded()
+    public void NoneMode_Shuffle_PlaysEachTrackOnceThenStops_AndIsNotSequential()
+    {
+        using var svc = new AudioService();
+        var titles = new[] { "One", "Two", "Three", "Four", "Five" };
+        svc.LoadTracks(titles.Select((title, i) => new Track
+        {
+            SourceId = $"local:{i + 1}",
+            Title = title,
+            FilePath = $"http://example.com/{i + 1}.mp3"
+        }));
+        svc.SetRepeatMode("none");
+        svc.SetShuffle(true);
+
+        var sawNonSequentialOrder = false;
+        for (var pass = 0; pass < 20; pass++)
+        {
+            if (pass > 0)
+            {
+                // 手动选歌开启新一轮，已播集合随之重置
+                svc.PlayAtIndex(0);
+                Assert.Equal("One", svc.CurrentTrack?.Title);
+            }
+
+            var played = new System.Collections.Generic.List<string> { "One" };
+            for (var step = 0; step < titles.Length - 1; step++)
+            {
+                Assert.True(TryAdvanceWithoutWrap(svc));
+                var title = svc.CurrentTrack?.Title;
+                Assert.NotNull(title);
+                // 未播尽不重复
+                Assert.DoesNotContain(title, played);
+                played.Add(title);
+            }
+
+            // 整单播完即停：不回绕、不重复
+            Assert.False(TryAdvanceWithoutWrap(svc));
+
+            if (!played.SequenceEqual(titles))
+                sawNonSequentialOrder = true;
+        }
+
+        // 4 次抽取全等于顺序排列的概率是 1/24 每轮，20 轮全顺序在真实随机下不可能发生
+        Assert.True(sawNonSequentialOrder);
+    }
+
+    [Fact]
+    public async Task NoneMode_Shuffle_ManualNextRespectsPlayedSet_AndStopsWhenExhausted()
+    {
+        using var svc = new AudioService();
+        svc.LoadTracks(new[]
+        {
+            new Track { SourceId = "local:1", Title = "One", FilePath = "http://example.com/1.mp3" },
+            new Track { SourceId = "local:2", Title = "Two", FilePath = "http://example.com/2.mp3" }
+        });
+        svc.SetRepeatMode("none");
+        svc.SetShuffle(true);
+
+        // 2 首：仅剩一首未播，手动 Next 必然切到它；再按已无未播曲目，保持不动（不回绕重播）
+        svc.Next();
+        await Task.Delay(150);
+        Assert.Equal("Two", svc.CurrentTrack?.Title);
+
+        svc.Next();
+        await Task.Delay(150);
+        Assert.Equal("Two", svc.CurrentTrack?.Title);
+    }
+
+    private static AudioService CreateExhaustedSequentialShuffle(out Track[] tracks)
+    {
+        tracks = new[]
+        {
+            new Track { SourceId = "local:1", Title = "One", FilePath = "http://example.com/1.mp3" },
+            new Track { SourceId = "local:2", Title = "Two", FilePath = "http://example.com/2.mp3" }
+        };
+        var svc = new AudioService();
+        svc.LoadTracks(tracks);
+        svc.SetRepeatMode("none");
+        svc.SetShuffle(true);
+        // 2 首歌单：推进一次后已播尽，此后任何一次成功推进都只能来自已播集合被重置
+        Assert.True(TryAdvanceWithoutWrap(svc));
+        Assert.False(TryAdvanceWithoutWrap(svc));
+        return svc;
+    }
+
+    private static void AssertCanAdvanceOnceAfterReset(AudioService svc)
+    {
+        Assert.True(TryAdvanceWithoutWrap(svc));
+        Assert.False(TryAdvanceWithoutWrap(svc));
+    }
+
+    [Fact]
+    public void NoneMode_Shuffle_PlayedSetResets_OnRepeatModeToggle()
+    {
+        using var svc = CreateExhaustedSequentialShuffle(out _);
+        svc.SetRepeatMode("list");
+        svc.SetRepeatMode("none");
+        AssertCanAdvanceOnceAfterReset(svc);
+    }
+
+    [Fact]
+    public void NoneMode_Shuffle_PlayedSetResets_OnSetShuffle()
+    {
+        using var svc = CreateExhaustedSequentialShuffle(out _);
+        svc.SetShuffle(false);
+        svc.SetShuffle(true);
+        AssertCanAdvanceOnceAfterReset(svc);
+    }
+
+    [Fact]
+    public void NoneMode_Shuffle_PlayedSetResets_OnShuffleToggle()
+    {
+        using var svc = CreateExhaustedSequentialShuffle(out _);
+        svc.Shuffle();
+        svc.Shuffle();
+        AssertCanAdvanceOnceAfterReset(svc);
+    }
+
+    [Fact]
+    public void NoneMode_Shuffle_PlayedSetResets_OnManualPick()
+    {
+        using var svc = CreateExhaustedSequentialShuffle(out _);
+        svc.PlayAtIndex(0);
+        AssertCanAdvanceOnceAfterReset(svc);
+    }
+
+    [Fact]
+    public void NoneMode_Shuffle_PlayedSetResets_OnPlayTrack()
+    {
+        using var svc = CreateExhaustedSequentialShuffle(out var tracks);
+        svc.PlayTrack(tracks[1]);
+        AssertCanAdvanceOnceAfterReset(svc);
+    }
+
+    [Fact]
+    public void NoneMode_Shuffle_PlayedSetResets_OnReload()
+    {
+        using var svc = CreateExhaustedSequentialShuffle(out var tracks);
+        // 同一批曲目实例重新载入
+        svc.LoadTracks(tracks);
+        AssertCanAdvanceOnceAfterReset(svc);
+    }
+
+    [Fact]
+    public void NoneMode_PreviousAtFirstTrack_DoesNotWrap_OtherModesStillDo()
+    {
+        using var svc = new AudioService();
+        svc.LoadTracks(new[]
+        {
+            new Track { SourceId = "local:1", Title = "One", FilePath = "http://example.com/1.mp3" },
+            new Track { SourceId = "local:2", Title = "Two", FilePath = "http://example.com/2.mp3" },
+            new Track { SourceId = "local:3", Title = "Three", FilePath = "http://example.com/3.mp3" }
+        });
+
+        svc.SetRepeatMode("none");
+        svc.Previous();
+        Assert.Equal("One", svc.CurrentTrack?.Title);
+
+        // 其余模式维持原有的回绕语义
+        foreach (var mode in new[] { "list", "single" })
+        {
+            svc.SetRepeatMode(mode);
+            svc.PlayAtIndex(0);
+            svc.Previous();
+            Assert.Equal("Three", svc.CurrentTrack?.Title);
+        }
+    }
+
+    [Fact]
+    public void SleepTimer_EndOfTrack_NotConsumedByNaturalTrackCompletedAlone()
     {
         var trackEnded = new Subject<Track?>();
         var naturalCompleted = new Subject<Track?>();
-        var trackChanged = new Subject<Track?>();
         var audio = new Mock<IAudioService>();
         audio.SetupGet(x => x.TrackEnded).Returns(trackEnded);
         audio.SetupGet(x => x.NaturalTrackCompleted).Returns(naturalCompleted);
-        audio.SetupGet(x => x.TrackChanged).Returns(trackChanged);
+        audio.SetupGet(x => x.TrackChanged).Returns(new Subject<Track?>());
         audio.SetupGet(x => x.CurrentTrack).Returns(new Track { Title = "Song" });
 
         using var timer = new SleepTimerService(audio.Object, CurrentThreadScheduler.Instance, CurrentThreadScheduler.Instance);
         timer.StartEndOfTrackTimer();
-        Assert.Equal(SleepTimerMode.EndOfTrack, timer.Mode);
 
-        // 单曲循环/列表循环/歌单上下文自然播完只发 NaturalTrackCompleted，不发 TrackEnded
+        // 自然完播只由宿主安装的拦截回调消费；服务若也消费，两者就是无序的一次性标志竞争消费者
         naturalCompleted.OnNext(new Track { Title = "Song" });
+        Assert.Equal(SleepTimerMode.EndOfTrack, timer.Mode);
+        audio.Verify(x => x.Pause(), Times.Never);
 
+        // 未安装拦截时的电台交接路径仍由 TrackEnded 兜底
+        trackEnded.OnNext(new Track { Title = "Song" });
         Assert.Equal(SleepTimerMode.Disabled, timer.Mode);
         audio.Verify(x => x.Pause(), Times.Once);
+    }
+
+    [Fact]
+    public async Task SleepTimer_EndOfTrack_InterceptIsSoleConsumer_AndBlocksAutoAdvanceInListMode()
+    {
+        // 同步 UI 调度器把「UI 线程先于拦截回调消费」固定成必然顺序：
+        // 服务若合并订阅自然完播事件，标志被吃掉后拦截拿到 false，列表循环照常续播到下一首
+        using var svc = new AudioService();
+        svc.LoadTracks(new[]
+        {
+            new Track { SourceId = "local:1", Title = "One", FilePath = "http://example.com/1.mp3" },
+            new Track { SourceId = "local:2", Title = "Two", FilePath = "http://example.com/2.mp3" }
+        });
+        svc.SetRepeatMode("list");
+        using var timer = new SleepTimerService(svc, CurrentThreadScheduler.Instance, CurrentThreadScheduler.Instance);
+        svc.SetBeforeAutoAdvanceCallback(_ => timer.CheckAndConsumeEndOfTrack());
+        timer.StartEndOfTrackTimer();
+        Assert.Equal(SleepTimerMode.EndOfTrack, timer.Mode);
+
+        SimulateNaturalEnd(svc);
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (timer.Mode != SleepTimerMode.Disabled && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        Assert.Equal(SleepTimerMode.Disabled, timer.Mode);
+        // 续播动作经 100ms 延迟调度，留足窗口确认它确实被拦截
+        await Task.Delay(300);
+        Assert.Equal("One", svc.CurrentTrack?.Title);
+    }
+
+    private static void SimulateNaturalEnd(AudioService svc)
+    {
+        var handler = typeof(AudioService).GetMethod(
+            "OnPlayerEndReached", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        handler.Invoke(svc, new object?[] { null, EventArgs.Empty });
     }
 
     [Fact]
@@ -227,7 +438,6 @@ public class RepeatModeRemediationTests
         vm.RepeatModeChanged += m => lastModeEvent = m;
         vm.ShuffleChanged += s => lastShuffleEvent = s;
 
-        Assert.True(vm.IsRepeatActive);
         Assert.False(vm.IsRepeatOff);
         Assert.False(vm.IsRepeatSingle);
         Assert.Equal(1.0, vm.RepeatButtonOpacity);
@@ -252,7 +462,6 @@ public class RepeatModeRemediationTests
         vm.ToggleRepeatCommand.Execute().Subscribe();
         Assert.Equal("none", lastModeEvent);
         Assert.True(vm.IsRepeatOff);
-        Assert.False(vm.IsRepeatActive);
         Assert.Equal(0.45, vm.RepeatButtonOpacity);
 
         // 外部恢复状态同步
